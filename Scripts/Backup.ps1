@@ -1,4 +1,5 @@
 $script_directory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
+Write-Host "Found: $script_directory"
 Push-Location $script_directory
 ./ScoopUpdate.ps1
 ./ScoopBackup.ps1
