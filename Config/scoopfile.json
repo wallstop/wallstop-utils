@@ -336,6 +336,13 @@
         {
             "Info": "",
             "Source": "extras",
+            "Name": "whkd",
+            "Version": "0.2.2",
+            "Updated": "\/Date(1729389050425)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
             "Name": "windirstat",
             "Version": "2.0.1",
             "Updated": "\/Date(1729151156438)\/"
