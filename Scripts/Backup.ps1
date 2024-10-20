@@ -1,5 +1,5 @@
-$root_directory = git rev-parse --show-toplevel
-Push-Location "$root_directory/Scripts/"
+$script_directory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
+Push-Location $script_directory
 .\ScoopUpdate.ps1
 .\ScoopBackup.ps1
 $date = Get-Date
