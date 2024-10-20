@@ -13,7 +13,14 @@ if (-not (Test-Path -Path $backupFolder)) {
     New-Item -Path $backupFolder -ItemType Directory
 }
 
-Remove-Item -Path "$baseDirectory/Config/.config" -Recurse -Forc
+$backupFolder = "$backupFolder/.config"
+# Create the backup folder if it doesn't exist
+if (-not (Test-Path -Path $backupFolder)) {
+    New-Item -Path $backupFolder -ItemType Directory
+} 
+else {
+    Remove-Item -Path "$backupFolder\*" -Recurse -Force
+}
 
 # Check if the .config folder exists
 if (Test-Path -Path $configFolder) {
@@ -24,3 +31,4 @@ if (Test-Path -Path $configFolder) {
 } else {
     Write-Host "The .config folder does not exist at $configFolder."
 }
+Pop-Location
