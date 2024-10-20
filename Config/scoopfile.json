@@ -167,6 +167,13 @@
         },
         {
             "Info": "",
+            "Source": "scoop-clojure",
+            "Name": "jet",
+            "Version": "0.7.27",
+            "Updated": "\/Date(1729387511944)\/"
+        },
+        {
+            "Info": "",
             "Source": "extras",
             "Name": "komorebi",
             "Version": "0.1.29",
