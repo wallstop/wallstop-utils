@@ -1,6 +1,5 @@
-$script_directory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-Write-Host "Found: $script_directory"
-Push-Location $script_directory
+$base_directory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
+Push-Location "$base_directory/Scripts/"
 ./ScoopUpdate.ps1
 ./ScoopBackup.ps1
 $date = Get-Date
