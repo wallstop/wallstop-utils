@@ -1,5 +1,4 @@
 $baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-Push-Location "$baseDirectory/Scripts/"
-./Scoop/ScoopRestore.ps1
-./WindowsTerminal/WindowsTerminalRestore.ps1
+Push-Location "$baseDirectory/Config/"
+scoop import scoopfile.json
 Pop-Location
