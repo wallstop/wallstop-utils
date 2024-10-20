@@ -258,6 +258,13 @@
         },
         {
             "Info": "",
+            "Source": "extras",
+            "Name": "qbittorrent",
+            "Version": "5.0.0",
+            "Updated": "\/Date(1729393190428)\/"
+        },
+        {
+            "Info": "",
             "Source": "main",
             "Name": "ripgrep",
             "Version": "14.1.1",
@@ -269,6 +276,13 @@
             "Name": "screentogif",
             "Version": "2.41.1",
             "Updated": "\/Date(1726040742610)\/"
+        },
+        {
+            "Info": "",
+            "Source": "nonportable",
+            "Name": "sql-server-management-studio-np",
+            "Version": "20.2.30.0",
+            "Updated": "\/Date(1729393534933)\/"
         },
         {
             "Info": "",
@@ -391,9 +405,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1729384860000)\/",
+                "value": "\/Date(1729398695000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, October 19, 2024 5:41:00 PM"
+                "DateTime": "Saturday, October 19, 2024 9:31:35 PM"
             },
             "Manifests": 2090
         },
@@ -401,9 +415,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1729370022000)\/",
+                "value": "\/Date(1729399012000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, October 19, 2024 1:33:42 PM"
+                "DateTime": "Saturday, October 19, 2024 9:36:52 PM"
             },
             "Manifests": 469
         },
