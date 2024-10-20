@@ -1,0 +1,1 @@
+scoop import Config/scoopfile.json
