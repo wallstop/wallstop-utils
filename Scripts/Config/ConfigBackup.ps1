@@ -12,12 +12,6 @@ $backupFolder = "$baseDirectory\..\Config"
 if (-not (Test-Path -Path $backupFolder)) {
   New-Item -Path $backupFolder -ItemType Directory
 }
-
-$backupFolder = "$backupFolder/.config"
-# Create the backup folder if it doesn't exist
-if (-not (Test-Path -Path $backupFolder)) {
-  New-Item -Path $backupFolder -ItemType Directory
-}
 else {
   Remove-Item -Path "$backupFolder\*" -Recurse -Force
 }
