@@ -4,6 +4,7 @@ Push-Location "$baseDirectory/Scripts/"
 ./WindowsTerminal/WindowsTerminalBackup.ps1
 ./Scoop/ScoopUpdate.ps1
 ./Scoop/ScoopBackup.ps1
+./Komorebi/KomorebiBackup.ps1
 $date = Get-Date
 $dateString = "{0:yyyy/MM/dd hh:mm:ss}" -f $date
 git add --all
