@@ -6,7 +6,7 @@ $configFolder = "$env:USERPROFILE\.config"
 
 # Define the destination folder where you want to store the backup
 # You can modify this path to any preferred backup location
-$backupFolder = "$baseDirectory/Config"
+$backupFolder = "$baseDirectory\..\Config"
 
 # Create the backup folder if it doesn't exist
 if (-not (Test-Path -Path $backupFolder)) {
