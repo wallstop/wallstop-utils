@@ -6,7 +6,7 @@ $configFolder = "$env:USERPROFILE\.config"
 
 # Define the destination folder where you want to store the backup
 # You can modify this path to any preferred backup location
-$backupFolder = "$baseDirectory\..\Config"
+$backupFolder = "$baseDirectory\..\Config\.config"
 
 # Create the backup folder if it doesn't exist
 if (-not (Test-Path -Path $backupFolder)) {
@@ -15,6 +15,8 @@ if (-not (Test-Path -Path $backupFolder)) {
 else {
   Remove-Item -Path "$backupFolder\*" -Recurse -Force
 }
+
+$backupFolder = "$backupFolder\.."
 
 # Check if the .config folder exists
 if (Test-Path -Path $configFolder) {
