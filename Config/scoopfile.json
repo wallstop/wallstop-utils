@@ -127,15 +127,15 @@
             "Info": "",
             "Source": "main",
             "Name": "hugo",
-            "Version": "0.136.2",
-            "Updated": "\/Date(1729237536209)\/"
+            "Version": "0.136.3",
+            "Updated": "\/Date(1729534019417)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "hugo-extended",
-            "Version": "0.136.2",
-            "Updated": "\/Date(1729237541069)\/"
+            "Version": "0.136.3",
+            "Updated": "\/Date(1729534022164)\/"
         },
         {
             "Info": "",
@@ -183,15 +183,15 @@
             "Info": "",
             "Source": "extras",
             "Name": "linqpad",
-            "Version": "8.5.5",
-            "Updated": "\/Date(1722584736589)\/"
+            "Version": "8.6.4",
+            "Updated": "\/Date(1729492546696)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "nodejs",
-            "Version": "22.9.0",
-            "Updated": "\/Date(1726645539696)\/"
+            "Version": "23.0.0",
+            "Updated": "\/Date(1729534119081)\/"
         },
         {
             "Info": "",
@@ -234,6 +234,13 @@
             "Name": "postgresql",
             "Version": "17.0",
             "Updated": "\/Date(1728460015161)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "powershell-beautifier",
+            "Version": "1.2.5",
+            "Updated": "\/Date(1729469599972)\/"
         },
         {
             "Info": "",
@@ -310,7 +317,7 @@
             "Source": null,
             "Name": "thunderbird",
             "Version": "115.8.1",
-            "Updated": "\/Date(1729029620482)\/"
+            "Updated": "\/Date(1729454631099)\/"
         },
         {
             "Info": "",
@@ -395,9 +402,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1729384678000)\/",
+                "value": "\/Date(1729528209000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, October 19, 2024 5:37:58 PM"
+                "DateTime": "Monday, October 21, 2024 9:30:09 AM"
             },
             "Manifests": 1344
         },
@@ -405,19 +412,19 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1729398695000)\/",
+                "value": "\/Date(1729528335000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, October 19, 2024 9:31:35 PM"
+                "DateTime": "Monday, October 21, 2024 9:32:15 AM"
             },
-            "Manifests": 2090
+            "Manifests": 2091
         },
         {
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1729399012000)\/",
+                "value": "\/Date(1729528929000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, October 19, 2024 9:36:52 PM"
+                "DateTime": "Monday, October 21, 2024 9:42:09 AM"
             },
             "Manifests": 469
         },
@@ -425,9 +432,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1729370011000)\/",
+                "value": "\/Date(1729528954000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, October 19, 2024 1:33:31 PM"
+                "DateTime": "Monday, October 21, 2024 9:42:34 AM"
             },
             "Manifests": 127
         },
@@ -435,9 +442,9 @@
             "Name": "java",
             "Source": "https://github.com/ScoopInstaller/Java",
             "Updated": {
-                "value": "\/Date(1729196371000)\/",
+                "value": "\/Date(1729527686000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, October 17, 2024 1:19:31 PM"
+                "DateTime": "Monday, October 21, 2024 9:21:26 AM"
             },
             "Manifests": 294
         },

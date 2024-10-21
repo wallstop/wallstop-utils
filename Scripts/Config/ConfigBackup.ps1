@@ -1,4 +1,5 @@
 $baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
+$baseDirectory = "$baseDirectory\.."
 Push-Location $baseDirectory
 
 # Define the path to the `.config` folder in the user's home directory
@@ -6,7 +7,7 @@ $configFolder = "$env:USERPROFILE\.config"
 
 # Define the destination folder where you want to store the backup
 # You can modify this path to any preferred backup location
-$backupFolder = "$baseDirectory\..\Config\.config"
+$backupFolder = "$baseDirectory\Config\.config"
 
 # Create the backup folder if it doesn't exist
 if (-not (Test-Path -Path $backupFolder)) {
