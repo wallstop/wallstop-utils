@@ -127,15 +127,15 @@
             "Info": "",
             "Source": "main",
             "Name": "hugo",
-            "Version": "0.136.2",
-            "Updated": "\/Date(1729237536209)\/"
+            "Version": "0.136.3",
+            "Updated": "\/Date(1729534019417)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "hugo-extended",
-            "Version": "0.136.2",
-            "Updated": "\/Date(1729237541069)\/"
+            "Version": "0.136.3",
+            "Updated": "\/Date(1729534022164)\/"
         },
         {
             "Info": "",
@@ -402,9 +402,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1729484984000)\/",
+                "value": "\/Date(1729528209000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Sunday, October 20, 2024 9:29:44 PM"
+                "DateTime": "Monday, October 21, 2024 9:30:09 AM"
             },
             "Manifests": 1344
         },
@@ -412,9 +412,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1729485106000)\/",
+                "value": "\/Date(1729528335000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Sunday, October 20, 2024 9:31:46 PM"
+                "DateTime": "Monday, October 21, 2024 9:32:15 AM"
             },
             "Manifests": 2091
         },
@@ -422,9 +422,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1729485507000)\/",
+                "value": "\/Date(1729528929000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Sunday, October 20, 2024 9:38:27 PM"
+                "DateTime": "Monday, October 21, 2024 9:42:09 AM"
             },
             "Manifests": 469
         },
@@ -432,9 +432,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1729442328000)\/",
+                "value": "\/Date(1729528954000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Sunday, October 20, 2024 9:38:48 AM"
+                "DateTime": "Monday, October 21, 2024 9:42:34 AM"
             },
             "Manifests": 127
         },
@@ -442,9 +442,9 @@
             "Name": "java",
             "Source": "https://github.com/ScoopInstaller/Java",
             "Updated": {
-                "value": "\/Date(1729196371000)\/",
+                "value": "\/Date(1729527686000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, October 17, 2024 1:19:31 PM"
+                "DateTime": "Monday, October 21, 2024 9:21:26 AM"
             },
             "Manifests": 294
         },
