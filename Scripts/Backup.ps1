@@ -1,6 +1,6 @@
 $baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
 Push-Location "$baseDirectory/Scripts/"
-./Utils/FormatPowershellScrips.ps1
+./Utils/FormatPowershellScripts.ps1
 ./WindowsTerminal/WindowsTerminalBackup.ps1
 ./Scoop/ScoopUpdate.ps1
 ./Scoop/ScoopBackup.ps1
