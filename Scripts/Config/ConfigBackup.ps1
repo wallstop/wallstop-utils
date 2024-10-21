@@ -10,25 +10,25 @@ $backupFolder = "$baseDirectory/Config"
 
 # Create the backup folder if it doesn't exist
 if (-not (Test-Path -Path $backupFolder)) {
-    New-Item -Path $backupFolder -ItemType Directory
+  New-Item -Path $backupFolder -ItemType Directory
 }
 
 $backupFolder = "$backupFolder/.config"
 # Create the backup folder if it doesn't exist
 if (-not (Test-Path -Path $backupFolder)) {
-    New-Item -Path $backupFolder -ItemType Directory
-} 
+  New-Item -Path $backupFolder -ItemType Directory
+}
 else {
-    Remove-Item -Path "$backupFolder\*" -Recurse -Force
+  Remove-Item -Path "$backupFolder\*" -Recurse -Force
 }
 
 # Check if the .config folder exists
 if (Test-Path -Path $configFolder) {
-    # Copy the .config folder to the backup destination
-    Copy-Item -Path $configFolder -Destination $backupFolder -Recurse -Force
+  # Copy the .config folder to the backup destination
+  Copy-Item -Path $configFolder -Destination $backupFolder -Recurse -Force
 
-    Write-Host "Backup successful! .config folder saved to $backupFolder"
+  Write-Host "Backup successful! .config folder saved to $backupFolder"
 } else {
-    Write-Host "The .config folder does not exist at $configFolder."
+  Write-Host "The .config folder does not exist at $configFolder."
 }
 Pop-Location

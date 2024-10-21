@@ -4,15 +4,15 @@ $backupFolder = "$baseDirectory/Config/WindowsTerminal"
 Push-Location "$baseDirectory"
 
 if (-not (Test-Path -Path $backupFolder)) {
-    New-Item -Path $backupFolder -ItemType Directory
+  New-Item -Path $backupFolder -ItemType Directory
 }
 
 if (Test-Path -Path $sourcePath) {
-    $backupFile = "$backupFolder/settings.json"
-    Copy-Item -Path $sourcePath -Destination $backupFile
-    Write-Host "Windows Terminal settings exported successfully."
+  $backupFile = "$backupFolder/settings.json"
+  Copy-Item -Path $sourcePath -Destination $backupFile
+  Write-Host "Windows Terminal settings exported successfully."
 } else {
-    Write-Host "Windows Terminal settings file not found!"
+  Write-Host "Windows Terminal settings file not found!"
 }
 
 Pop-Location

@@ -8,26 +8,26 @@ $configDir = "$env:USERPROFILE\.config"
 # For example: "C:\Backups\.config_backup_20231005"
 $backupDir = "$baseDirectory\Config\.config"
 try {
-    # Check if the backup directory exists
-    if (-not (Test-Path -Path $backupDir)) {
-        Write-Host "Backup directory not found: $backupDir" -ForegroundColor Red
-        exit 1
-    }   
+  # Check if the backup directory exists
+  if (-not (Test-Path -Path $backupDir)) {
+    Write-Host "Backup directory not found: $backupDir" -ForegroundColor Red
+    exit 1
+  }
 
-    # Check if the .config directory exists; if not, create it
-    if (-not (Test-Path -Path $configDir)) {
-        Write-Host ".config directory not found, creating it at: $configDir"
-        New-Item -Path $configDir -ItemType Directory
-    }
+  # Check if the .config directory exists; if not, create it
+  if (-not (Test-Path -Path $configDir)) {
+    Write-Host ".config directory not found, creating it at: $configDir"
+    New-Item -Path $configDir -ItemType Directory
+  }
 
-    # Restore the contents of the backup to the .config directory
-    try {
-        Copy-Item -Path "$backupDir\*" -Destination $configDir -Recurse -Force
-        Write-Host ".config directory restored from backup successfully." -ForegroundColor Green
-    } catch {
-        Write-Host "An error occurred while restoring the .config directory: $_" -ForegroundColor Red
-    }
-} 
+  # Restore the contents of the backup to the .config directory
+  try {
+    Copy-Item -Path "$backupDir\*" -Destination $configDir -Recurse -Force
+    Write-Host ".config directory restored from backup successfully." -ForegroundColor Green
+  } catch {
+    Write-Host "An error occurred while restoring the .config directory: $_" -ForegroundColor Red
+  }
+}
 finally {
-    Pop-Location
+  Pop-Location
 }
