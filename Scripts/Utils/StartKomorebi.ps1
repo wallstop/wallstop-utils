@@ -1,1 +1,1 @@
-komorebic start --whkd --bar
+komorebic start --whkd
