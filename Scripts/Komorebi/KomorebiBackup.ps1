@@ -1,4 +1,5 @@
 $rootDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
+$rootDirectory = "$rootDirectory\.."
 Push-Location $rootDirectory
 try {
   $komorebiConfig = "$env:USERPROFILE\komorebi.json"
