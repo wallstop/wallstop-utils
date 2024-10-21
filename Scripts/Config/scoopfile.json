@@ -1,0 +1,462 @@
+﻿{
+    "config": {
+        "scoop_branch": "master",
+        "scoop_repo": "https://github.com/ScoopInstaller/Scoop"
+    },
+    "apps": [
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "7zip",
+            "Version": "24.08",
+            "Updated": "\/Date(1723535109606)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "7zip19.00-helper",
+            "Version": "19.00",
+            "Updated": "\/Date(1694294667084)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "aws",
+            "Version": "2.18.10",
+            "Updated": "\/Date(1729323931743)\/"
+        },
+        {
+            "Info": "",
+            "Source": "scoop-clojure",
+            "Name": "clj-deps",
+            "Version": "1.12.0.1479",
+            "Updated": "\/Date(1726952348228)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "cloc",
+            "Version": "2.02",
+            "Updated": "\/Date(1722671130395)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "concfg",
+            "Version": "0.2021.05.09",
+            "Updated": "\/Date(1669489790929)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "dark",
+            "Version": "3.14",
+            "Updated": "\/Date(1708847111116)\/"
+        },
+        {
+            "Info": "",
+            "Source": "nonportable",
+            "Name": "devtoys-np",
+            "Version": "1.0.13.0",
+            "Updated": "\/Date(1728155248209)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "espanso",
+            "Version": "2.2.1",
+            "Updated": "\/Date(1726957233833)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "everything",
+            "Version": "1.4.1.1026",
+            "Updated": "\/Date(1722584732573)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "ffmpeg",
+            "Version": "7.1",
+            "Updated": "\/Date(1727768740188)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "flow-launcher",
+            "Version": "1.19.3",
+            "Updated": "\/Date(1729136651323)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "fontforge",
+            "Version": "20230101",
+            "Updated": "\/Date(1705791838961)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "gimp",
+            "Version": "2.10.38-1",
+            "Updated": "\/Date(1729044449483)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "gitkraken",
+            "Version": "10.4.0",
+            "Updated": "\/Date(1727855153441)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "go",
+            "Version": "1.23.2",
+            "Updated": "\/Date(1727855224928)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "gource",
+            "Version": "0.53",
+            "Updated": "\/Date(1697673808345)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "hugo",
+            "Version": "0.136.2",
+            "Updated": "\/Date(1729237536209)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "hugo-extended",
+            "Version": "0.136.2",
+            "Updated": "\/Date(1729237541069)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "inky",
+            "Version": "0.15.1",
+            "Updated": "\/Date(1729138560149)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "innounp",
+            "Version": "0.50",
+            "Updated": "\/Date(1669490074074)\/"
+        },
+        {
+            "Info": "",
+            "Source": "versions",
+            "Name": "innounp-unicode",
+            "Version": "1.73",
+            "Updated": "\/Date(1729041529250)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "insomnia",
+            "Version": "10.1.0",
+            "Updated": "\/Date(1729151151258)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "komorebi",
+            "Version": "0.1.29",
+            "Updated": "\/Date(1729379936475)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "leiningen",
+            "Version": "2.11.2",
+            "Updated": "\/Date(1707896722307)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "linqpad",
+            "Version": "8.5.5",
+            "Updated": "\/Date(1722584736589)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "nodejs",
+            "Version": "22.9.0",
+            "Updated": "\/Date(1726645539696)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "notepadplusplus",
+            "Version": "8.7",
+            "Updated": "\/Date(1726645543564)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "obsidian",
+            "Version": "1.7.4",
+            "Updated": "\/Date(1729387107086)\/"
+        },
+        {
+            "Info": "",
+            "Source": "java",
+            "Name": "openjdk17",
+            "Version": "17.0.2-8",
+            "Updated": "\/Date(1705974333652)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "paint.net",
+            "Version": "5.0.13",
+            "Updated": "\/Date(1709711112987)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "pandoc",
+            "Version": "3.5",
+            "Updated": "\/Date(1729375524262)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "postgresql",
+            "Version": "17.0",
+            "Updated": "\/Date(1728460015161)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "powershell-beautifier",
+            "Version": "1.2.5",
+            "Updated": "\/Date(1729469599972)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "powertoys",
+            "Version": "0.85.1",
+            "Updated": "\/Date(1729041218788)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "prime95",
+            "Version": "30.19b20",
+            "Updated": "\/Date(1717314310329)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "pshazz",
+            "Version": "0.2022.03.09",
+            "Updated": "\/Date(1669490004059)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "qbittorrent",
+            "Version": "5.0.0",
+            "Updated": "\/Date(1729393190428)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "ripgrep",
+            "Version": "14.1.1",
+            "Updated": "\/Date(1725867911756)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "screentogif",
+            "Version": "2.41.1",
+            "Updated": "\/Date(1726040742610)\/"
+        },
+        {
+            "Info": "",
+            "Source": "nonportable",
+            "Name": "sql-server-management-studio-np",
+            "Version": "20.2.30.0",
+            "Updated": "\/Date(1729393534933)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "sqlite",
+            "Version": "3.46.1",
+            "Updated": "\/Date(1729373689606)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "sublime-text",
+            "Version": "4-4180",
+            "Updated": "\/Date(1722930336999)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "tailwindcss",
+            "Version": "3.4.14",
+            "Updated": "\/Date(1729039939735)\/"
+        },
+        {
+            "Info": "",
+            "Source": null,
+            "Name": "thunderbird",
+            "Version": "115.8.1",
+            "Updated": "\/Date(1729454631099)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "touch",
+            "Version": "0.2018.07.25",
+            "Updated": "\/Date(1726341685303)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "vcredist2022",
+            "Version": "14.40.33816.0",
+            "Updated": "\/Date(1728584585454)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "vlc",
+            "Version": "3.0.21",
+            "Updated": "\/Date(1720394282686)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "vncviewer",
+            "Version": "7.12.1",
+            "Updated": "\/Date(1723707937720)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "vscode",
+            "Version": "1.94.2",
+            "Updated": "\/Date(1728584593521)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "whkd",
+            "Version": "0.2.2",
+            "Updated": "\/Date(1729389050425)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "windirstat",
+            "Version": "2.0.1",
+            "Updated": "\/Date(1729151156438)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "winmerge",
+            "Version": "2.16.42.1",
+            "Updated": "\/Date(1722411943798)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "wiztree",
+            "Version": "4.20",
+            "Updated": "\/Date(1726948659735)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "yarn",
+            "Version": "1.22.22",
+            "Updated": "\/Date(1717724498011)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "zeal",
+            "Version": "0.7.2",
+            "Updated": "\/Date(1729374008167)\/"
+        }
+    ],
+    "buckets": [
+        {
+            "Name": "main",
+            "Source": "https://github.com/ScoopInstaller/Main",
+            "Updated": {
+                "value": "\/Date(1729456004000)\/",
+                "DisplayHint": 2,
+                "DateTime": "Sunday, October 20, 2024 1:26:44 PM"
+            },
+            "Manifests": 1344
+        },
+        {
+            "Name": "extras",
+            "Source": "https://github.com/ScoopInstaller/Extras",
+            "Updated": {
+                "value": "\/Date(1729456149000)\/",
+                "DisplayHint": 2,
+                "DateTime": "Sunday, October 20, 2024 1:29:09 PM"
+            },
+            "Manifests": 2090
+        },
+        {
+            "Name": "versions",
+            "Source": "https://github.com/ScoopInstaller/Versions",
+            "Updated": {
+                "value": "\/Date(1729456301000)\/",
+                "DisplayHint": 2,
+                "DateTime": "Sunday, October 20, 2024 1:31:41 PM"
+            },
+            "Manifests": 469
+        },
+        {
+            "Name": "nonportable",
+            "Source": "https://github.com/ScoopInstaller/Nonportable",
+            "Updated": {
+                "value": "\/Date(1729442328000)\/",
+                "DisplayHint": 2,
+                "DateTime": "Sunday, October 20, 2024 9:38:48 AM"
+            },
+            "Manifests": 127
+        },
+        {
+            "Name": "java",
+            "Source": "https://github.com/ScoopInstaller/Java",
+            "Updated": {
+                "value": "\/Date(1729196371000)\/",
+                "DisplayHint": 2,
+                "DateTime": "Thursday, October 17, 2024 1:19:31 PM"
+            },
+            "Manifests": 294
+        },
+        {
+            "Name": "scoop-clojure",
+            "Source": "https://github.com/littleli/scoop-clojure",
+            "Updated": {
+                "value": "\/Date(1729178514000)\/",
+                "DisplayHint": 2,
+                "DateTime": "Thursday, October 17, 2024 8:21:54 AM"
+            },
+            "Manifests": 27
+        }
+    ]
+}
