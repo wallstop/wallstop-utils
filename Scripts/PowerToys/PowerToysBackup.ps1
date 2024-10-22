@@ -16,7 +16,7 @@ try {
     exit 1
   }
 
-  Copy-Item -Path $sourcePath\*.json -Destination $backupFolder -Recurse -Force
+  Robocopy.exe "$sourcePath $backupFolder *.json /E"
   Write-Host "PowerToys configuration settings have been backed up to $backupFolder."
 }
 finally {
