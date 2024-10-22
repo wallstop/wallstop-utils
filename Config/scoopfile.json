@@ -22,8 +22,8 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.18.10",
-            "Updated": "\/Date(1729323931743)\/"
+            "Version": "2.18.11",
+            "Updated": "\/Date(1729567718336)\/"
         },
         {
             "Info": "",
@@ -295,8 +295,8 @@
             "Info": "",
             "Source": "main",
             "Name": "sqlite",
-            "Version": "3.46.1",
-            "Updated": "\/Date(1729373689606)\/"
+            "Version": "3.47.0",
+            "Updated": "\/Date(1729567720342)\/"
         },
         {
             "Info": "",
@@ -402,9 +402,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1729528209000)\/",
+                "value": "\/Date(1729557322000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, October 21, 2024 9:30:09 AM"
+                "DateTime": "Monday, October 21, 2024 5:35:22 PM"
             },
             "Manifests": 1344
         },
@@ -412,9 +412,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1729528335000)\/",
+                "value": "\/Date(1729557528000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, October 21, 2024 9:32:15 AM"
+                "DateTime": "Monday, October 21, 2024 5:38:48 PM"
             },
             "Manifests": 2091
         },
@@ -422,9 +422,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1729528929000)\/",
+                "value": "\/Date(1729562337000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, October 21, 2024 9:42:09 AM"
+                "DateTime": "Monday, October 21, 2024 6:58:57 PM"
             },
             "Manifests": 469
         },
@@ -432,9 +432,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1729528954000)\/",
+                "value": "\/Date(1729542782000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, October 21, 2024 9:42:34 AM"
+                "DateTime": "Monday, October 21, 2024 1:33:02 PM"
             },
             "Manifests": 127
         },
@@ -442,9 +442,9 @@
             "Name": "java",
             "Source": "https://github.com/ScoopInstaller/Java",
             "Updated": {
-                "value": "\/Date(1729527686000)\/",
+                "value": "\/Date(1729541950000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, October 21, 2024 9:21:26 AM"
+                "DateTime": "Monday, October 21, 2024 1:19:10 PM"
             },
             "Manifests": 294
         },
