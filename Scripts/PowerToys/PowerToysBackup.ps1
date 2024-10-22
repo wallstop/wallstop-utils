@@ -16,7 +16,7 @@ try {
     exit 1
   }
 
-  Robocopy.exe "$sourcePath $backupFolder *.json /E"
+  Robocopy.exe $sourcePath $backupFolder *.json /S
   Write-Host "PowerToys configuration settings have been backed up to $backupFolder."
 }
 finally {
