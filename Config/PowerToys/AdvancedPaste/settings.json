@@ -1,0 +1,50 @@
+{
+  "properties": {
+    "ShowCustomPreview": {
+      "value": true
+    },
+    "SendPasteKeyCombination": {
+      "value": true
+    },
+    "CloseAfterLosingFocus": {
+      "value": false
+    },
+    "advanced-paste-ui-hotkey": {
+      "win": true,
+      "ctrl": false,
+      "alt": false,
+      "shift": true,
+      "code": 86,
+      "key": ""
+    },
+    "paste-as-plain-hotkey": {
+      "win": true,
+      "ctrl": true,
+      "alt": true,
+      "shift": false,
+      "code": 86,
+      "key": ""
+    },
+    "paste-as-markdown-hotkey": {
+      "win": false,
+      "ctrl": false,
+      "alt": false,
+      "shift": false,
+      "code": 0,
+      "key": ""
+    },
+    "paste-as-json-hotkey": {
+      "win": false,
+      "ctrl": false,
+      "alt": false,
+      "shift": false,
+      "code": 0,
+      "key": ""
+    },
+    "custom-actions": {
+      "value": []
+    }
+  },
+  "name": "AdvancedPaste",
+  "version": "1"
+}
