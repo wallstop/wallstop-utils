@@ -24630,3 +24630,5 @@ $HOME
 $PROFILE
 $HOME
 .\Scripts\Backup.ps1
+.\Scripts\Powershell\PowershellBackup.ps1
+.\Scripts\Backup.ps1
