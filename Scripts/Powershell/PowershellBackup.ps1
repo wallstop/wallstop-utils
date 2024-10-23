@@ -1,7 +1,7 @@
-$sourcePath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+$sourcePath = $PROFILE
 $baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
 $baseDirectory = "$baseDirectory\.."
-$backupFolder = "$baseDirectory\Config\WindowsTerminal"
+$backupFolder = "$baseDirectory\Config\Powershell"
 Push-Location "$baseDirectory"
 
 if (-not (Test-Path -Path $backupFolder)) {
@@ -9,11 +9,20 @@ if (-not (Test-Path -Path $backupFolder)) {
 }
 
 if (Test-Path -Path $sourcePath) {
-  $backupFile = "$backupFolder\settings.json"
+  $backupFile = Split-Path $sourcePath -Leaf
+  $backupFile = "$backupFolder\$backupFile"
   Copy-Item -Path $sourcePath -Destination $backupFile
-  Write-Host "Windows Terminal settings exported successfully."
+  Write-Host "Powershell settings exported successfully."
 } else {
-  Write-Host "Windows Terminal settings file not found!"
+  Write-Host "Powershell settings file not found!"
+}
+
+$powershell7SourcePath = "$HOME\PowerShell\profile.ps1"
+if (Test-Path -Path $powershell7SourcePath) {
+  $backupFile = Split-Path $powershell7SourcePath -Leaf
+  $backupFile = "$backupFolder\$backupFile"
+  Copy-Item -Path $powershell7SourcePath -Destination $backupFile
+  Write-Host "Powershell settings exported successfully."
 }
 
 $computerName = $env:COMPUTERNAME

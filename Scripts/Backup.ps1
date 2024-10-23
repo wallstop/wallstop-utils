@@ -3,6 +3,7 @@ Push-Location "$baseDirectory/Scripts/"
 ./Config/ConfigBackup.ps1
 ./Utils/FormatPowershellScripts.ps1
 ./WindowsTerminal/WindowsTerminalBackup.ps1
+./Powershell/PowershellBackup.ps1
 ./Scoop/ScoopUpdate.ps1
 ./Scoop/ScoopBackup.ps1
 ./Komorebi/KomorebiBackup.ps1
