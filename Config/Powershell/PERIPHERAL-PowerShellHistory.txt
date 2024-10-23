@@ -24626,3 +24626,7 @@ cd ..\wallstop-utils\
 git status
 $PROFILE
 .\Scripts\Backup.ps1
+$HOME
+$PROFILE
+$HOME
+.\Scripts\Backup.ps1
