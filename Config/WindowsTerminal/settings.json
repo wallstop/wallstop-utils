@@ -4,8 +4,12 @@
     "actions": 
     [
         {
-            "command": "find",
-            "keys": "ctrl+shift+f"
+            "command": 
+            {
+                "action": "resizePane",
+                "direction": "down"
+            },
+            "keys": "ctrl+shift+down"
         },
         {
             "command": 
@@ -14,6 +18,10 @@
                 "direction": "left"
             },
             "keys": "ctrl+shift+left"
+        },
+        {
+            "command": "find",
+            "keys": "ctrl+shift+f"
         },
         {
             "command": 
@@ -28,14 +36,6 @@
             "command": 
             {
                 "action": "resizePane",
-                "direction": "down"
-            },
-            "keys": "ctrl+shift+down"
-        },
-        {
-            "command": 
-            {
-                "action": "resizePane",
                 "direction": "up"
             },
             "keys": "ctrl+shift+up"
@@ -43,14 +43,6 @@
         {
             "command": "paste",
             "keys": "ctrl+v"
-        },
-        {
-            "command": 
-            {
-                "action": "copy",
-                "singleLine": false
-            },
-            "keys": "ctrl+c"
         },
         {
             "command": "unbound",
@@ -87,6 +79,14 @@
         {
             "command": 
             {
+                "action": "copy",
+                "singleLine": false
+            },
+            "keys": "ctrl+c"
+        },
+        {
+            "command": 
+            {
                 "action": "splitPane",
                 "split": "right"
             },
@@ -103,7 +103,7 @@
     ],
     "copyFormatting": "none",
     "copyOnSelect": false,
-    "defaultProfile": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
+    "defaultProfile": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
     "newTabMenu": 
     [
         {
@@ -153,6 +153,12 @@
                 "hidden": false,
                 "name": "Developer PowerShell for VS 2022",
                 "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+                "hidden": false,
+                "name": "PowerShell",
+                "source": "Windows.Terminal.PowershellCore"
             }
         ]
     },
@@ -366,5 +372,6 @@
             "yellow": "#808000"
         }
     ],
+    "startOnUserLogin": true,
     "themes": []
 }
