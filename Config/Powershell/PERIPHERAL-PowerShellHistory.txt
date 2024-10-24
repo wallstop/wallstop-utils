@@ -24665,3 +24665,6 @@ man Stop-Process
 Stop-Process -Name notepad -Force
 Get-Process -Name notepad
 .\Scripts\Backup.ps1
+cls
+.\
+.\Scripts\backup.ps1
