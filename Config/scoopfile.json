@@ -20,10 +20,17 @@
         },
         {
             "Info": "",
+            "Source": "extras",
+            "Name": "autohotkey",
+            "Version": "2.0.18",
+            "Updated": "\/Date(1729726580962)\/"
+        },
+        {
+            "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.18.12",
-            "Updated": "\/Date(1729653384673)\/"
+            "Version": "2.18.13",
+            "Updated": "\/Date(1729751768582)\/"
         },
         {
             "Info": "",
@@ -140,6 +147,13 @@
         {
             "Info": "",
             "Source": "extras",
+            "Name": "hunt-and-peck",
+            "Version": "1.7",
+            "Updated": "\/Date(1729726180971)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
             "Name": "inky",
             "Version": "0.15.1",
             "Updated": "\/Date(1729138560149)\/"
@@ -206,13 +220,6 @@
             "Name": "obsidian",
             "Version": "1.7.4",
             "Updated": "\/Date(1729387107086)\/"
-        },
-        {
-            "Info": "",
-            "Source": "main",
-            "Name": "oh-my-posh",
-            "Version": "23.20.2",
-            "Updated": "\/Date(1729652587250)\/"
         },
         {
             "Info": "",
@@ -386,8 +393,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "wiztree",
-            "Version": "4.20",
-            "Updated": "\/Date(1726948659735)\/"
+            "Version": "4.21",
+            "Updated": "\/Date(1729751772283)\/"
         },
         {
             "Info": "",
@@ -409,9 +416,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1729657775000)\/",
+                "value": "\/Date(1729730094000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, October 22, 2024 9:29:35 PM"
+                "DateTime": "Wednesday, October 23, 2024 5:34:54 PM"
             },
             "Manifests": 1344
         },
@@ -419,9 +426,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1729657931000)\/",
+                "value": "\/Date(1729744312000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, October 22, 2024 9:32:11 PM"
+                "DateTime": "Wednesday, October 23, 2024 9:31:52 PM"
             },
             "Manifests": 2091
         },
@@ -429,9 +436,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1729658312000)\/",
+                "value": "\/Date(1729744832000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, October 22, 2024 9:38:32 PM"
+                "DateTime": "Wednesday, October 23, 2024 9:40:32 PM"
             },
             "Manifests": 469
         },
@@ -439,9 +446,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1729629180000)\/",
+                "value": "\/Date(1729715718000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, October 22, 2024 1:33:00 PM"
+                "DateTime": "Wednesday, October 23, 2024 1:35:18 PM"
             },
             "Manifests": 127
         },
@@ -449,9 +456,9 @@
             "Name": "java",
             "Source": "https://github.com/ScoopInstaller/Java",
             "Updated": {
-                "value": "\/Date(1729600508000)\/",
+                "value": "\/Date(1729686900000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, October 22, 2024 5:35:08 AM"
+                "DateTime": "Wednesday, October 23, 2024 5:35:00 AM"
             },
             "Manifests": 294
         },

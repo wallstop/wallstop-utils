@@ -16,7 +16,7 @@
   "WindowLeft": 1400,
   "WindowTop": 334,
   "MaxResultsToShow": 4,
-  "ActivateTimes": 2,
+  "ActivateTimes": 20,
   "HideWhenDeactivated": true,
   "ClearInputOnLaunch": false,
   "TabSelectsContextButtons": true,
