@@ -1,4 +1,4 @@
-$sourcePath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+$sourcePath = "$HOME\scoop\apps\windows-terminal\current\settings\settings.json"
 $baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
 $baseDirectory = "$baseDirectory\.."
 $backupFolder = "$baseDirectory\Config\WindowsTerminal"
