@@ -3,7 +3,7 @@ $baseDirectory = "$baseDirectory\.."
 Push-Location "$baseDirectory"
 
 try {
-  $windowsTerminalSettings = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+  $windowsTerminalSettings = "$HOME\scoop\apps\windows-terminal\current\settings\settings.json"
   if (-not (Test-Path -Path $windowsTerminalSettings)) {
     Write-Host "Windows Terminal settings not found at $windowsTerminalSettings"
     exit 1
