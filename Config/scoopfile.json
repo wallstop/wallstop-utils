@@ -29,8 +29,8 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.18.14",
-            "Updated": "\/Date(1729802084558)\/"
+            "Version": "2.18.15",
+            "Updated": "\/Date(1729924567942)\/"
         },
         {
             "Info": "",
@@ -416,9 +416,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1729830639000)\/",
+                "value": "\/Date(1729916983000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, October 24, 2024 9:30:39 PM"
+                "DateTime": "Friday, October 25, 2024 9:29:43 PM"
             },
             "Manifests": 1344
         },
@@ -426,9 +426,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1729826989000)\/",
+                "value": "\/Date(1729917133000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, October 24, 2024 8:29:49 PM"
+                "DateTime": "Friday, October 25, 2024 9:32:13 PM"
             },
             "Manifests": 2091
         },
@@ -436,9 +436,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1729831220000)\/",
+                "value": "\/Date(1729917450000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, October 24, 2024 9:40:20 PM"
+                "DateTime": "Friday, October 25, 2024 9:37:30 PM"
             },
             "Manifests": 469
         },
@@ -446,9 +446,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1729821479000)\/",
+                "value": "\/Date(1729874477000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, October 24, 2024 6:57:59 PM"
+                "DateTime": "Friday, October 25, 2024 9:41:17 AM"
             },
             "Manifests": 127
         },
