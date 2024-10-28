@@ -423,9 +423,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1730003395000)\/",
+                "value": "\/Date(1730089799000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, October 26, 2024 9:29:55 PM"
+                "DateTime": "Sunday, October 27, 2024 9:29:59 PM"
             },
             "Manifests": 1344
         },
@@ -433,9 +433,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1730003537000)\/",
+                "value": "\/Date(1730089926000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, October 26, 2024 9:32:17 PM"
+                "DateTime": "Sunday, October 27, 2024 9:32:06 PM"
             },
             "Manifests": 2091
         },
@@ -443,9 +443,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1730003883000)\/",
+                "value": "\/Date(1730090335000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, October 26, 2024 9:38:03 PM"
+                "DateTime": "Sunday, October 27, 2024 9:38:55 PM"
             },
             "Manifests": 469
         },
