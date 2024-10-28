@@ -24737,3 +24737,6 @@ cd D:\code\wallstop-studios\
 cd ..\wallstop-utils\
 code .
 .\Scripts\Backup.ps1
+winget upgrade
+winget upgrade --all
+.\scripts\Backup.ps1
