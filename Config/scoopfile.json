@@ -29,8 +29,8 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.18.17",
-            "Updated": "\/Date(1730270165071)\/"
+            "Version": "2.18.18",
+            "Updated": "\/Date(1730356563507)\/"
         },
         {
             "Info": "",
@@ -199,6 +199,13 @@
             "Name": "linqpad",
             "Version": "8.6.4",
             "Updated": "\/Date(1729492546696)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "nircmd",
+            "Version": "2.87",
+            "Updated": "\/Date(1730333247466)\/"
         },
         {
             "Info": "",
@@ -423,9 +430,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1730262594000)\/",
+                "value": "\/Date(1730349023000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, October 29, 2024 9:29:54 PM"
+                "DateTime": "Wednesday, October 30, 2024 9:30:23 PM"
             },
             "Manifests": 1344
         },
@@ -433,19 +440,19 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1730262738000)\/",
+                "value": "\/Date(1730349132000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, October 29, 2024 9:32:18 PM"
+                "DateTime": "Wednesday, October 30, 2024 9:32:12 PM"
             },
-            "Manifests": 2092
+            "Manifests": 2093
         },
         {
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1730263075000)\/",
+                "value": "\/Date(1730349530000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, October 29, 2024 9:37:55 PM"
+                "DateTime": "Wednesday, October 30, 2024 9:38:50 PM"
             },
             "Manifests": 469
         },
@@ -453,9 +460,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1730234039000)\/",
+                "value": "\/Date(1730343236000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, October 29, 2024 1:33:59 PM"
+                "DateTime": "Wednesday, October 30, 2024 7:53:56 PM"
             },
             "Manifests": 127
         },
