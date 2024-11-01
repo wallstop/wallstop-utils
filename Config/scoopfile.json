@@ -29,8 +29,8 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.18.18",
-            "Updated": "\/Date(1730356563507)\/"
+            "Version": "2.19.0",
+            "Updated": "\/Date(1730442965703)\/"
         },
         {
             "Info": "",
@@ -338,7 +338,7 @@
             "Source": null,
             "Name": "thunderbird",
             "Version": "115.8.1",
-            "Updated": "\/Date(1729826946104)\/"
+            "Updated": "\/Date(1730394464237)\/"
         },
         {
             "Info": "",
@@ -372,8 +372,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "vscode",
-            "Version": "1.95.0",
-            "Updated": "\/Date(1730270184484)\/"
+            "Version": "1.95.1",
+            "Updated": "\/Date(1730443010972)\/"
         },
         {
             "Info": "",
@@ -430,9 +430,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1730349023000)\/",
+                "value": "\/Date(1730435397000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Wednesday, October 30, 2024 9:30:23 PM"
+                "DateTime": "Thursday, October 31, 2024 9:29:57 PM"
             },
             "Manifests": 1344
         },
@@ -440,29 +440,29 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1730349132000)\/",
+                "value": "\/Date(1730435543000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Wednesday, October 30, 2024 9:32:12 PM"
+                "DateTime": "Thursday, October 31, 2024 9:32:23 PM"
             },
-            "Manifests": 2093
+            "Manifests": 2094
         },
         {
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1730349530000)\/",
+                "value": "\/Date(1730435877000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Wednesday, October 30, 2024 9:38:50 PM"
+                "DateTime": "Thursday, October 31, 2024 9:37:57 PM"
             },
-            "Manifests": 469
+            "Manifests": 470
         },
         {
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1730343236000)\/",
+                "value": "\/Date(1730406708000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Wednesday, October 30, 2024 7:53:56 PM"
+                "DateTime": "Thursday, October 31, 2024 1:31:48 PM"
             },
             "Manifests": 127
         },
@@ -470,9 +470,9 @@
             "Name": "java",
             "Source": "https://github.com/ScoopInstaller/Java",
             "Updated": {
-                "value": "\/Date(1729819221000)\/",
+                "value": "\/Date(1730424357000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, October 24, 2024 6:20:21 PM"
+                "DateTime": "Thursday, October 31, 2024 6:25:57 PM"
             },
             "Manifests": 294
         },
