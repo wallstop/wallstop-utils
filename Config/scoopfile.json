@@ -188,6 +188,13 @@
         },
         {
             "Info": "",
+            "Source": "extras",
+            "Name": "lazygit",
+            "Version": "0.44.1",
+            "Updated": "\/Date(1730590191655)\/"
+        },
+        {
+            "Info": "",
             "Source": "main",
             "Name": "leiningen",
             "Version": "2.11.2",
@@ -297,6 +304,13 @@
             "Name": "ripgrep",
             "Version": "14.1.1",
             "Updated": "\/Date(1725867911756)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "rufus",
+            "Version": "4.6",
+            "Updated": "\/Date(1730600645380)\/"
         },
         {
             "Info": "",
@@ -430,9 +444,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1730521817000)\/",
+                "value": "\/Date(1730608174000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 1, 2024 9:30:17 PM"
+                "DateTime": "Saturday, November 2, 2024 9:29:34 PM"
             },
             "Manifests": 1344
         },
@@ -440,9 +454,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1730521917000)\/",
+                "value": "\/Date(1730608306000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 1, 2024 9:31:57 PM"
+                "DateTime": "Saturday, November 2, 2024 9:31:46 PM"
             },
             "Manifests": 2094
         },
@@ -450,9 +464,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1730522272000)\/",
+                "value": "\/Date(1730612839000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 1, 2024 9:37:52 PM"
+                "DateTime": "Saturday, November 2, 2024 10:47:19 PM"
             },
             "Manifests": 470
         },
@@ -460,9 +474,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1730498966000)\/",
+                "value": "\/Date(1730579495000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 1, 2024 3:09:26 PM"
+                "DateTime": "Saturday, November 2, 2024 1:31:35 PM"
             },
             "Manifests": 127
         },
