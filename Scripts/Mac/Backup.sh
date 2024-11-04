@@ -15,7 +15,7 @@ git pull origin main
 git push origin main
 
 # Directory to store the backups
-BACKUP_DIR="%script_dir/../../Config/Mac"
+BACKUP_DIR="$script_dir/../../Config/Mac"
 mkdir -p "$BACKUP_DIR"
 
 dotfile_count=0
