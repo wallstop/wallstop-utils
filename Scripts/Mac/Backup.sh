@@ -1,11 +1,22 @@
 #!/bin/bash
 
+brew update
+brew upgrade
+./backup_brew.sh
+
+current_date=$(date)
+git add --all
+git commit -m "Backup for $current_date"
+git pull origin main
+git push origin main
+
 # Directory to store the backups
 BACKUP_DIR="../../Config/Mac"
 mkdir -p "$BACKUP_DIR"
 
 dotfile_count=0
 applescript_count=0
+script_count=0
 
 # Find all dotfiles in the home directory and copy them to the backup directory
 for file in $HOME/.*; do
@@ -29,5 +40,14 @@ for file in $HOME/*.{scpt,applescript}; do
     fi
 done
 
-echo "Backup completed. $dotfile_count dotfiles and $applescript_count AppleScript files were copied to $BACKUP_DIR"
+# Backup bash files in the home directory
+for file in $HOME/*.{sh}; do
+    # Check if the file exists to handle the case where no AppleScript files are present
+    if [[ -e "$file" ]]; then
+        cp -p "$file" "$BACKUP_DIR/"
+        ((script_count++))
+    fi
+done
+
+echo "Backup completed. $dotfile_count dotfiles, $script_count shell scripts, and $applescript_count AppleScript files were copied to $BACKUP_DIR"
 
