@@ -2,7 +2,11 @@
 
 brew update
 brew upgrade
-./backup_brew.sh
+
+# Get the directory where the script is located
+script_dir="$(dirname "${BASH_SOURCE[0]}")"
+# Execute another script in the same directory
+"$script_dir/backup_brew.sh"
 
 current_date=$(date)
 git add --all
@@ -11,7 +15,7 @@ git pull origin main
 git push origin main
 
 # Directory to store the backups
-BACKUP_DIR="../../Config/Mac"
+BACKUP_DIR="%script_dir/../../Config/Mac"
 mkdir -p "$BACKUP_DIR"
 
 dotfile_count=0

@@ -22,8 +22,11 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     usage
 fi
 
+script_dir="$(dirname "${BASH_SOURCE[0]}")"
+
+
 # Set backup directory
-BACKUP_DIR="../../Config/Mac-Brew"
+BACKUP_DIR="$script_dir/../../Config/Mac-Brew"
 
 # Create backup directory if it doesn't exist
 mkdir -p "$BACKUP_DIR"
