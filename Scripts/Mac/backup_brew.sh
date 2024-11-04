@@ -24,7 +24,6 @@ fi
 
 script_dir="$(dirname "${BASH_SOURCE[0]}")"
 
-
 # Set backup directory
 BACKUP_DIR="$script_dir/../../Config/Mac-Brew"
 
