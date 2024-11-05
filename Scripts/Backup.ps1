@@ -5,11 +5,13 @@ try {
   ./Utils/FormatPowershellScripts.ps1
   ./WindowsTerminal/WindowsTerminalBackup.ps1
   ./Powershell/PowershellBackup.ps1
+  ./Komorebi/StopKomorebi.ps1
   ./Scoop/ScoopUpdate.ps1
   ./Scoop/ScoopBackup.ps1
   ./Komorebi/KomorebiBackup.ps1
   ./PowerToys/PowerToysBackup.ps1
   ./WinGet/WinGetUpdate.ps1
+  ./Komorebi/StartKomorebi.ps1
   $date = Get-Date
   $dateString = "{0:yyyy/MM/dd hh:mm:ss}" -f $date
   git add --all

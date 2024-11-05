@@ -52,6 +52,21 @@ minimizedWindows := []
     }
     return
 
+#+Up::
+    WinGet, winState, MinMax, A
+    if (winState == 1) ; If maximized
+    {
+        ; Unmaximize the window (restore to original size)
+        WinRestore, A
+    }
+    else if (winState == 0) ; If in normal state
+    {
+        ; Maximize the window
+        WinMaximize, A
+    }
+    return
+
+
 ; Optional: Remove window from stack if it's closed
 ; This ensures that the stack remains accurate even if windows are closed externally
 #Persistent
