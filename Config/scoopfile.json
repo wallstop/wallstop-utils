@@ -134,15 +134,15 @@
             "Info": "",
             "Source": "main",
             "Name": "hugo",
-            "Version": "0.137.0",
-            "Updated": "\/Date(1730792148572)\/"
+            "Version": "0.137.1",
+            "Updated": "\/Date(1730878546784)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "hugo-extended",
-            "Version": "0.137.0",
-            "Updated": "\/Date(1730792150885)\/"
+            "Version": "0.137.1",
+            "Updated": "\/Date(1730878549476)\/"
         },
         {
             "Info": "",
@@ -162,15 +162,15 @@
             "Info": "",
             "Source": "main",
             "Name": "innounp",
-            "Version": "1.75",
-            "Updated": "\/Date(1730529367419)\/"
+            "Version": "1.76",
+            "Updated": "\/Date(1730878554086)\/"
         },
         {
             "Info": "",
             "Source": "versions",
             "Name": "innounp-unicode",
-            "Version": "1.75",
-            "Updated": "\/Date(1730529369962)\/"
+            "Version": "1.76",
+            "Updated": "\/Date(1730878557822)\/"
         },
         {
             "Info": "",
@@ -352,7 +352,7 @@
             "Source": null,
             "Name": "thunderbird",
             "Version": "115.8.1",
-            "Updated": "\/Date(1730394464237)\/"
+            "Updated": "\/Date(1730864136624)\/"
         },
         {
             "Info": "",
@@ -444,9 +444,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1730780969000)\/",
+                "value": "\/Date(1730867396000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 4, 2024 8:29:29 PM"
+                "DateTime": "Tuesday, November 5, 2024 8:29:56 PM"
             },
             "Manifests": 1345
         },
@@ -454,19 +454,19 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1730781093000)\/",
+                "value": "\/Date(1730872679000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 4, 2024 8:31:33 PM"
+                "DateTime": "Tuesday, November 5, 2024 9:57:59 PM"
             },
-            "Manifests": 2094
+            "Manifests": 2095
         },
         {
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1730781378000)\/",
+                "value": "\/Date(1730867826000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 4, 2024 8:36:18 PM"
+                "DateTime": "Tuesday, November 5, 2024 8:37:06 PM"
             },
             "Manifests": 470
         },
@@ -474,9 +474,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1730768477000)\/",
+                "value": "\/Date(1730859237000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 4, 2024 5:01:17 PM"
+                "DateTime": "Tuesday, November 5, 2024 6:13:57 PM"
             },
             "Manifests": 127
         },
