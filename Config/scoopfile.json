@@ -29,8 +29,8 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.19.1",
-            "Updated": "\/Date(1730529363958)\/"
+            "Version": "2.19.2",
+            "Updated": "\/Date(1730964966095)\/"
         },
         {
             "Info": "",
@@ -120,8 +120,8 @@
             "Info": "",
             "Source": "main",
             "Name": "go",
-            "Version": "1.23.2",
-            "Updated": "\/Date(1727855224928)\/"
+            "Version": "1.23.3",
+            "Updated": "\/Date(1730965033007)\/"
         },
         {
             "Info": "",
@@ -134,15 +134,15 @@
             "Info": "",
             "Source": "main",
             "Name": "hugo",
-            "Version": "0.137.1",
-            "Updated": "\/Date(1730878546784)\/"
+            "Version": "0.138.0",
+            "Updated": "\/Date(1730965036664)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "hugo-extended",
-            "Version": "0.137.1",
-            "Updated": "\/Date(1730878549476)\/"
+            "Version": "0.138.0",
+            "Updated": "\/Date(1730965039990)\/"
         },
         {
             "Info": "",
@@ -204,8 +204,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "linqpad",
-            "Version": "8.6.4",
-            "Updated": "\/Date(1729492546696)\/"
+            "Version": "8.6.6",
+            "Updated": "\/Date(1730965044848)\/"
         },
         {
             "Info": "",
@@ -444,19 +444,19 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1730867396000)\/",
+                "value": "\/Date(1730953795000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, November 5, 2024 8:29:56 PM"
+                "DateTime": "Wednesday, November 6, 2024 8:29:55 PM"
             },
-            "Manifests": 1345
+            "Manifests": 1347
         },
         {
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1730872679000)\/",
+                "value": "\/Date(1730954212000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, November 5, 2024 9:57:59 PM"
+                "DateTime": "Wednesday, November 6, 2024 8:36:52 PM"
             },
             "Manifests": 2095
         },
@@ -464,9 +464,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1730867826000)\/",
+                "value": "\/Date(1730954263000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Tuesday, November 5, 2024 8:37:06 PM"
+                "DateTime": "Wednesday, November 6, 2024 8:37:43 PM"
             },
             "Manifests": 470
         },
