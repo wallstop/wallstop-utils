@@ -19,7 +19,7 @@ if (Test-Path -Path $sourcePath) {
 }
 
 $powershell7SourcePath = $HOME
-$powershell7SourcePath = "$powershell7SourcePath\Documents\PowerShell\profile.ps1"
+$powershell7SourcePath = "$powershell7SourcePath\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
 if (Test-Path -Path $powershell7SourcePath) {
   $backupFile = Split-Path $powershell7SourcePath -Leaf
   $backupFile = "$backupFolder\$backupFile"
