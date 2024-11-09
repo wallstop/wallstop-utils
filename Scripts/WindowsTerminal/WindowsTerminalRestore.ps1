@@ -3,10 +3,11 @@ $baseDirectory = "$baseDirectory\.."
 Push-Location "$baseDirectory"
 
 try {
-  $windowsTerminalSettings = "$HOME\scoop\apps\windows-terminal\current\settings\settings.json"
-  if (-not (Test-Path -Path $windowsTerminalSettings)) {
-    Write-Host "Windows Terminal settings not found at $windowsTerminalSettings"
-    exit 1
+  $windowsTerminalConfigPath = "$HOME\scoop\apps\windows-terminal\current\settings"
+  $windowsTerminalSettings = "$windowsTerminalConfigPath\settings.json"
+  if (-not (Test-Path -Path $windowsTerminalConfigPath)) {
+    Write-Host "Windows Terminal settings directory not found at $windowsTerminalConfigPath, creating..."
+    New-Item -ItemType Directory -Path $windowsTerminalConfigPath -Force
   }
 
   $settingsPath = "$baseDirectory/Config/WindowsTerminal/settings.json"
