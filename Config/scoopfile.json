@@ -29,8 +29,8 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.19.3",
-            "Updated": "\/Date(1731051365976)\/"
+            "Version": "2.19.4",
+            "Updated": "\/Date(1731137765976)\/"
         },
         {
             "Info": "",
@@ -386,8 +386,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "vscode",
-            "Version": "1.95.1",
-            "Updated": "\/Date(1730443010972)\/"
+            "Version": "1.95.2",
+            "Updated": "\/Date(1731137790240)\/"
         },
         {
             "Info": "",
@@ -444,9 +444,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1731040137000)\/",
+                "value": "\/Date(1731126566000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 7, 2024 8:28:57 PM"
+                "DateTime": "Friday, November 8, 2024 8:29:26 PM"
             },
             "Manifests": 1347
         },
@@ -454,9 +454,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1731040321000)\/",
+                "value": "\/Date(1731126585000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 7, 2024 8:32:01 PM"
+                "DateTime": "Friday, November 8, 2024 8:29:45 PM"
             },
             "Manifests": 2096
         },
@@ -464,9 +464,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1731040559000)\/",
+                "value": "\/Date(1731126903000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 7, 2024 8:35:59 PM"
+                "DateTime": "Friday, November 8, 2024 8:35:03 PM"
             },
             "Manifests": 470
         },
@@ -474,9 +474,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1731040592000)\/",
+                "value": "\/Date(1731126964000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 7, 2024 8:36:32 PM"
+                "DateTime": "Friday, November 8, 2024 8:36:04 PM"
             },
             "Manifests": 127
         },
