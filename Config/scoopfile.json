@@ -444,9 +444,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1731126566000)\/",
+                "value": "\/Date(1731212930000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 8, 2024 8:29:26 PM"
+                "DateTime": "Saturday, November 9, 2024 8:28:50 PM"
             },
             "Manifests": 1347
         },
@@ -454,9 +454,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1731126585000)\/",
+                "value": "\/Date(1731213060000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 8, 2024 8:29:45 PM"
+                "DateTime": "Saturday, November 9, 2024 8:31:00 PM"
             },
             "Manifests": 2096
         },
@@ -464,9 +464,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1731126903000)\/",
+                "value": "\/Date(1731217766000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 8, 2024 8:35:03 PM"
+                "DateTime": "Saturday, November 9, 2024 9:49:26 PM"
             },
             "Manifests": 470
         },
@@ -474,9 +474,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1731126964000)\/",
+                "value": "\/Date(1731204033000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 8, 2024 8:36:04 PM"
+                "DateTime": "Saturday, November 9, 2024 6:00:33 PM"
             },
             "Manifests": 127
         },
@@ -494,9 +494,9 @@
             "Name": "scoop-clojure",
             "Source": "https://github.com/littleli/scoop-clojure",
             "Updated": {
-                "value": "\/Date(1729178514000)\/",
+                "value": "\/Date(1731155024000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, October 17, 2024 8:21:54 AM"
+                "DateTime": "Saturday, November 9, 2024 4:23:44 AM"
             },
             "Manifests": 27
         }
