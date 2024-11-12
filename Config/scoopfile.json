@@ -29,8 +29,8 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.19.4",
-            "Updated": "\/Date(1731137765976)\/"
+            "Version": "2.19.5",
+            "Updated": "\/Date(1731396968396)\/"
         },
         {
             "Info": "",
@@ -218,8 +218,8 @@
             "Info": "",
             "Source": "main",
             "Name": "nodejs",
-            "Version": "23.1.0",
-            "Updated": "\/Date(1730151869856)\/"
+            "Version": "23.2.0",
+            "Updated": "\/Date(1731396985794)\/"
         },
         {
             "Info": "",
@@ -444,9 +444,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1731299383000)\/",
+                "value": "\/Date(1731385745000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Sunday, November 10, 2024 8:29:43 PM"
+                "DateTime": "Monday, November 11, 2024 8:29:05 PM"
             },
             "Manifests": 1347
         },
@@ -454,9 +454,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1731299508000)\/",
+                "value": "\/Date(1731385963000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Sunday, November 10, 2024 8:31:48 PM"
+                "DateTime": "Monday, November 11, 2024 8:32:43 PM"
             },
             "Manifests": 2096
         },
@@ -464,9 +464,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1731299809000)\/",
+                "value": "\/Date(1731390042000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Sunday, November 10, 2024 8:36:49 PM"
+                "DateTime": "Monday, November 11, 2024 9:40:42 PM"
             },
             "Manifests": 470
         },
@@ -474,9 +474,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1731299839000)\/",
+                "value": "\/Date(1731386188000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Sunday, November 10, 2024 8:37:19 PM"
+                "DateTime": "Monday, November 11, 2024 8:36:28 PM"
             },
             "Manifests": 127
         },
@@ -494,9 +494,9 @@
             "Name": "scoop-clojure",
             "Source": "https://github.com/littleli/scoop-clojure",
             "Updated": {
-                "value": "\/Date(1731155024000)\/",
+                "value": "\/Date(1731338516000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, November 9, 2024 4:23:44 AM"
+                "DateTime": "Monday, November 11, 2024 7:21:56 AM"
             },
             "Manifests": 27
         }
