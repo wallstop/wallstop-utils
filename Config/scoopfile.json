@@ -29,8 +29,8 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.19.5",
-            "Updated": "\/Date(1731396968396)\/"
+            "Version": "2.20.0",
+            "Updated": "\/Date(1731483367088)\/"
         },
         {
             "Info": "",
@@ -113,8 +113,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "gitkraken",
-            "Version": "10.4.1",
-            "Updated": "\/Date(1729653402689)\/"
+            "Version": "10.5.0",
+            "Updated": "\/Date(1731483397975)\/"
         },
         {
             "Info": "",
@@ -232,8 +232,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "obsidian",
-            "Version": "1.7.5",
-            "Updated": "\/Date(1730792162901)\/"
+            "Version": "1.7.6",
+            "Updated": "\/Date(1731483411534)\/"
         },
         {
             "Info": "",
@@ -246,8 +246,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "paint.net",
-            "Version": "5.0.13",
-            "Updated": "\/Date(1709711112987)\/"
+            "Version": "5.1",
+            "Updated": "\/Date(1731483417316)\/"
         },
         {
             "Info": "",
@@ -352,7 +352,7 @@
             "Source": null,
             "Name": "thunderbird",
             "Version": "115.8.1",
-            "Updated": "\/Date(1730864136624)\/"
+            "Updated": "\/Date(1731483155268)\/"
         },
         {
             "Info": "",
@@ -365,8 +365,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "vcredist2022",
-            "Version": "14.40.33816.0",
-            "Updated": "\/Date(1728584585454)\/"
+            "Version": "14.42.34433.0",
+            "Updated": "\/Date(1731516668764)\/"
         },
         {
             "Info": "",
@@ -444,9 +444,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1731385745000)\/",
+                "value": "\/Date(1731515425000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 11, 2024 8:29:05 PM"
+                "DateTime": "Wednesday, November 13, 2024 8:30:25 AM"
             },
             "Manifests": 1347
         },
@@ -454,9 +454,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1731385963000)\/",
+                "value": "\/Date(1731516168000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 11, 2024 8:32:43 PM"
+                "DateTime": "Wednesday, November 13, 2024 8:42:48 AM"
             },
             "Manifests": 2096
         },
@@ -464,9 +464,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1731390042000)\/",
+                "value": "\/Date(1731516101000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 11, 2024 9:40:42 PM"
+                "DateTime": "Wednesday, November 13, 2024 8:41:41 AM"
             },
             "Manifests": 470
         },
@@ -474,9 +474,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1731386188000)\/",
+                "value": "\/Date(1731472671000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 11, 2024 8:36:28 PM"
+                "DateTime": "Tuesday, November 12, 2024 8:37:51 PM"
             },
             "Manifests": 127
         },
@@ -484,9 +484,9 @@
             "Name": "java",
             "Source": "https://github.com/ScoopInstaller/Java",
             "Updated": {
-                "value": "\/Date(1731028715000)\/",
+                "value": "\/Date(1731514913000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 7, 2024 5:18:35 PM"
+                "DateTime": "Wednesday, November 13, 2024 8:21:53 AM"
             },
             "Manifests": 294
         },
@@ -494,9 +494,9 @@
             "Name": "scoop-clojure",
             "Source": "https://github.com/littleli/scoop-clojure",
             "Updated": {
-                "value": "\/Date(1731338516000)\/",
+                "value": "\/Date(1731403318000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 11, 2024 7:21:56 AM"
+                "DateTime": "Tuesday, November 12, 2024 1:21:58 AM"
             },
             "Manifests": 27
         }
