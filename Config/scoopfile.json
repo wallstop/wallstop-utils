@@ -29,8 +29,8 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.21.2",
-            "Updated": "\/Date(1731656168877)\/"
+            "Version": "2.21.3",
+            "Updated": "\/Date(1731742567325)\/"
         },
         {
             "Info": "",
@@ -444,9 +444,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1731645041000)\/",
+                "value": "\/Date(1731731421000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 14, 2024 8:30:41 PM"
+                "DateTime": "Friday, November 15, 2024 8:30:21 PM"
             },
             "Manifests": 1347
         },
@@ -454,9 +454,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1731652679000)\/",
+                "value": "\/Date(1731731548000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 14, 2024 10:37:59 PM"
+                "DateTime": "Friday, November 15, 2024 8:32:28 PM"
             },
             "Manifests": 2098
         },
@@ -464,9 +464,9 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1731645560000)\/",
+                "value": "\/Date(1731732181000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 14, 2024 8:39:20 PM"
+                "DateTime": "Friday, November 15, 2024 8:43:01 PM"
             },
             "Manifests": 470
         },
@@ -474,9 +474,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1731573564000)\/",
+                "value": "\/Date(1731702842000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 14, 2024 12:39:24 AM"
+                "DateTime": "Friday, November 15, 2024 12:34:02 PM"
             },
             "Manifests": 127
         },
