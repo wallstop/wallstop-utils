@@ -9,434 +9,476 @@
             "Source": "main",
             "Name": "7zip",
             "Version": "24.08",
-            "Updated": "\/Date(1723535109606)\/"
+            "Updated": "\/Date(1731808302899)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "7zip19.00-helper",
             "Version": "19.00",
-            "Updated": "\/Date(1694294667084)\/"
+            "Updated": "\/Date(1731808305389)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "autohotkey",
             "Version": "2.0.18",
-            "Updated": "\/Date(1729726580962)\/"
+            "Updated": "\/Date(1731809339434)\/"
+        },
+        {
+            "Info": "Install failed",
+            "Source": null,
+            "Name": "autohotkey1.1",
+            "Version": null,
+            "Updated": "\/Date(1731813997221)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "aws",
             "Version": "2.21.3",
-            "Updated": "\/Date(1731742567325)\/"
+            "Updated": "\/Date(1731808348677)\/"
         },
         {
             "Info": "",
             "Source": "scoop-clojure",
             "Name": "clj-deps",
             "Version": "1.12.0.1479",
-            "Updated": "\/Date(1726952348228)\/"
+            "Updated": "\/Date(1731809367092)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "cloc",
             "Version": "2.02",
-            "Updated": "\/Date(1722671130395)\/"
+            "Updated": "\/Date(1731808350085)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "concfg",
             "Version": "0.2021.05.09",
-            "Updated": "\/Date(1669489790929)\/"
+            "Updated": "\/Date(1731808353814)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "dark",
             "Version": "3.14",
-            "Updated": "\/Date(1708847111116)\/"
+            "Updated": "\/Date(1731808354889)\/"
         },
         {
             "Info": "",
             "Source": "nonportable",
             "Name": "devtoys-np",
             "Version": "1.0.13.0",
-            "Updated": "\/Date(1728155248209)\/"
+            "Updated": "\/Date(1731808367579)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "discord",
+            "Version": "1.0.9156-20",
+            "Updated": "\/Date(1731810596621)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "espanso",
             "Version": "2.2.1",
-            "Updated": "\/Date(1726957233833)\/"
+            "Updated": "\/Date(1731808373219)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "everything",
             "Version": "1.4.1.1026",
-            "Updated": "\/Date(1722584732573)\/"
+            "Updated": "\/Date(1731809369386)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "ffmpeg",
             "Version": "7.1",
-            "Updated": "\/Date(1727768740188)\/"
+            "Updated": "\/Date(1731808383338)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "flow-launcher",
             "Version": "1.19.4",
-            "Updated": "\/Date(1731602717018)\/"
+            "Updated": "\/Date(1731809375965)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "fontforge",
             "Version": "20230101",
-            "Updated": "\/Date(1705791838961)\/"
+            "Updated": "\/Date(1731809380793)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "gimp",
             "Version": "2.10.38-1",
-            "Updated": "\/Date(1729044449483)\/"
+            "Updated": "\/Date(1731809421811)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "gitkraken",
             "Version": "10.5.0",
-            "Updated": "\/Date(1731483397975)\/"
+            "Updated": "\/Date(1731809435860)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "go",
             "Version": "1.23.3",
-            "Updated": "\/Date(1730965033007)\/"
+            "Updated": "\/Date(1731808403788)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "gource",
             "Version": "0.53",
-            "Updated": "\/Date(1697673808345)\/"
+            "Updated": "\/Date(1731808405223)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "hugo",
             "Version": "0.138.0",
-            "Updated": "\/Date(1730965036664)\/"
+            "Updated": "\/Date(1731808406354)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "hugo-extended",
             "Version": "0.138.0",
-            "Updated": "\/Date(1730965039990)\/"
+            "Updated": "\/Date(1731808407720)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "hunt-and-peck",
             "Version": "1.7",
-            "Updated": "\/Date(1729726180971)\/"
+            "Updated": "\/Date(1731809436980)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "inky",
             "Version": "0.15.1",
-            "Updated": "\/Date(1729138560149)\/"
+            "Updated": "\/Date(1731809448938)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "innounp",
             "Version": "1.76",
-            "Updated": "\/Date(1730878554086)\/"
+            "Updated": "\/Date(1731808370471)\/"
         },
         {
             "Info": "",
             "Source": "versions",
             "Name": "innounp-unicode",
             "Version": "1.76",
-            "Updated": "\/Date(1730878557822)\/"
+            "Updated": "\/Date(1731808409831)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "insomnia",
             "Version": "10.1.1",
-            "Updated": "\/Date(1729802093035)\/"
+            "Updated": "\/Date(1731809463617)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "komorebi",
             "Version": "0.1.30",
-            "Updated": "\/Date(1730749231048)\/"
+            "Updated": "\/Date(1731809466744)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "lazygit",
             "Version": "0.44.1",
-            "Updated": "\/Date(1730590191655)\/"
+            "Updated": "\/Date(1731809467859)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "leiningen",
             "Version": "2.11.2",
-            "Updated": "\/Date(1707896722307)\/"
+            "Updated": "\/Date(1731808412840)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "linqpad",
             "Version": "8.6.6",
-            "Updated": "\/Date(1730965044848)\/"
+            "Updated": "\/Date(1731809474941)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "nircmd",
             "Version": "2.87",
-            "Updated": "\/Date(1730333247466)\/"
+            "Updated": "\/Date(1731808413932)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "nodejs",
             "Version": "23.2.0",
-            "Updated": "\/Date(1731396985794)\/"
+            "Updated": "\/Date(1731808419091)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "notepadplusplus",
             "Version": "8.7.1",
-            "Updated": "\/Date(1730792153617)\/"
+            "Updated": "\/Date(1731809476545)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "obs-studio",
+            "Version": "30.2.3",
+            "Updated": "\/Date(1731816246504)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "obsidian",
             "Version": "1.7.6",
-            "Updated": "\/Date(1731483411534)\/"
+            "Updated": "\/Date(1731809495081)\/"
         },
         {
             "Info": "",
             "Source": "java",
             "Name": "openjdk17",
             "Version": "17.0.2-8",
-            "Updated": "\/Date(1705974333652)\/"
+            "Updated": "\/Date(1731808424537)\/"
+        },
+        {
+            "Info": "",
+            "Source": "main",
+            "Name": "openssh",
+            "Version": "9.8.1.0p1",
+            "Updated": "\/Date(1731807936564)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "paint.net",
             "Version": "5.1",
-            "Updated": "\/Date(1731483417316)\/"
+            "Updated": "\/Date(1731809505552)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "pandoc",
             "Version": "3.5",
-            "Updated": "\/Date(1729375524262)\/"
+            "Updated": "\/Date(1731808429634)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "postgresql",
             "Version": "17.1",
-            "Updated": "\/Date(1731602701462)\/"
+            "Updated": "\/Date(1731808465582)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "powershell-beautifier",
             "Version": "1.2.5",
-            "Updated": "\/Date(1729469599972)\/"
+            "Updated": "\/Date(1731808466471)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "powertoys",
             "Version": "0.86.0",
-            "Updated": "\/Date(1731602758613)\/"
+            "Updated": "\/Date(1731809536553)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "prime95",
             "Version": "30.19b20",
-            "Updated": "\/Date(1717314310329)\/"
+            "Updated": "\/Date(1731809537661)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "pshazz",
             "Version": "0.2022.03.09",
-            "Updated": "\/Date(1669490004059)\/"
+            "Updated": "\/Date(1731808468084)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "qbittorrent",
             "Version": "5.0.1",
-            "Updated": "\/Date(1730183751961)\/"
+            "Updated": "\/Date(1731809541123)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "ripgrep",
             "Version": "14.1.1",
-            "Updated": "\/Date(1725867911756)\/"
+            "Updated": "\/Date(1731808468958)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "rufus",
             "Version": "4.6",
-            "Updated": "\/Date(1730600645380)\/"
+            "Updated": "\/Date(1731809542030)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "screentogif",
             "Version": "2.41.1",
-            "Updated": "\/Date(1726040742610)\/"
+            "Updated": "\/Date(1731809548867)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "spotify",
+            "Version": "1.2.50.335.g5e2860a8",
+            "Updated": "\/Date(1731810607372)\/"
         },
         {
             "Info": "",
             "Source": "nonportable",
             "Name": "sql-server-management-studio-np",
             "Version": "20.2.30.0",
-            "Updated": "\/Date(1729393534933)\/"
+            "Updated": "\/Date(1731808574385)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "sqlite",
             "Version": "3.47.0",
-            "Updated": "\/Date(1729567720342)\/"
+            "Updated": "\/Date(1731808575862)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "sublime-text",
             "Version": "4-4180",
-            "Updated": "\/Date(1722930336999)\/"
+            "Updated": "\/Date(1731809559992)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "tailwindcss",
             "Version": "3.4.15",
-            "Updated": "\/Date(1731656174747)\/"
+            "Updated": "\/Date(1731808577919)\/"
         },
         {
             "Info": "",
-            "Source": null,
+            "Source": "extras",
             "Name": "thunderbird",
-            "Version": "115.8.1",
-            "Updated": "\/Date(1731483155268)\/"
+            "Version": "132.0.1",
+            "Updated": "\/Date(1731816403860)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "touch",
             "Version": "0.2018.07.25",
-            "Updated": "\/Date(1726341685303)\/"
+            "Updated": "\/Date(1731808578215)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "vcredist2022",
             "Version": "14.42.34433.0",
-            "Updated": "\/Date(1731516668764)\/"
+            "Updated": "\/Date(1731809365038)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "vlc",
             "Version": "3.0.21",
-            "Updated": "\/Date(1720394282686)\/"
+            "Updated": "\/Date(1731809568932)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "vncviewer",
             "Version": "7.12.1",
-            "Updated": "\/Date(1723707937720)\/"
+            "Updated": "\/Date(1731809569729)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "vscode",
             "Version": "1.95.3",
-            "Updated": "\/Date(1731656198423)\/"
+            "Updated": "\/Date(1731809576951)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "whkd",
             "Version": "0.2.2",
-            "Updated": "\/Date(1729389050425)\/"
+            "Updated": "\/Date(1731809577754)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "windirstat",
             "Version": "2.0.3",
-            "Updated": "\/Date(1729653406885)\/"
+            "Updated": "\/Date(1731809578704)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "windows-terminal",
             "Version": "1.21.2911.0",
-            "Updated": "\/Date(1729976121355)\/"
+            "Updated": "\/Date(1731809580222)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "winmerge",
             "Version": "2.16.44",
-            "Updated": "\/Date(1730151871880)\/"
+            "Updated": "\/Date(1731809582511)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "wiztree",
             "Version": "4.22",
-            "Updated": "\/Date(1730139679343)\/"
+            "Updated": "\/Date(1731809583992)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "yarn",
             "Version": "1.22.22",
-            "Updated": "\/Date(1717724498011)\/"
+            "Updated": "\/Date(1731808581310)\/"
         },
         {
             "Info": "",
             "Source": "extras",
             "Name": "zeal",
             "Version": "0.7.2",
-            "Updated": "\/Date(1729374008167)\/"
+            "Updated": "\/Date(1731809592437)\/"
+        },
+        {
+            "Info": "",
+            "Source": "extras",
+            "Name": "zoom",
+            "Version": "6.2.7.49583",
+            "Updated": "\/Date(1731816223083)\/"
         }
     ],
     "buckets": [
@@ -444,9 +486,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1731731421000)\/",
+                "value": "\/Date(1731817766000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 15, 2024 8:30:21 PM"
+                "DateTime": "Saturday, November 16, 2024 8:29:26 PM"
             },
             "Manifests": 1347
         },
@@ -454,19 +496,19 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1731731548000)\/",
+                "value": "\/Date(1731804143000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 15, 2024 8:32:28 PM"
+                "DateTime": "Saturday, November 16, 2024 4:42:23 PM"
             },
-            "Manifests": 2098
+            "Manifests": 2099
         },
         {
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1731732181000)\/",
+                "value": "\/Date(1731818256000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 15, 2024 8:43:01 PM"
+                "DateTime": "Saturday, November 16, 2024 8:37:36 PM"
             },
             "Manifests": 470
         },
@@ -474,9 +516,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1731702842000)\/",
+                "value": "\/Date(1731809520000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Friday, November 15, 2024 12:34:02 PM"
+                "DateTime": "Saturday, November 16, 2024 6:12:00 PM"
             },
             "Manifests": 127
         },

@@ -4,6 +4,11 @@
     "actions": 
     [
         {
+            "command": "find",
+            "id": "User.find",
+            "keys": "ctrl+shift+f"
+        },
+        {
             "command": 
             {
                 "action": "resizePane",
@@ -11,11 +16,6 @@
             },
             "id": "User.resizePane.2A0DA8E0",
             "keys": "ctrl+shift+left"
-        },
-        {
-            "command": "find",
-            "id": "User.find",
-            "keys": "ctrl+shift+f"
         },
         {
             "command": 
@@ -37,11 +37,6 @@
             "keys": "alt+shift+d"
         },
         {
-            "command": "paste",
-            "id": "User.paste",
-            "keys": "ctrl+v"
-        },
-        {
             "command": 
             {
                 "action": "resizePane",
@@ -49,6 +44,11 @@
             },
             "id": "User.resizePane.6CD791B",
             "keys": "ctrl+shift+up"
+        },
+        {
+            "command": "paste",
+            "id": "User.paste",
+            "keys": "ctrl+v"
         },
         {
             "command": "unbound",
@@ -75,6 +75,22 @@
             "keys": "alt+shift+up"
         },
         {
+            "command": "unbound",
+            "keys": "alt+down"
+        },
+        {
+            "command": "unbound",
+            "keys": "alt+left"
+        },
+        {
+            "command": "unbound",
+            "keys": "alt+right"
+        },
+        {
+            "command": "unbound",
+            "keys": "alt+up"
+        },
+        {
             "command": 
             {
                 "action": "splitPane",
@@ -95,6 +111,14 @@
         {
             "command": 
             {
+                "action": "moveFocus",
+                "direction": "right"
+            },
+            "keys": "ctrl+right"
+        },
+        {
+            "command": 
+            {
                 "action": "splitPane",
                 "split": "right"
             },
@@ -109,6 +133,30 @@
             },
             "id": "User.resizePane.87C324ED",
             "keys": "ctrl+shift+right"
+        },
+        {
+            "command": 
+            {
+                "action": "moveFocus",
+                "direction": "down"
+            },
+            "keys": "ctrl+down"
+        },
+        {
+            "command": 
+            {
+                "action": "moveFocus",
+                "direction": "left"
+            },
+            "keys": "ctrl+left"
+        },
+        {
+            "command": 
+            {
+                "action": "moveFocus",
+                "direction": "up"
+            },
+            "keys": "ctrl+up"
         }
     ],
     "copyFormatting": "none",
@@ -147,28 +195,22 @@
                 "source": "Windows.Terminal.Azure"
             },
             {
-                "guid": "{16208362-94fc-5b1f-a491-5b2624d5ab56}",
-                "hidden": true,
-                "name": "Visual Studio Debug Console",
-                "source": "VSDebugConsole"
+                "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+                "hidden": false,
+                "name": "PowerShell",
+                "source": "Windows.Terminal.PowershellCore"
             },
             {
-                "guid": "{0fa6604e-a71c-54e7-9d25-ba1e9fd94238}",
+                "guid": "{4840e8fd-dcfe-5ba3-8ede-8d5e73771134}",
                 "hidden": false,
                 "name": "Developer Command Prompt for VS 2022",
                 "source": "Windows.Terminal.VisualStudio"
             },
             {
-                "guid": "{5d782ce4-00ce-52bf-a8e0-c730b3a2b5d3}",
+                "guid": "{e9ebad9f-e64b-5556-927c-00f1e6f0366f}",
                 "hidden": false,
                 "name": "Developer PowerShell for VS 2022",
                 "source": "Windows.Terminal.VisualStudio"
-            },
-            {
-                "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
-                "hidden": false,
-                "name": "PowerShell",
-                "source": "Windows.Terminal.PowershellCore"
             }
         ]
     },

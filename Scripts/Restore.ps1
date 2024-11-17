@@ -5,7 +5,7 @@ try {
   ./Powershell/PowerShellRestore.ps1
   ./PowerToys/PowerToysRestore.ps1
   ./Config/ConfigRestore.ps1
-  ./Komorebi/KomorebRestore.ps1
+  ./Komorebi/KomorebiRestore.ps1
   ./WindowsTerminal/WindowsTerminalRestore.ps1
 }
 finally {
