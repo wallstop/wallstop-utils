@@ -23,36 +23,13 @@
   },
   "monitors": [
     {
-      "workspaces": [
-        {
-          "name": "I",
-          "layout": "BSP"
-        },
-        {
-          "name": "II",
-          "layout": "VerticalStack"
-        },
-        {
-          "name": "III",
-          "layout": "HorizontalStack"
-        },
-        {
-          "name": "IV",
-          "layout": "UltrawideVerticalStack"
-        },
-        {
-          "name": "V",
-          "layout": "Rows"
-        },
-        {
-          "name": "VI",
-          "layout": "Grid"
-        },
-        {
-          "name": "VII",
-          "layout": "RightMainVerticalStack"
-        }
-      ]
+      "workspaces": [{ "name": "Left", "layout": "HorizontalStack" }]
+    },
+    {
+      "workspaces": [{ "name": "Right","layout": "HorizontalStack" }]
+    },
+    {
+      "workspaces": [{ "name": "Main", "layout": "Grid" }]
     }
   ]
 }
