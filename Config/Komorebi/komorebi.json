@@ -25,32 +25,24 @@
     {
       "workspaces": [
         {
-          "name": "I",
-          "layout": "BSP"
-        },
-        {
-          "name": "II",
-          "layout": "VerticalStack"
-        },
-        {
-          "name": "III",
-          "layout": "HorizontalStack"
-        },
-        {
-          "name": "IV",
-          "layout": "UltrawideVerticalStack"
-        },
-        {
-          "name": "V",
-          "layout": "Rows"
-        },
-        {
-          "name": "VI",
+          "name": "Middle",
           "layout": "Grid"
-        },
+        }
+      ]
+    },
+    {
+      "workspaces": [
         {
-          "name": "VII",
-          "layout": "RightMainVerticalStack"
+          "name": "Left",
+          "layout": "HorizontalStack"
+        }
+      ]
+    },
+    {
+      "workspaces": [
+        {
+          "name": "Right",
+          "layout": "HorizontalStack"
         }
       ]
     }
