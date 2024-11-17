@@ -43,6 +43,55 @@
     },
     "custom-actions": {
       "value": []
+    },
+    "additional-actions": {
+      "image-to-text": {
+        "shortcut": {
+          "win": false,
+          "ctrl": false,
+          "alt": false,
+          "shift": false,
+          "code": 0,
+          "key": ""
+        },
+        "isShown": true
+      },
+      "paste-as-file": {
+        "isShown": true,
+        "paste-as-txt-file": {
+          "shortcut": {
+            "win": false,
+            "ctrl": false,
+            "alt": false,
+            "shift": false,
+            "code": 0,
+            "key": ""
+          },
+          "isShown": true
+        },
+        "paste-as-png-file": {
+          "shortcut": {
+            "win": false,
+            "ctrl": false,
+            "alt": false,
+            "shift": false,
+            "code": 0,
+            "key": ""
+          },
+          "isShown": true
+        },
+        "paste-as-html-file": {
+          "shortcut": {
+            "win": false,
+            "ctrl": false,
+            "alt": false,
+            "shift": false,
+            "code": 0,
+            "key": ""
+          },
+          "isShown": true
+        }
+      }
     }
   },
   "name": "AdvancedPaste",
