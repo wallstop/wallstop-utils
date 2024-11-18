@@ -323,8 +323,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "qbittorrent",
-            "Version": "5.0.1",
-            "Updated": "\/Date(1731809541123)\/"
+            "Version": "5.0.2",
+            "Updated": "\/Date(1731915015971)\/"
         },
         {
             "Info": "",
@@ -486,9 +486,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1731817766000)\/",
+                "value": "\/Date(1731904255000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, November 16, 2024 8:29:26 PM"
+                "DateTime": "Sunday, November 17, 2024 8:30:55 PM"
             },
             "Manifests": 1347
         },
@@ -496,19 +496,19 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1731804143000)\/",
+                "value": "\/Date(1731904372000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, November 16, 2024 4:42:23 PM"
+                "DateTime": "Sunday, November 17, 2024 8:32:52 PM"
             },
-            "Manifests": 2099
+            "Manifests": 2100
         },
         {
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1731818256000)\/",
+                "value": "\/Date(1731904819000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, November 16, 2024 8:37:36 PM"
+                "DateTime": "Sunday, November 17, 2024 8:40:19 PM"
             },
             "Manifests": 470
         },
@@ -516,9 +516,9 @@
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1731809520000)\/",
+                "value": "\/Date(1731904806000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Saturday, November 16, 2024 6:12:00 PM"
+                "DateTime": "Sunday, November 17, 2024 8:40:06 PM"
             },
             "Manifests": 127
         },
