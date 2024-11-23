@@ -36,15 +36,15 @@
             "Info": "",
             "Source": "main",
             "Name": "aws",
-            "Version": "2.22.0",
-            "Updated": "\/Date(1732001444538)\/"
+            "Version": "2.22.4",
+            "Updated": "\/Date(1732383424323)\/"
         },
         {
             "Info": "",
             "Source": "scoop-clojure",
             "Name": "clj-deps",
-            "Version": "1.12.0.1479",
-            "Updated": "\/Date(1731809367092)\/"
+            "Version": "1.12.0.1488",
+            "Updated": "\/Date(1732383431487)\/"
         },
         {
             "Info": "",
@@ -148,15 +148,15 @@
             "Info": "",
             "Source": "main",
             "Name": "hugo",
-            "Version": "0.139.0",
-            "Updated": "\/Date(1732001449099)\/"
+            "Version": "0.139.2",
+            "Updated": "\/Date(1732383436050)\/"
         },
         {
             "Info": "",
             "Source": "main",
             "Name": "hugo-extended",
-            "Version": "0.139.0",
-            "Updated": "\/Date(1732001452955)\/"
+            "Version": "0.139.2",
+            "Updated": "\/Date(1732383440155)\/"
         },
         {
             "Info": "",
@@ -232,8 +232,8 @@
             "Info": "",
             "Source": "main",
             "Name": "nodejs",
-            "Version": "23.2.0",
-            "Updated": "\/Date(1731808419091)\/"
+            "Version": "23.3.0",
+            "Updated": "\/Date(1732383455744)\/"
         },
         {
             "Info": "",
@@ -253,8 +253,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "obsidian",
-            "Version": "1.7.6",
-            "Updated": "\/Date(1731809495081)\/"
+            "Version": "1.7.7",
+            "Updated": "\/Date(1732383475033)\/"
         },
         {
             "Info": "",
@@ -288,8 +288,8 @@
             "Info": "",
             "Source": "main",
             "Name": "postgresql",
-            "Version": "17.1",
-            "Updated": "\/Date(1731808465582)\/"
+            "Version": "17.2",
+            "Updated": "\/Date(1732383554222)\/"
         },
         {
             "Info": "",
@@ -351,8 +351,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "spotify",
-            "Version": "1.2.50.335.g5e2860a8",
-            "Updated": "\/Date(1731810607372)\/"
+            "Version": "1.2.51.345.gcc39d911",
+            "Updated": "\/Date(1732383578190)\/"
         },
         {
             "Info": "",
@@ -414,8 +414,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "vncviewer",
-            "Version": "7.12.1",
-            "Updated": "\/Date(1731809569729)\/"
+            "Version": "7.13.0",
+            "Updated": "\/Date(1732383557639)\/"
         },
         {
             "Info": "",
@@ -442,8 +442,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "windows-terminal",
-            "Version": "1.21.2911.0",
-            "Updated": "\/Date(1731809580222)\/"
+            "Version": "1.21.3231.0",
+            "Updated": "\/Date(1732383560431)\/"
         },
         {
             "Info": "",
@@ -477,8 +477,8 @@
             "Info": "",
             "Source": "extras",
             "Name": "zoom",
-            "Version": "6.2.7.49583",
-            "Updated": "\/Date(1731816223083)\/"
+            "Version": "6.2.10.50536",
+            "Updated": "\/Date(1732383566788)\/"
         }
     ],
     "buckets": [
@@ -486,9 +486,9 @@
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
             "Updated": {
-                "value": "\/Date(1731990604000)\/",
+                "value": "\/Date(1732379374000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 18, 2024 8:30:04 PM"
+                "DateTime": "Saturday, November 23, 2024 8:29:34 AM"
             },
             "Manifests": 1348
         },
@@ -496,9 +496,9 @@
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
             "Updated": {
-                "value": "\/Date(1731990724000)\/",
+                "value": "\/Date(1732379544000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 18, 2024 8:32:04 PM"
+                "DateTime": "Saturday, November 23, 2024 8:32:24 AM"
             },
             "Manifests": 2100
         },
@@ -506,19 +506,19 @@
             "Name": "versions",
             "Source": "https://github.com/ScoopInstaller/Versions",
             "Updated": {
-                "value": "\/Date(1731991120000)\/",
+                "value": "\/Date(1732379909000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 18, 2024 8:38:40 PM"
+                "DateTime": "Saturday, November 23, 2024 8:38:29 AM"
             },
-            "Manifests": 470
+            "Manifests": 471
         },
         {
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
             "Updated": {
-                "value": "\/Date(1731934737000)\/",
+                "value": "\/Date(1732379936000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 18, 2024 4:58:57 AM"
+                "DateTime": "Saturday, November 23, 2024 8:38:56 AM"
             },
             "Manifests": 127
         },
@@ -526,9 +526,9 @@
             "Name": "java",
             "Source": "https://github.com/ScoopInstaller/Java",
             "Updated": {
-                "value": "\/Date(1731961198000)\/",
+                "value": "\/Date(1732306801000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Monday, November 18, 2024 12:19:58 PM"
+                "DateTime": "Friday, November 22, 2024 12:20:01 PM"
             },
             "Manifests": 294
         },
@@ -536,9 +536,9 @@
             "Name": "scoop-clojure",
             "Source": "https://github.com/littleli/scoop-clojure",
             "Updated": {
-                "value": "\/Date(1731597730000)\/",
+                "value": "\/Date(1732288923000)\/",
                 "DisplayHint": 2,
-                "DateTime": "Thursday, November 14, 2024 7:22:10 AM"
+                "DateTime": "Friday, November 22, 2024 7:22:03 AM"
             },
             "Manifests": 27
         }
