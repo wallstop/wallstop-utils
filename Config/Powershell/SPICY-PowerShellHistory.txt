@@ -1,0 +1,502 @@
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+scoop search ssh
+scoop install openssh
+d:
+cd code
+cd .\wallstop-utils\
+git init
+git remote add origin git@github.com:wallstop/wallstop-utils.git
+git fetch --all
+git checkout main
+git pull origin main
+ls
+.\Scripts\Restore.ps1
+scoop bucket add extras
+.\Scripts\Restore.ps1
+cd ..
+.\Scripts\Restore.ps1
+scoop bucket remove extras
+scoop bucket rm extras
+scoop bucket add extras
+ls
+.\Scripts\Restore.ps1
+d:
+cd .\code\wallstop-utils\
+ls
+cd config
+cd ..
+cd .\Scripts\
+ls
+scoop list
+cd ..
+ls
+cd .\Scripts\
+ls
+cd .\WinGet\
+ls
+scoop search powershell
+winget install --id Microsoft.PowerShell --source winget
+Set-Service ssh-agent -StartupType Manual
+sudo !!
+Set-Service ssh-agent -StartupType Manual
+sudo !!
+Set-Service ssh-agent -StartupType Manual
+sudo !!
+sudo Set-Service ssh-agent -StartupType Manual
+Set-Service ssh-agent -StartupType Manual
+d:
+cd .\Code\wallstop-utils\
+cd .\Scripts\
+.\WinGet\
+cd .\WinGet\
+ls
+.\WinGetUpdate.ps1
+cd d:/code/wallstop-utils
+ls
+.\Scripts\Komorebi\StartKomorebi.ps1
+code ~
+ls
+cd .\Scripts\
+ls
+.\Komorebi\KomorebiRestore.ps1
+.\Komorebi\StopKomorebi.ps1
+.\Komorebi\StartKomorebi.ps1
+scoop search discord
+scoop install discord
+scoop install spotify
+.\komorebi\StopKomorebi.ps1
+.\komorebi\StartKomorebi.ps1
+cd ../..
+mkdir IshoBoy
+mkdir DoxReloaded
+cd .\DoxReloaded\
+git init
+git remote add origin git@github.com:wallstop/DoxReloaded.git
+git fetch --all
+cd ..
+cd .\IshoBoy\
+git init
+git remote add origin git@github.com:wallstop/IshoBoy.git
+git fetch --all
+git checkout main
+cd ..
+cd .\DoxReloaded\
+git checkout main
+cd ..
+mkdir ambiguous-obsidian
+cd .\ambiguous-obsidian\
+git init
+git remote add origin git@github.com:wallstop/ambiguous-obsidian.git
+git fetch --all
+notepad "$HOME/.gitconfig"
+git checkout main
+git pull origin main
+cd ..
+mkdir test
+cd test
+git init
+cd ..
+rmdir test
+git config --global init.defaultBranch main
+mkdir test
+cd test
+git init
+cd ..
+cd .\wallstop-utils\
+ls
+cd config
+ls
+cd .\WindowsTerminal\
+ls
+cd ..
+ls
+cd .\Scripts\
+ls
+cd .\WindowsTerminal\
+ls
+.\WindowsTerminalRestore.ps1
+ls
+d:
+cd .\Code\wallstop-utils\
+ls
+cd .\Scripts\
+ls
+cd .\AutoHotKey\
+ls
+.\DiscordToggleMute.ahk
+.\window-control.ahk
+scoop search auto
+scoop install autohotkey1.1
+ls
+.\window-control.ahk
+.\DiscordToggleMute.ahk
+explorer .
+scoop install zoom
+scoop install obs
+scoop search obs
+scoop install obs-studio
+scoop install obsidian
+scoop install thunderbird
+git config --global user.name "Eli Pinkerton"
+git config --global user.email "wallstop@wallstopstudios.com"
+scoop search cam
+cd ../..
+code .
+explorer .
+cd ~
+code .
+d:
+cd code
+mkdir wallstop-studios
+cd .\wallstop-studios\
+git init
+git remote add origin git@github.com:wallstop/wallstop-studios.git
+git fetch --all
+winget settings
+winget list
+winget pin add --id "Unity.Unity.6000"
+scoop search win-capture
+e:
+ls
+cd media
+ls
+cd .\Video\
+ls
+cd .\OBSRecording\
+ls
+ffmpeg -i '.\2024-11-17 13-55-00.mkv' -c copy output.mp4
+ls
+code .
+cd d:/code/wallstop-utils
+ls
+.\Scripts\Komorebi\StartKomorebi.ps1
+d:
+cd code/ishoboy
+ls
+git status
+git checkout -b dev/wallstop/dynamite-prop
+git status
+code .
+git status
+dotnet tool install -g csharpier
+dotnet csharpier --version
+ls
+d:
+cd .\Code\ambiguous-obsidian\
+git status
+git status
+git add --all
+git status
+git commit -m "Dynamite tile"
+git push origin dev/wallstop/dynamite-prop
+git add --all
+git status
+git commit -m "Temp"
+git status
+git diff .obsidian/plugins/obsidian-git/data.json
+lazygit
+git status
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/rock-placement
+git checkout main
+git status
+git reset --hard origin/main
+git status
+cd D:\code\ambiguous-obsidian\
+cd ..\IshoBoy\
+git checkout -b dev/wallstop/rock-placement
+git status
+git add --all
+git status
+git commit -m "Rock placement"
+git push origin dev/wallstop/rock-placement
+git checkout main
+git pull origin main
+git status
+cd ..
+mkdir UnityPackages
+cd .\UnityPackages\
+cd ..
+rmdir .\UnityPackages\
+cd .\UnityPackages\
+cd Packages
+mkdir DxMessaging
+mkdir UnityHelpers
+cd .\UnityHelpers\
+git init
+git remote add origin git@github.com:wallstop/unity-helpers.git
+git fetch --all
+cd ..
+cd .\DxMessaging\
+git init
+git remote add origin git@github.com:wallstop/DxMessaging.git
+git fetch --all
+git checkout master
+git pull origin master
+cd ..
+cd .\UnityHelpers\
+git pull origin main
+explorer .
+cd ..
+ls
+cd ../..
+ls
+code .
+scoop search steam
+cd .\UnityPackages\
+ls
+cd Packages
+ls
+mkdir com.wallstop-studios.dxmessaging
+mkdir com.wallstop-studios.unity-helpers
+cd .\com.wallstop-studios.dxmessaging\
+git init
+git remote add origin git@github.com:wallstop/DxMessaging.git
+git fetch --all
+git checkout master
+cd ..
+cd .\com.wallstop-studios.unity-helpers\
+git init
+git remote add origin git@github.com:wallstop/unity-helpers.git
+git fetch --all
+git pull origin main
+cd ..
+cd .\com.wallstop-studios.dxmessaging\
+git pull origin master
+git status
+diff
+git diff .obsidian/plugins/obsidian-git/data.json
+git add --all
+git commit -m "In-Progress"
+git pull origin main
+git status
+git diff origin/main
+git status
+git diff
+git add --all
+git commit -m "Temp"
+git push origin main
+git pull origin main
+cd d:/code/isho-boy
+cd d:/code/ishoboy
+git status
+git pull origin main
+git checkout -b dev/wallstop-dialog
+git checkout main
+git branch -D dev/wallstop-dialog
+git branch
+lazygit
+git checkout -b dev/wallstop/dialog
+cd ..
+mkdir wallstop-studios-obsidian
+cd .\wallstop-studios-obsidian\
+git init
+git remote add origin git@github.com:wallstop/wallstop-studios-obsidian.git
+git fetch --all
+git pull origin main
+f:
+cd .\DxMessaging-Unity\
+git status
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git status
+git config --global --add safe.directory F:/DxMessaging-Unity/Packages/com.wallstop-studios.unity-helpers
+git status
+cd ..
+cd .\com.wallstop-studios.dxmessaging\
+git status
+git config --global --add safe.directory F:/DxMessaging-Unity/Packages/com.wallstop-studios.dxmessaging
+scoop search clock
+scoop search carnac
+scoop install carnac
+carnac
+Carnac
+.\Carnac.exe
+scoop uninstall carnac
+git status
+git add --all
+git commit -m "Add sample dialogue"
+git push origin dev/wallstop/dialog
+git status
+git add --all
+git commit -m "PR feedback"
+git push origin dev/wallstop/dialog
+git status
+git diff
+cd ..
+cd .\ambiguous-obsidian\
+git status
+git diff
+git status
+git add --all
+git commit -m "In-progress"
+git push origin main
+git status
+git add --all
+lazygit
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/better-movement-input
+git status
+git status
+git status
+git add --all
+git commit -m "Refine player movement"
+git push origin 
+lazygit
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/pathing
+winget list
+winget list | rg Unity
+winget pin add --id "Unity.Unity.2022"
+winget pin add --id "Unity.Unity.2021"
+scoop search fan
+scoop uninstall hugo
+scoop uninstall hugo-extended
+scoop install fancontrol
+scoop uninstall fancontrol
+d:
+cd code/ishoboy
+git status
+git add --all
+git commit -m "Finish pathfinding"
+lazygit
+git status
+scoop uninstall fancontrol
+lazygit
+git checkout mian
+git checkout main
+git add --all
+git commit -m "Paths default loop"
+git checkout main
+git pull origin main
+git log
+git reflog
+git checkout eedc8d1
+git checkout main
+git cherry-pick eedc8d1
+git status
+git push origin main
+scoop search thunderbird
+cd ..\DoxReloaded\
+git status
+git diff
+git status
+f:
+ls
+cd .\DxMessaging-Unity\
+ls
+git status
+git config --global --add safe.directory F:/DxMessaging-Unity
+git status
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git status
+d:
+cd code/wallstop-utils
+ls
+.\scripts\Komorebi\StartKomorebi.ps1
+ls
+cd ..
+cd d:/code/unitypackages
+cd .\Packages\com.wallstop-studios.dxmessaging\
+git status
+cd ..
+cd .\com.wallstop-studios.unity-helpers\
+git status
+code .
+git checkout -b dev/wallstop/new-randoms
+git add --all
+git statu
+git status
+git commit -m "Add new randoms"
+lazygit
+git checkout main
+git pull origin main
+npm publish
+npm adduser wallstop
+npm publish
+code .
+git status
+git checkout -b dev/wallstop/random-json-tests
+lazygit
+d:
+ls
+cd code
+ls
+cd .\UnityPackages\
+ls
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git checkout main
+git pull origin main
+git checkout dev/wallstop/random-json-tests
+git status
+git checkout Runtime/Core/Random/AbstractRandom.cs
+git status
+git add --all
+git status
+git commit -m "In-progress"
+git status
+git add --all
+git commit -m "Add JSON serialization fix"
+lazygit
+git status
+git add --all
+git stash
+git status
+git add --all
+git commit -m "Add comment to test"
+lazygit
+git checkout main
+git pull origin main
+npm publish
+d:
+cd code/ishoboy
+git checkout -b dev/wallstop/package-updates
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/package-updates
+git checkout dev/wallstop/package-updates
+code .
+lazygit
+lazygit
+git status
+git push origin dev/wallstop/package-updates
+git status
+git add --all
+git commit -m "Remove Feel Demos"
+lazygit
+git checkout -b dev/wallstop/package-updates-2
+git checkout dev/wallstop/package-updates
+lazygit
+git log
+git rebase -i HEAD~3
+git log
+git push origin dev/wallstop/package-updates
+lazygit
+git rebase -i HEAD~3
+git status
+git rebase -edit-todo
+git rebase --edit-todo
+git rebase --abort
+git push origin dev/wallstop/package-updates
+git checkout main
+git pull origin main
+git add --all
+git stash
+git pull origin main
+scoop search what
+scoop search telegram
+scoop install telegram
+scoop install signal
+scoop update *
+scoop uninstall fancontrol
+d:
+cd code
+cd .\ambiguous-obsidian\
+git add --all
+git commit -m "Fix"
+git push origin main
+scoop search office
+scoop install libreoffice
