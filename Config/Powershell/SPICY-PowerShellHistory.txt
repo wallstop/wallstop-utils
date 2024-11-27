@@ -500,3 +500,38 @@ git commit -m "Fix"
 git push origin main
 scoop search office
 scoop install libreoffice
+d:
+cd .\Code\UnityPackages\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git pull origin main
+git checkout -b dev/wallstop/several-bug-fixes
+code .
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+git status
+git add --all
+git status
+git commit -m "Fix several random bugs"
+git push origin dev/wallstop/several-bug-fixes
+git status
+git add --all
+git commit -m "Add more ObjectHelper tests"
+code .
+git status
+git add --all
+git commit -m "Version bump"
+lazygit
+git checkout main
+git pull origin main
+npm publish
+d:
+cd code/ishoboy
+git pull origin main
+git checkout -b dev/wallstop/package-updates-3
+git status
+git add --all
+git status
+git add --all
+lazygit
