@@ -18,8 +18,8 @@ WriteLog(msg) {
     FileAppend, % "[" timestamp "] " msg "`n", %logFile%
 }
 
-; Define excluded window classes (optional, customize as needed)
-excludedClasses := ["Progman", "WorkerW", "Shell_TrayWnd", "Button", "YourExcludedClass"]
+; Define excluded window classes (including taskbar previews)
+excludedClasses := ["Progman", "WorkerW", "Shell_TrayWnd", "Button", "ApplicationFrameWindow", "Windows.UI.Core.CoreWindow"]
 
 ; Set a timer to check active window every 100 milliseconds
 SetTimer, WatchActiveWindow, 100
