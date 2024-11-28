@@ -535,3 +535,73 @@ git add --all
 git status
 git add --all
 lazygit
+d:
+cd code/wallstop-utils
+code .
+explorer .
+code .
+git status
+git add --all
+git commit -m "Add auto center focus"
+git push origin main
+code .
+explorer .
+ls
+git status
+git add --all
+git commit -m "Add logging enhanced auto center focus"
+git push origin main
+d:
+cd .\Code\UnityPackages\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git checkout -b dev/wallstop/even-more-tests
+git status
+git add --all
+git commit -m "Several fixes"
+lazygit
+code .
+code .
+git status
+git add --all
+git commit -m "Bump version"
+lazygit
+d:
+cd code/ishoboy
+git status
+cls
+git add --all
+git commit -m "Add tests"
+git log
+git show b4e9dc81be40c30398e0d01caa7330ef005344eb
+git status
+git add --all
+git commit -m "Fix tests"
+code .
+lazygit
+git checkout main
+git pull origin main
+npm publish
+git checkout main
+git pull origin main
+git status
+git add --all
+git commit -m "Add SOAP"
+git checkout -b dev/wallstop/SOAP
+git status
+git add --all
+git commit -m "Remove examples"
+lazygit
+git checkout main
+git pull origin main
+git reset --hard origin/main
+git branch
+lazygit
+git checkout -b dev/wallstop/new-packages
+git status
+git add --all
+git commit -m "Remove SOAP"
+git status
+git add --all
+git status
+git commit -m "Add Databrain"
+lazygit
