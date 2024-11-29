@@ -605,3 +605,22 @@ git add --all
 git status
 git commit -m "Add Databrain"
 lazygit
+explorer .
+git status
+git add --all
+git commit -m "Fix center focus"
+git push origin main
+git status
+git add --all
+git commit -m "Exclude confirmation dialogues"
+git push origin main
+git status
+git add --all
+git commit -m "Add DataBrain"
+lazygit
+scoop install chrome
+scoop search chrome
+scoop install googlechrome
+scoop update *
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
