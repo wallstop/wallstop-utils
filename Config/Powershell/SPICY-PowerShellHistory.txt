@@ -624,3 +624,7 @@ scoop install googlechrome
 scoop update *
 .\scripts\Komorebi\StopKomorebi.ps1
 .\scripts\Komorebi\StartKomorebi.ps1
+d:
+cd code/ishoboy
+git status
+git checkout Assets/ThirdParty/Databrain/Core/UI/DatabrainEditorWindow.cs
