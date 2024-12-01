@@ -35,7 +35,7 @@
       "workspaces": [
         {
           "name": "Left",
-          "layout": "HorizontalStack"
+          "layout": "Rows"
         }
       ]
     },
@@ -43,7 +43,7 @@
       "workspaces": [
         {
           "name": "Right",
-          "layout": "HorizontalStack"
+          "layout": "Rows"
         }
       ]
     }
