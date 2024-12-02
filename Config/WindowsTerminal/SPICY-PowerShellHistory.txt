@@ -658,3 +658,73 @@ cd code/wallstop-utils
 git add --all
 git commit -m "In Progress"
 lazygit
+cls
+git status
+git add --all
+git commit -m "Fully integrate Databrain"
+lazygit
+git checkout main
+git pull origin main
+git status
+git reset --hard origin/main
+git status
+git add --all
+git stash
+git status
+git log
+git branch
+git checkout dev/wallstop/new-packages
+git rebase main
+git status
+git add Assets/ThirdParty/Obvious/Soap/Core/Editor/Resources/SoapSettings.asset
+git status
+git rebase --continue
+cls
+cd assets/scenes
+ls
+cd ..
+git status
+git add --all
+git commit -m "Initial Holden assets import"
+git push origin dev/wallstop/new-packages --force
+git checkout main
+git pull origin main
+git branch
+lazygit
+git checkout -b dev/wallstop/player-character
+cd D:\code\ambiguous-obsidian\
+code .
+git status
+git add --all
+git commit -m "In-Progress"
+git rm -r --cached .
+git add .
+git status
+git commit -m "Deleted data.json"
+git push origin main
+komorebic pause
+komorebic --help
+komorebic stop
+git status
+git add --all
+git status
+git commit -m "Initial animations"
+lazygit
+cls
+git status
+git add --all
+git commit -m "Initial data config"
+git push origin dev/wallstop/player-character
+git status
+git add --all
+git commit -m "Initial data config"
+git push origin dev/wallstop/player-character
+git status
+git add --all
+git commit -m "Initial player animations wired in"
+git push origin dev/wallstop/player-character
+lazygit
+git status
+git push origin dev/wallstop/player-character
+git checkout main
+git pull origin main
