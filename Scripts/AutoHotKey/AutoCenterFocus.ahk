@@ -19,7 +19,9 @@ WriteLog(msg) {
 }
 
 ; Define excluded window classes (including taskbar previews)
-excludedClasses := ["Progman", "WorkerW", "Shell_TrayWnd", "Button", "ApplicationFrameWindow", "Windows.UI.Core.CoreWindow", "#32770"]
+excludedClasses := ["Progman", "WorkerW", "Shell_TrayWnd", "Button", "ApplicationFrameWindow", "Windows.UI.Core.CoreWindow", "#32770", "msctls_progress32", "DirectUIHWND"]
+progressBarTitles := ["Progress", "Loading...", "Copying...", "Loading", "Copying", "Hold On", "Hold On..."]
+
 
 ; Set a timer to check active window every 100 milliseconds
 SetTimer, WatchActiveWindow, 100
@@ -66,6 +68,14 @@ WatchActiveWindow:
                 break
             }
         }
+		
+		if (winTitle in progressBarTitles)
+		{
+			excluded := true
+			WriteLog("Excluded Window Detected by Title: " . winTitle)
+			return
+		}
+		
         if (excluded)
             return  ; Skip processing excluded windows
 
@@ -93,6 +103,12 @@ WatchActiveWindow:
             WriteLog("Failed to get window position for ID: " . activeWinID)
             ; Update last active window and exit
             lastActiveWindow := activeWinID
+            return
+        }
+		
+		if (winHeight < 50)
+        {
+            WriteLog("Excluded Window Detected by Size (Height < 50px): " . winClass)
             return
         }
 

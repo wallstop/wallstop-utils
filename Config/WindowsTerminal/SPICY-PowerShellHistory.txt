@@ -728,3 +728,52 @@ git status
 git push origin dev/wallstop/player-character
 git checkout main
 git pull origin main
+komorebic stop
+d:
+cd code/wallstop-utils
+d:
+cd code/ishoboy
+git checkout -b dev/wallstop/holden-arm-tool
+git status
+git add --all
+git commit -m "v0 of arm tool"
+lazygit
+git status
+git add --all
+git commit -m "v0.5 of hand tool"
+git push origin dev/wallstop/holden-arm-tool
+git status
+git add --all
+git commit -m "Animated tool"
+lazygit
+komorebic start
+code .
+code .
+komorebic stop
+git status
+lazygit
+git status
+git add --all
+git commit -m "Stuff"
+lazygit
+git diff origin/dev/wallstop/holden-arm-tool
+git push origin dev/wallstop/holden-arm-tool
+git fetch --all
+git diff origin/dev/wallstop/holden-arm-tool
+git pull
+git status
+git push
+git status
+git add --all
+git commit -m "PR feedback"
+git push origin dev/wallstop/holden-arm-tool
+git checkout main
+git pull origin main
+komorebic start
+code .
+git status
+git add --all
+git diff origin/main
+git add --all
+git commit -m "Opacity for holding editor"
+git push origin main
