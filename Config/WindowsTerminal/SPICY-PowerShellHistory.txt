@@ -777,3 +777,17 @@ git diff origin/main
 git add --all
 git commit -m "Opacity for holding editor"
 git push origin main
+komorebic start
+komorebic stop
+.\scripts\Komorebi\StartKomorebi.ps1
+D:
+cd code/ishoboy
+git status
+git pull origin main
+git checkout -b dev/wallstop/tighter-sprites
+komorebic stop
+cd D:/code/wallstop-utils
+git status
+.\scripts\Komorebi\StartKomorebi.ps1
+git status
+lazygit
