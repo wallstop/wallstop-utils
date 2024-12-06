@@ -816,3 +816,14 @@ git checkout -b dev/wallstop/refactored-prop
 lazygit
 git checkout main
 git pull origin main
+git checkout -b dev/wallstop/fix-props
+cls
+git status
+git add --all
+git status
+git commit -m "Lots of progress on LevelManager refactor"
+lazygit
+git status
+git add --all
+git commit -m "Fix compilation issues"
+lazygit
