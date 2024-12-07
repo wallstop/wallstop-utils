@@ -827,3 +827,10 @@ git status
 git add --all
 git commit -m "Fix compilation issues"
 lazygit
+scoop update *
+scoop update *
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+git status
