@@ -1,1 +1,2 @@
-Scripts/AutoHotKey/*.txt
+Scripts/**/*.txt
+Scripts/**/*.log
