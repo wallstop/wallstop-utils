@@ -934,3 +934,54 @@ git pull origin main
 git checkout -b dev/wallstop/full-player-prop-animations
 git status
 lazygit
+d:
+cd code/ishoboy
+git status
+git add --all
+git commit -m "Finess on Props"
+lazygit
+git status
+git add --all
+git commit -m "Fix Prop preview bug"
+git status
+lazygit
+gits tatus
+git status
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/prop-import
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+git status
+git add --all
+git commit -m "Import all props"
+git status
+git diff
+git status
+git add --all
+git commit -m "Fix import bugs"
+lazygit
+git checkout main
+git pull origin main
+d:
+cd code
+mkdir UniverseTowerDefense
+cd .\UniverseTowerDefense\
+git init
+git remote add origin git@github.com:wallstop/UniverseTowerDefense.git
+git fetch --all
+git checkout master
+git pull origin master
+git status
+git add --all
+git commit -m "Update props"
+git push origin main
+git status
+git checkout -b dev/wallstop/prop-perf
+git status
+git add --all
+lazygit
+git checkout main
+git pull origin main
