@@ -985,3 +985,57 @@ git add --all
 lazygit
 git checkout main
 git pull origin main
+winget pin add --id "Unity.Unity.2023"
+d:
+cd code/
+ls
+cd .\UnityPackages\
+ls
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git pull origin main
+git checkout -b dev/wallstop/better-runtime-singletons
+code .
+git status
+lazygit
+git checkout main
+git pull origin main
+npm publish
+cd ..\com.wallstop-studios.dxmessaging\
+git status
+git diff
+git add --all
+git stash
+git pull origin master
+git checkout -b dev/wallstop/remove-empties
+code .
+git status
+f:
+ls
+cd .\DxMessaging-Unity\
+ls
+cd .\Packages\
+cd .\com.wallstop-studios.unity-helpers\
+git pull origin main
+cd ..\com.wallstop-studios.dxmessaging\
+git pull origin master
+d:
+ls
+cd D:\code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.dxmessaging\
+git pull origin master
+d:
+cd code/ishoboy
+git checkout -b dev/wallstop/item-glow
+git status
+lazygit
+git status
+git add --all
+rm D:/Code/IshoBoy/.git/index.lock
+lazygit
+cd d:/code/wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+git status
+git add --all
+git commit -m "In-progress"
+lazygit
