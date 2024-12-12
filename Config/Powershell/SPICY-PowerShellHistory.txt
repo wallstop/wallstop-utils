@@ -1039,3 +1039,26 @@ git status
 git add --all
 git commit -m "In-progress"
 lazygit
+cd ..\com.wallstop-studios.unity-helpers\
+git checkout -b dev/wallstop/better-logging
+code .
+lazygit
+git status
+git log
+npm publish
+code .
+lazygit
+npm publish
+lazygit
+npm publish
+git diff origin/main
+git pull origin main
+lazygit
+git fetch --all
+git checkout main
+git pull origin main
+git checkout dev/wallstop/item-glow
+git pull origin dev/wallstop/item-glow
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+lazygit
