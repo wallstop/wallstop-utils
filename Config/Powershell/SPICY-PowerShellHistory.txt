@@ -1062,3 +1062,9 @@ git pull origin dev/wallstop/item-glow
 .\scripts\Komorebi\StopKomorebi.ps1
 .\scripts\Komorebi\StartKomorebi.ps1
 lazygit
+git checkout main
+git pull origin main
+git branch
+lazygit
+git checkout -b dev/wallstop/tutorial
+lazygit
