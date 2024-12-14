@@ -106,7 +106,7 @@ WatchActiveWindow:
             return
         }
 		
-		if (winHeight < 50)
+		if (winHeight < 400)
         {
             WriteLog("Excluded Window Detected by Size (Height < 50px): " . winClass)
             return

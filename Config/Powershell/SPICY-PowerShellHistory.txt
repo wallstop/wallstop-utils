@@ -1068,3 +1068,15 @@ git branch
 lazygit
 git checkout -b dev/wallstop/tutorial
 lazygit
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+d:
+cd code/ish
+cd code/ishoboy
+code .
+git status
+lazygit
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
