@@ -1080,3 +1080,6 @@ git status
 lazygit
 .\scripts\Komorebi\StopKomorebi.ps1
 .\scripts\Komorebi\StartKomorebi.ps1
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+.\scripts\Backup.ps1
