@@ -6,7 +6,7 @@ SetWorkingDir %A_ScriptDir%  ; Ensures a consistent starting directory.
 ; Initialize variables
 lastActiveWindow := ""
 CoordMode, Mouse, Screen  ; Ensure mouse coordinates are in screen mode
-CoordMode, Win, Screen  ; Ensure window coordinates are in screen mode
+CoordMode, Win, Screen    ; Ensure window coordinates are in screen mode
 
 ; Setup logging (optional, useful for debugging)
 logFile := A_ScriptDir "\MouseCenterLog.txt"
@@ -21,7 +21,6 @@ WriteLog(msg) {
 ; Define excluded window classes (including taskbar previews)
 excludedClasses := ["Progman", "WorkerW", "Shell_TrayWnd", "Button", "ApplicationFrameWindow", "Windows.UI.Core.CoreWindow", "#32770", "msctls_progress32", "DirectUIHWND"]
 progressBarTitles := ["Progress", "Loading...", "Copying...", "Loading", "Copying", "Hold On", "Hold On..."]
-
 
 ; Set a timer to check active window every 100 milliseconds
 SetTimer, WatchActiveWindow, 100
@@ -44,6 +43,19 @@ IsDescendantWindow(ancestorHWND, descendantHWND) {
     return false
 }
 
+; Helper function to get window rect via WinAPI
+GetWindowRect(hWnd) {
+    VarSetCapacity(rect, 16, 0)
+    if (DllCall("GetWindowRect", "ptr", hWnd, "ptr", &rect)) {
+        left := NumGet(rect, 0, "int")
+        top := NumGet(rect, 4, "int")
+        right := NumGet(rect, 8, "int")
+        bottom := NumGet(rect, 12, "int")
+        return {left: left, top: top, right: right, bottom: bottom}
+    }
+    return {left: 0, top: 0, right: 0, bottom: 0}
+}
+
 WatchActiveWindow:
     ; Get the ID of the currently active window
     WinGet, activeWinID, ID, A
@@ -59,31 +71,26 @@ WatchActiveWindow:
 
         ; Check if window class is excluded
         excluded := false
-        for index, className in excludedClasses
-        {
-            if (winClass = className)
-            {
+        for index, className in excludedClasses {
+            if (winClass = className) {
                 excluded := true
                 WriteLog("Excluded Window Detected: " . winClass)
+                lastActiveWindow := activeWinID
                 break
             }
         }
-		
-		if (winTitle in progressBarTitles)
-		{
-			excluded := true
-			WriteLog("Excluded Window Detected by Title: " . winTitle)
-			return
-		}
-		
+
+        if (winTitle in progressBarTitles) {
+            excluded := true
+            return
+        }
+
         if (excluded)
             return  ; Skip processing excluded windows
 
         ; If there was a previously active window, check if the new window is its descendant
-        if (lastActiveWindow)
-        {
-            if (IsDescendantWindow(lastActiveWindow, activeWinID))
-            {
+        if (lastActiveWindow) {
+            if (IsDescendantWindow(lastActiveWindow, activeWinID)) {
                 WriteLog("New active window is a descendant of the last active window. No mouse movement.")
                 ; Update last active window and exit
                 lastActiveWindow := activeWinID
@@ -91,24 +98,25 @@ WatchActiveWindow:
             }
         }
 
-              ; Optional: Add a short delay to ensure the window is ready
+        ; Optional: Add a short delay to ensure the window is ready
         Sleep, 50
 
         ; Get the window's position and size
         WinGetPos, winX, winY, winWidth, winHeight, ahk_id %activeWinID%
 
         ; Handle potential errors in retrieving window position
-        if ErrorLevel
-        {
+        if ErrorLevel {
             WriteLog("Failed to get window position for ID: " . activeWinID)
             ; Update last active window and exit
             lastActiveWindow := activeWinID
             return
         }
+
+        if (winHeight < 400) {
+            return
+        }
 		
-		if (winHeight < 400)
-        {
-            WriteLog("Excluded Window Detected by Size (Height < 50px): " . winClass)
+		if (winWidth < 400) {
             return
         }
 
@@ -124,19 +132,28 @@ WatchActiveWindow:
         WriteLog("Current Mouse Position: " . mouseX . "," . mouseY)
 
         ; Check if the mouse is within the window's bounds
-        if (mouseX >= winX && mouseX <= (winX + winWidth) && mouseY >= winY && mouseY <= (winY + winHeight))
-        {
+        if (mouseX >= winX && mouseX <= (winX + winWidth) && mouseY >= winY && mouseY <= (winY + winHeight)) {
             WriteLog("Mouse is already within the active window. No movement.")
-            ; Update last active window and exit
             lastActiveWindow := activeWinID
             return
         }
 
-  
+        ; Check if the mouse is within any child controls of the active window
+        ; This helps if there are child windows/controls outside the main window bounds
+        WinGet, ChildList, ControlListHwnd, ahk_id %activeWinID%
+        Loop, Parse, ChildList, `n
+        {
+            childHwnd := A_LoopField
+            rect := GetWindowRect(childHwnd)
+            if (mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom) {
+                WriteLog("Mouse is within a child window/control of the active window. No movement.")
+                lastActiveWindow := activeWinID
+                return
+            }
+        }
 
-        ; Move the mouse cursor to the center of the active window
+        ; If we reach here, mouse is not inside the active window or any child windows/controls
         MouseMove, %centerX%, %centerY%, 0  ; The '0' speed makes the movement instant
-
         WriteLog("Mouse moved to center: " . centerX . "," . centerY)
 
         ; Update the last active window

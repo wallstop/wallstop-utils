@@ -1083,3 +1083,41 @@ lazygit
 .\scripts\Komorebi\StopKomorebi.ps1
 .\scripts\Komorebi\StartKomorebi.ps1
 .\scripts\Backup.ps1
+d:
+cd code/wallstop-utils
+code .
+git status
+git checkout Scripts/AutoHotKey/AutoCenterFocus.ahk
+d:
+cd code/ishoboy
+.\Scripts\Komorebi\StopKomorebi.ps1
+.\Scripts\Komorebi\StartKomorebi.ps1
+lazygit
+lazygit
+code .
+devtoys
+scoop installed
+scoop list
+devtoys-np
+scoop search devtoys
+scoop install devtoys-np
+scoop uninstall devtoys-np
+scoop install devtoys-np
+git status
+git checkout Assets/ThirdParty/Databrain*
+git status
+lazygit
+git status
+git restore --staged *Empty*Object*
+git status
+git restore --staged *Empty*Data*
+git status
+git checkout Assets/Resources/Data/DataBrain/ProductionDataLibrary.asset
+git status
+git add Assets/Scripts/Utils/Core/DataBrainLibrary.cs
+git status
+git checkout Assets/Resources/Data/DataBrain/ProductionDataLibrary.asset
+git commit -m "In-progress"
+git add --all
+git stash
+lazygit
