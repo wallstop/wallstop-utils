@@ -1121,3 +1121,8 @@ git commit -m "In-progress"
 git add --all
 git stash
 lazygit
+.\scripts\Komorebi\StartKomorebi.ps1
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
