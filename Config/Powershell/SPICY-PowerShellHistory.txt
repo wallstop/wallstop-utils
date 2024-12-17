@@ -1126,3 +1126,21 @@ lazygit
 .\scripts\Komorebi\StartKomorebi.ps1
 .\scripts\Komorebi\StopKomorebi.ps1
 .\scripts\Komorebi\StartKomorebi.ps1
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\StartKomorebi.ps1
+code  .
+d:
+cd code/is
+cd code/ishoboy
+.\scripts\Komorebi\RestartKomorebi.ps1
+git status
+git add --all
+git status
+lazygit
+.\scripts\Komorebi\RestartKomorebi.ps1
+git status
+git status
+git checkout Assets/Prefabs/Singletons/MainCamera.prefab
+lazygit
