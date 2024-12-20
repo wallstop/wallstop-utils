@@ -1179,3 +1179,41 @@ git add --all
 git status
 git commit -m "In-progress"
 lazygit
+git checkout main
+git pull origin main
+lazygit
+git checkout -b dev/wallstop/tutorial-3
+lazygit
+cd ..
+cd .\ambiguous-obsidian\
+git pull origin main
+cd d:/code/wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+lazygit
+git status
+git add --all
+git stash
+git log
+scoop update *
+cd d:/code/wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+d:
+cd code/ishoboy
+.\scripts\Komorebi\RestartKomorebi.ps1
+git status
+git add --all
+git stash
+git status
+git diff Assets/Resources/Data/DataBrain/ProductionDataLibrary.asset
+git status
+git add --all
+git commit -m "Adjust level generator to include background objects"
+git status
+git checkout Packages*
+git status
+git add --all
+git stash
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+lazygit
+lazygit
