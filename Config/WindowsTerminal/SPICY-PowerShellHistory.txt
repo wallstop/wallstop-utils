@@ -1217,3 +1217,21 @@ git stash
 .\scripts\Komorebi\RestartKomorebi.ps1
 lazygit
 lazygit
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/tutorial-4
+lazygit
+cd ..
+cd .\ambiguous-obsidian\
+git pull origin main
+cd ..
+cd wallstop-utils
+.\scripts\Komorebi\STopKomorebi.ps1
+scoop install github-desktop
+scoop search github
+scoop install github
+github
+.\scripts\Komorebi\RestartKomorebi.ps1
+.\scripts\Komorebi\STopKomorebi.ps1
+lazygit
+.\scripts\Komorebi\RestartKomorebi.ps1
