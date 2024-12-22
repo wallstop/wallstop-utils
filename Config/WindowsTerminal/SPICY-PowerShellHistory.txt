@@ -1235,3 +1235,19 @@ github
 .\scripts\Komorebi\STopKomorebi.ps1
 lazygit
 .\scripts\Komorebi\RestartKomorebi.ps1
+scoop update *
+cd ..
+mkdir jam-ideas
+cd .\jam-ideas\
+git init
+git remote add origin git@github.com:wallstop/jam-ideas.git
+git fetch --all
+git pull origin main
+.\scripts\Komorebi\STopKomorebi.ps1
+cd d:/code/wallstop-utils
+.\scripts\Komorebi\STopKomorebi.ps1
+git status
+git add --all
+git stash
+git pull origin dev/wallstop/tutorial-4
+lazygit
