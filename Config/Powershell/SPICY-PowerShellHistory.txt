@@ -1251,3 +1251,37 @@ git add --all
 git stash
 git pull origin dev/wallstop/tutorial-4
 lazygit
+.\scripts\Komorebi\RestartKomorebi.ps1
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/cleanup
+git status
+git add --all
+lazygit
+cd D:\code\ambiguous-obsidian\
+git add --all
+git stash
+git stash --apply
+git stash pop
+git status
+git add --all
+git commit -m "Add Persistence guide"
+git push origin main
+git config --global core.autocrlf false
+git status
+git add --all
+git commit -m "Fix line endings"
+git push origin main
+ssh fridge
+ssh 192.168.1.22
+ping fridge
+ssh 192.168.1.22
+ssh 192.168.1.13
+ssh fridge
+ping fridge
+ping fridge -t
+ssh fridge
+.\scripts\Komorebi\STopKomorebi.ps1
+cd d:/code/wallstop-utils
+.\scripts\Komorebi\STopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
