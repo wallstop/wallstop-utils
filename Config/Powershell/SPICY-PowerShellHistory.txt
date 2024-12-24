@@ -1285,3 +1285,54 @@ ssh fridge
 cd d:/code/wallstop-utils
 .\scripts\Komorebi\STopKomorebi.ps1
 .\scripts\Komorebi\RestartKomorebi.ps1
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+d:
+cd .\Code\IshoBoy\
+git checkout main
+git pull origin main
+git status
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.dxmessaging\
+git checkout -b dev/wallstop/priorities
+git status
+git add --all
+git commit -m "In progress"
+.\scripts\Komorebi\STopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+gits tatus
+git status
+git diff *.asset
+git status
+git add --all
+git commit -m "Fix bugs"
+git push origin main
+git status
+git add --all
+git commit -m "Fix remaining object appear bugs"
+lazygit
+d:
+cd code/wallstop-utils
+d:
+cd code/ishoboy
+lazygi
+lazygit
+.\scripts\Komorebi\RestartKomorebi.ps1
+.\scripts\Komorebi\STopKomorebi.ps1
+git checkout -b dev/wallstop/holden-feedback
+.\scripts\Komorebi\RestartKomorebi.ps1
+lazygit
+cd ..
+cd .\ambiguous-obsidian\
+git status
+git add --all
+git push origin main
+cd ..
+cd .\jam-ideas\
+git status
+git add --all
+git commit -m "In progress"
+git push origin main
+git status
