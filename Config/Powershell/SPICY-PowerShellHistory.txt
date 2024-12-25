@@ -1336,3 +1336,16 @@ git add --all
 git commit -m "In progress"
 git push origin main
 git status
+cd ../wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+winget update
+winget upgrade
+code .
+winget upgrade --all --silent
+scoop update *
+.\scripts\Komorebi\RestartKomorebi.ps1
+code .
+git status
+git add --all
+git commit -m "In progress"
+lazygit
