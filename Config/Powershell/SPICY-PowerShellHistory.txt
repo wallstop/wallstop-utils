@@ -1349,3 +1349,28 @@ git status
 git add --all
 git commit -m "In progress"
 lazygit
+git fetch --all
+git checkout dev/wallstop/fix-floating-props
+git status
+lazygit
+git status
+git add --all
+git commit -m "Fix #57"
+lazygit
+git checkout -b dev/wallstop/litter-reticle
+git status
+git add --all
+git commit -m "Always show target reticle"
+lazygit
+git checkout -b dev/wallstop/dev/prop-shadows
+git status
+git add --all
+git commit -m "Add prop shadows"
+lazygit
+git log
+git checkout main
+git pull origin main
+git cherry-pick e43f683d1ace804d561fc3bfbb1a3d1b26a6694d
+git push origin main
+lazygit
+git status
