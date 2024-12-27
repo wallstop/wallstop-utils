@@ -1374,3 +1374,51 @@ git cherry-pick e43f683d1ace804d561fc3bfbb1a3d1b26a6694d
 git push origin main
 lazygit
 git status
+git add --all
+git commit -m "Address camera size (#52)"
+lazygit
+git checkout -b dev/wallstop/player-pickup-items
+git status
+git add --all
+git commit -m "Address #54"
+lazygit
+git log
+git checkout main
+git pull origin main
+git cherry-pick b1b794ca96a2d66519d355495d85d3a887249da6
+lazygit
+git checkout -b dev/wallstop/dialogue-bubble-line
+lazygit
+ scoop install gimp
+gimp
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+git checkout -b dev/wallstop/dominant-color
+cd ..
+cd .\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+lazygit
+cd ..
+cd .\com.wallstop-studios.dxmessaging\
+git status
+git add --all
+git commit -m "In Progress"
+git checkout master
+code .
+cd ..
+cd .\com.wallstop-studios.unity-helpers\
+code .
+git status
+git add --all
+lazygit
+npm publish
+git status
+git status
+git add --all
+lazygit
+winget upgrade --all --silent
+git checkout -b dev/wallstop/gamepad-1
+lazygit
+d:
+cd .\Code\IshoBoy\
+lazygit
