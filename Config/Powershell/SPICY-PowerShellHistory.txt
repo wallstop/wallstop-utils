@@ -1422,3 +1422,16 @@ lazygit
 d:
 cd .\Code\IshoBoy\
 lazygit
+d: 
+cd code/wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+lazygit
+git checkout -b dev/wallstop/better-dialogue
+cd ..
+cd ambi
+cd code
+cd .\ambiguous-obsidian\
+git rebase --abort
+git reset --hard o
+git reset --hard origin/main
+.\scripts\Komorebi\StopKomorebi.ps1
