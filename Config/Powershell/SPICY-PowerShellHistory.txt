@@ -1435,3 +1435,31 @@ git rebase --abort
 git reset --hard o
 git reset --hard origin/main
 .\scripts\Komorebi\StopKomorebi.ps1
+.\Scripts\WinGet\WinGetUpdate.ps1
+winget upgrade --all --silent
+code .
+cd ..
+cd .\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.dxmessaging\
+git status
+git add --all
+git stash
+git log
+git branch
+git reflog
+git checkout dev/wallstop/priorities
+ssh fridge
+git status
+code .
+git status
+git add *.cs
+git add *.json
+git status
+lazygit
+git add --all
+git stash
+git checkout main
+git pull origin main
+git checkout master
+git pull origin master
+npm publish
