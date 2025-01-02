@@ -1623,3 +1623,82 @@ git pull origin main
 scoop list
 scoop install autohotkey1.1
 scoop update *
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+cd ../doxreloaded
+git checkout -b dev/wallstop/package-updates
+git status
+git add --all
+git commit -m "Mostly fix package updates"
+git checkout main
+git checkout dev/wallstop/package-updates
+git status
+git add --all
+git stash
+git checkout main
+git checkout -b dev/wallstop/package-updates-2
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+git status
+git add --all
+git commit -m "Package updates"
+lazygit
+git checkout main
+git status
+git add --all
+git commit -m "Missed updates"
+git pull origin main
+git status
+git push origin main
+lazygit
+git checkout -b dev/wallstop/ml-agents
+python --version
+python
+d:
+cd code/
+mkdir ml-agents
+cd .\ml-agents\
+git init
+git remote add origin git@github.com:Unity-Technologies/ml-agents.git
+git fetch --all
+git pull origin main
+ls
+git checkout release_22
+git checkout origin/release_22
+conda
+pip3
+d:
+cd .\Code\ml-agents\
+python --version
+conda create -n mlagents
+miniconda
+conda
+cmd
+_conda
+conda
+python
+d:
+cd .\Code\ml-agents\
+conda create -n mlagents
+conda activate mlagents
+pip3 install torch~=2.21 --index-url https://download.pytorch.org/whl/cu121
+pip3 install torch~=2.2.1 --index-url https://download.pytorch.org/whl/cu121
+python -m pip install ./ml-agents-envs
+python -m pip install ./ml-agents
+d:
+cd .\Code\ml-agents\
+git status
+d:
+cd .\Code\ml-agents\
+d:
+cd .\Code\ml-agents\
+conda create -n mlagents
+python --version
+conda create -n mlagents python=3.10.8
+conda activate mlagents
+pip3 install torch~=2.2.1 --index-url https://download.pytorch.org/whl/cu121
+scoop list
+python -m pip install ./ml-agents-envs.
+python -m pip install ./ml-agents-envs
+python -m pip install ./ml-agents
+mlagents-learn --help
