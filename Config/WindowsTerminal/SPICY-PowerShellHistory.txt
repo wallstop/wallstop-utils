@@ -1702,3 +1702,24 @@ python -m pip install ./ml-agents-envs.
 python -m pip install ./ml-agents-envs
 python -m pip install ./ml-agents
 mlagents-learn --help
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+cd ..\DoxReloaded\
+.\scripts\Komorebi\RestartKomorebi.ps1
+cd ../wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+ls
+code .
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+d:
+cd .\Code\ml-agents\
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+tensorboard --logdir results --port 6006
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --stop
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+ code .
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
