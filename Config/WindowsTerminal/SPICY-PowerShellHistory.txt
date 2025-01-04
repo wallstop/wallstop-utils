@@ -1723,3 +1723,62 @@ mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+cd ..
+cd .\DoxReloaded\
+git status
+git add --all
+git commit -m "Initial work on ML Agents"
+lazygit
+cd ..
+cd .\unity-favorites\
+git pull origin main
+git checkout dev/wallstop/resize-overlay
+git rebase main
+git status
+code .
+git status
+git add Packages/com.overdrive.pins/Editor/Pins/PinsOverlay.cs
+git status
+git rebase --continue
+git status
+lazygit
+git status
+git add  --all
+lazygit
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+git checkout main
+git pull origin main
+git branch
+git checkout dev/wallstop/resize-overlay
+git rebase main
+git status
+git add --all
+git commit -m "PR feedback"
+git rebase main
+git status
+lazygit
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+d:
+cd .\Code\ml-agents\
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+tensorboard --logdir results --port 6006
+d:
+cd .\Code\ml-agents\
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+cd d:/code/ml-agents
+tensorboard --logdir results --port 6006
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+d:
+cd code/doxreloaded
+git status
+git add --all
+git commit -m "Better ML setup"
+git push origin dev/wallstop/ml-agents
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume\
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
