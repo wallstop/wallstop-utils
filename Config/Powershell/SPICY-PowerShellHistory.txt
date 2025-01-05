@@ -1782,3 +1782,26 @@ mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume\
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+cd ..
+cd wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+d:
+cd .\Code\ml-agents\
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
