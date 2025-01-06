@@ -1805,3 +1805,13 @@ mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+scoop search godot
+scoop install godot
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+cd ..
+cd .\DoxReloaded\
+code .
+code .idea
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
