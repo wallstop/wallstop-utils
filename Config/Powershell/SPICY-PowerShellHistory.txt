@@ -1815,3 +1815,14 @@ code .idea
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+cls
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+gitcls
+cls
+git status
+git add --all
+git commit -m "Even better ML setup"
+git push origin dev/wallstop/ml-agents
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
