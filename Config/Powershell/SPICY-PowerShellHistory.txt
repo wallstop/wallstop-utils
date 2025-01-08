@@ -1826,3 +1826,30 @@ git commit -m "Even better ML setup"
 git push origin dev/wallstop/ml-agents
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent
 mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+code .
+mlagents-learn .\config\dox_config.yaml --run-id=DoxSolverAgent --resume
+git diff
+git status
+git checkout Assets/Plugins/WallstopStudios*
+git status
+git add --all
+git status
+git commit -m "Remove ML Agents"
+git push origin dev/wallstop/ml-agents
+git status
+git add --all
+git commit -m "Add Beam search strategy"
+cd ..
+cd .\unity-favorites\
+git checkout main
+git add --all
+git stash
+git checkout mian
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/fix-main-camera-bug
+git checkout main
+git pull origin main
+git checkout dev/wallstop/fix-main-camera-bug
+git status
+explorer .
