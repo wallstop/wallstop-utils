@@ -1853,3 +1853,58 @@ git pull origin main
 git checkout dev/wallstop/fix-main-camera-bug
 git status
 explorer .
+winget list
+winget list | rg conda
+winget pin add --id "Miniconda3"
+winget update
+winget pin add --id "Anaconda.Miniconda3"
+git status
+git add --all
+git status
+git commit -m "MoveSequence v1"
+cd d:/code/wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+git init
+git remote add origin git@github.com:AD1759/Flappy-Bird-Not-Complete-.git
+git fetch --all
+git pull origin main
+git status
+git diff
+git status
+git diff Assets/Scripts/Solvers/Solver.cs
+git checkout Assets/Scripts/Solvers/Solver.cs
+git status
+.\scripts\Komorebi\RestartKomorebi.ps1
+scoop update spotify
+cd ..
+ls
+mkdir unity-favorites
+cd .\unity-favorites\
+git init
+git remote add origin git@github.com:Wyattari/Favorites.git
+git fetch --all
+git pull origin main
+git checkout -b dev/wallstop/bug-fixes
+git add --all
+git commit -m "Perf improvements"
+git status
+git add --all
+git stash
+git stash show
+git status
+git add --all
+git commit -m "Fixes #26"
+git push origin dev/wallstop/bug-fixes
+lazygit
+git status
+git diff Assets/Scripts/Game/BoardState.cs
+git checkout Assets/Scripts/Game/BoardState.cs
+git status
+git add --all
+git commit -m "Upgrades"
+git checkout main
+git add --all
+git stash
+git pull origin main
+lazygit
+gits tatus
