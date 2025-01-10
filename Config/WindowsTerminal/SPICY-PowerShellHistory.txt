@@ -1908,3 +1908,61 @@ git stash
 git pull origin main
 lazygit
 gits tatus
+git status
+git add --all
+git commit -m "Solver upgrades"
+lazygit
+e:
+cd .\Media\Video\
+cd .\Ambiguous\
+ls
+explorer .
+ffmpeg -i isho_boy_run.mov -c:v libvpx-vp9 -crf 30 -b:v 0 -c:a libopus isho_boy_run_vp9.webm
+ffmpeg -i isho_boy_run.mov -c:v libx265 -crf 28 -tag:v hvc1 -c:a aac isho_boy_run_hvec.mp4
+ffmpeg -i isho_boy_run.mov -c:v prores_ks -profile:v 3 -c:a pcm_s16le isho_boy_run_prores.mov
+ffmpeg -i isho_boy_run.mov -c:v prores_ks -profile:v 4 -c:a pcm_s16le -pix_fmt yuva444p10le -vendor apl0 isho_boy_run_prores.mov
+ffmpeg -i isho_boy_run.mov -c:v prores_ks -profile:v 4 -c:a pcm_s16le -pix_fmt yuva444p10le -vf "pad=width=360:height=360:x=(ow-iw)/2:y=(oh-ih)/2:color=0x00000000" -vendor apl0 isho_boy_run_prores.mov
+vlc .\isho_boy_run_prores.mov
+.\scripts\Komorebi\StopKomorebi.ps1
+vlc .\isho_boy_run_prores.mov
+ffmpeg -i isho_boy_run.mov -vf "scale=max(360,iw):max(360,ih):force_original_aspect_ratio=decrease" -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le output.mov
+ffmpeg -i isho_boy_run.mov -vf "scale=max(360,iw):max(360,ih)" -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le output.mov
+ffmpeg -i isho_boy_run.mov -vf "scale=max(360,iw):max(360,ih):force_original_aspect_ratio=decrease" -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le output.mov
+ffmpeg -i isho_boy_run.mov -vf "scale=w='max(360,iw)':h='max(360,ih)',setsar=1" -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le output.mov
+scoop search mpc
+ffmpeg -i isho_boy_run.mov -vf "scale=iw*max(1\,360/iw):ih*max(1\,360/ih):flags=lanczos" -c:v qtrle -pix_fmt argb output.mov
+ffmpeg -i isho_boy_run.mov -vf "scale=iw*max(1\,360/iw):ih*max(1\,360/ih):flags=lanczos" -c:v libx265 -pix_fmt yuva420p output.mov
+ffprobe -i isho_boy_run.mov -show_streams -select_streams v:0
+ffprobe -i output.mov -show_streams -select_streams v:0
+ffmpeg -i isho_boy_run.mov -vf "scale=iw*max(1\,360/iw):ih*max(1\,360/ih):flags=lanczos" -c:v libx265 -pix_fmt yuva420p output.mov
+ffmpeg -i isho_boy_run.mov -vf "scale=iw*max(1\,360/iw):ih*max(1\,360/ih):flags=lanczos" -c:v prores_ks -pix_fmt yuva444p10le output.mov
+.\scripts\Komorebi\RestartKomorebi.ps1
+cd .\unity-favorites\
+cd ..\unity-favorites
+git pull origin main
+git checkout -b dev/wallstop/more-tweaks
+lazygit
+cd .
+cd ..
+cd .\Reddit\
+cd .\FlappyBird\
+git fetch --all
+git reset --hard origin/main
+ls
+git status
+git add --all
+git stash
+git reset --hard origin/main
+git status
+git add --all
+git stash
+git reset --hard origin/main
+git pull origin main
+git checkout -b dev/wallstop/collision-fixes
+git status
+git add *.cs
+git status
+lazygit
+git remote remove origin
+git remote add origin git@github.com:wallstop/Flappy-Bird-Not-Complete-.git
+lazygit
