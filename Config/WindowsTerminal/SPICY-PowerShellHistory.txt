@@ -1966,3 +1966,63 @@ lazygit
 git remote remove origin
 git remote add origin git@github.com:wallstop/Flappy-Bird-Not-Complete-.git
 lazygit
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+cd ../../
+cd .\DoxReloaded\
+git status
+git add --all
+git commit -m "Update solvers"
+lazygit
+cd ..
+ls
+cd .\Udemy\
+ls
+mkdir cinemachine-timeline
+cd .\cinemachine-timeline\
+git init
+cd ..
+rmdir .\cinemachine-timeline\
+explorer .
+cd cin
+ls
+cd .\cinemachine-timeline\
+git init
+git remote add origin git@github.com:wallstop/cinemachine-timeline.git
+git add --all
+git status
+git commit -m "Initial setup"
+git pull origin main
+git fetch --all
+git push origin main
+cd ..
+cd .\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git status
+git diff
+git add --all
+gi tstash
+git stash
+git checkout -b dev/wallstop/proper-uuids
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git status
+code .
+lazygit
+git pull origin main
+npm publish
+d:
+cd .\Code\Udemy\
+ls
+cd .\cinemachine-timeline\
+ls
+code .
+lazygit
+npm publish
+d:
+cd .\Code\DoxReloaded\
+git status
+git add --all
+git commit -m "Updated genomes"
+lazygit
