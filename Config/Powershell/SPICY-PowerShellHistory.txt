@@ -2026,3 +2026,111 @@ git status
 git add --all
 git commit -m "Updated genomes"
 lazygit
+d:
+cd .\Code\IshoBoy\
+git status
+git diff
+git checkout -b dev/wallstop/package-upgrades
+lazygit
+e:
+cd .\Media\Video\Ambiguous\doughby_run\
+ffmpeg -framerate 30 -i "doughby run loop web_%05d.png" -vf "scale=iw:ih:force_original_aspect_ratio=decrease,pad=ceil(max(iw\\,min_w)/2)*2:ceil(max(ih\\,min_h)/2)*2:-1:-1:color=0x00000000" -c:v qtrle -pix_fmt argb doughby_run.mov
+Get-ChildItem -Path "C:\Your\Directory" -File | ForEach-Object {`
+    $newName = $_.Name -replace ' ', '_'`
+    Rename-Item -Path $_.FullName -NewName $newName`
+}
+Get-ChildItem -Path "E:\Media\Video\Ambiguous\doughby_run" -File | ForEach-Object {`
+    $newName = $_.Name -replace ' ', '_'`
+    Rename-Item -Path $_.FullName -NewName $newName`
+}
+ls
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "scale=iw:ih:force_original_aspect_ratio=decrease,pad=ceil(max(iw\\,min_w)/2)*2:ceil(max(ih\\,min_h)/2)*2:-1:-1:color=0x00000000" -c:v qtrle -pix_fmt argb doughby_run.mov
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "scale=iw:ih:force_original_aspect_ratio=decrease,pad=ceil(max(iw\\,1920)/2)*2:ceil(max(ih\\,1080)/2)*2:-1:-1:color=black@0" -c:v qtrle -pix_fmt argb doughby_run.mov
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "pad=iw+X:ih+Y:(ow-iw)/2:(oh-ih)/2" -pix_fmt yuva420p -c:v qtrle doughby_run.mov
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "pad=1920:1080:(360-iw)/2:(360-ih)/2" -pix_fmt yuva420p -c:v qtrle doughby_run.mov
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "pad=1920:1080:(360-iw)/2:(360-ih)/2" -pix_fmt yuva420p -c:v libx265 -tag:v hvc1 doughby_run.mov
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "pad=360:360:(360-iw)/2:(360-ih)/2" -pix_fmt yuva420p -c:v libx265 -tag:v hvc1 doughby_run.mov
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "pad=360:360:(360-iw)/2:(360-ih)/2" -pix_fmt yuva420p -c:v libx264 -crf 18 -preset slow -tag:v avc1 doughby_run_1.mov
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "pad=360:360:(360-iw)/2:(360-ih)/2" -pix_fmt yuva420p -c:v qtrle doughby_run_1.mov
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "pad=360:360:(360-iw)/2:(360-ih)/2" -pix_fmt yuva420p -c:v qtrle doughby_run.mov
+ffmpeg -framerate 12 -i doughby_run_loop_web_%05d.png -vf "pad=360:360:(360-iw)/2:(360-ih)/2" -pix_fmt yuva444p10le -c:v prores_ks -profile:v 4444 doughby_run_1.mov
+d:
+git status
+git reflog
+git checkout dev/wallstop/package-upgrades
+git add --all
+git stash
+git checkout dev/wallstop/package-upgrades
+git rebase main
+touch beep.txt
+rm beep.txt
+lazygit
+cd .
+cd ..
+cd .\ambiguous-obsidian\
+git add --all
+git commit -m "Add Git Flow"
+git push origin main
+cd D:\code\IshoBoy\
+git status
+git checkout -b dev/wallstop/tutorial-v2
+lazygit
+code .
+git status
+git add --all
+git commit -m "Update meta files"
+git rm -r --cached .
+git add .
+git status
+git add --all
+git stash
+git checkout main
+git pull origin main
+git reflog
+git checkout dev/wallstop/package-upgrades
+git status
+git add --all
+git commit -m "Remove debug sprites"
+git checkout main
+git pull origin main
+git checkout dev/wallstop/package-upgrades
+git rebase main
+git rebase --abort
+git reflog
+git checkout dev/wallstop/tutorial-v2
+git rebase main
+code .
+cd .\Assets\Sprites\Levels\
+ls
+cd '.\0 Tutorial\'
+ls
+cd .\tutorial_01\
+ls
+pandoc
+cd D:\Code\IshoBoy\Assets\Sprites\Levels\0 Tutorial\tutorial_01
+cd "D:\Code\IshoBoy\Assets\Sprites\Levels\0 Tutorial\tutorial_01"
+ls
+pandoc tut01_readme.rtf -f rtf -t markdown -o tut01_readme.md
+git status
+git add --all
+git status
+git add *.anim
+git add --all
+git stash
+git status
+gi tadd --all
+git commit -m "Update readme and meta files"
+git status
+git add --all
+git commit -m "Update readme and meta files"
+git status
+cd ../..
+cd ..
+lazygit
+cd D:\code\ambiguous-obsidian\
+code .
+lazygit
+git status
+git add --all
+git commit -m "Better levels"
+lazygit
