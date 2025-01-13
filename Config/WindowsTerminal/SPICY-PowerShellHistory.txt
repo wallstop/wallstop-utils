@@ -2134,3 +2134,18 @@ git status
 git add --all
 git commit -m "Better levels"
 lazygit
+git status
+git add --all
+lazygit
+git status
+git checkout Assets/Resources*
+git status
+lazygit
+rustup
+rustup toolchain install stable-x86_64-pc-windows-gnu
+link
+exit
+cd ../..
+cd ..
+cd .\wallstop-utils\
+.\scripts\Komorebi\RestartKomorebi.ps1
