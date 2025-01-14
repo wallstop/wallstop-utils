@@ -2149,3 +2149,18 @@ cd ../..
 cd ..
 cd .\wallstop-utils\
 .\scripts\Komorebi\RestartKomorebi.ps1
+cd ..\DoxReloaded\
+ls
+cd .\RustCore\
+ls
+git status
+code .
+cd ..
+code .
+git status
+code .
+git status
+git add --all
+git commit -m "Initial rust stuff"
+P
+lazygit
