@@ -2164,3 +2164,54 @@ git add --all
 git commit -m "Initial rust stuff"
 P
 lazygit
+cd ..
+cd .\Reddit\
+ls
+mkdir clock
+cd clock
+git init
+git remote add origin git@github.com:comet400/Clock.git
+git fetch --all
+code .
+ls
+git pull origin main
+ls
+code .
+git checkout -b dev/wallstop/noodling-around
+scoop list
+scoop install cmake
+make
+exit
+scoop search make
+scoop install make
+scoop install gcc
+gcc
+exit
+gcc
+exit
+scoop uninstall gcc
+gcc
+make
+scoop install gcc
+d:
+cd code/reddit/clock
+make
+gcc
+exit
+gcc
+make
+gcc
+exit
+gcc -Wall -Wextra -Os -march=native -mtune=native -funroll-loops -Iinclude -c sr
+c/bytecode.c -o build/bytecode.ogcc -Wall -Wextra -Os -march=native -mtune=native -funroll-loops -Iinclude -c sr
+where.exe gcc
+scoop search cc1
+cc1
+exit
+where.exe cc1
+git status
+git checkout makefile
+git status
+where.exe gcc
+cc1
+where.exe cc1
