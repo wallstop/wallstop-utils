@@ -2215,3 +2215,5 @@ git status
 where.exe gcc
 cc1
 where.exe cc1
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
