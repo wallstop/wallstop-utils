@@ -2217,3 +2217,24 @@ cc1
 where.exe cc1
 .\scripts\Komorebi\StopKomorebi.ps1
 .\scripts\Komorebi\RestartKomorebi.ps1
+cd ../..
+cd .\DoxReloaded\
+ls
+git status
+git add --all
+lazygit
+scoop update spotify
+scoop update spotify
+spotify
+scoop update spotify
+scoop update
+scoop update spotify
+scoop status
+scoop update *
+scoop update
+scoop update spotify
+scoop update *
+scoop update 
+scoop update *
+scoop update spotify
+scoop update *
