@@ -2238,3 +2238,13 @@ scoop update
 scoop update *
 scoop update spotify
 scoop update *
+code .
+lazygit
+lazygi
+lazygit
+git status
+git commit -m "In progress"
+git rm --cached RustCore/src/Game/target/.rustc_info.json
+git status
+git commit -m "Remove unused target files"
+lazygit
