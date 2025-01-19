@@ -2248,3 +2248,68 @@ git rm --cached RustCore/src/Game/target/.rustc_info.json
 git status
 git commit -m "Remove unused target files"
 lazygit
+d:
+cd .\Code\DoxReloaded\
+cd d:/code
+cd .\Reddit\clock\
+ls
+cc1
+exit
+cc1
+cc1.exe
+where.exe cc1
+cc1
+where.exe gcc
+where.exe cc1
+D:
+cd .\Code\DoxReloaded\
+git status
+git add --all
+git commit -m "More rust impl"
+lazygit
+Get-ChildItem -Recurse -Filter *.rs | Get-Content | Measure-Object -Line
+lazygit
+cargo build
+cargo test
+ls
+cd src
+ls
+cd Game
+ls
+cargo buidl
+cargo build
+carbo build
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+cls
+cargo build
+Get-ChildItem -Recurse -Filter *.rs | Get-Content | Measure-Object -Line

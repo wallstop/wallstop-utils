@@ -4,6 +4,15 @@
     "actions": 
     [
         {
+            "command": 
+            {
+                "action": "resizePane",
+                "direction": "down"
+            },
+            "id": "User.resizePane.F747588A",
+            "keys": "ctrl+shift+down"
+        },
+        {
             "command": "find",
             "id": "User.find",
             "keys": "ctrl+shift+f"
@@ -20,21 +29,17 @@
         {
             "command": 
             {
-                "action": "resizePane",
-                "direction": "down"
-            },
-            "id": "User.resizePane.F747588A",
-            "keys": "ctrl+shift+down"
-        },
-        {
-            "command": 
-            {
                 "action": "splitPane",
                 "split": "auto",
                 "splitMode": "duplicate"
             },
             "id": "User.splitPane.A6751878",
             "keys": "alt+shift+d"
+        },
+        {
+            "command": "paste",
+            "id": "User.paste",
+            "keys": "ctrl+v"
         },
         {
             "command": 
@@ -44,11 +49,6 @@
             },
             "id": "User.resizePane.6CD791B",
             "keys": "ctrl+shift+up"
-        },
-        {
-            "command": "paste",
-            "id": "User.paste",
-            "keys": "ctrl+v"
         },
         {
             "command": "unbound",
@@ -114,6 +114,7 @@
                 "action": "moveFocus",
                 "direction": "right"
             },
+            "id": "User.moveFocus.87C324ED",
             "keys": "ctrl+right"
         },
         {
@@ -140,6 +141,7 @@
                 "action": "moveFocus",
                 "direction": "down"
             },
+            "id": "User.moveFocus.F747588A",
             "keys": "ctrl+down"
         },
         {
@@ -148,6 +150,7 @@
                 "action": "moveFocus",
                 "direction": "left"
             },
+            "id": "User.moveFocus.2A0DA8E0",
             "keys": "ctrl+left"
         },
         {
@@ -156,6 +159,7 @@
                 "action": "moveFocus",
                 "direction": "up"
             },
+            "id": "User.moveFocus.6CD791B",
             "keys": "ctrl+up"
         }
     ],
@@ -210,6 +214,18 @@
                 "guid": "{e9ebad9f-e64b-5556-927c-00f1e6f0366f}",
                 "hidden": false,
                 "name": "Developer PowerShell for VS 2022",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{21424ecc-51c5-5ef0-984a-2fd899ba729d}",
+                "hidden": true,
+                "name": "Developer Command Prompt for VS 2019",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{21ae5328-67e2-5eff-bd68-36f0a4aca4be}",
+                "hidden": true,
+                "name": "Developer PowerShell for VS 2019",
                 "source": "Windows.Terminal.VisualStudio"
             }
         ]
