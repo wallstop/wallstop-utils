@@ -2313,3 +2313,11 @@ cargo build
 cls
 cargo build
 Get-ChildItem -Recurse -Filter *.rs | Get-Content | Measure-Object -Line
+git status
+git add --all
+git commit -m "More levels"
+lazygit
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
