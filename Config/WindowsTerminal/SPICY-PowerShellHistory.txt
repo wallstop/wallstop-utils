@@ -2321,3 +2321,4 @@ d:
 cd code/wallstop-utils
 .\scripts\Komorebi\StopKomorebi.ps1
 .\scripts\Komorebi\RestartKomorebi.ps1
+scoop update *
