@@ -2322,3 +2322,36 @@ cd code/wallstop-utils
 .\scripts\Komorebi\StopKomorebi.ps1
 .\scripts\Komorebi\RestartKomorebi.ps1
 scoop update *
+d:
+cd code
+ls
+cd .\unity-favorites\
+git status
+git add --all
+git stash
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/perf
+git fetch --all
+git checkout RemoveResizing
+git pull origin RemoveResizing
+d:
+ls
+cd code
+ls
+mkdir Shiro
+cd Shiro
+ls
+git init
+git remote add origin git@github.com:SL-Gremory/Shiro.git
+git fetch --all
+git checkout fp-shop
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+.\scripts\Komorebi\StopKomorebi.ps1
+whkd.exe --stop
+whkd.exe --help
+scoop update *
+.\scripts\Komorebi\RestartKomorebi.ps1
+code .
