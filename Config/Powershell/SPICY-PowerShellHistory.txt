@@ -2355,3 +2355,43 @@ whkd.exe --help
 scoop update *
 .\scripts\Komorebi\RestartKomorebi.ps1
 code .
+.\scripts\Komorebi\RestartKomorebi.ps1
+d:
+cd code/doxreloaded
+git status
+git add --all
+git status
+git commit -m "Mostly finished"
+lazygit
+git checkout main
+git pull origin main
+git status
+git diff
+git add --all
+git commit -m "Update mac bundle"
+git push origin main
+cd ..
+cd .\ambiguous-obsidian\
+git status
+git add --all
+git commit -m "Add org chart"
+git push origin main
+code .
+cd ../wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+d:
+cd .\Code\ambiguous-obsidian\
+git status
+git diff
+git rebase --abort
+git status
+git pull origin main
+git status
+git diff
+git status
+code .
+git status
+git add --all
+git rebase --continue
+git push origin main
