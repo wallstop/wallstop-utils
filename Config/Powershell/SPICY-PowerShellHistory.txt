@@ -2396,3 +2396,15 @@ git add --all
 git rebase --continue
 git push origin main
 .\scripts\Komorebi\RestartKomorebi.ps1
+scoop search trello
+cd ..\IshoBoy\
+git checkout main
+git pull origin main
+git checkotu dev/wallstop/tutorial-v2
+git checkotu dev/wallstop/tutorialv2
+git checkout dev/wallstop/tutorial-v2
+git rebase main
+git status
+git add --all
+git commit -m "Level updates"
+lazygit
