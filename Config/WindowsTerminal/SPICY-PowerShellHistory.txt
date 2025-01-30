@@ -2408,3 +2408,7 @@ git status
 git add --all
 git commit -m "Level updates"
 lazygit
+git status
+lazygit
+git status
+lazygit
