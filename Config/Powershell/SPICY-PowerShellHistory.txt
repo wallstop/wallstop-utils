@@ -2412,3 +2412,9 @@ git status
 lazygit
 git status
 lazygit
+wingget update
+winget update
+winget update *
+code .
+winget upgrade --all --silent
+code .
