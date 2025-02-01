@@ -2418,3 +2418,24 @@ winget update *
 code .
 winget upgrade --all --silent
 code .
+scoop update *
+scoop update *
+scoop search calibre
+scoop install calibre
+git status
+lazygit
+git checkout main
+git pull origin main
+git checkout dev/wallstop/tutorial-v2
+git status
+git add --all
+git commit -m "Add meta files"
+git checkout dev/wallstop/tutorial-v2
+git rebase main
+git status
+git checkout main
+git rebase --abort
+git checkout main
+git reset --hard origin/main
+git checkout dev/wallstop/tutorial-v2
+git rebase main
