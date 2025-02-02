@@ -2439,3 +2439,16 @@ git checkout main
 git reset --hard origin/main
 git checkout dev/wallstop/tutorial-v2
 git rebase main
+cd ..
+cd .\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git pull origin main
+git checkout -b dev/wallstop/fix-match-collider-to-sprite
+code .
+lazygit
+git checkout main
+git pull origin main
+npm publish
+lazygit
+.\scripts\Komorebi\RestartKomorebi.ps1
+lazygit
