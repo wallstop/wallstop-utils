@@ -2452,3 +2452,26 @@ npm publish
 lazygit
 .\scripts\Komorebi\RestartKomorebi.ps1
 lazygit
+lazygit
+code .
+code .
+lazygit
+npm publish
+d:
+cd .\Code\IshoBoy\
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+code .
+git status
+lazygit
+npm publish
+code .
+scoop update *
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+lazygit
+lazygit
+git push origin dev/wallstop/tutorial-v2
+git
