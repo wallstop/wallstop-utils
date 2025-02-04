@@ -2475,3 +2475,10 @@ lazygit
 lazygit
 git push origin dev/wallstop/tutorial-v2
 git
+git status
+git checkout main
+git pull origin main
+git reflog
+git checkout dev/wallstop/tutorial-v2
+git rebase main
+lazygit
