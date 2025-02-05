@@ -2482,3 +2482,23 @@ git reflog
 git checkout dev/wallstop/tutorial-v2
 git rebase main
 lazygit
+git status
+git diff
+lazygit
+git status
+git log
+git show ef2188f1579dc845440cf0923449b96059a464a0
+git reflog
+git log
+git revert ef2188f1579dc845440cf0923449b96059a464a0
+git status
+git add --all
+git stash
+git status
+.\scripts\Komorebi\RestartKomorebi.ps1
+lazygit
+lazygit
+git status
+git add --all
+rm D:/Code/IshoBoy/.git/index.lock
+lazygit
