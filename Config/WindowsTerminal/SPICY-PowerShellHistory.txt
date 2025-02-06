@@ -2502,3 +2502,19 @@ git status
 git add --all
 rm D:/Code/IshoBoy/.git/index.lock
 lazygit
+git status
+git add --all
+cd ../..
+cd ../
+cd .\Shiro\
+git add --all
+git stash
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/update-dependencies
+lazygit
+cd d:code/wallstop-utils
+cd d:/code/wallstop-utils
+lazygit
+lazygit
+cd ..\ambiguous-obsidian\
