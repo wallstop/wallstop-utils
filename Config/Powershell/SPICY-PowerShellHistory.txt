@@ -2518,3 +2518,5 @@ cd d:/code/wallstop-utils
 lazygit
 lazygit
 cd ..\ambiguous-obsidian\
+scoop update *
+.\scripts\Komorebi\RestartKomorebi.ps1
