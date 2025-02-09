@@ -2520,3 +2520,39 @@ lazygit
 cd ..\ambiguous-obsidian\
 scoop update *
 .\scripts\Komorebi\RestartKomorebi.ps1
+git status
+lazygit
+git checkout main
+git pull origin main
+git checkout dev/wallstop/tutorial-v2
+git rebase main
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+code .
+git status
+lazygit
+npm publish
+lazygit
+git status
+git add --all
+ssh fridge
+cd d:/code/wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+.\scripts\Komorebi\StopKomorebi.ps1
+cd d:/code/wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+d:
+cd .\Code\IshoBoy\
+lazygit
+git status
+git diff Assets/Prefabs/Player/Player.prefab
+git status
+git add --all
+git commit -m "More progress"
+lazygit
+d:
+cd .\Code\IshoBoy\
+lazygi
+lazygit
