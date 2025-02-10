@@ -2556,3 +2556,32 @@ d:
 cd .\Code\IshoBoy\
 lazygi
 lazygit
+scoop search calendar
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+code .
+lazygit
+npm publish
+lazygit
+git fetch --all
+git checkout Feb_7
+git pull origin Feb_7
+git log
+git reflog
+git checkout dev/wallstop/tutorial-v2
+git cherry-pick 5c5a1c37ffcb15559ee44a1a97d8b9d089c9e2e3
+git status
+lazygit
+git log
+lazygit
+git checkout Feb_7
+git log
+git reflog
+git checkout dev/wallstop/tutorial-v2
+git cherry-pick 5c5a1c37ffcb15559ee44a1a97d8b9d089c9e2e3
+git status
+git cherry-pick --continue
+git commit --allow-empty
+git status
+lazygit
