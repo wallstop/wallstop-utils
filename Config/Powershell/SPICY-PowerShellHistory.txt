@@ -2585,3 +2585,10 @@ git cherry-pick --continue
 git commit --allow-empty
 git status
 lazygit
+scoop search thunderbird
+scoop uninstall thunderbird
+scoop install thunderbird-esr
+git status
+git add --all
+git status
+lazygit
