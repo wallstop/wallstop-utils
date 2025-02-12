@@ -2592,3 +2592,7 @@ git status
 git add --all
 git status
 lazygit
+cd D:/code/wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
