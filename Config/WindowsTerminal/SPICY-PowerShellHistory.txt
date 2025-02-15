@@ -2600,3 +2600,11 @@ scoop update *
 d:
 cd code/wallstop-utils
 .\scripts\Komorebi\RestartKomorebi.ps1
+scoop update *
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\STioKomorebi.ps1
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+scoop update *
+scoop update spotify
