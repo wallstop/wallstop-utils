@@ -2608,3 +2608,22 @@ cd code/wallstop-utils
 .\scripts\Komorebi\RestartKomorebi.ps1
 scoop update *
 scoop update spotify
+scoop update *
+d:
+cd .\Code\IshoBoy\
+scoop update *
+lazygit
+git checkout main
+git pull origin main
+git reflog
+git checkout dev/wallstop/tutorial-v2
+git rebase main
+lazygit
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/letterbox
+lazygit
+git checkout main
+git pull origin main
+lazygit
+scoop update *
