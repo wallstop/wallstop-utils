@@ -2627,3 +2627,5 @@ git checkout main
 git pull origin main
 lazygit
 scoop update *
+scoop update spotify
+scoop update *
