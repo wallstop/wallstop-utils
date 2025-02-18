@@ -2629,3 +2629,17 @@ lazygit
 scoop update *
 scoop update spotify
 scoop update *
+scoop update spotify
+cd ..\Shiro\
+git status
+git add --all
+git stash
+git checkout main
+git pull origin main
+git fetch --all
+git checkout -b dev/wallstop/save-slots
+scoop update *
+scoop list | rg spotify
+scoop update spotify
+scoop uninstall spotify
+scoop install spotify
