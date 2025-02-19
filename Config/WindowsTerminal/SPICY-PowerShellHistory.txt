@@ -2643,3 +2643,16 @@ scoop list | rg spotify
 scoop update spotify
 scoop uninstall spotify
 scoop install spotify
+d:
+cd d:/code/wallstop-utils
+scoop update *
+scoop show spotify
+scoop help
+scoop status spotify
+scoop info spotify
+git pull origin main
+git checkout -b dev/wallstop/holden-feedback-1
+lazygit
+scoop info spotify
+scoop update spotify
+scoop update *
