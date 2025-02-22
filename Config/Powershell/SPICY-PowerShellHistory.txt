@@ -2656,3 +2656,11 @@ lazygit
 scoop info spotify
 scoop update spotify
 scoop update *
+git status
+git diff
+lazygit
+git checkout main
+git pull origin main
+git checkout dev/wallstop/holden-feedback-1
+git rebase main
+lazygit
