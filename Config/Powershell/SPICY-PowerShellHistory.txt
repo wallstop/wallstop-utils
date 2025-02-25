@@ -2746,3 +2746,82 @@ cd ../
 cd .\com.wallstop-studios.unity-helpers\
 cd ..\com.wallstop-studios.dxcommandterminal\
 lazygit
+scoop update spotify
+scoop update *
+cd ../
+cd .\com.wallstop-studios.unity-helpers\
+code .
+lazygit
+npm publish
+cd ..
+cd .\com.wallstop-studios.dxcommandterminal\
+git status
+cd ../
+cd .\com.wallstop-studios.unity-helpers\
+git status
+git add --all
+git commit -m "Update Clear tests with additional sanity"
+lazygit
+cd ..\com.wallstop-studios.dxcommandterminal\
+git status
+lazygit
+code .
+lazygit
+git checkout master
+git pull origin master
+npm publish
+cd ../..
+cd ..
+cd .\IshoBoy\
+cd ..
+cd D:\Code\DxMessaging-Unity\Packages\com.wallstop-studios.dxcommandterminal
+code .
+cd ..
+code .
+layzgit
+lazygit
+cd .\com.wallstop-studios.dxcommandterminal\
+lazygit
+code .
+cde .
+code .
+lazygit
+npm publish
+cd D:/code/ishoboy
+git status
+lazygit
+scoop update *
+ scoop update spotify
+scoop uninstall spotify
+scoop install spotify
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.dxcommandterminal\
+code .
+git checkout -b dev/wallstop/minor-updates
+git status
+lazygit
+git rm -r --cached .
+git add .
+git status
+git add --all
+git status
+lazygit
+git checkout master
+git pull origin master
+npm publish
+git status
+lazygit
+code .
+lazgit
+lazygit
+npm publish
+code .
+lazygit
+npm publish
+d:
+cd code/ishoboy
+git status
+git add --all
+git commit -m "Update DxCommandTerminal"
+git push origin main
