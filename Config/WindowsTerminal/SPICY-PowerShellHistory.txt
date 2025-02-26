@@ -2825,3 +2825,28 @@ git status
 git add --all
 git commit -m "Update DxCommandTerminal"
 git push origin main
+d:
+cd code/wallstop-utils
+.\scripts\Komorebi\RestartKomorebi.ps1
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.dxcommandterminal\
+git status
+git checkout -b dev/wallstop/command-arg-refactor
+lazygit
+git status
+git add --all
+git commit -m "Fix minor bugs in vec4-style parsers"
+git status
+git add --all
+git commit -m "Don't filter string variable output"
+git status
+git add --all
+git commit -m "More tests"
+git status
+git add --all
+git commit -m "Implement most immediate ideas"
+code .
+git status
+git add --all
+git commit -m "In-progress README"
