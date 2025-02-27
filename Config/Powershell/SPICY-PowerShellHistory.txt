@@ -2850,3 +2850,7 @@ code .
 git status
 git add --all
 git commit -m "In-progress README"
+scoop uninstall spotify
+git status
+lazygit
+code .
