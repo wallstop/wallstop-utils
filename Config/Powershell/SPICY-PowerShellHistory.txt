@@ -2882,3 +2882,28 @@ cd code/wallstop-utils
 .\scripts\Komorebi\RestartKomorebi.ps1
 git status
 lazygit
+code .
+scoop search atuin
+lazygit
+lazygit
+git checkout master
+git pull origin master
+code .
+lazygit
+npm publish
+git status
+git add --all
+git commit -m "Update DxCommandTerminal"
+git push origin main
+git checkout -b dev/wallstop/new-input-system
+git status
+git add --all
+git commit -m "Add new Input System handling"
+code .
+lazygit 
+lazygit
+code .
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+lazygit
+lazygit
