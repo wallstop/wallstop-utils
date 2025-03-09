@@ -2907,3 +2907,70 @@ code .
 .\scripts\Komorebi\RestartKomorebi.ps1
 lazygit
 lazygit
+scoop search godot
+scoop install godot
+scoop update *
+d:
+cd code/
+ls
+mkdir Reciclator
+cd .\Reciclator\
+git init
+git remote add origin git@github.com:cryptidarling/Reciclator.git
+git fetch --all
+git pull origin main
+git checkout -b dev/wallstop/game-over
+d:
+cd .\Code\IshoBoy\
+code .
+code .
+git status
+code .
+git status
+git add *.cs
+git add *.unity
+git status
+lazygit
+cd ..\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.dxcommandterminal\
+git status
+code .
+git status
+git add --all
+git status
+lazygit
+git checkout main
+git pull origin main
+git checkout main
+git checkout master
+git pull origin master
+npm publish
+git checkout -b dev/wallstop/bug-fixes-1
+code .
+lazygit
+git checkout master
+cls
+git pull origin master
+cls
+lazygit
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.dxcommandterminal\
+npm publish
+git pull origin master
+code .
+lazygit
+npm publish
+lazygit
+code .
+lazygit
+npm publish
+lazygit
+code .
+lazygit
+npm publish
+code .
+layzgit
+lazygit
+git checkout -b dev/wallstop/better-auto-complete
+lazygit
