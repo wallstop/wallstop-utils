@@ -2974,3 +2974,31 @@ layzgit
 lazygit
 git checkout -b dev/wallstop/better-auto-complete
 lazygit
+code .
+lazygit
+code .
+lazygit
+git checkout master
+git pull origin master
+npm publish
+code .
+lazygit
+npm publish
+git status
+git log
+git show d6eba35155ddf3960b83bcb851ef5353f6d9998b
+code .
+lazygit
+npm publish
+d:
+cd .\Code\wallstop-studios\
+cd code/wallstop-utils
+cd d:/code/wallstop-utils
+.\Scripts\Komorebi\StopKomorebi.ps1
+.\Scripts\Komorebi\RestartKomorebi.ps1
+lazygit
+code .
+lazygit
+npm publish
+git checkout -b dev/wallstop/lifecycle
+lazygit
