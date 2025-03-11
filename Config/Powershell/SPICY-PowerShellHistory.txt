@@ -3002,3 +3002,9 @@ lazygit
 npm publish
 git checkout -b dev/wallstop/lifecycle
 lazygit
+scoop update *
+scoop update *
+code .
+lazygit
+code .
+lazygit
