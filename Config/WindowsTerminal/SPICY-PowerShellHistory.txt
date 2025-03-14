@@ -3012,3 +3012,84 @@ scoop update *
 cd ..
 cd .\ambiguous-obsidian\
 git status
+ping google.com
+ping google.com -t
+ping -t 8.8.8.8
+lazygit
+git checkout master
+git pull origin master
+npm publish
+git checkout -b dev/wallstop/player-input-testing
+git status
+git checkout master
+cd ../
+cd .\com.wallstop-studios.unity-helpers\
+git status
+git checkout -b dev/wallstop/minor-updates
+git add --all
+lazygit
+code .
+lazygti
+lazygit.exe
+git checkout main
+git pull origin main
+npm publish
+cd ..
+cd .\com.wallstop-studios.dxcommandterminal\
+git status
+git  add --all
+git stash
+git pull origin master
+git checkout -b dev/wallstop/minor-improvements
+git status
+code .
+lazygit
+git checkout master
+git pull origin master
+npm publish
+code .
+git status
+git add --all
+git commit -m "Remove front command from documentation"
+git push origin master
+git checkout -b dev/wallstop/package-updates
+git checkout main
+git checkout dev/wallstop/package-updates
+git status
+code .
+git status
+git add --all
+git commit -m "Minor updates"
+git checkout main
+git pull origin main
+git status
+rm -rf .\.vscode\
+explorer .
+git status
+cd ../wallstop-utils
+.\scripts\Komorebi\StopKomorebi.ps1
+.\scripts\Komorebi\RestartKomorebi.ps1
+code .
+komorebic --help
+komorebic --help | rg stop
+komorebic stop
+komorebic start
+komorebic stop
+komorebic reload-configuration
+ssh fridge
+git add --all
+git status
+git commit -m "Add meta files"
+git push origin main
+git reflog
+git checkout dev/wallstop/package-updates
+git rebase main
+git status
+git rebase main
+git status
+git diff
+git add --all
+git status
+git commit -m "In-progress"
+git status
+git rebase main
