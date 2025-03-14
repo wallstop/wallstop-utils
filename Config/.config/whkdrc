@@ -5,6 +5,9 @@
 alt + o                 : taskkill /f /im whkd.exe; Start-Process whkd -WindowStyle hidden # if shell is pwsh / powershell
 # alt + shift + o         : komorebic reload-configuration
 
+alt + s : komorebic stop
+alt + r : komorebic start
+
 # App shortcuts - these require shell to be pwsh / powershell
 # The apps will be focused if open, or launched if not open
 # alt + f                 : if ($wshell.AppActivate('Firefox') -eq $False) { start firefox }
@@ -13,8 +16,8 @@ alt + o                 : taskkill /f /im whkd.exe; Start-Process whkd -WindowSt
 alt + q                 : komorebic close
 alt + m                 : komorebic minimize
 
-# Focus windows
 alt + left                 : komorebic focus left
+# Focus windows
 alt + down                 : komorebic focus down
 alt + up                 : komorebic focus up
 alt + right                 : komorebic focus right
