@@ -3093,3 +3093,107 @@ git status
 git commit -m "In-progress"
 git status
 git rebase main
+cd ..\com.wallstop-studios.unity-helpers\
+git status
+git add --all
+git status
+code .
+git status
+lazygit
+npm publish
+q:
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\
+ls
+cd .\com.wallstop-studios.dxmessaging\
+git status
+git diff
+git status
+git add --all
+git status
+git diff origin/master Tests/Runtime/WallstopStudios.DxMessaging.Tests.Runtime.asmdef
+git status
+git add --all
+git status
+code .
+cd ..
+code .
+cd .\com.wallstop-studios.dxmessaging\
+git status
+git add --all
+git commit -m "Bump Unity Helpers version"
+git push origin master
+npm publish
+cd ..\com.wallstop-studios.dxcommandterminal\
+git status
+git diff
+code .
+git status
+git diff
+git add --all
+git commit -m "Fix bug in CyclicBuffer resize operation"
+git push origin master
+npm publish
+cd ..
+code .
+cd .\com.wallstop-studios.dxcommandterminal\
+git status
+git add --all
+git status
+git add --all
+git status
+git commit -m "Update README"
+git push origin master
+cd ..\com.wallstop-studios.dxcommandterminal\
+cd ..\com.wallstop-studios.dxmessaging\
+git status
+git add --all
+git commit -m "Update README"
+git push origin master
+cd ..\com.wallstop-studios.unity-helpers\
+cd ..\com.wallstop-studios.dxmessaging\
+git status
+git add --all
+git commit -m "Update README"
+git push origin master
+git status
+git add --all
+git commit -m "Update README"
+git push origin master
+cd ..\com.wallstop-studios.dxmessaging\
+git status
+cd ..\com.wallstop-studios.dxcommandterminal\
+git status
+git commit -m "Update README"
+git add --all
+git commit -m "Update README"
+git push origin master
+cd ..\com.wallstop-studios.unity-helpers\
+git status
+git add --all
+git commit -m "Update README"
+git push origin main
+d:
+cd .\Code\IshoBoy\
+git status
+git add --all
+git commit -m "Update wallstop packages"
+git status
+git add --all
+git status
+git add --all
+git status
+cd ..
+cd .\com.wallstop-studios.dxcommandterminal\
+git status
+git diff
+git add --all
+code .
+git status
+git add --all
+git commit -m "Fix IsClosed bug where terminal accidentally started as closed"
+git push origin master
+npm publish
+code .
+.\BackupDxMessaging.ps1
