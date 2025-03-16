@@ -3197,3 +3197,164 @@ git push origin master
 npm publish
 code .
 .\BackupDxMessaging.ps1
+Get-ChildItem -Path Z:
+Get-ChildItem -Path Z:\
+Get-ChildItem -Path Z:\Backup\Code\DxMessaging\ -Filter "*zip"
+.\BackupDxMessaging.ps1
+cd ..\com.wallstop-studios.unity-helpers\
+git checkout -b dev/wallstop/relation-component-perf
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git status
+code .
+lazygit
+git checkout main
+git pull origin main
+npm publish
+cd ..
+cd .\com.wallstop-studios.dxmessaging\
+code .
+git status
+code .
+git status
+git add --all
+git commit -m "Update README"
+git push origin master
+d:
+cd .\Code\IshoBoy\
+git status
+git add --all
+git commit -m "Update packages"
+scoop update *
+cd ..
+ls
+cd .\com.wallstop-studios.unity-helpers\
+code .
+git status
+git add --all
+git status
+git commit -m "Add github actions"
+git push origin main
+git status
+git add --all
+git commit -m "Update github actions to auto release"
+git push origin main
+npm login
+git status
+git add --all
+git status
+git add --all
+git commit -m "Add NPM publish script"
+git push origin main
+unity-editor -batchmode -nographics -logfile - -createManualActivationFile
+C:\Program Files\Unity\Hub\Editor\6000.0.33f1\Editor\Unity.exe-batchmode -nographics -logfile - -createManualActivationFile
+&"C:\Program Files\Unity\Hub\Editor\6000.0.33f1\Editor\Unity.exe" -batchmode -nographics -logfile - -createManualActivationFile
+&"C:\Program Files\Unity\Hub\Editor\6000.0.33f1\Editor\Unity.exe" -batchmode -nographics -logfile -createManualActivationFile
+& "C:\Program Files\Unity\Hub\Editor\6000.0.33f1\Editor\Unity.exe" -batchmode -nographics -logfile -createManualActivationFile
+ls
+code .\Unity_v6000.0.33f1.alf
+code .
+git status
+git add --all
+git commit -m "Update UnityPackage exporter action"
+git push origin main
+git status
+git add --all
+git commit -m "Auto run tests"
+git push origin main
+git status
+git add --all
+git commit -m "Fix readme and maybe fix tests"
+git push origin main
+cd ../..
+ls
+git status
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git status
+git add --all
+git status
+git add --all
+git status
+git add --all
+git commit -m "Remove Unity tests"
+git push origin main
+git status
+git add --all
+git commit -m "Maybe fix unity packaging"
+git push origin main
+git status
+git add --all
+git commit -m "Maybe fix unity packaging"
+git push origin main
+git status
+git add --all
+git commit -m "Make UNITY_LICENSE env-var on package"
+git push origin main
+git status
+git add --all
+git commit -m "Add manual triggers for github actions"
+git push origin main
+git status
+git add --all
+git commit -m "Version bump"
+git push origin main
+git status
+git add --all
+git commit -m "Update unity package action"
+git push origin main
+git add --all
+git commit -m "Update unity package action"
+git push origin main
+code .
+git status
+git add --all
+git commit -m "Maybe fix build"
+git push origin main
+git status
+git add --all
+git stash
+git add --all
+git commit -m "Maybe fix build"
+git push origin main
+git status
+git add --all
+git commit -m "Update manual actions"
+git push origin main
+git status
+git add --all
+git status
+git add --all
+git status
+git commit -m "Maybe fix export automation"
+git push origin main
+git status
+git add --all
+git status
+git add --all
+git commit -m "Remove unity package export attempts"
+git push origin main
+cd ..
+cd .\com.wallstop-studios.dxcommandterminal\
+code .
+git status
+git add --all
+git commit -m "Add NPM auto-publishing"
+git push origin master
+cd ..\com.wallstop-studios.dxmessaging\
+code .
+git status
+git add --all
+git commit -m "Add NPM auto-publishing"
+git push origin master
+cd ..\com.wallstop-studios.dxcommandterminal\
+git checkout -b dev/wallstop/ui-toolkit
+git status
+git add --all
+git stash
+git status
+git add --all
+git stash
+git checkout master
+git pull origin
+git checkout -b dev/wallstop/better-buttons
