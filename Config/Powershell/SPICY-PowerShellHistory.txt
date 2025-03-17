@@ -3358,3 +3358,48 @@ git stash
 git checkout master
 git pull origin
 git checkout -b dev/wallstop/better-buttons
+code .
+lazygit
+git checkout master
+git pull origin master
+cd ..\com.wallstop-studios.dxmessaging\
+code .
+git status
+git add --all
+git commit -m "Update NPM publishing script"
+git push origin master
+cd ..\com.wallstop-studios.dxcommandterminal\
+git pull origin master
+git status
+git add --all
+git commit -m "Update Command Terminal"
+code .
+cd ..\com.wallstop-studios.unity-helpers\
+git status
+git add --all
+code .
+git status
+git add --all
+git commit -m "Add tests around reflection helper"
+git push origin main
+cd ..
+cd .\com.wallstop-studios.dxcommandterminal\
+code .
+lazygit
+git checkout -b dev/wallstop/better-ui
+lazygit
+git checkout master
+git pull origin master
+git rebase --abort
+git reset --hard origin/master
+git pull origin master
+git status
+cd ..\com.wallstop-studios.unity-helpers\
+code .
+lazygit
+git status
+git status
+git add --all
+git commit -m "Reduce allocations"
+git push origin dev/wallstop/package-updates
+lazygit
