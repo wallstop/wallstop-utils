@@ -3403,3 +3403,6 @@ git add --all
 git commit -m "Reduce allocations"
 git push origin dev/wallstop/package-updates
 lazygit
+code .
+git status
+lazygit
