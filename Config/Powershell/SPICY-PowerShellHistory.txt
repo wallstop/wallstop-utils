@@ -3406,3 +3406,9 @@ lazygit
 code .
 git status
 lazygit
+git status
+cls
+git status
+git checkotu Assets/Scripts/Data/Visuals/CameraTargetTracker.cs
+git checkout Assets/Scripts/Data/Visuals/CameraTargetTracker.cs
+git status
