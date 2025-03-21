@@ -3412,3 +3412,11 @@ git status
 git checkotu Assets/Scripts/Data/Visuals/CameraTargetTracker.cs
 git checkout Assets/Scripts/Data/Visuals/CameraTargetTracker.cs
 git status
+git status
+git checkout -b dev/wallstop/minor-updates
+lazygit
+git status
+code .
+lazygit
+code .
+lazygit
