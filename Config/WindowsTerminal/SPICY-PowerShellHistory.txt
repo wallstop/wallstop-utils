@@ -3420,3 +3420,63 @@ code .
 lazygit
 code .
 lazygit
+d:
+cd .\Code\DxMessaging-Unity\
+git status
+cd .\Packages\com.wallstop-studios.dxmessaging\
+code .
+git checkout -b dev/wallstop/reduce-allocations
+git status
+git add --all
+git commit -m "First pass remove LINQ"
+git checkout master
+git pull origin master
+git checkout dev/wallstop/reduce-allocations
+git rebase master
+git status
+git add --all
+git commit -m "Better GC handling"
+lazygit
+cd ..\com.wallstop-studios.unity-helpers\
+git status
+git diff
+cd ..
+git status
+cd .\com.wallstop-studios.dxmessaging\
+git status
+git checkout master
+git pull origin master
+git status
+code .
+lazygit
+git status
+cde .
+code .
+git push origin master
+cd ..
+cd D:\code\Shiro\
+git status
+git add --all
+git stash
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/update-packages
+git status
+git add *.cs
+git add .\Packages\*
+git status
+lazygit
+cd ..
+cd .\DxMessaging-Unity\Packages\com.wallstop-studios.dxmessaging\
+code .
+layzgit
+lazygit
+cd ..
+cd ../
+cd ..
+cd .\Shiro\
+git status
+git add .\Packages\*
+git status
+git commit -m "Even more and better updates"
+lazygit

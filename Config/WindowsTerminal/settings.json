@@ -12,13 +12,8 @@
             "id": "User.resizePane.F747588A"
         },
         {
-            "command": 
-            {
-                "action": "splitPane",
-                "split": "auto",
-                "splitMode": "duplicate"
-            },
-            "id": "User.splitPane.A6751878"
+            "command": "find",
+            "id": "User.find"
         },
         {
             "command": 
@@ -29,8 +24,13 @@
             "id": "User.resizePane.2A0DA8E0"
         },
         {
-            "command": "find",
-            "id": "User.find"
+            "command": 
+            {
+                "action": "splitPane",
+                "split": "auto",
+                "splitMode": "duplicate"
+            },
+            "id": "User.splitPane.A6751878"
         },
         {
             "command": "paste",
@@ -39,10 +39,10 @@
         {
             "command": 
             {
-                "action": "copy",
-                "singleLine": false
+                "action": "resizePane",
+                "direction": "up"
             },
-            "id": "User.copy.644BA8F2"
+            "id": "User.resizePane.6CD791B"
         },
         {
             "command": 
@@ -55,10 +55,10 @@
         {
             "command": 
             {
-                "action": "resizePane",
-                "direction": "up"
+                "action": "copy",
+                "singleLine": false
             },
-            "id": "User.resizePane.6CD791B"
+            "id": "User.copy.644BA8F2"
         },
         {
             "command": 
@@ -115,12 +115,12 @@
     "keybindings": 
     [
         {
-            "id": null,
-            "keys": "alt+shift+plus"
-        },
-        {
             "id": "User.resizePane.F747588A",
             "keys": "ctrl+shift+down"
+        },
+        {
+            "id": null,
+            "keys": "alt+shift+plus"
         },
         {
             "id": "User.find",
@@ -131,12 +131,12 @@
             "keys": "ctrl+v"
         },
         {
-            "id": "User.splitPane.A6751878",
-            "keys": "alt+shift+d"
-        },
-        {
             "id": "User.resizePane.2A0DA8E0",
             "keys": "ctrl+shift+left"
+        },
+        {
+            "id": "User.splitPane.A6751878",
+            "keys": "alt+shift+d"
         },
         {
             "id": "User.resizePane.6CD791B",
@@ -151,16 +151,16 @@
             "keys": "alt+shift+down"
         },
         {
-            "id": "User.moveFocus.6CD791B",
-            "keys": "ctrl+up"
+            "id": null,
+            "keys": "alt+shift+left"
         },
         {
             "id": "User.splitPane.864CD510",
             "keys": "ctrl+shift+plus"
         },
         {
-            "id": null,
-            "keys": "alt+shift+left"
+            "id": "User.moveFocus.6CD791B",
+            "keys": "ctrl+up"
         },
         {
             "id": null,
@@ -272,6 +272,12 @@
                 "hidden": true,
                 "name": "Developer PowerShell for VS 2019",
                 "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{2ece5bfe-50ed-5f3a-ab87-5cd4baafed2b}",
+                "hidden": false,
+                "name": "Git Bash",
+                "source": "Git"
             }
         ]
     },
