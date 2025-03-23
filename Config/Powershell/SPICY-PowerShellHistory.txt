@@ -3480,3 +3480,71 @@ git add .\Packages\*
 git status
 git commit -m "Even more and better updates"
 lazygit
+cd ..
+cd .\IshoBoy\
+git status
+lazygit
+git checkout main
+git pull origin main
+cd ..\ambiguous-obsidian\
+git status
+lazygit
+cd ..
+cd .\IshoBoy\
+git checkout -b dev/wallstop/new-packages
+git status
+lazygit
+git status
+git add --all
+git stash
+git status
+code .
+rg "ScreenTransition.cs" .
+git status
+git add --all
+git stash
+git status
+git diff Assets/Settings/Renderer2D.asset
+git status
+git diff Assets/Settings/Renderer2D.asset
+lazygit
+git status
+git add --all
+git commit -m "Disable transitions in render pipeline"
+git status
+git add --all
+git stash
+git status
+git add --all
+git stash
+git status
+git add --all
+git stash
+git status
+git add --all
+git stash
+git status
+git add --all
+git commit -m "Allocation removal"
+git status
+git add --all
+git status
+lazygit
+cd ..\DxMessaging-Unity\Packages\com.wallstop-studios.unity-helpers\
+code .
+lazygit
+dotnet csharpier .
+git status
+lazygit
+cd ../../
+cd shir
+cd ..
+cd shiro
+git status
+git add Packages*
+git status
+lazygit
+cd ..
+cd .\IshoBoy\
+git status
+lazygit
