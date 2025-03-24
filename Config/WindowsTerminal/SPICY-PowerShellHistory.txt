@@ -3548,3 +3548,79 @@ cd ..
 cd .\IshoBoy\
 git status
 lazygit
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.unity-helpers\
+git checkout -b dev/wallstop/more-reflection-helpers
+code .
+lazygit
+cd D:\Code\IshoBoy\
+git status
+git log
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/steam-integration
+d:
+cd .\Code\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.dxcommandterminal\
+git status
+git cehckout -b dev/wallstop/uitoolkit
+git checkout -b dev/wallstop/ui-toolkit
+git branch -D dev/wallstop/ui-toolkit
+git checkout -b dev/wallstop/ui-toolkit
+lazygit
+cd ..
+cd .\com.wallstop-studios.unity-helpers\
+git checkout main
+git pull origin main
+git status
+git add --all 
+git stash
+git pull origin main
+git checkout -b dev/wallstop/slightly-more-perf
+git status
+lazygit
+git checkout main
+git reflog
+git checkout dev/wallstop/slightly-more-perf
+cd ..\com.wallstop-studios.dxcommandterminal\
+git status
+git add --all
+git commit -m "Initial AI generated UI Toolkit stuff"
+cd ..
+cd .\com.wallstop-studios.unity-helpers\
+git status
+git checkout .\Runtime\Core\DataStructure\QuadTree.cs
+git status
+git diff
+code .
+git status
+git add --all
+git commit -m "Add auto cleanup of RuntimeSingleton + non-allocation insertion sort"
+lazygit
+git checkout main
+git pull origin main
+git status
+git add --all
+git commit -m "Initial steam integration"
+code .
+git checkout -b dev/wallstop/allocation-free-has-flags
+git status
+git add --all
+git status
+git commit -m "Add allocation-free enum flag check"
+lazygit
+git checkout main
+git pull origin main
+lazygit
+lazygit
+cd ..
+mkdir TextTween
+cd .\TextTween\
+git init
+git remote add origin git@github.com:AlicanHasirci/TextTween.git
+git fetch --all
+git pull origin main
+git checkout -b dev/wallstop/no-allocations
+cd ..
+rm -rf .\TextTween\
