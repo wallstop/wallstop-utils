@@ -3624,3 +3624,54 @@ git pull origin main
 git checkout -b dev/wallstop/no-allocations
 cd ..
 rm -rf .\TextTween\
+cd ..
+ls
+cd .\TextTween\
+git status
+lazygit
+git status
+git add --all
+git status
+git commit -m "Performance tests"
+git log
+git checkout main
+git checkout -b dev/wallstop/performance-tests
+git cherry-pick b82ae0c5f79311a997db9a5a42dfcff8a20c9fc1
+git status
+code Runtime/Modifiers/TransformModifier.cs
+code Runtime/TweenManager.cs
+git checkout origin/main .\Runtime\TweenManager.cs 
+git cherry-pick --continue
+git status
+git add --all
+git cherry-pick --continue
+git reflog
+git checkotu dev/wallstop/no-allocations
+git checkout dev/wallstop/no-allocations
+git add --all
+git commit -m "In-progress"
+git checkout dev/wallstop/no-allocations
+lazygit
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/no-allocations-2
+git cherry-pick b82ae0c5f79311a997db9a5a42dfcff8a20c9fc1
+git status
+code Runtime/Modifiers/TransformModifier.cs
+git add Runtime/Modifiers/TransformModifier.cs
+git status
+git checkout origin/main .\Runtime\TweenManager.cs
+git status
+git cherry-pick --continue
+git checkout main
+git add --all
+git stash
+git pull origin main
+git checkout main
+git pull origin main
+git reset --hard origin/main
+git status
+cd ..
+explorer .
+cd .\IshoBoy\
+lazygit
