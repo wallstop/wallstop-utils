@@ -3675,3 +3675,36 @@ cd ..
 explorer .
 cd .\IshoBoy\
 lazygit
+cd d:/code
+mkdir Steamworks
+cd Steamworks
+git init
+git remote add origin git@github.com:Facepunch/Facepunch.Steamworks.git
+git fetch --all
+git checkout master
+git pull origin master
+code .
+git remote remove origin
+git remote add origin git@github.com:wallstop/Facepunch.Steamworks.git
+git checkout -b dev/wallstop/no-allocation-controllers
+git status
+lazygit
+code .
+lazygit
+git status
+git diff
+git status
+git diff
+git status
+lazygit
+git log
+git diff origin/master
+git reflog
+git checkout 4e5ee80
+git status
+git log
+git checkout -b dev/wallstop/no-allocation-controllers-2
+lazygit
+code .
+lazygit
+git status
