@@ -3708,3 +3708,50 @@ lazygit
 code .
 lazygit
 git status
+ping -t 8.8.8.8
+cls
+d:
+cd .\Code\ambiguous-obsidian\
+code .
+cd .\Tutorials\
+pandoc.exe --help
+pandoc.exe '.\06 - Git Flow.md' -f markdown -t docx
+pandoc.exe '.\06 - Git Flow.md' -f markdown -t docx -o "GitFlow.docx"
+cd ..
+pandoc.exe '.Tutorials\06 - Git Flow.md' -f markdown -t docx -o "GitFlow.docx"
+ls
+pandoc '.\Tutorials\06 - Git Flow.md' -f markown -t docx -o "GitFlow.docx"
+pandoc '.\Tutorials\06 - Git Flow.md' -f markdown -t docx -o "GitFlow.docx"
+git status
+rm .\GitFlow.docx
+cd ..
+cd .\Reddit\
+mkdir GithubTakeout
+cd .\GithubTakeout\
+git init
+git remote add origin git@github.com:cgoldberg/githubtakeout.git
+git fetch --all
+git checkout master
+git pull origin master
+E:
+cd .\Downloads\o
+cd .\Downloads\
+ffmpeg -i .\Shiro_Spear_Heavy_Neutral_Directional_Stab08.gif frame_%04.png
+pip install black
+python .\githubtakeout.py wallstop
+pip install
+pip install .
+python .\githubtakeout.py wallstop
+git status
+code .
+git status
+python .\githubtakeout.py wallstop
+git checkout -b dev/wallstop/working-on-windows
+lazygit
+git remote show
+git remote show origin
+git remote remove origin
+git remote add origin git@github.com:wallstop/githubtakeout.git
+lazygit
+explorer .
+python .\githubtakeout.py wallstop --history
