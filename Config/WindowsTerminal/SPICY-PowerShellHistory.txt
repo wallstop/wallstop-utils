@@ -3755,3 +3755,116 @@ git remote add origin git@github.com:wallstop/githubtakeout.git
 lazygit
 explorer .
 python .\githubtakeout.py wallstop --history
+d:
+cd code
+cd .\Reddit\
+cd .\GithubTakeout\
+git checkout master
+git status
+git add --all
+git stash
+git status
+git add --all
+git stash
+git pull origin master
+git reflog
+git checkout dev/wallstop/working-on-windows
+git rebase master
+git status
+code githubtakeout.py
+git status
+git add .\githubtakeout.egg-info\
+git status
+git add githubtakeout.py
+git rebase --continue
+git status
+pip install .
+python .\githubtakeout.py wallstop --history
+d:
+cd .\Code\Reddit\GithubTakeout\
+lazygit
+d:
+cd .\Code\Reddit\test
+ls
+cd ..
+ls
+ls Test
+ls E:/Test
+ls Test
+ls E:/Downloads/Test
+python
+ls E:/Downloads/Test
+ls
+mkdir Test
+mklink pointer.txt E:/Downloads/Test/I_Exist.txt
+New-Item -ItemType SymbolicLink -Path Pointer.txt -Target "E:/Downloads/Test/I_Exist.txt"
+ls E:/Downloads/Test
+python
+ls
+mkdir Test
+python
+ls
+cd .\GithubTakeout\
+git checkout master
+git remote remove origin
+git remote add origin git@github.com:cgoldberg/githubtakeout.git
+git fetch --all
+git pull origin master
+python .\githubtakeout.py wallstop --history
+python --version
+cd ..
+ls
+cd ..
+cd .\IshoBoy\
+scoop search pyenv
+scoop install pyenv
+pyenv install -l
+pyenv install 3.12
+pyenv install -l | rg 3.12
+pyyenv install --list
+pyenv install --list
+scoop uninstall pyenv
+cd d:/code/wallstop-utils
+Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1" -OutFile "./install-pyenv-win.ps1"; &"./install-pyenv-win.ps1"
+ls
+rm .\install-pyenv-win.ps1
+pyenv
+pyenv install --list | rg 3.12
+pyenv install 3.12.9
+pyenv install 3.10.0
+python --version
+python
+pyenv global 3.10.0
+python --version
+pyenv global 3.12.9
+python --version
+git remote remove origin 
+git remote add origin git@github.com:wallstop/githubtakeout.git
+git fetch --all
+git pull origin master
+ls
+python .\githubtakeout.py wallstop
+python --version
+d:
+cd .\Code\Reddit\GithubTakeout\
+python .\githubtakeout.py wallstop
+pip install .
+python .\githubtakeout.py wallstop
+Where.exe python
+git add --all
+git stash
+git checkout -b dev/wallstop/ensure-submodule-is-loaded
+python
+python .\githubtakeout.py wallstop
+python
+pyenv python 3.10.-
+pyenv python 3.10.0
+pyenv
+pyenv install 3.10.0
+git status
+git add --all
+git stash
+ls
+git status
+layzgit
+lazygit
