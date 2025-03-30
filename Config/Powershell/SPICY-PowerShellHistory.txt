@@ -3922,3 +3922,85 @@ lazygit
 git checkout main
 git pull origin main
 git status
+git checkout main
+git fetch --all
+git pull origin main
+code  C:\Users\wallstop\AppData\Local\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\DiagOutputDir\WinGet-EpicGames.EpicGamesLauncher.1.3.135.0-2025-03-29-09-25-18.112.log
+git checkout -b dev/wallstop/performance-tests
+git status
+git add --all
+git commit -m "First draft tests"
+git checkout main
+git pull origin main
+git checkout dev/wallstop/performance-tests
+git rebase main
+git status
+code Editor/TextTweenEditor.cs
+git add Editor/TextTweenEditor.cs
+git status
+code Runtime/TweenManager.cs
+git status
+git add --all
+git status
+git rebase --continue
+nmap
+scoop search nmap
+scoop install nmap
+lazygit
+git checkout main
+git pull origin main
+git checkout dev/wallstop/fix-memory-leak
+git rebase main
+git status
+code Runtime/TweenManager.cs
+git status
+git add --all
+git rebase --continue
+lazygit
+git reflog
+git checkout  dev/wallstop/performance-tests
+git add --all
+git stash
+git checkout  dev/wallstop/performance-tests
+git status
+git stash --apply
+git stash pop
+git status
+git add --all
+git stash
+lazygit
+git add --all
+git stash
+git status
+git log
+git diff 2b9a1e52278216b1c9ee94a2aa0fe9c71d848549
+git status
+lazygit
+git status
+git diff
+git add --all
+git stash
+git status
+git add --all
+git stash
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/fix-editor-bug
+lazygit
+git checkout main
+git pull origin main
+git status
+git reflog
+git checkout  dev/wallstop/performance-tests
+git status
+git diff
+git diff origin/main
+git checkout origin/main
+git checkout main
+git checkout -b dev/wallstop/fix-text-edit-bug
+lazygit
+git checkout main
+git checkout dev/wallstop/fix-text-edit-bug
+lazygit
+git diff origin/main
+lazygit
