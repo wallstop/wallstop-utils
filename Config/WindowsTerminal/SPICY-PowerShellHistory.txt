@@ -4004,3 +4004,80 @@ git checkout dev/wallstop/fix-text-edit-bug
 lazygit
 git diff origin/main
 lazygit
+git checkout main
+git pull origin main
+git checkout dev/wallstop/fix-text-edit-bug
+git rebase main
+git status
+git diff
+code .
+git status
+git add --all
+git rebase --continue
+git status
+code Editor/TweenManagerEditor.cs
+git add Editor/TweenManagerEditor.cs
+git status
+code Runtime/TweenManager.cs
+dotnet csharpier .
+git status
+git checkout *Modifier*
+git status
+git diff Editor/TweenManagerEditor.cs
+git status
+git add Editor/TweenManagerEditor.cs
+git status
+git diff Runtime/TweenManager.cs
+git status
+git add --all
+git rebase --continue
+git status
+lazygit
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/fix-enable-bug
+lazygit
+git checkout main
+git status
+git diff
+git add --all
+git stash
+git checkout dev/wallstop/fix-text-edit-bug
+lazygit
+git checkout dev/wallstop/fix-enable-bug
+git remove remove origin
+git remote remove origin
+git remote add origin git@github.com:AlicanHasirci/TextTween.git
+git fetch --all
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/performance-tests
+git checkout dev/wallstop/performance-tests
+git rebase main
+git status
+code Editor/TextTweenEditor.cs
+rm Editor/TextTweenEditor.cs
+git status
+git add Editor/TextTweenEditor.cs
+git status
+git rebase --continue
+git status
+rm Editor/TextTweenEditor.cs
+git add Editor/TextTweenEditor.cs
+git status
+code Runtime/TweenManager.cs
+git add Runtime/TweenManager.cs
+git status
+git rebase --continue
+git status
+git diff origin/main
+git remote remove origin
+git remote add origin git@github.com:wallstop/TextTween.git
+lazygit
+git push origin dev/wallstop/performance-tests --force
+lazygit
+git status
+git add --all
+git stash
+git pull origin main
+git checkout -b dev/wallstop/steam-achievements
