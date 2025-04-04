@@ -4193,3 +4193,29 @@ git commit -m "In-progress"
 git status
 git checkout origin/main *.cs
 git status
+lazygit
+scoop install procexplorer
+scoop install processexplorer
+scoop search proc
+git status
+explorer .
+ls
+rm .\sqlite3.dll
+explorer .
+rg sqlite3.dll
+cd ..
+ls
+cd .\com.wallstop-studios.dxmessaging\
+code .
+dotnet csharpier .
+git status
+git add --all
+lazygit
+cd ..\Shiro\
+git status
+git add --all
+git stash
+git checkout main
+lazygit
+git pull origin main
+git checkout -b dev/wallstop/update-packages-2
