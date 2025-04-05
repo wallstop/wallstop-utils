@@ -4219,3 +4219,17 @@ git checkout main
 lazygit
 git pull origin main
 git checkout -b dev/wallstop/update-packages-2
+cd ..\IshoBoy\
+git status
+lazygit
+cd ..\Shiro\
+git status
+git add *.json
+git status
+git commit -m "Update wallstop packages"
+lazygit
+cd ..\IshoBoy\
+cd d:/code/wallstop-utils
+ls
+.\Scripts\WinGet\WinGetUpdate.ps1
+lazygit
