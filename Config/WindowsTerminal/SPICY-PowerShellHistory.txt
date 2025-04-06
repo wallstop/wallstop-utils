@@ -4233,3 +4233,128 @@ cd d:/code/wallstop-utils
 ls
 .\Scripts\WinGet\WinGetUpdate.ps1
 lazygit
+cd .\Assets\ThirdParty\
+ls
+mkdir SuperUnityBuild
+cd .\SuperUnityBuild\
+git init
+git remote add origin git@github.com:superunitybuild/buildtool.git
+git fetch --all
+git pull origin dev
+git checkout dev
+git pull origin dev
+git checkout -b dev/wallstop/unity-6
+git checkout -b wallstop/unity-6
+cd ../
+mkdir UberLogger
+cd UberLogger
+git init
+git remote add origin git@github.com:bbbscarter/UberLogger.git
+git fetch --all
+git checkout master
+git pull origin master
+cd ..\SuperUnityBuild\
+git status
+cd ../..
+cd ..
+git status
+git diff ProjectSettings/ProjectSettings.asset
+git checkout ProjectSettings/ProjectSettings.asset
+git status
+git diff Assets/Settings/UniversalRP.asset
+cd ..
+git status
+cd .\IshoBoy\
+git add *.cs
+git status
+git add Assets/Streamin*
+git status
+add Assets/ThirdParty*
+git add Assets/ThirdParty*
+git status
+explorer .
+git status
+git add Assets/ThirdParty*
+git status
+git add Assets/Thirdparty/*
+git add Assets/ThirdParty/*
+git status
+git add Assets/Thirdparty/SuperUnityBuild
+git status
+git add Assets/Thirdparty/SuperUnityBuild*
+git status
+lazygit
+git status
+lazygit
+pre-commit uninstall
+lazygit
+git status
+git add Assets/ThirdParty*
+git status
+cd .\Assets\ThirdParty\UberLogger\
+git status
+git diff *.meta
+qgit status
+git add --all
+git checkout -b dev/wallstop/tidy
+git commit -m "In-progress"
+cd ..
+ls
+git status
+git add ThirdParty*
+git status
+git commit -m "In-progress"
+gits tatus
+git status
+git add --all
+git stash
+cd .\ThirdParty\
+mkdir SuperUnityBuild
+cd .\SuperUnityBuild\
+git init
+git remote add origin git@github.com:superunitybuild/buildtool.git
+git fetch --all
+git checkout dev
+git checkout -b wallstop/unity-6
+cd ..
+gits tatus
+git status
+cd ../..
+ls
+git status
+git diff
+git diff origin/main ProjectSettings/ProjectSettings.asset
+cd .\Assets\ThirdParty\
+ls
+cd .\UberLogger\
+ls
+git status
+cd ../..
+ls
+git status
+git add ThirdParty*
+git status
+git commit -m "Remove useless uberlogger"
+explorer .
+git init
+git remote add origin git@github.com:superunitybuild/buildtool.git
+git fetch --all
+git checkout dev
+git pull origin dev
+git checkout -b wallstop/unity-6
+lazygit
+lazygit
+git status
+cd .\ThirdParty\UberLogger\
+dotnet csharpier .
+cd ../../
+cd ..
+git status
+git add --all
+cd .\Assets\ThirdParty\UberLogger\
+git status
+ls
+explorer .
+cd ../..
+cd ..
+lazygit
