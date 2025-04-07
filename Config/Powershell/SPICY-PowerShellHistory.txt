@@ -4358,3 +4358,34 @@ explorer .
 cd ../..
 cd ..
 lazygit
+cd ..\com.wallstop-studios.unity-helpers\
+code .
+cd ..\Shiro\o
+cd ..\Shiro\
+git status
+git add --all
+git stash
+git fetch --all
+git checkout origin/main
+git checkout main
+lazygit
+git checkout Jirushi-test
+git diff origin/main "Assets/Prefabs/Player Character/Player.prefab"
+lazygit
+code .
+lazygit
+code .
+lazygit
+code .
+lazygit
+cd ..\IshoBoy\
+git status
+git add --all
+git commit -m "in-progress"
+code .
+code .
+lazygit
+lazygit
+code .
+code .
+lazygit
