@@ -4389,3 +4389,28 @@ lazygit
 code .
 code .
 lazygit
+code .
+git add Assets/ThirdParty*
+git status
+git check-ignore -v Assets/ThirdParty/UberLogger*
+code .
+git check-ignore -v .\Assets\ThirdParty\UberLogger\README.md
+git submodule
+explorer .
+rg "UberLogger" .
+git submodule deinit
+git submodule deinit --all
+git status
+git add Assets/ThirdParty*
+git status
+git check-ignore -v .\Assets\ThirdParty\UberLogger\README.md
+cd .\Assets\ThirdParty\UberLogger\
+git status
+cd ../../..
+git submodule deinit -f Assets/ThirdParty/UberLogger
+git rm -f .\Assets\ThirdParty\UberLogger\
+git status
+git add --all
+git status
+git commit -m "Add UberLogger"
+lazygit
