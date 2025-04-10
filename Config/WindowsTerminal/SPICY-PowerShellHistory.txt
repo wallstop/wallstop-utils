@@ -4414,3 +4414,48 @@ git add --all
 git status
 git commit -m "Add UberLogger"
 lazygit
+scoop update discord
+git status
+lazygit
+cd ..
+ls
+cd .\Reddit\
+ls
+mkdir json-formatter
+cd .\json-formatter\
+git init
+git remote add origin git@github.com:wallstop/json-formatter.git
+cls
+git fetch --all
+git pull origin main
+lazygit
+touch .gitignore
+lazygit
+npm install prettier
+git diff .\formatter.js
+git status
+git diff origin/main formatter.js
+git status
+git checkout formatter.js
+git status
+git diff origin/main formatter.js
+git commit -m "Add node_modules to gitignore"
+lazygit
+cd ..
+mkdir gantt-chart-tool
+git init
+git remote add origin git@github.com:wallstop/gantt-chart-tool.git
+lazygit
+ls
+explorer .
+ls
+cd .\gantt-chart-tool\
+git init
+git remote add origin git@github.com:wallstop/gantt-chart-tool.git
+lazygit
+git pull origin main
+git fetch --all
+lazygit
+cd ../..
+cd .\IshoBoy\
+lazygit
