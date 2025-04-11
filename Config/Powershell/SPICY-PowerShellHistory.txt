@@ -4459,3 +4459,24 @@ lazygit
 cd ../..
 cd .\IshoBoy\
 lazygit
+cd ..\DxMessaging-Unity\
+git status
+cd .\Packages\
+cd .\com.wallstop-studios.dxmessaging\
+cd ../
+cd .\com.wallstop-studios.unity-helpers\
+code .
+lazygit
+cd ..
+cd .\com.wallstop-studios.dxmessaging\
+npm publish
+cd ..\com.wallstop-studios.unity-helpers\
+npm publish
+npm install
+npm install -g npm@11.3.0
+scoop list | rg npm
+scoop list | rg node
+scoop update *
+npm login
+npm publish
+cd ..\com.wallstop-studios.dxmessaging\
