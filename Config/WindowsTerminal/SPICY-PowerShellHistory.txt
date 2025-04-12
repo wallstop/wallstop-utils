@@ -4480,3 +4480,16 @@ scoop update *
 npm login
 npm publish
 cd ..\com.wallstop-studios.dxmessaging\
+lazygit
+d:
+cd .\Code\DxMessaging-Unity\Packages\com.wallstop-studios.dxmessaging\
+git status
+git add --all
+git commit -m "Performance work"
+lazygit
+git diff origin/master
+lazygit
+code .
+lazygit
+code .
+lazygit
