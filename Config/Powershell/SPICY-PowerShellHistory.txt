@@ -4493,3 +4493,53 @@ code .
 lazygit
 code .
 lazygit
+code .
+lazygit
+cd D:\code\IshoBoy\
+git status
+git diff
+git add --al
+git checkout -b dev/wallstop/package-updates
+d:
+cd .\Code\DxMessaging-Unity\Packages\com.wallstop-studios.dxmessaging\
+code .
+lazygit
+cd D:\code\Shiro\
+git checkout main
+lazygit
+git pull origin main
+lazygit
+cd D:\code\IshoBoy\
+git status
+lazygit
+Plazygit
+lazygit
+cd D:\code\Shiro\
+lazygit
+cls
+scoop update *
+d:
+cd code/shiro
+lazygit
+cd D:\code\IshoBoy\
+lazygit
+d:
+cd code/reddit
+ls
+mkdir UnityCloudBuildSteamUploader
+cd .\UnityCloudBuildSteamUploader\
+git init
+git remote add origin git@github.com:aschearer/UnityCloudBuildSteamUploader.git
+git fetch --all
+git checkout master
+lazygit
+cd ..\DxMessaging-Unity\
+cd .\Packages\com.wallstop-studios.dxcommandterminal\
+git status
+git add --all
+pip install pre-commit
+pre-commit install
+git status
+git diff origin/main
+git diff origin/master
+lazygit
