@@ -4543,3 +4543,13 @@ git status
 git diff origin/main
 git diff origin/master
 lazygit
+d:
+cd .\Code\DxMessaging-Unity\
+d:
+cd code/wallstop-utils
+code .
+.\Scripts\Utils\BackupDxMessaging.ps1
+code .
+.\Scripts\Utils\BackupDxMessaging.ps1
+cd .\Packages\com.wallstop-studios.dxcommandterminal\
+lazygit
