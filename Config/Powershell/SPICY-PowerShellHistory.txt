@@ -4553,3 +4553,20 @@ code .
 .\Scripts\Utils\BackupDxMessaging.ps1
 cd .\Packages\com.wallstop-studios.dxcommandterminal\
 lazygit
+d:
+cd .\Code\DxMessaging-Unity\Packages\com.wallstop-studios.dxcommandterminal\
+lazygit
+npm install prettier
+git status
+code .
+git status
+git diff package.json
+git checkout package.json
+git checkout package-lock.json
+rm package-lock.json
+git status
+npm install --global prettier
+git status
+explorer .
+git status
+lazygit
