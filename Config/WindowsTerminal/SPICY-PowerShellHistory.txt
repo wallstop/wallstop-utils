@@ -4570,3 +4570,9 @@ git status
 explorer .
 git status
 lazygit
+d:
+cd code/wallstop-utils
+.\Scripts\komorebi\restartkomorebi.ps1
+d:
+cd .\Code\DxMessaging-Unity\Packages\com.wallstop-studios.dxcommandterminal\
+lazygit
