@@ -4576,3 +4576,14 @@ cd code/wallstop-utils
 d:
 cd .\Code\DxMessaging-Unity\Packages\com.wallstop-studios.dxcommandterminal\
 lazygit
+d:
+cd code/wallstop-utils
+scoop update *
+.\Scripts\komorebi\restartkomorebi.ps1
+komorebic reload-configuration
+komorebic
+komorebic gui
+.\scripts\winget\WinGetUpdate.ps1
+code .
+code .
+lazygit
