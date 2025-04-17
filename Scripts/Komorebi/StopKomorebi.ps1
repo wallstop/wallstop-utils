@@ -1,1 +1,2 @@
-Stop-Process -Name "Komorebi" -ErrorAction SilentlyContinue
+Stop-Process -Name "komorebi" -ErrorAction SilentlyContinue
+Stop-Process -Name "whkd" -ErrorAction SilentlyContinue
