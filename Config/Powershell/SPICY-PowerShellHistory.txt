@@ -4587,3 +4587,8 @@ komorebic gui
 code .
 code .
 lazygit
+git status
+git commit -m "Lots of progress"
+lazygit
+code .
+cd ..\DxMessaging-Unity\
