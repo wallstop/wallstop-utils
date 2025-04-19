@@ -4592,3 +4592,57 @@ git commit -m "Lots of progress"
 lazygit
 code .
 cd ..\DxMessaging-Unity\
+lazygit
+lazygit
+explorer .
+lazygit
+code .
+lazygit
+git pull origin master
+git rebase --abort
+git checkout master
+git pull origin master
+lazygit
+code .
+cd ..\com.wallstop-studios.unity-helpers\
+code .
+lazygit
+rm .\package-lock.json
+rm .\package-lock.json.meta
+lazygit
+cd ..\com.wallstop-studios.dxcommandterminal\
+code .
+cd ..
+code .
+cd .\com.wallstop-studios.dxcommandterminal\
+git status
+git add --all
+git commit -m "Fix npm-publish script for manual runs"
+git push origin master
+cd ..\com.wallstop-studios.unity-helpers\
+git status
+git add --all
+git status
+git commit -m "Fix npm-publish script for manual runs"
+git push origin main
+cd ..
+cd .\TextTween\
+git fetch --all
+git checkout main
+git pull origin main
+git checkout -b dev/wallstop/better-npm-publish
+git status
+lazygit
+cd ..\com.wallstop-studios.unity-helpers\
+lazygit
+git push origin main
+git checkout -b dev/wallstop/better-npm-publish2
+lazygit
+git checkout main
+git pull origin main
+git reset --hard origin/main
+cd ..\com.wallstop-studios.dxmessaging\
+git status
+git add --all
+git commit -m "Fix npm-publish script for manual runs"
+git push origin master
