@@ -4646,3 +4646,39 @@ git status
 git add --all
 git commit -m "Fix npm-publish script for manual runs"
 git push origin master
+git checkout -b dev/wallstop/compiletime-perf
+code .
+git status
+git add --all
+git status
+lazygit
+git add --all
+git stash
+git status
+git add --all
+git commit -m "In progress"
+git checkout master
+cd d:/code/ishoboy
+git status
+git add --all
+git stash
+git pull origin main
+git fetch --all
+git checkout dev/wallstop/mac-builds
+cd ..\DxMessaging-Unity\Packages\com.wallstop-studios.dxmessaging\
+git reflog
+git checkout dev/wallstop/compiletime-perf
+cd ..
+code .
+cd ..
+code .
+cd .\Packages\com.wallstop-studios.dxmessaging\
+ping -t 8.8.8.8
+lazygit
+code .
+lazygit
+cd D:\code\Shiro\
+lazygit
+git checkout -b dev/wallstop/even-better-packages
+cls
+lazygit
