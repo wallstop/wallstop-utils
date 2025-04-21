@@ -4682,3 +4682,41 @@ lazygit
 git checkout -b dev/wallstop/even-better-packages
 cls
 lazygit
+cd ..\DxMessaging-Unity\
+cd ..\IshoBoy\
+git status
+git diff
+git pull origin master
+git checkout -b dev/wallstop/more-defaults
+code .
+lazygit
+cd ..\com.wallstop-studios.unity-helpers\
+code .
+lazygit
+cd ..
+code .
+lazygit
+cd .\com.wallstop-studios.unity-helpers\
+lazygit
+git status
+git diff
+git add --all
+git stsah
+git stash
+lazygit
+cd ..\com.wallstop-studios.dxmessaging\
+code .
+lazygit
+lazygit 
+code .
+lazygit
+cls
+ls
+cls
+cd ..
+ls
+cd REddit
+ls
+cd .\UnityCloudBuildSteamUploader\
+ls
+code .
