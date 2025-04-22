@@ -4720,3 +4720,16 @@ ls
 cd .\UnityCloudBuildSteamUploader\
 ls
 code .
+cd ..\com.wallstop-studios.unity-helpers\
+git status
+code .
+lazygit
+cd ../..
+cd .\IshoBoy\
+git checkout -b dev/wallstop/cloud-builds
+git status
+lazygit
+cd scr
+cd Assets/scripts
+code .
+lazygit
