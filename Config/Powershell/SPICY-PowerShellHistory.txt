@@ -4733,3 +4733,15 @@ cd scr
 cd Assets/scripts
 code .
 lazygit
+cd ..
+cd .\com.wallstop-studios.dxmessaging\
+code .
+lazygit
+cd d:\code\Shiro\
+lazygit
+cd ..\com.wallstop-studios.dxcommandterminal\
+git status
+git diff
+code .
+layzgit
+lazygit
