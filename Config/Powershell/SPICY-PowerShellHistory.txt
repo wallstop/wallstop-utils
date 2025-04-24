@@ -4745,3 +4745,9 @@ git diff
 code .
 layzgit
 lazygit
+cd ..\com.wallstop-studios.unity-helpers\
+dotnet csharpier .
+lazygit
+git checkout -b dev/wallstop/logging
+code .
+lazygit
