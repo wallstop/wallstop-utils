@@ -16,7 +16,4 @@ if (Test-Path -Path $sourcePath) {
   Write-Host "Windows Terminal settings file not found!"
 }
 
-$computerName = $env:COMPUTERNAME
-Get-Content -Path (Get-PSReadLineOption).HistorySavePath | Out-File -FilePath "$backupFolder\$computerName-PowerShellHistory.txt"
-Write-Host "Backed up PowerShellHistory for $computerName"
 Pop-Location
