@@ -4751,3 +4751,24 @@ lazygit
 git checkout -b dev/wallstop/logging
 code .
 lazygit
+cd d:/code/wallstop-utils
+code .
+git status
+pip install git-filter-repo
+git filter-repo --path .\Config\WindowsTerminal\*.txt --invert-paths
+git filter-repo --path .\Config\WindowsTerminal\*.txt --invert-paths --force
+git status
+git stauts
+git status
+git filter-repo --path Config/WindowsTerminal/DESKTOP-LEOHRAB-PowerShellHistory.txt --invert-paths --force
+git filter-repo --path Config/WindowsTerminal/PERIPHERAL-PowerShellHistory.txt --invert-paths --force
+git filter-repo --path Config/WindowsTerminal/SPICY-PowerShellHistory.txt --invert-paths --force
+git status
+git add --all
+git commit -m "Remove history backup"
+git push origin main --force
+lazygit
+git remote add origin git@github.com:wallstop/wallstop-utils.git
+git push origin main --force
+cd ../..
+lazygit
