@@ -11,7 +11,7 @@ try {
   ./Komorebi/KomorebiBackup.ps1
   ./PowerToys/PowerToysBackup.ps1
   ./WinGet/WinGetUpdate.ps1
-  ./Komorebi/StartKomorebi.ps1
+  ./Komorebi/RestartKomorebi.ps1
   $date = Get-Date
   $dateString = "{0:yyyy/MM/dd hh:mm:ss}" -f $date
   git add --all
