@@ -81,6 +81,11 @@
     },
     {
       "kind": "Title",
+      "id": "Select Assembly Definition Asset",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
       "id": "Data Visualizer",
       "matching_strategy": "Equals"
     }
