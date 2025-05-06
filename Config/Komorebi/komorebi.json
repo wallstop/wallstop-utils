@@ -86,6 +86,31 @@
     },
     {
       "kind": "Title",
+      "id": "Odin Validator",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Animation Creator",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Sprite Settings Directory Applier",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Animation Copier",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Prefab Check",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
       "id": "Data Visualizer",
       "matching_strategy": "Equals"
     }
