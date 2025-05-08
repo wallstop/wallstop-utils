@@ -96,6 +96,11 @@
     },
     {
       "kind": "Title",
+      "id": "Extension:",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
       "id": "Sprite Settings Directory Applier",
       "matching_strategy": "Contains"
     },
