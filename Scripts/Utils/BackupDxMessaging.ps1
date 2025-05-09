@@ -1,6 +1,6 @@
 # --- Configuration ---
-$sourcePath = "D:\Code\DxMessaging-Unity"
-$backupDir = "Z:\Backup\Code\DxMessaging"
+$sourcePath = "D:\Code\Packages"
+$backupDir = "Z:\Backup\Code\Packages"
 # Define directories/files to exclude relative to the source path
 # Robocopy's /XD excludes directories matching these names *anywhere* in the tree
 $excludedDirs = @(
