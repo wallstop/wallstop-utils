@@ -116,6 +116,11 @@
     },
     {
       "kind": "Title",
+      "id": "Editor",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
       "id": "Data Visualizer",
       "matching_strategy": "Equals"
     }
