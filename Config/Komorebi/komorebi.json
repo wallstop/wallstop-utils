@@ -20,13 +20,6 @@
     "unfocused_border": "Base03",
     "bar_accent": "Base0D"
   },
-  "stackbar": {
-    "height": 40,
-    "mode": "OnStack",
-    "tabs": {
-      "width": 300
-    }
-  },
   "monitors": [
     {
       "workspaces": [
@@ -112,6 +105,11 @@
     {
       "kind": "Title",
       "id": "Prefab Check",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Import Unity Package",
       "matching_strategy": "Contains"
     },
     {
