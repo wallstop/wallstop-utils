@@ -1,1 +1,1 @@
-{"version":"1.0","name":"NewPlus","properties":{"HideFileExtension":{"value":true},"HideStartingDigits":{"value":true},"TemplateLocation":{"value":"C:\\Users\\wallstop\\AppData\\Local\\Microsoft\\PowerToys\\NewPlus\\Templates"}}}
+{"version":"1.0","name":"NewPlus","properties":{"HideFileExtension":{"value":true},"HideStartingDigits":{"value":true},"ReplaceVariables":{"value":false},"TemplateLocation":{"value":"C:\\Users\\dbfsi\\AppData\\Local\\Microsoft\\PowerToys\\NewPlus\\Templates"}}}

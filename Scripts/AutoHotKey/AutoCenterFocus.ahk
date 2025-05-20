@@ -8,14 +8,8 @@ lastActiveWindow := ""
 CoordMode, Mouse, Screen  ; Ensure mouse coordinates are in screen mode
 CoordMode, Win, Screen    ; Ensure window coordinates are in screen mode
 
-; Setup logging (optional, useful for debugging)
-logFile := A_ScriptDir "\MouseCenterLog.txt"
-
 ; Function to write logs
 WriteLog(msg) {
-    global logFile
-    FormatTime, timestamp,, yyyy-MM-dd HH:mm:ss
-    FileAppend, % "[" timestamp "] " msg "`n", %logFile%
 }
 
 ; Define excluded window classes (including taskbar previews)

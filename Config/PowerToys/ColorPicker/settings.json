@@ -60,13 +60,21 @@
         "Key": false,
         "Value": "%Hn, %Wh%, %Bn%"
       },
+      "CIEXYZ": {
+        "Key": false,
+        "Value": "XYZ(%Xv, %Yv, %Zv)"
+      },
       "CIELAB": {
         "Key": false,
         "Value": "CIELab(%Lc, %Ca, %Cb)"
       },
-      "CIEXYZ": {
+      "Oklab": {
         "Key": false,
-        "Value": "XYZ(%Xv, %Yv, %Zv)"
+        "Value": "oklab(%Lo, %Oa, %Ob)"
+      },
+      "Oklch": {
+        "Key": false,
+        "Value": "oklch(%Lo, %Oc, %Oh)"
       },
       "VEC4": {
         "Key": false,

@@ -1,9 +1,9 @@
 {
   "properties": {
-    "ShowCustomPreview": {
-      "value": true
+    "IsAdvancedAIEnabled": {
+      "value": false
     },
-    "SendPasteKeyCombination": {
+    "ShowCustomPreview": {
       "value": true
     },
     "CloseAfterLosingFocus": {
@@ -81,6 +81,31 @@
           "isShown": true
         },
         "paste-as-html-file": {
+          "shortcut": {
+            "win": false,
+            "ctrl": false,
+            "alt": false,
+            "shift": false,
+            "code": 0,
+            "key": ""
+          },
+          "isShown": true
+        }
+      },
+      "transcode": {
+        "isShown": true,
+        "transcode-to-mp3": {
+          "shortcut": {
+            "win": false,
+            "ctrl": false,
+            "alt": false,
+            "shift": false,
+            "code": 0,
+            "key": ""
+          },
+          "isShown": true
+        },
+        "transcode-to-mp4": {
           "shortcut": {
             "win": false,
             "ctrl": false,

@@ -117,9 +117,14 @@
       "id": "Editor",
       "matching_strategy": "Contains"
     },
-        {
+    {
       "kind": "Title",
       "id": "Color",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Welcome to JetBrains",
       "matching_strategy": "Contains"
     },
     {

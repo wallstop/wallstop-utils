@@ -77,7 +77,7 @@ try {
 
   # Execute Robocopy
   Write-Host "Running Robocopy..."
-  $process = Start-Process Robocopy.exe -ArgumentList $robocopyArgs -Wait -NoNewWindow -PassThru
+  $process = Start-Process Robocopy.exe -ArgumentList $robocopyArgs -Wait -NoNewWindow -Passthru
 
   # Check Robocopy Exit Code (See Robocopy documentation for meanings)
   # 0 = No errors, no files copied
@@ -112,7 +112,7 @@ try {
     '/NJH',# No Job Header
     '/NJS' # No Job Summary
   )
-  $processMove = Start-Process Robocopy.exe -ArgumentList $robocopyMoveArgs -Wait -NoNewWindow -PassThru
+  $processMove = Start-Process Robocopy.exe -ArgumentList $robocopyMoveArgs -Wait -NoNewWindow -Passthru
   if ($processMove.ExitCode -ge 8) {
     Write-Error "Robocopy failed during ZIP file move with exit code $($processMove.ExitCode). The ZIP might still be in '$env:TEMP'."
     exit 1 # Exit the script
