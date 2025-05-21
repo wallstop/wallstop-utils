@@ -1,11 +1,9 @@
 {
     "$help": "https://aka.ms/terminal-documentation",
     "$schema": "https://aka.ms/terminal-profiles-schema",
-    "actions": 
-    [
+    "actions": [
         {
-            "command": 
-            {
+            "command": {
                 "action": "resizePane",
                 "direction": "down"
             },
@@ -16,16 +14,14 @@
             "id": "User.find"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "resizePane",
                 "direction": "left"
             },
             "id": "User.resizePane.2A0DA8E0"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "splitPane",
                 "split": "auto",
                 "splitMode": "duplicate"
@@ -37,72 +33,63 @@
             "id": "User.paste"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "resizePane",
                 "direction": "up"
             },
             "id": "User.resizePane.6CD791B"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "splitPane",
                 "split": "down"
             },
             "id": "User.splitPane.D5151347"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "copy",
                 "singleLine": false
             },
             "id": "User.copy.644BA8F2"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "moveFocus",
                 "direction": "right"
             },
             "id": "User.moveFocus.87C324ED"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "splitPane",
                 "split": "right"
             },
             "id": "User.splitPane.864CD510"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "resizePane",
                 "direction": "right"
             },
             "id": "User.resizePane.87C324ED"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "moveFocus",
                 "direction": "down"
             },
             "id": "User.moveFocus.F747588A"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "moveFocus",
                 "direction": "left"
             },
             "id": "User.moveFocus.2A0DA8E0"
         },
         {
-            "command": 
-            {
+            "command": {
                 "action": "moveFocus",
                 "direction": "up"
             },
@@ -112,8 +99,7 @@
     "copyFormatting": "none",
     "copyOnSelect": false,
     "defaultProfile": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
-    "keybindings": 
-    [
+    "keybindings": [
         {
             "id": "User.resizePane.F747588A",
             "keys": "ctrl+shift+down"
@@ -211,20 +197,16 @@
             "keys": "ctrl+left"
         }
     ],
-    "newTabMenu": 
-    [
+    "newTabMenu": [
         {
             "type": "remainingProfiles"
         }
     ],
-    "profiles": 
-    {
-        "defaults": 
-        {
-            "colorScheme": "One Half Dark"
+    "profiles": {
+        "defaults": {
+            "colorScheme": "Arthur"
         },
-        "list": 
-        [
+        "list": [
             {
                 "commandline": "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
                 "guid": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
@@ -281,7 +263,100 @@
             }
         ]
     },
-    "schemes": [],
+    "schemes": [
+        {
+            "background": "#212121",
+            "black": "#151515",
+            "blue": "#6C99BB",
+            "brightBlack": "#505050",
+            "brightBlue": "#6C99BB",
+            "brightCyan": "#7DD6CF",
+            "brightGreen": "#7E8E50",
+            "brightPurple": "#9F4E85",
+            "brightRed": "#AC4142",
+            "brightWhite": "#F5F5F5",
+            "brightYellow": "#E5B567",
+            "cursorColor": "#D0D0D0",
+            "cyan": "#7DD6CF",
+            "foreground": "#D0D0D0",
+            "green": "#7E8E50",
+            "name": "Afterglow",
+            "purple": "#9F4E85",
+            "red": "#AC4142",
+            "selectionBackground": "#303030",
+            "white": "#D0D0D0",
+            "yellow": "#E5B567"
+        },
+        {
+            "background": "#1C1C1C",
+            "black": "#3D352A",
+            "blue": "#6495ED",
+            "brightBlack": "#554444",
+            "brightBlue": "#87CEEB",
+            "brightCyan": "#B0C4DE",
+            "brightGreen": "#88AA22",
+            "brightPurple": "#996600",
+            "brightRed": "#CC5533",
+            "brightWhite": "#DDCCBB",
+            "brightYellow": "#FFA75D",
+            "cursorColor": "#E2BBEF",
+            "cyan": "#B0C4DE",
+            "foreground": "#DDEEDD",
+            "green": "#86AF80",
+            "name": "Arthur",
+            "purple": "#DEB887",
+            "red": "#CD5C5C",
+            "selectionBackground": "#4D4D4D",
+            "white": "#BBAA99",
+            "yellow": "#E8AE5B"
+        },
+        {
+            "background": "#1F2430",
+            "black": "#191E2A",
+            "blue": "#6DCBFA",
+            "brightBlack": "#686868",
+            "brightBlue": "#73D0FF",
+            "brightCyan": "#95E6CB",
+            "brightGreen": "#BAE67E",
+            "brightPurple": "#D4BFFF",
+            "brightRed": "#F28779",
+            "brightWhite": "#FFFFFF",
+            "brightYellow": "#FFD580",
+            "cursorColor": "#FFCC66",
+            "cyan": "#90E1C6",
+            "foreground": "#CBCCC6",
+            "green": "#A6CC70",
+            "name": "Ayu Mirage",
+            "purple": "#CFBAFA",
+            "red": "#ED8274",
+            "selectionBackground": "#33415E",
+            "white": "#C7C7C7",
+            "yellow": "#FAD07B"
+        },
+        {
+            "background": "#2B2B2B",
+            "black": "#000000",
+            "blue": "#6D9CBE",
+            "brightBlack": "#323232",
+            "brightBlue": "#9FCEF0",
+            "brightCyan": "#A0CEF0",
+            "brightGreen": "#83D182",
+            "brightPurple": "#FFFFFF",
+            "brightRed": "#FF7B6B",
+            "brightWhite": "#FFFFFF",
+            "brightYellow": "#FFFF7C",
+            "cursorColor": "#FFFFFF",
+            "cyan": "#6E9CBE",
+            "foreground": "#E6E1DC",
+            "green": "#519F50",
+            "name": "Broadcast",
+            "purple": "#D0D0FF",
+            "red": "#DA4939",
+            "selectionBackground": "#5A647E",
+            "white": "#FFFFFF",
+            "yellow": "#FFD24A"
+        }
+    ],
     "startOnUserLogin": true,
     "themes": []
 }

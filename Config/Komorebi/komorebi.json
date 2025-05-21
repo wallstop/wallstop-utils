@@ -114,12 +114,12 @@
     },
     {
       "kind": "Title",
-      "id": "Editor",
+      "id": "Color",
       "matching_strategy": "Contains"
     },
     {
       "kind": "Title",
-      "id": "Color",
+      "id": "Claude",
       "matching_strategy": "Contains"
     },
     {
