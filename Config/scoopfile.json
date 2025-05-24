@@ -3,253 +3,253 @@
         {
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
-            "Updated": "2025-05-22T21:29:23-07:00",
+            "Updated": "2025-05-23T21:29:27-07:00",
             "Manifests": 1389
         },
         {
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
-            "Updated": "2025-05-22T22:28:12-07:00",
-            "Manifests": 2165
+            "Updated": "2025-05-23T21:35:39-07:00",
+            "Manifests": 2166
         },
         {
             "Name": "java",
             "Source": "https://github.com/ScoopInstaller/Java",
-            "Updated": "2025-05-21T09:26:17-07:00",
+            "Updated": "2025-05-23T13:22:01-07:00",
             "Manifests": 299
         }
     ],
     "apps": [
         {
-            "Info": "",
-            "Source": "main",
-            "Version": "24.09",
+            "Name": "7zip",
             "Updated": "2025-05-20T09:49:19.790584-07:00",
-            "Name": "7zip"
+            "Info": "",
+            "Version": "24.09",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "1.8.0.142",
+            "Name": "audioswitcher",
             "Updated": "2025-05-20T10:18:26.1326218-07:00",
-            "Name": "audioswitcher"
+            "Info": "",
+            "Version": "1.8.0.142",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "2.0.19",
+            "Name": "autohotkey",
             "Updated": "2025-05-20T09:58:15.5072442-07:00",
-            "Name": "autohotkey"
+            "Info": "",
+            "Version": "2.0.19",
+            "Source": "extras"
         },
         {
+            "Name": "aws",
+            "Updated": "2025-05-23T23:30:35.1817979-07:00",
             "Info": "",
-            "Source": "main",
-            "Version": "2.27.21",
-            "Updated": "2025-05-22T23:30:36.4224868-07:00",
-            "Name": "aws"
+            "Version": "2.27.22",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "main",
-            "Version": "1.2.0",
+            "Name": "base64",
             "Updated": "2025-05-20T13:20:05.4414174-07:00",
-            "Name": "base64"
+            "Info": "",
+            "Version": "1.2.0",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "1.1.0",
+            "Name": "chatgpt",
             "Updated": "2025-05-20T10:02:19.3464179-07:00",
-            "Name": "chatgpt"
+            "Info": "",
+            "Version": "1.1.0",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "main",
-            "Version": "3.14.1",
+            "Name": "dark",
             "Updated": "2025-05-20T10:15:49.4024887-07:00",
-            "Name": "dark"
+            "Info": "",
+            "Version": "3.14.1",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "2.2.0",
+            "Name": "deluge",
             "Updated": "2025-05-20T11:12:29.0039929-07:00",
-            "Name": "deluge"
+            "Info": "",
+            "Version": "2.2.0",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "1.0.9188-21",
+            "Name": "discord",
             "Updated": "2025-05-20T10:09:53.2863201-07:00",
-            "Name": "discord"
+            "Info": "",
+            "Version": "1.0.9188-21",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "1.4.1.1026",
+            "Name": "everything",
             "Updated": "2025-05-20T10:16:24.6922676-07:00",
-            "Name": "everything"
+            "Info": "",
+            "Version": "1.4.1.1026",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "225",
+            "Name": "fancontrol",
             "Updated": "2025-05-21T23:30:38.3489735-07:00",
-            "Name": "fancontrol"
+            "Info": "",
+            "Version": "225",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "main",
-            "Version": "7.1.1",
+            "Name": "ffmpeg",
             "Updated": "2025-05-20T10:02:14.8156866-07:00",
-            "Name": "ffmpeg"
+            "Info": "",
+            "Version": "7.1.1",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "1.19.5",
+            "Name": "flow-launcher",
             "Updated": "2025-05-20T10:16:36.0346187-07:00",
-            "Name": "flow-launcher"
+            "Info": "",
+            "Version": "1.19.5",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "3.0.4",
+            "Name": "gimp",
             "Updated": "2025-05-22T11:24:33.3482936-07:00",
-            "Name": "gimp"
+            "Info": "",
+            "Version": "3.0.4",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "4.4.1",
+            "Name": "godot",
             "Updated": "2025-05-20T10:15:00.9222322-07:00",
-            "Name": "godot"
+            "Info": "",
+            "Version": "4.4.1",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "137.0.7151.41",
+            "Name": "googlechrome",
             "Updated": "2025-05-22T23:30:45.4135754-07:00",
-            "Name": "googlechrome"
+            "Info": "",
+            "Version": "137.0.7151.41",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "main",
-            "Version": "2.64.4",
+            "Name": "innounp",
             "Updated": "2025-05-22T11:23:54.8541407-07:00",
-            "Name": "innounp"
+            "Info": "",
+            "Version": "2.64.4",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "0.1.37",
+            "Name": "komorebi",
             "Updated": "2025-05-20T09:48:55.8000352-07:00",
-            "Name": "komorebi"
+            "Info": "",
+            "Version": "0.1.37",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "0.50.0",
+            "Name": "lazygit",
             "Updated": "2025-05-20T09:48:39.9241568-07:00",
-            "Name": "lazygit"
+            "Info": "",
+            "Version": "0.50.0",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "8.8.1",
+            "Name": "notepadplusplus",
             "Updated": "2025-05-20T09:49:50.9183724-07:00",
-            "Name": "notepadplusplus"
+            "Info": "",
+            "Version": "8.8.1",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "1.8.10",
+            "Name": "obsidian",
             "Updated": "2025-05-20T11:04:55.6894799-07:00",
-            "Name": "obsidian"
+            "Info": "",
+            "Version": "1.8.10",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "main",
-            "Version": "1.2.5",
+            "Name": "powershell-beautifier",
             "Updated": "2025-05-20T13:34:07.5742884-07:00",
-            "Name": "powershell-beautifier"
+            "Info": "",
+            "Version": "1.2.5",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "0.91.1",
+            "Name": "powertoys",
             "Updated": "2025-05-20T10:16:18.2650794-07:00",
-            "Name": "powertoys"
+            "Info": "",
+            "Version": "0.91.1",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "main",
-            "Version": "0.2022.03.09",
+            "Name": "pshazz",
             "Updated": "2025-05-20T09:49:56.2579339-07:00",
-            "Name": "pshazz"
+            "Info": "",
+            "Version": "0.2022.03.09",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "main",
-            "Version": "7.5.1",
+            "Name": "pwsh",
             "Updated": "2025-05-20T10:54:59.4090414-07:00",
-            "Name": "pwsh"
+            "Info": "",
+            "Version": "7.5.1",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "main",
-            "Version": "14.1.1",
+            "Name": "ripgrep",
             "Updated": "2025-05-20T13:41:38.1851713-07:00",
-            "Name": "ripgrep"
+            "Info": "",
+            "Version": "14.1.1",
+            "Source": "main"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "2.41.2",
+            "Name": "screentogif",
             "Updated": "2025-05-20T10:01:57.4502391-07:00",
-            "Name": "screentogif"
+            "Info": "",
+            "Version": "2.41.2",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "7.55.0",
+            "Name": "signal",
             "Updated": "2025-05-21T23:30:41.9919756-07:00",
-            "Name": "signal"
+            "Info": "",
+            "Version": "7.55.0",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": null,
-            "Version": "128.10.1esr",
+            "Name": "thunderbird-esr",
             "Updated": "2025-05-22T14:12:47.6300322-07:00",
-            "Name": "thunderbird-esr"
+            "Info": "",
+            "Version": "128.10.1esr",
+            "Source": null
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "1.100.2",
+            "Name": "vscode",
             "Updated": "2025-05-20T09:49:26.1399422-07:00",
-            "Name": "vscode"
+            "Info": "",
+            "Version": "1.100.2",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "20240203-110809-5046fc22",
+            "Name": "wezterm",
             "Updated": "2025-05-21T09:56:02.5341677-07:00",
-            "Name": "wezterm"
+            "Info": "",
+            "Version": "20240203-110809-5046fc22",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "0.2.9",
+            "Name": "whkd",
             "Updated": "2025-05-20T10:50:21.2315271-07:00",
-            "Name": "whkd"
+            "Info": "",
+            "Version": "0.2.9",
+            "Source": "extras"
         },
         {
-            "Info": "",
-            "Source": "extras",
-            "Version": "1.22.11141.0",
+            "Name": "windows-terminal",
             "Updated": "2025-05-20T09:49:09.4470004-07:00",
-            "Name": "windows-terminal"
+            "Info": "",
+            "Version": "1.22.11141.0",
+            "Source": "extras"
         }
     ]
 }
