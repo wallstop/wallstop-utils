@@ -1,4 +1,24 @@
 {
+    "buckets": [
+        {
+            "Name": "main",
+            "Source": "https://github.com/ScoopInstaller/Main",
+            "Updated": "2025-06-04T21:30:03-07:00",
+            "Manifests": 1389
+        },
+        {
+            "Name": "extras",
+            "Source": "https://github.com/ScoopInstaller/Extras",
+            "Updated": "2025-06-04T21:29:56-07:00",
+            "Manifests": 2167
+        },
+        {
+            "Name": "java",
+            "Source": "https://github.com/ScoopInstaller/Java",
+            "Updated": "2025-06-02T09:27:15-07:00",
+            "Manifests": 299
+        }
+    ],
     "apps": [
         {
             "Updated": "2025-05-20T09:49:19.790584-07:00",
@@ -22,10 +42,10 @@
             "Source": "extras"
         },
         {
-            "Updated": "2025-06-03T23:30:36.6298723-07:00",
+            "Updated": "2025-06-04T23:30:36.4078812-07:00",
             "Name": "aws",
             "Info": "",
-            "Version": "2.27.28",
+            "Version": "2.27.29",
             "Source": "main"
         },
         {
@@ -197,10 +217,10 @@
             "Source": "extras"
         },
         {
-            "Updated": "2025-05-28T23:30:48.7411842-07:00",
+            "Updated": "2025-06-04T23:30:41.0035372-07:00",
             "Name": "signal",
             "Info": "",
-            "Version": "7.56.0",
+            "Version": "7.56.1",
             "Source": "extras"
         },
         {
@@ -244,26 +264,6 @@
             "Info": "",
             "Version": "1.22.11141.0",
             "Source": "extras"
-        }
-    ],
-    "buckets": [
-        {
-            "Name": "main",
-            "Source": "https://github.com/ScoopInstaller/Main",
-            "Updated": "2025-06-03T21:30:44-07:00",
-            "Manifests": 1389
-        },
-        {
-            "Name": "extras",
-            "Source": "https://github.com/ScoopInstaller/Extras",
-            "Updated": "2025-06-03T21:29:43-07:00",
-            "Manifests": 2166
-        },
-        {
-            "Name": "java",
-            "Source": "https://github.com/ScoopInstaller/Java",
-            "Updated": "2025-06-02T09:27:15-07:00",
-            "Manifests": 299
         }
     ]
 }
