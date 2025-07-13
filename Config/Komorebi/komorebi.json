@@ -21,7 +21,15 @@
     "bar_accent": "Base0D"
   },
   "monitors": [
+    {
+      "workspaces": [
         {
+          "name": "Middle",
+          "layout": "Grid"
+        }
+      ]
+    },
+    {
       "workspaces": [
         {
           "name": "Left",
@@ -29,19 +37,11 @@
         }
       ]
     },
-        {
+    {
       "workspaces": [
         {
           "name": "Right",
           "layout": "Rows"
-        }
-      ]
-    },
-    {
-      "workspaces": [
-        {
-          "name": "Middle",
-          "layout": "Grid"
         }
       ]
     }
