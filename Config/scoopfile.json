@@ -1,415 +1,415 @@
 {
-    "apps": [
-        {
-            "Updated": "2025-08-03T23:30:11.999027-07:00",
-            "Name": "7zip",
-            "Info": "",
-            "Version": "25.01",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-05-20T10:18:26.1326218-07:00",
-            "Name": "audioswitcher",
-            "Info": "",
-            "Version": "1.8.0.142",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-05-20T09:58:15.5072442-07:00",
-            "Name": "autohotkey",
-            "Info": "",
-            "Version": "2.0.19",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-06T23:30:42.7445696-07:00",
-            "Name": "aws",
-            "Info": "",
-            "Version": "2.28.4",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-07-25T23:30:42.8852972-07:00",
-            "Name": "base64",
-            "Info": "",
-            "Version": "1.3.0",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-08-02T16:28:23.0035961-07:00",
-            "Name": "busybox",
-            "Info": "",
-            "Version": "5579-g5749feb35",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-07-14T23:30:11.1680046-07:00",
-            "Name": "cacert",
-            "Info": "",
-            "Version": "2025-07-15",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-05-20T10:02:19.3464179-07:00",
-            "Name": "chatgpt",
-            "Info": "",
-            "Version": "1.1.0",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-05-20T10:15:49.4024887-07:00",
-            "Name": "dark",
-            "Info": "",
-            "Version": "3.14.1",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-05-20T11:12:29.0039929-07:00",
-            "Name": "deluge",
-            "Info": "",
-            "Version": "2.2.0",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-05-20T10:09:53.2863201-07:00",
-            "Name": "discord",
-            "Info": "",
-            "Version": "1.0.9188-21",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-07-23T09:44:58.8331315-07:00",
-            "Name": "everything",
-            "Info": "",
-            "Version": "1.4.1.1028",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-03T23:30:13.2612075-07:00",
-            "Name": "fancontrol",
-            "Info": "",
-            "Version": "229",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-05-20T10:02:14.8156866-07:00",
-            "Name": "ffmpeg",
-            "Info": "",
-            "Version": "7.1.1",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-06-21T07:56:38.5298161-07:00",
-            "Name": "flow-launcher",
-            "Info": "",
-            "Version": "1.20.1",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-07-15T18:46:37.2498344-07:00",
-            "Name": "foobar2000",
-            "Info": "",
-            "Version": "2.24.6",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-07-15T09:17:12.7701919-07:00",
-            "Name": "freac",
-            "Info": "",
-            "Version": "1.1.7",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-02T19:47:00.9831088-07:00",
-            "Name": "gcc",
-            "Info": "",
-            "Version": "13.2.0",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-05-22T11:24:33.3482936-07:00",
-            "Name": "gimp",
-            "Info": "",
-            "Version": "3.0.4",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-06T23:31:41.5573482-07:00",
-            "Name": "go",
-            "Info": "",
-            "Version": "1.24.6",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-05-20T10:15:00.9222322-07:00",
-            "Name": "godot",
-            "Info": "",
-            "Version": "4.4.1",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-06T23:31:46.7489349-07:00",
-            "Name": "googlechrome",
-            "Info": "",
-            "Version": "139.0.7258.67",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-05T18:47:55.455752-07:00",
-            "Name": "graalvm22-jdk17",
-            "Info": "",
-            "Version": "22.3.2",
-            "Source": "java"
-        },
-        {
-            "Updated": "2025-08-02T16:08:30.9685903-07:00",
-            "Name": "gradle",
-            "Info": "",
-            "Version": "9.0.0",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-08-02T16:25:20.7960191-07:00",
-            "Name": "gzip",
-            "Info": "",
-            "Version": "1.3.12",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-06-09T17:44:52.9519505-07:00",
-            "Name": "httrack",
-            "Info": "",
-            "Version": "3.49.2",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-07-31T23:30:49.532757-07:00",
-            "Name": "innounp",
-            "Info": "",
-            "Version": "2.64.6",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-05-20T09:48:55.8000352-07:00",
-            "Name": "komorebi",
-            "Info": "",
-            "Version": "0.1.37",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-03T23:30:15.4575022-07:00",
-            "Name": "lazygit",
-            "Info": "",
-            "Version": "0.54.0",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-07-17T23:32:33.1199179-07:00",
-            "Name": "libreoffice",
-            "Info": "",
-            "Version": "25.2.5",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-07-15T23:30:48.8038029-07:00",
-            "Name": "linqpad",
-            "Info": "",
-            "Version": "8.9.5",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-02T19:47:40.9040589-07:00",
-            "Name": "llvm",
-            "Info": "",
-            "Version": "20.1.8",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-07-31T23:31:01.8566265-07:00",
-            "Name": "nodejs-lts",
-            "Info": "",
-            "Version": "22.18.0",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-07-10T23:30:38.681416-07:00",
-            "Name": "notepadplusplus",
-            "Info": "",
-            "Version": "8.8.3",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-07-28T23:30:52.4640095-07:00",
-            "Name": "obs-studio",
-            "Info": "",
-            "Version": "31.1.2",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-05-20T11:04:55.6894799-07:00",
-            "Name": "obsidian",
-            "Info": "",
-            "Version": "1.8.10",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-05T18:47:19.0739965-07:00",
-            "Name": "openjdk24",
-            "Info": "",
-            "Version": "24.0.2-12",
-            "Source": "java"
-        },
-        {
-            "Updated": "2025-05-20T13:34:07.5742884-07:00",
-            "Name": "powershell-beautifier",
-            "Info": "",
-            "Version": "1.2.5",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-05-20T10:16:18.2650794-07:00",
-            "Name": "powertoys",
-            "Info": "",
-            "Version": "0.91.1",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-05-20T09:49:56.2579339-07:00",
-            "Name": "pshazz",
-            "Info": "",
-            "Version": "0.2022.03.09",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-06-26T12:01:14.7177601-07:00",
-            "Name": "pwsh",
-            "Info": "",
-            "Version": "7.5.2",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-05-20T13:41:38.1851713-07:00",
-            "Name": "ripgrep",
-            "Info": "",
-            "Version": "14.1.1",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-07-12T14:23:58.3711813-07:00",
-            "Name": "rust",
-            "Info": "",
-            "Version": "1.88.0",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-07-20T23:30:20.7284947-07:00",
-            "Name": "screentogif",
-            "Info": "",
-            "Version": "2.41.5",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-06T23:31:51.3600698-07:00",
-            "Name": "signal",
-            "Info": "",
-            "Version": "7.65.0",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-03T23:30:17.51101-07:00",
-            "Name": "sqlite",
-            "Info": "",
-            "Version": "3.50.4",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-06-17T19:57:01.1180104-07:00",
-            "Name": "sqlitebrowser",
-            "Info": "",
-            "Version": "3.13.1",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-07-28T14:18:13.8942349-07:00",
-            "Name": "thunderbird-esr",
-            "Info": "",
-            "Version": "128.10.1esr",
-            "Source": null
-        },
-        {
-            "Updated": "2025-07-18T19:44:07.1014486-07:00",
-            "Name": "ultravnc",
-            "Info": "",
-            "Version": "1.4.3.6",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-06-01T13:35:00.6305406-07:00",
-            "Name": "vlc",
-            "Info": "",
-            "Version": "3.0.21",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-07-29T23:31:03.9138949-07:00",
-            "Name": "vscode",
-            "Info": "",
-            "Version": "1.102.3",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-05-21T09:56:02.5341677-07:00",
-            "Name": "wezterm",
-            "Info": "",
-            "Version": "20240203-110809-5046fc22",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-06-09T19:22:06.1569868-07:00",
-            "Name": "wget",
-            "Info": "",
-            "Version": "1.21.4",
-            "Source": "main"
-        },
-        {
-            "Updated": "2025-05-20T10:50:21.2315271-07:00",
-            "Name": "whkd",
-            "Info": "",
-            "Version": "0.2.9",
-            "Source": "extras"
-        },
-        {
-            "Updated": "2025-08-01T23:30:47.6273359-07:00",
-            "Name": "windows-terminal",
-            "Info": "",
-            "Version": "1.22.12111.0",
-            "Source": "extras"
-        }
-    ],
     "buckets": [
         {
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
-            "Updated": "2025-08-06T21:34:50-07:00",
+            "Updated": "2025-08-07T21:34:35-07:00",
             "Manifests": 1398
         },
         {
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
-            "Updated": "2025-08-06T21:34:52-07:00",
-            "Manifests": 2174
+            "Updated": "2025-08-07T21:37:02-07:00",
+            "Manifests": 2175
         },
         {
             "Name": "nonportable",
             "Source": "https://github.com/ScoopInstaller/Nonportable",
-            "Updated": "2025-08-06T01:49:24-07:00",
+            "Updated": "2025-08-07T19:36:31-07:00",
             "Manifests": 128
         },
         {
             "Name": "java",
             "Source": "https://github.com/ScoopInstaller/Java",
-            "Updated": "2025-08-06T18:53:47-07:00",
+            "Updated": "2025-08-07T05:48:07-07:00",
             "Manifests": 299
+        }
+    ],
+    "apps": [
+        {
+            "Updated": "2025-08-03T23:30:11.999027-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "25.01",
+            "Name": "7zip"
+        },
+        {
+            "Updated": "2025-05-20T10:18:26.1326218-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.8.0.142",
+            "Name": "audioswitcher"
+        },
+        {
+            "Updated": "2025-05-20T09:58:15.5072442-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "2.0.19",
+            "Name": "autohotkey"
+        },
+        {
+            "Updated": "2025-08-07T23:30:41.3601303-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "2.28.5",
+            "Name": "aws"
+        },
+        {
+            "Updated": "2025-07-25T23:30:42.8852972-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "1.3.0",
+            "Name": "base64"
+        },
+        {
+            "Updated": "2025-08-02T16:28:23.0035961-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "5579-g5749feb35",
+            "Name": "busybox"
+        },
+        {
+            "Updated": "2025-07-14T23:30:11.1680046-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "2025-07-15",
+            "Name": "cacert"
+        },
+        {
+            "Updated": "2025-05-20T10:02:19.3464179-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.1.0",
+            "Name": "chatgpt"
+        },
+        {
+            "Updated": "2025-05-20T10:15:49.4024887-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "3.14.1",
+            "Name": "dark"
+        },
+        {
+            "Updated": "2025-05-20T11:12:29.0039929-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "2.2.0",
+            "Name": "deluge"
+        },
+        {
+            "Updated": "2025-05-20T10:09:53.2863201-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.0.9188-21",
+            "Name": "discord"
+        },
+        {
+            "Updated": "2025-07-23T09:44:58.8331315-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.4.1.1028",
+            "Name": "everything"
+        },
+        {
+            "Updated": "2025-08-07T23:30:43.7544402-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "230",
+            "Name": "fancontrol"
+        },
+        {
+            "Updated": "2025-05-20T10:02:14.8156866-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "7.1.1",
+            "Name": "ffmpeg"
+        },
+        {
+            "Updated": "2025-06-21T07:56:38.5298161-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.20.1",
+            "Name": "flow-launcher"
+        },
+        {
+            "Updated": "2025-07-15T18:46:37.2498344-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "2.24.6",
+            "Name": "foobar2000"
+        },
+        {
+            "Updated": "2025-07-15T09:17:12.7701919-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.1.7",
+            "Name": "freac"
+        },
+        {
+            "Updated": "2025-08-02T19:47:00.9831088-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "13.2.0",
+            "Name": "gcc"
+        },
+        {
+            "Updated": "2025-05-22T11:24:33.3482936-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "3.0.4",
+            "Name": "gimp"
+        },
+        {
+            "Updated": "2025-08-06T23:31:41.5573482-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "1.24.6",
+            "Name": "go"
+        },
+        {
+            "Updated": "2025-05-20T10:15:00.9222322-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "4.4.1",
+            "Name": "godot"
+        },
+        {
+            "Updated": "2025-08-06T23:31:46.7489349-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "139.0.7258.67",
+            "Name": "googlechrome"
+        },
+        {
+            "Updated": "2025-08-05T18:47:55.455752-07:00",
+            "Source": "java",
+            "Info": "",
+            "Version": "22.3.2",
+            "Name": "graalvm22-jdk17"
+        },
+        {
+            "Updated": "2025-08-02T16:08:30.9685903-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "9.0.0",
+            "Name": "gradle"
+        },
+        {
+            "Updated": "2025-08-02T16:25:20.7960191-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "1.3.12",
+            "Name": "gzip"
+        },
+        {
+            "Updated": "2025-06-09T17:44:52.9519505-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "3.49.2",
+            "Name": "httrack"
+        },
+        {
+            "Updated": "2025-07-31T23:30:49.532757-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "2.64.6",
+            "Name": "innounp"
+        },
+        {
+            "Updated": "2025-05-20T09:48:55.8000352-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "0.1.37",
+            "Name": "komorebi"
+        },
+        {
+            "Updated": "2025-08-03T23:30:15.4575022-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "0.54.0",
+            "Name": "lazygit"
+        },
+        {
+            "Updated": "2025-07-17T23:32:33.1199179-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "25.2.5",
+            "Name": "libreoffice"
+        },
+        {
+            "Updated": "2025-07-15T23:30:48.8038029-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "8.9.5",
+            "Name": "linqpad"
+        },
+        {
+            "Updated": "2025-08-02T19:47:40.9040589-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "20.1.8",
+            "Name": "llvm"
+        },
+        {
+            "Updated": "2025-07-31T23:31:01.8566265-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "22.18.0",
+            "Name": "nodejs-lts"
+        },
+        {
+            "Updated": "2025-07-10T23:30:38.681416-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "8.8.3",
+            "Name": "notepadplusplus"
+        },
+        {
+            "Updated": "2025-07-28T23:30:52.4640095-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "31.1.2",
+            "Name": "obs-studio"
+        },
+        {
+            "Updated": "2025-05-20T11:04:55.6894799-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.8.10",
+            "Name": "obsidian"
+        },
+        {
+            "Updated": "2025-08-05T18:47:19.0739965-07:00",
+            "Source": "java",
+            "Info": "",
+            "Version": "24.0.2-12",
+            "Name": "openjdk24"
+        },
+        {
+            "Updated": "2025-05-20T13:34:07.5742884-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "1.2.5",
+            "Name": "powershell-beautifier"
+        },
+        {
+            "Updated": "2025-05-20T10:16:18.2650794-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "0.91.1",
+            "Name": "powertoys"
+        },
+        {
+            "Updated": "2025-05-20T09:49:56.2579339-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "0.2022.03.09",
+            "Name": "pshazz"
+        },
+        {
+            "Updated": "2025-06-26T12:01:14.7177601-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "7.5.2",
+            "Name": "pwsh"
+        },
+        {
+            "Updated": "2025-05-20T13:41:38.1851713-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "14.1.1",
+            "Name": "ripgrep"
+        },
+        {
+            "Updated": "2025-08-07T23:33:24.2418669-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "1.89.0",
+            "Name": "rust"
+        },
+        {
+            "Updated": "2025-07-20T23:30:20.7284947-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "2.41.5",
+            "Name": "screentogif"
+        },
+        {
+            "Updated": "2025-08-06T23:31:51.3600698-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "7.65.0",
+            "Name": "signal"
+        },
+        {
+            "Updated": "2025-08-03T23:30:17.51101-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "3.50.4",
+            "Name": "sqlite"
+        },
+        {
+            "Updated": "2025-06-17T19:57:01.1180104-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "3.13.1",
+            "Name": "sqlitebrowser"
+        },
+        {
+            "Updated": "2025-07-28T14:18:13.8942349-07:00",
+            "Source": null,
+            "Info": "",
+            "Version": "128.10.1esr",
+            "Name": "thunderbird-esr"
+        },
+        {
+            "Updated": "2025-07-18T19:44:07.1014486-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.4.3.6",
+            "Name": "ultravnc"
+        },
+        {
+            "Updated": "2025-06-01T13:35:00.6305406-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "3.0.21",
+            "Name": "vlc"
+        },
+        {
+            "Updated": "2025-08-07T23:33:40.6790263-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.103.0",
+            "Name": "vscode"
+        },
+        {
+            "Updated": "2025-05-21T09:56:02.5341677-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "20240203-110809-5046fc22",
+            "Name": "wezterm"
+        },
+        {
+            "Updated": "2025-06-09T19:22:06.1569868-07:00",
+            "Source": "main",
+            "Info": "",
+            "Version": "1.21.4",
+            "Name": "wget"
+        },
+        {
+            "Updated": "2025-05-20T10:50:21.2315271-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "0.2.9",
+            "Name": "whkd"
+        },
+        {
+            "Updated": "2025-08-01T23:30:47.6273359-07:00",
+            "Source": "extras",
+            "Info": "",
+            "Version": "1.22.12111.0",
+            "Name": "windows-terminal"
         }
     ]
 }
