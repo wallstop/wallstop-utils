@@ -386,17 +386,21 @@ function Increment-Version {
 
     Write-Host $actionMessage -Replace '\s{2,}',' ' # Clean up potential double spaces in message
     Write-Host "New version will be: $newVersion"
-    $oldVersionPattern = '"version"\s*:\s*"' + [regex]::Escape($originalVersion) + '"'
-    $newVersionJsonFragment = '"version": "' + $newVersion + '"'
-    if ($fileContentRaw -match $oldVersionPattern) {
-      $updatedFileContent = $fileContentRaw -replace $oldVersionPattern,$newVersionJsonFragment
-      if ($pscmdlet.ShouldProcess($packageJsonPath,"Update version from '$originalVersion' to '$newVersion'")) {
-        try { Set-Content -Path $packageJsonPath -Value $updatedFileContent -Encoding UTF8 -ErrorAction Stop; Write-Host "Successfully updated." }
-        catch { Write-Error "Could not write. Error: $($_.Exception.Message)"; return }
+
+    # Update the JSON object and format it deterministically
+    $jsonForParsing.version = $newVersion
+    $updatedFileContent = $jsonForParsing | ConvertTo-Json -Depth 100 -Compress:$false
+
+    if ($pscmdlet.ShouldProcess($packageJsonPath,"Update version from '$originalVersion' to '$newVersion'")) {
+      try {
+        # Write content without adding extra newlines by using -NoNewline and adding a single newline
+        $updatedFileContent | Set-Content -Path $packageJsonPath -Encoding UTF8 -NoNewline -ErrorAction Stop
+        Add-Content -Path $packageJsonPath -Value "" -Encoding UTF8 -ErrorAction Stop  # Add single final newline
+        Write-Host "Successfully updated."
       }
-      else { Write-Host "Operation cancelled." }
+      catch { Write-Error "Could not write. Error: $($_.Exception.Message)"; return }
     }
-    else { Write-Error "Could not find pattern for replacement. File not modified."; return }
+    else { Write-Host "Operation cancelled." }
 
   }
   catch { Write-Error "Unexpected error: $($_.Exception.Message)"; if ($_.Exception.ErrorRecord) { Write-Error "Details: $($_.Exception.ErrorRecord)" } }
