@@ -395,7 +395,7 @@ function Increment-Version {
       try {
         # Write content without adding extra newlines by using -NoNewline and adding a single newline
         $updatedFileContent | Set-Content -Path $packageJsonPath -Encoding UTF8 -NoNewline -ErrorAction Stop
-        Add-Content -Path $packageJsonPath -Value "" -Encoding UTF8 -ErrorAction Stop  # Add single final newline
+        Add-Content -Path $packageJsonPath -Value "" -Encoding UTF8 -ErrorAction Stop # Add single final newline
         Write-Host "Successfully updated."
       }
       catch { Write-Error "Could not write. Error: $($_.Exception.Message)"; return }
