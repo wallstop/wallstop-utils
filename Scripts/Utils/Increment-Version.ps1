@@ -64,7 +64,21 @@ function Increment-Version {
 
     [Parameter(Mandatory = $false,HelpMessage = "Specifies increment mode. Default: 'Default'. RolloverAt9: '0.0.9' -> '0.1.0', '-rc.07.9' -> '-rc.08.0'.")]
     [ValidateSet("Default","RolloverAt9")]
-    [string]$IncrementMode = "RolloverAt9"
+    [string]$IncrementMode = "RolloverAt9",
+    [Parameter(Mandatory = $false)]
+    [switch]$CommitChanges,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$RunPreCommit,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$NoVerify,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$AllowNonMainBranch,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Push
   )
 
   # Check for custom help invocation first
@@ -90,6 +104,11 @@ function Increment-Version {
       Write-Host -NoNewline "  "; Write-Host "Increment-Version" -ForegroundColor $commandColor -NoNewline
       Write-Host -NoNewline " [-"; Write-Host "PromoteToRelease" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline "]"
       Write-Host -NoNewline " [-"; Write-Host "IncrementMode" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline " <"; Write-Host "Default" -ForegroundColor $placeholderColor -NoNewline; Write-Host -NoNewline "|"; Write-Host "RolloverAt9" -ForegroundColor $placeholderColor -NoNewline; Write-Host -NoNewline ">]"
+      Write-Host -NoNewline " [-"; Write-Host "CommitChanges" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline "]"
+      Write-Host -NoNewline " [-"; Write-Host "RunPreCommit" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline "]"
+      Write-Host -NoNewline " [-"; Write-Host "NoVerify" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline "]"
+      Write-Host -NoNewline " [-"; Write-Host "AllowNonMainBranch" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline "]"
+      Write-Host -NoNewline " [-"; Write-Host "Push" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline "]"
       Write-Host -NoNewline " [-"; Write-Host "WhatIf" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline "]"
       Write-Host -NoNewline " [-"; Write-Host "Confirm" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline "]"
       Write-Host -NoNewline " ["; Write-Host "<CommonParameters>" -ForegroundColor $placeholderColor -NoNewline; Write-Host "]"
@@ -112,6 +131,21 @@ function Increment-Version {
       Write-Host "    If specified, and the current version is a pre-release (e.g., X.Y.Z-rc.N), it will be promoted"
       Write-Host "    to the release version X.Y.Z. If the current version is already a release, its patch"
       Write-Host "    component will be incremented based on the selected -IncrementMode."
+      Write-Host # Blank line
+      Write-Host -NoNewline "  -"; Write-Host "CommitChanges" -ForegroundColor $paramColor
+      Write-Host "    Stage and commit the version bump (stages package.json and package-lock.json if present)."
+      Write-Host # Blank line
+      Write-Host -NoNewline "  -"; Write-Host "RunPreCommit" -ForegroundColor $paramColor
+      Write-Host "    Run pre-commit hooks (if available) or fallbacks: Prettier JSON/MD/YAML, scripts/fix-eol.js, CSharpier."
+      Write-Host # Blank line
+      Write-Host -NoNewline "  -"; Write-Host "NoVerify" -ForegroundColor $paramColor
+      Write-Host "    Pass --no-verify to git commit (skip hooks). If commit fails, script retries with --no-verify."
+      Write-Host # Blank line
+      Write-Host -NoNewline "  -"; Write-Host "AllowNonMainBranch" -ForegroundColor $paramColor
+      Write-Host "    Allow committing version bumps on non-main/master branches (guard is on by default)."
+      Write-Host # Blank line
+      Write-Host -NoNewline "  -"; Write-Host "Push" -ForegroundColor $paramColor
+      Write-Host "    Push the commit to the current branch (origin)."
       Write-Host # Blank line
 
       Write-Host -NoNewline "  -"; Write-Host "IncrementMode" -ForegroundColor $paramColor -NoNewline; Write-Host " <Default | RolloverAt9>" -ForegroundColor $placeholderColor
@@ -164,6 +198,10 @@ function Increment-Version {
       Write-Host "    # Displays this help summary."
       Write-Host # Blank line
 
+      Write-Host -NoNewline "  "; Write-Host "Increment-Version" -ForegroundColor $commandColor -NoNewline
+      Write-Host -NoNewline " -"; Write-Host "CommitChanges" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline " -"; Write-Host "RunPreCommit" -ForegroundColor $paramColor -NoNewline; Write-Host -NoNewline " -"; Write-Host "Push" -ForegroundColor $paramColor
+      Write-Host "    # Bump, run hooks, commit and push on main/master."
+      Write-Host # Blank line
       Write-Host "NOTES" -ForegroundColor $headerColor
       Write-Host "  This script provides a custom quick help. For more detailed and standard PowerShell help,"
       Write-Host "  which includes full parameter descriptions generated from comment-based help within the script,"
@@ -207,7 +245,7 @@ function Increment-Version {
     $originalVersionObject = $jsonForParsing.version; if ($null -eq $originalVersionObject) { Write-Error "'version' field is null."; return }
     $originalVersion = $originalVersionObject.ToString(); Write-Host "Current version: $originalVersion"
 
-    $semVerRegex = "^(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(?:-(?<prerelease>(?:\d+|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:\d+|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
+    $semVerRegex = '^(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(?:-(?<prerelease>(?:\d+|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:\d+|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
     $match = [regex]::Match($originalVersion,$semVerRegex)
     if (-not $match.Success) { Write-Error "Version '$originalVersion' is not valid per SemVer (even with lenient pre-release parsing)."; return }
 
@@ -235,7 +273,7 @@ function Increment-Version {
         # This logic assumes a structure like prefixNUMBER.SUBNUMBER or just prefixNUMBER (implying .0)
 
         $lastPartIdx = $preParts.Length - 1
-        $lastPartPattern = "^(?<prefix>[a-zA-Z0-9\-]*)?(?<num>\d+)$" # General pattern for a part that is or ends in a number
+        $lastPartPattern = "^(?<prefix>[a-zA-Z0-9\\-]*)?(?<num>\\d+)$" # General pattern for a part that is or ends in a number
         $matchLastPart = $preParts[$lastPartIdx] | Select-String -Pattern $lastPartPattern
 
         # If last part doesn't look like a simple number (e.g., "rc10" not "10"), append a conceptual ".0"
@@ -243,7 +281,7 @@ function Increment-Version {
         # Based on "1.0.01rc10" -> "1.0.01rc10.1", implies "1.0.01rc10" is treated as "1.0.01rc10.0"
         if ($matchLastPart -and $matchLastPart.Matches[0].Groups["prefix"].Value -ne "") {
           # e.g., "rc10", not "10"
-          if (-not (($preParts.Length -gt 1) -and ($preParts[$preParts.Length - 1] -match "^\d+$") -and ($preParts[$preParts.Length - 2] | Select-String -Pattern $lastPartPattern))) {
+          if (-not (($preParts.Length -gt 1) -and ($preParts[$preParts.Length - 1] -match "^\\d+$") -and ($preParts[$preParts.Length - 2] | Select-String -Pattern $lastPartPattern))) {
             # Heuristic: if last part is like "rc10", treat as "rc10.0" by adding "0" to parts array for processing
             $preParts = $preParts + "0" # Conceptually append ".0"
           }
@@ -260,7 +298,7 @@ function Increment-Version {
 
           # Regex to find an optional prefix and a mandatory numeric suffix in a part
           # e.g., "rc07" -> prefix="rc", num="07"; "07" -> prefix="", num="07"
-          $partPattern = "^(?<prefix>[a-zA-Z\-\.]*?)?(?<num>\d+)$" # Non-greedy prefix, numeric suffix
+          $partPattern = "^(?<prefix>[a-zA-Z\\-\\.]*?)?(?<num>\\d+)$" # Non-greedy prefix, numeric suffix
           $partMatch = $currentPrePart | Select-String -Pattern $partPattern
 
           if ($partMatch) {
@@ -331,7 +369,7 @@ function Increment-Version {
         $originalFormatLength = $lastPrePart.Length
 
         # Check if the last part is purely numeric
-        if ($lastPrePart -match "^\d+$") {
+        if ($lastPrePart -match "^\\d+$") {
           [long]$numericValue = $lastPrePart # Use long to handle potentially large numbers if not just 0-9
           $numericValue++ # Simple increment
           $preParts[$lastPrePartIdx] = $numericValue.ToString("D$($originalFormatLength)")
@@ -384,19 +422,40 @@ function Increment-Version {
     }
 
 
-    Write-Host $actionMessage -Replace '\s{2,}',' ' # Clean up potential double spaces in message
+    Write-Host ($actionMessage -replace '\s{2,}',' ') # Clean up potential double spaces in message
     Write-Host "New version will be: $newVersion"
+    $updated = $false
 
-    # Update the JSON object and format it deterministically
-    $jsonForParsing.version = $newVersion
-    $updatedFileContent = $jsonForParsing | ConvertTo-Json -Depth 100 -Compress:$false
+    # Update package.json in-place: replace only the top-level "version" value to minimize diffs
+    [string]$pattern = '^(?<indent>\s*)"version"\s*:\s*"[^"]*"'
+    $regex = [System.Text.RegularExpressions.Regex]::new($pattern,[System.Text.RegularExpressions.RegexOptions]::Multiline)
+    $updatedRaw = $regex.Replace($fileContentRaw,{ param([System.Text.RegularExpressions.Match]$m) ($m.Groups['indent'].Value + '"version": ' + '"' + $newVersion + '"') },1)
+
+    if ($updatedRaw -eq $fileContentRaw) {
+      Write-Error "Failed to update '$packageJsonPath' because the version field could not be located in the expected format."
+      return
+    }
 
     if ($pscmdlet.ShouldProcess($packageJsonPath,"Update version from '$originalVersion' to '$newVersion'")) {
       try {
-        # Write content without adding extra newlines by using -NoNewline and adding a single newline
-        $updatedFileContent | Set-Content -Path $packageJsonPath -Encoding UTF8 -NoNewline -ErrorAction Stop
-        Add-Content -Path $packageJsonPath -Value "" -Encoding UTF8 -ErrorAction Stop # Add single final newline
+        $encodingToUse = $null
+        try {
+          [byte[]]$existingBytes = [System.IO.File]::ReadAllBytes($packageJsonPath)
+          $hasUtf8Bom = $existingBytes.Length -ge 3 -and $existingBytes[0] -eq 0xEF -and $existingBytes[1] -eq 0xBB -and $existingBytes[2] -eq 0xBF
+          $encodingToUse = if ($hasUtf8Bom) {
+            New-Object System.Text.UTF8Encoding ($true)
+          }
+          else {
+            New-Object System.Text.UTF8Encoding ($false)
+          }
+        }
+        catch {
+          $encodingToUse = New-Object System.Text.UTF8Encoding ($false)
+        }
+
+        [System.IO.File]::WriteAllText($packageJsonPath,$updatedRaw,$encodingToUse)
         Write-Host "Successfully updated."
+        $updated = $true
       }
       catch { Write-Error "Could not write. Error: $($_.Exception.Message)"; return }
     }
@@ -405,3 +464,73 @@ function Increment-Version {
   }
   catch { Write-Error "Unexpected error: $($_.Exception.Message)"; if ($_.Exception.ErrorRecord) { Write-Error "Details: $($_.Exception.ErrorRecord)" } }
 }
+# Post-write optional git integration
+if ($updated -and ($CommitChanges.IsPresent -or $RunPreCommit.IsPresent -or $Push.IsPresent)) {
+  $inside = ""
+  try { $inside = (git rev-parse --is-inside-work-tree 2>$null).Trim() } catch {}
+  if ($inside -ne "true") {
+    Write-Warning "Not a git repository; skipping commit/push."
+  } else {
+    $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+    $primary = @("master","main")
+    if (-not $AllowNonMainBranch.IsPresent -and -not ($primary -contains $branch)) {
+      Write-Warning "On branch '$branch'. Version bumps are restricted to master/main. Use -AllowNonMainBranch to override."
+    } else {
+      try { git fetch --prune | Out-Null } catch {}
+      # Safe, optional fast-forward pull: only if clean, no merge/rebase in progress, and behind without local commits
+      $gitDir = (git rev-parse --git-dir 2>$null)
+      $mergeInProgress = if ($gitDir) { Test-Path -LiteralPath (Join-Path $gitDir 'MERGE_HEAD') } else { $false }
+      $rebaseInProgress = if ($gitDir) { (Test-Path -LiteralPath (Join-Path $gitDir 'rebase-apply')) -or (Test-Path -LiteralPath (Join-Path $gitDir 'rebase-merge')) } else { $false }
+      $wtClean = $true
+      try { git diff --no-ext-diff --quiet --exit-code; if ($LASTEXITCODE -ne 0) { $wtClean = $false } } catch { $wtClean = $false }
+      if (-not $mergeInProgress -and -not $rebaseInProgress -and $wtClean) {
+        try {
+          $countsRaw = git rev-list --left-right --count "@{u}...HEAD" 2>$null
+          if ($countsRaw) {
+            $parts = $countsRaw -split '\s+'
+            if ($parts.Length -ge 2) {
+              [int]$behind = $parts[0]; [int]$ahead = $parts[1]
+              if ($behind -gt 0 -and $ahead -eq 0) {
+                git pull --ff-only | Out-Null
+              }
+            }
+          }
+        } catch {}
+      }
+      git add -- "$packageJsonPath" | Out-Null
+      $lockPath = Join-Path (Split-Path -Path $packageJsonPath) "package-lock.json"
+      if (Test-Path $lockPath -PathType Leaf) { git add -- "$lockPath" | Out-Null }
+      if ($RunPreCommit.IsPresent) {
+        if (Get-Command pre-commit -ErrorAction SilentlyContinue) {
+          try { pre-commit run -a | Out-Null } catch {}
+          git add -a | Out-Null
+        } else {
+          if (Get-Command npm -ErrorAction SilentlyContinue) {
+            try { npm run format:json --silent | Out-Null } catch {}
+            try { npm run format:md --silent | Out-Null } catch {}
+            try { npm run format:yaml --silent | Out-Null } catch {}
+          }
+          if (Test-Path "scripts/fix-eol.js") { try { node scripts/fix-eol.js -v | Out-Null } catch {} }
+          if (Test-Path ".config/dotnet-tools.json") {
+            if (Get-Command dotnet -ErrorAction SilentlyContinue) {
+              try { dotnet tool restore | Out-Null } catch {}
+              try { dotnet tool run csharpier format | Out-Null } catch {}
+            }
+          }
+          git add -a | Out-Null
+        }
+      }
+      $msg = "chore(version): bump to $newVersion"
+      $args = @("commit","-m",$msg)
+      if ($NoVerify.IsPresent) { $args += "--no-verify" }
+      & git @args
+      if ($LASTEXITCODE -ne 0) {
+        git add -a | Out-Null
+        git commit -m $msg --no-verify | Out-Null
+      }
+      if ($Push.IsPresent) { git push -u origin $branch | Out-Null }
+    }
+  }
+}
+
+

@@ -19,6 +19,11 @@ INCREMENT_MODE="RolloverAt9"
 WHATIF=false
 VERBOSE=false
 
+COMMIT_CHANGES=false
+RUN_HOOKS=false
+NO_VERIFY=false
+ALLOW_NON_MAIN=false
+PUSH=false
 # Display help
 show_help() {
     echo -e "${YELLOW}increment-version.sh Script Quick Help:${NC}"
@@ -28,7 +33,7 @@ show_help() {
     echo "  Increments the version in a package.json file found in the current or parent directories."
     echo
     echo -e "${YELLOW}SYNTAX${NC}"
-    echo -e "  ${GREEN}increment-version.sh${NC} [-p|--promote] [-m|--mode ${GRAY}<Default|RolloverAt9>${NC}] [-w|--whatif] [-v|--verbose] [-h|--help]"
+    echo -e "  ${GREEN}increment-version.sh${NC} [-p|--promote] [-m|--mode ${GRAY}<Default|RolloverAt9>${NC}] [-w|--whatif] [-v|--verbose] [--commit] [--run-hooks] [--no-verify] [--allow-non-main-branch] [--push] [-h|--help]"
     echo
     echo -e "${YELLOW}DESCRIPTION${NC}"
     echo "  This script searches for a 'package.json' file by traversing upwards from the current directory."
@@ -57,6 +62,21 @@ show_help() {
     echo
     echo -e "  -v, --verbose${NC}"
     echo "    Display verbose output."
+    echo
+    echo -e "  --commit${NC}"
+    echo "    Stage and commit the bump with message 'chore(version): bump to <new>'."
+    echo
+    echo -e "  --run-hooks${NC}"
+    echo "    Run pre-commit hooks (if installed) or formatting fallbacks before commit."
+    echo
+    echo -e "  --no-verify${NC}"
+    echo "    Pass --no-verify to git commit (skip hooks)."
+    echo
+    echo -e "  --allow-non-main-branch${NC}"
+    echo "    Allow committing version bumps on non-main branches (default is restricted)."
+    echo
+    echo -e "  --push${NC}"
+    echo "    Push to the current branch after commit."
     echo
     echo -e "  -h, --help${NC}"
     echo "    Displays this help summary."
@@ -106,6 +126,26 @@ parse_args() {
                 ;;
             -v|--verbose)
                 VERBOSE=true
+                shift
+                ;;
+            --commit)
+                COMMIT_CHANGES=true
+                shift
+                ;;
+            --run-hooks)
+                RUN_HOOKS=true
+                shift
+                ;;
+            --no-verify)
+                NO_VERIFY=true
+                shift
+                ;;
+            --allow-non-main-branch)
+                ALLOW_NON_MAIN=true
+                shift
+                ;;
+            --push)
+                PUSH=true
                 shift
                 ;;
             *)
@@ -245,6 +285,16 @@ increment_main_version_rollover() {
 # Main script logic
 main() {
     parse_args "$@"
+    local UPDATED=false
+    local PYTHON_CMD=""
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_CMD="python3"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_CMD="python"
+    else
+        echo -e "${RED}Error: python3 or python is required.${NC}" >&2
+        exit 1
+    fi
 
     # Find package.json
     local package_json_path
@@ -255,14 +305,33 @@ main() {
 
     echo "Found package.json at: $package_json_path"
 
-    # Read and parse JSON
-    if ! command -v jq >/dev/null 2>&1; then
-        echo -e "${RED}Error: jq is required but not installed.${NC}" >&2
-        exit 1
-    fi
-
+    # Read and parse JSON to obtain current version
     local original_version
-    if ! original_version=$(jq -r '.version // empty' "$package_json_path" 2>/dev/null); then
+    if ! original_version=$("$PYTHON_CMD" - "$package_json_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    raw = path.read_bytes()
+except OSError as exc:
+    sys.stderr.write(f"{exc}\n")
+    sys.exit(2)
+
+try:
+    text = raw.decode("utf-8-sig")
+    data = json.loads(text)
+except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    sys.stderr.write(f"{exc}\n")
+    sys.exit(3)
+
+version = data.get("version")
+if not version:
+    sys.exit(4)
+sys.stdout.write(version)
+PY
+    ); then
         echo -e "${RED}Error: Failed to parse JSON from '$package_json_path'.${NC}" >&2
         exit 1
     fi
@@ -361,16 +430,113 @@ main() {
     if [[ "$WHATIF" == "true" ]]; then
         echo "Operation cancelled (--whatif specified)."
     else
-        if jq --arg version "$new_version" '.version = $version' "$package_json_path" > "${package_json_path}.tmp"; then
-            mv "${package_json_path}.tmp" "$package_json_path"
+        if "$PYTHON_CMD" - "$package_json_path" "$new_version" <<'PY'
+import os
+import re
+import sys
+
+path, new_version = sys.argv[1], sys.argv[2]
+with open(path, 'rb') as fh:
+    raw = fh.read()
+utf8_bom = b'\xef\xbb\xbf'
+has_bom = raw.startswith(utf8_bom)
+if has_bom:
+    text = raw[len(utf8_bom):].decode('utf-8')
+else:
+    text = raw.decode('utf-8')
+pattern = re.compile(r'^(?P<indent>\s*)"version"\s*:\s*"[^"]*"', re.MULTILINE)
+if not pattern.search(text):
+    sys.stderr.write("Error: version field not found in package.json\n")
+    sys.exit(1)
+updated = pattern.sub(lambda m: '{}"version": "{}"'.format(m.group("indent"), new_version), text, count=1)
+if updated == text:
+    sys.stderr.write("Error: version field was not modified\n")
+    sys.exit(2)
+with open(path, 'wb') as fh:
+    if has_bom:
+        fh.write(utf8_bom)
+    fh.write(updated.encode('utf-8'))
+PY
+        then
             echo "Successfully updated."
+            UPDATED=true
         else
-            echo -e "${RED}Error: Could not write to file.${NC}" >&2
-            rm -f "${package_json_path}.tmp"
+            status=$?
+            if [[ $status -eq 2 ]]; then
+                echo -e "${RED}Error: Version field was not modified; check package.json formatting.${NC}" >&2
+            else
+                echo -e "${RED}Error: Could not write to file.${NC}" >&2
+            fi
             exit 1
+        fi
+    fi
+    # Post-update git integration to avoid PR conflicts with pre-commit/CI
+    if [[ "$UPDATED" == "true" && ( "$COMMIT_CHANGES" == "true" || "$RUN_HOOKS" == "true" || "$PUSH" == "true" ) ]]; then
+        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            branch=$(git rev-parse --abbrev-ref HEAD)
+            primary_branches=(master main)
+            allow_branch=false
+            for b in "${primary_branches[@]}"; do
+              if [[ "$branch" == "$b" ]]; then allow_branch=true; fi
+            done
+            if [[ "$ALLOW_NON_MAIN" != "true" && "$allow_branch" != "true" ]]; then
+                echo -e "${YELLOW}Note:${NC} On branch '$branch'. Version bumps are restricted to main/master by default. Use --allow-non-main-branch to override." >&2
+            else
+                git fetch --prune || true
+                                # Safe fast-forward pull only when clean and behind
+                if [ -d "$(git rev-parse --git-dir 2>/dev/null)" ]; then
+                    if [ ! -f "$(git rev-parse --git-dir)/MERGE_HEAD" ] && [ ! -d "$(git rev-parse --git-dir)/rebase-apply" ] && [ ! -d "$(git rev-parse --git-dir)/rebase-merge" ]; then
+                        if git diff --no-ext-diff --quiet --exit-code; then
+                            counts=$(git rev-list --left-right --count '@{u}...HEAD' 2>/dev/null || true)
+                            behind=$(echo "$counts" | awk '{print $1}')
+                            ahead=$(echo "$counts" | awk '{print $2}')
+                            if [ -n "$behind" ] && [ "${behind:-0}" -gt 0 ] && [ "${ahead:-0}" -eq 0 ]; then
+                                git pull --ff-only || true
+                            fi
+                        fi
+                    fi
+                fi
+                git add -- "$package_json_path" || true
+                lock_path="$(dirname "$package_json_path")/package-lock.json"
+                [[ -f "$lock_path" ]] && git add -- "$lock_path" || true
+                if [[ "$RUN_HOOKS" == "true" ]]; then
+                    if command -v pre-commit >/dev/null 2>&1; then
+                        pre-commit run -a || true
+                        git add -A || true
+                    else
+                        if command -v npm >/dev/null 2>&1; then
+                            npm run format:json --silent || true
+                            npm run format:md --silent || true
+                            npm run format:yaml --silent || true
+                        fi
+                        if [[ -f scripts/fix-eol.js ]]; then node scripts/fix-eol.js -v || true; fi
+                        if [[ -f .config/dotnet-tools.json ]] && command -v dotnet >/dev/null 2>&1; then
+                            dotnet tool restore || true
+                            dotnet tool run csharpier format || true
+                        fi
+                        git add -A || true
+                    fi
+                fi
+                msg="chore(version): bump to $new_version"
+                if [[ "$NO_VERIFY" == "true" ]]; then
+                    git commit -m "$msg" --no-verify || true
+                else
+                    if ! git commit -m "$msg"; then
+                        echo "Commit failed; retrying after restage with --no-verify..."
+                        git add -A || true
+                        git commit -m "$msg" --no-verify || true
+                    fi
+                fi
+                if [[ "$PUSH" == "true" ]]; then
+                    git push -u origin "$branch" || true
+                fi
+            fi
+        else
+            echo -e "${YELLOW}Note:${NC} Not a git repository; skipping commit/push."
         fi
     fi
 }
 
 # Run main function with all arguments
 main "$@"
+
