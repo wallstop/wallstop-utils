@@ -20,6 +20,7 @@
     "unfocused_border": "Base03",
     "bar_accent": "Base0D"
   },
+  "window_handling_behaviour": "Async",
   "monitors": [
     {
       "workspaces": [
