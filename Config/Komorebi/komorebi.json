@@ -55,6 +55,11 @@
     },
     {
       "kind": "Title",
+      "id": "BALL x PIT",
+      "matching_strategy": "Equals"
+    },
+    {
+      "kind": "Title",
       "id": "Unity Bug Reporter",
       "matching_strategy": "Equals"
     },
