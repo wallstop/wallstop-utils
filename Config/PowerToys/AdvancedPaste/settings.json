@@ -1,6 +1,6 @@
 {
   "properties": {
-    "IsAdvancedAIEnabled": {
+    "IsAIEnabled": {
       "value": false
     },
     "ShowCustomPreview": {
@@ -8,6 +8,9 @@
     },
     "CloseAfterLosingFocus": {
       "value": false
+    },
+    "EnableClipboardPreview": {
+      "value": true
     },
     "advanced-paste-ui-hotkey": {
       "win": true,
@@ -117,6 +120,10 @@
           "isShown": true
         }
       }
+    },
+    "paste-ai-configuration": {
+      "active-provider-id": "",
+      "providers": []
     }
   },
   "name": "AdvancedPaste",
