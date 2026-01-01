@@ -6,14 +6,6 @@
         {
             "command": 
             {
-                "action": "resizePane",
-                "direction": "down"
-            },
-            "id": "User.resizePane.F747588A"
-        },
-        {
-            "command": 
-            {
                 "action": "moveFocus",
                 "direction": "left"
             },
@@ -23,13 +15,18 @@
             "command": 
             {
                 "action": "resizePane",
-                "direction": "left"
+                "direction": "down"
             },
-            "id": "User.resizePane.2A0DA8E0"
+            "id": "User.resizePane.F747588A"
         },
         {
-            "command": "find",
-            "id": "User.find"
+            "command": 
+            {
+                "action": "splitPane",
+                "split": "auto",
+                "splitMode": "duplicate"
+            },
+            "id": "User.splitPane.A6751878"
         },
         {
             "command": 
@@ -40,13 +37,16 @@
             "id": "User.moveFocus.F747588A"
         },
         {
+            "command": "find",
+            "id": "User.find"
+        },
+        {
             "command": 
             {
-                "action": "splitPane",
-                "split": "auto",
-                "splitMode": "duplicate"
+                "action": "resizePane",
+                "direction": "left"
             },
-            "id": "User.splitPane.A6751878"
+            "id": "User.resizePane.2A0DA8E0"
         },
         {
             "command": "paste",
@@ -115,12 +115,12 @@
     "keybindings": 
     [
         {
-            "id": "User.resizePane.F747588A",
-            "keys": "ctrl+shift+down"
-        },
-        {
             "id": null,
             "keys": "alt+shift+plus"
+        },
+        {
+            "id": "User.resizePane.F747588A",
+            "keys": "ctrl+shift+down"
         },
         {
             "id": "User.paste",
@@ -131,12 +131,12 @@
             "keys": "ctrl+shift+f"
         },
         {
-            "id": "User.resizePane.2A0DA8E0",
-            "keys": "ctrl+shift+left"
-        },
-        {
             "id": "User.splitPane.A6751878",
             "keys": "alt+shift+d"
+        },
+        {
+            "id": "User.resizePane.2A0DA8E0",
+            "keys": "ctrl+shift+left"
         },
         {
             "id": "User.resizePane.6CD791B",
@@ -151,16 +151,16 @@
             "keys": "alt+shift+down"
         },
         {
-            "id": "User.moveFocus.6CD791B",
-            "keys": "ctrl+up"
+            "id": null,
+            "keys": "alt+shift+left"
         },
         {
             "id": "User.splitPane.864CD510",
             "keys": "ctrl+shift+plus"
         },
         {
-            "id": null,
-            "keys": "alt+shift+left"
+            "id": "User.moveFocus.6CD791B",
+            "keys": "ctrl+up"
         },
         {
             "id": null,
@@ -314,6 +314,48 @@
                 "hidden": false,
                 "name": "Ubuntu 22.04.5 LTS",
                 "source": "CanonicalGroupLimited.Ubuntu22.04LTS_79rhkp1fndgsc"
+            },
+            {
+                "guid": "{77e7844d-172e-5b4a-a713-9267f3b0c170}",
+                "hidden": false,
+                "name": "Developer Command Prompt for VS 18",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{408bf8e9-7e79-59ec-8358-42608eb343eb}",
+                "hidden": false,
+                "name": "Developer PowerShell for VS 18",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{7003737b-0e54-51a8-ad5a-6f4be9812fc9}",
+                "hidden": true,
+                "name": "Developer Command Prompt for VS 2017 (2)",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{10dfbc56-b706-526c-b041-410ce34bfc2e}",
+                "hidden": true,
+                "name": "Developer Command Prompt for VS 2017",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{cb8ae1dd-793c-51ec-a0fa-268748a0d33e}",
+                "hidden": false,
+                "name": "podman-net-usermode",
+                "source": "Microsoft.WSL"
+            },
+            {
+                "guid": "{d26bb9f7-f43f-5a39-8a61-07a93513996a}",
+                "hidden": false,
+                "name": "podman-machine-default",
+                "source": "Microsoft.WSL"
+            },
+            {
+                "guid": "{16208362-94fc-5b1f-a491-5b2624d5ab56}",
+                "hidden": true,
+                "name": "Visual Studio Debug Console",
+                "source": "VSDebugConsole"
             }
         ]
     },
