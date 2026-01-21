@@ -135,11 +135,6 @@
     },
     {
       "kind": "Title",
-      "id": "Claude",
-      "matching_strategy": "Contains"
-    },
-    {
-      "kind": "Title",
       "id": "Welcome to JetBrains",
       "matching_strategy": "Contains"
     },
