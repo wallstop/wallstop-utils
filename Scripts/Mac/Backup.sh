@@ -1,21 +1,36 @@
 #!/bin/bash
 
+# Exit on error, undefined variables, and pipe failures
+set -euo pipefail
+
+# Enable nullglob so globs that match nothing expand to nothing
+shopt -s nullglob
+
 brew update
 brew upgrade
 
-# Get the directory where the script is located
-script_dir="$(dirname "${BASH_SOURCE[0]}")"
-# Execute another script in the same directory
-"$script_dir/backup_brew.sh"
+# Get the directory where the script is located and resolve to absolute path
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Execute Homebrew backup script
+"$SCRIPT_DIR/backup_brew.sh"
+
+# Execute WezTerm backup if config exists
+WEZTERM_BACKUP="$REPO_ROOT/Scripts/Wezterm/WeztermBackup.sh"
+if [[ -x "$WEZTERM_BACKUP" ]]; then
+    echo "Running WezTerm backup..."
+    "$WEZTERM_BACKUP" || echo "Warning: WezTerm backup skipped (no config found)"
+fi
 
 current_date=$(date)
 git add --all
-git commit -m "Backup for $current_date"
+git commit -m "Backup for $current_date" || echo "No changes to commit"
 git pull origin main
 git push origin main
 
 # Directory to store the backups
-BACKUP_DIR="$script_dir/../../Config/Mac"
+BACKUP_DIR="$REPO_ROOT/Config/Mac"
 mkdir -p "$BACKUP_DIR"
 
 dotfile_count=0
@@ -44,9 +59,9 @@ for file in $HOME/*.{scpt,applescript}; do
     fi
 done
 
-# Backup bash files in the home directory
+# Backup shell scripts in the home directory
 for file in $HOME/*.{sh}; do
-    # Check if the file exists to handle the case where no AppleScript files are present
+    # Check if the file exists to handle the case where no shell scripts are present
     if [[ -e "$file" ]]; then
         cp -p "$file" "$BACKUP_DIR/"
         ((script_count++))
