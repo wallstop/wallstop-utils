@@ -64,8 +64,8 @@
             "Source": "main"
         },
         {
-            "Version": "9.2.0",
-            "Updated": "2026-02-05T23:31:26.2023432-08:00",
+            "Version": "9.2.1",
+            "Updated": "2026-02-07T14:41:03.1835807-08:00",
             "Info": "",
             "Name": "calibre",
             "Source": "extras"
@@ -274,22 +274,22 @@
             "Source": "extras"
         },
         {
-            "Version": "0.58.1",
-            "Updated": "2026-01-12T23:30:59.5064326-08:00",
+            "Version": "0.59.0",
+            "Updated": "2026-02-07T14:43:17.7379862-08:00",
             "Info": "",
             "Name": "lazygit",
             "Source": "extras"
         },
         {
-            "Version": "25.8.4",
-            "Updated": "2025-12-18T23:33:41.6882004-08:00",
+            "Version": "26.2.0",
+            "Updated": "2026-02-07T14:45:42.8082062-08:00",
             "Info": "",
             "Name": "libreoffice",
             "Source": "extras"
         },
         {
-            "Version": "9.5.10",
-            "Updated": "2025-12-28T23:30:19.7903864-08:00",
+            "Version": "9.6.6",
+            "Updated": "2026-02-07T14:42:55.502405-08:00",
             "Info": "",
             "Name": "linqpad",
             "Source": "extras"
@@ -379,8 +379,8 @@
             "Source": "extras"
         },
         {
-            "Version": "1.10.6",
-            "Updated": "2025-12-19T11:47:36.1948934-08:00",
+            "Version": "1.11.7",
+            "Updated": "2026-02-07T14:42:33.0899324-08:00",
             "Info": "",
             "Name": "obsidian",
             "Source": "extras"
@@ -456,8 +456,8 @@
             "Source": "main"
         },
         {
-            "Version": "4.11",
-            "Updated": "2026-01-02T14:38:56.5734981-08:00",
+            "Version": "4.12",
+            "Updated": "2026-02-07T14:42:07.0390074-08:00",
             "Info": "",
             "Name": "rufus",
             "Source": "extras"
@@ -484,8 +484,8 @@
             "Source": "main"
         },
         {
-            "Version": "7.86.0",
-            "Updated": "2026-01-21T23:31:02.2504272-08:00",
+            "Version": "7.88.0",
+            "Updated": "2026-02-07T14:42:14.1051805-08:00",
             "Info": "",
             "Name": "signal",
             "Source": "extras"
@@ -540,8 +540,8 @@
             "Source": "extras"
         },
         {
-            "Version": "1.108.1",
-            "Updated": "2026-01-15T23:32:23.7024071-08:00",
+            "Version": "1.109.0",
+            "Updated": "2026-02-07T14:41:46.0291383-08:00",
             "Info": "",
             "Name": "vscode",
             "Source": "extras"
@@ -589,8 +589,8 @@
             "Source": "main"
         },
         {
-            "Version": "2025.12.08",
-            "Updated": "2025-12-07T23:30:24.3582642-08:00",
+            "Version": "2026.02.04",
+            "Updated": "2026-02-07T14:41:58.2320071-08:00",
             "Info": "",
             "Name": "yt-dlp",
             "Source": "main"
@@ -600,14 +600,14 @@
         {
             "Name": "main",
             "Source": "https://github.com/ScoopInstaller/Main",
-            "Updated": "2026-02-06T20:50:00-08:00",
+            "Updated": "2026-02-07T21:01:49-08:00",
             "Manifests": 1433
         },
         {
             "Name": "extras",
             "Source": "https://github.com/ScoopInstaller/Extras",
-            "Updated": "2026-02-06T20:50:27-08:00",
-            "Manifests": 2257
+            "Updated": "2026-02-07T17:05:31-08:00",
+            "Manifests": 2258
         },
         {
             "Name": "nonportable",
