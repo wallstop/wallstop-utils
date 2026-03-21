@@ -44,6 +44,12 @@ config.mouse_bindings = {
     event = { Up = { streak = 1, button = 'Left' } },
     action = wezterm.action.CompleteSelection 'PrimarySelection',
   },
+  -- Ctrl+Click to open hyperlinks
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = 'CTRL',
+    action = wezterm.action.OpenLinkAtMouseCursor,
+  },
 }
 
 -- Key bindings
