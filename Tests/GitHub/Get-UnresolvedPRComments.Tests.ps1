@@ -57,6 +57,45 @@ Describe "Resolve-GitHubGraphQLEndpoint" {
     }
 }
 
+Describe "Get-GitHubHeaders" {
+    It "returns a hashtable without auth token" {
+        $headers = Get-GitHubHeaders -AuthToken $null
+        $headers | Should -BeOfType [hashtable]
+        $headers.ContainsKey("Accept") | Should -BeTrue
+        $headers.ContainsKey("User-Agent") | Should -BeTrue
+        $headers.ContainsKey("Authorization") | Should -BeFalse
+    }
+
+    It "returns a hashtable with bearer authorization when token is supplied" {
+        $headers = Get-GitHubHeaders -AuthToken "token-123"
+        $headers | Should -BeOfType [hashtable]
+        $headers["Authorization"] | Should -Be "Bearer token-123"
+    }
+}
+
+Describe "Get-HeaderValue" {
+    It "returns null when headers are null" {
+        (Get-HeaderValue -Headers $null -Key "X-RateLimit-Reset") | Should -BeNullOrEmpty
+    }
+
+    It "reads case-insensitive values from dictionary headers" {
+        $headers = @{ "x-ratelimit-reset" = "123" }
+        (Get-HeaderValue -Headers $headers -Key "X-RateLimit-Reset") | Should -Be "123"
+    }
+
+    It "reads values from generic dictionary headers" {
+        $headers = [System.Collections.Generic.Dictionary[string,string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $headers["X-OAuth-Scopes"] = "repo"
+
+        (Get-HeaderValue -Headers $headers -Key "X-OAuth-Scopes") | Should -Be "repo"
+    }
+
+    It "ignores enumerable entries without Key property" {
+        $headers = @("a", "b")
+        (Get-HeaderValue -Headers $headers -Key "X-RateLimit-Reset") | Should -BeNullOrEmpty
+    }
+}
+
 Describe "Redact-SensitiveText" {
     It "redacts exact token occurrences" {
         $token = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
@@ -108,6 +147,26 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record.latestReplySummary | Should -Be "Reply summary"
         $record.threadId | Should -Be "THREAD_1"
     }
+
+    It "handles a single comment node that is not array-wrapped" {
+        $thread = [pscustomobject]@{
+            id = "THREAD_SINGLE"
+            isResolved = $false
+            path = "src/single.ts"
+            startLine = 21
+            line = 21
+            comments = [pscustomobject]@{
+                nodes = [pscustomobject]@{ body = "Single comment only" }
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 7 -GitHubHost "github.com"
+        $record | Should -Not -BeNullOrEmpty
+        $record.topLevelComment | Should -Be "Single comment only"
+        $record.latestReplySummary | Should -BeNullOrEmpty
+        $record.lineStart | Should -Be 21
+        $record.lineEnd | Should -Be 21
+    }
 }
 
 Describe "Format-UnresolvedThreadsAsText" {
@@ -153,7 +212,10 @@ Latest reply summary: Reply B
 ---
 "@
 
-        $text | Should -BeExactly $expected.TrimEnd("`r", "`n")
+        $actualNormalized = $text -replace "`r`n", "`n"
+        $expectedNormalized = $expected.TrimEnd("`r", "`n") -replace "`r`n", "`n"
+
+        $actualNormalized | Should -BeExactly $expectedNormalized
     }
 }
 
@@ -216,12 +278,124 @@ Describe "Invoke-GitHubRequestWithRetry" {
         { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_INVALID*"
     }
 
+    It "retries 403 responses and eventually succeeds" {
+        $script:attempt = 0
+        Mock Invoke-RestMethod {
+            $script:attempt++
+            if ($script:attempt -le 2) {
+                throw (New-Object System.Exception "forbidden")
+            }
+
+            return @{ ok = $true }
+        }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{} }
+        Mock Start-Sleep { }
+
+        $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 3 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $result.ok | Should -BeTrue
+        $script:attempt | Should -Be 3
+    }
+
+    It "uses Retry-After header fallback when waiting on rate limits" {
+        $script:attempt = 0
+        Mock Invoke-RestMethod {
+            $script:attempt++
+            if ($script:attempt -eq 1) {
+                throw (New-Object System.Exception "rate limited")
+            }
+
+            return @{ ok = $true }
+        }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{ "Retry-After" = "1" } }
+        Mock Start-Sleep { }
+
+        $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit
+        $result.ok | Should -BeTrue
+        $script:attempt | Should -Be 2
+        Assert-MockCalled Start-Sleep -Times 1 -Scope It
+    }
+
+    It "throws E_RATE_LIMIT_403 when rate-limit headers exist and waiting is disabled" {
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "rate limited") }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{ "Retry-After" = "60" } }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_RATE_LIMIT_403*"
+    }
+
+    It "throws E_FORBIDDEN when 403 has no rate-limit headers" {
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "forbidden") }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{} }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_FORBIDDEN*"
+    }
+
+    It "enforces overall timeout budget before sleeping for rate-limit reset" {
+        $futureReset = [DateTimeOffset]::UtcNow.AddSeconds(45).ToUnixTimeSeconds().ToString()
+
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "rate limited") }
+        Mock Get-HttpStatusCode { 429 }
+        Mock Get-ResponseHeaders { @{ "X-RateLimit-Reset" = $futureReset } }
+        Mock Start-Sleep { }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(2)) -WaitOnRateLimit } | Should -Throw "*E_NETWORK_TIMEOUT*"
+        Assert-MockCalled Start-Sleep -Times 0 -Scope It
+    }
+
+    It "applies exponential backoff with jitter bounds" {
+        $script:attempt = 0
+        $script:delays = @()
+
+        Mock Invoke-RestMethod {
+            $script:attempt++
+            if ($script:attempt -le 2) {
+                throw (New-Object System.Exception "temporary failure")
+            }
+
+            return @{ ok = $true }
+        }
+        Mock Get-HttpStatusCode { 500 }
+        Mock Get-ResponseHeaders { @{} }
+        Mock Start-Sleep {
+            param(
+                [int]$Milliseconds
+            )
+
+            if ($PSBoundParameters.ContainsKey("Milliseconds")) {
+                $script:delays += $Milliseconds
+            }
+        }
+
+        $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 3 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $result.ok | Should -BeTrue
+        $script:delays.Count | Should -Be 2
+        $script:delays[0] | Should -BeGreaterOrEqual 1000
+        $script:delays[0] | Should -BeLessThan 1300
+        $script:delays[1] | Should -BeGreaterOrEqual 2000
+        $script:delays[1] | Should -BeLessThan 2300
+    }
+
+    It "rejects negative MaxRetries values" {
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries -1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*Cannot validate argument*"
+    }
+
     It "rejects invalid rate-limit reset timestamps" {
         Mock Invoke-RestMethod { throw (New-Object System.Exception "rate limited") }
         Mock Get-HttpStatusCode { 429 }
         Mock Get-ResponseHeaders { @{ "X-RateLimit-Reset" = "0" } }
 
         { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit } | Should -Throw "*E_RATE_LIMIT*"
+    }
+
+    It "does not fail with hashtable conversion when response headers are array-shaped" {
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "temporary failure") }
+        Mock Get-HttpStatusCode { 500 }
+        Mock Get-ResponseHeaders { @("header-a", "header-b") }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{ "Accept" = "application/json" } -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_GRAPHQL_ERROR*"
     }
 }
 
@@ -260,6 +434,31 @@ Describe "Validate-GitHubTokenForRepoAccess" {
         }
 
         { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_INSUFFICIENT_SCOPE*"
+    }
+
+    It "maps malformed metadata payloads to E_AUTH_INSUFFICIENT_SCOPE" {
+        Mock Invoke-WebRequest {
+            return [pscustomobject]@{
+                Headers = @{ "X-OAuth-Scopes" = "repo" }
+                Content = '[{"private": true}, {"private": false}]'
+            }
+        }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_INSUFFICIENT_SCOPE*"
+    }
+
+    It "maps 401 failures to E_AUTH_INVALID" {
+        Mock Invoke-WebRequest { throw (New-Object System.Exception "auth failed") }
+        Mock Get-HttpStatusCode { 401 }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_INVALID*"
+    }
+
+    It "maps 429 failures to E_AUTH_RATE_LIMITED" {
+        Mock Invoke-WebRequest { throw (New-Object System.Exception "rate limited") }
+        Mock Get-HttpStatusCode { 429 }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_RATE_LIMITED*"
     }
 }
 
@@ -375,5 +574,349 @@ Describe "Resolve-PullRequestTarget" {
         }
 
         { Resolve-PullRequestTarget -Interactive -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*"
+    }
+}
+
+Describe "Invoke-Main" {
+    It "runs the non-interactive happy path and writes json output" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "json"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path = "src/main.ts"
+                    lineStart = 1
+                    lineEnd = 1
+                    topLevelComment = "hello"
+                    latestReplySummary = $null
+                }
+            )
+        }
+        Mock Format-UnresolvedThreadsAsJson { '[{"path":"src/main.ts"}]' }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:lastOutput | Should -Match "src/main.ts"
+        Assert-MockCalled Validate-GitHubTokenForRepoAccess -Times 1 -Scope It -ParameterFilter { $RequestTimeoutSeconds -eq 60 }
+    }
+
+    It "retries after interactive login when unauthenticated request fails" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = $null
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($true)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        $script:authTokenCallCount = 0
+        Mock Get-AuthToken {
+            $script:authTokenCallCount++
+            if ($script:authTokenCallCount -eq 1) {
+                return $null
+            }
+
+            return "interactive-token"
+        }
+
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Test-CanPromptForLogin { $true }
+        Mock Assert-IsHashtableLike { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Validate-GitHubTokenForRepoAccess { }
+
+        $script:reviewCallCount = 0
+        Mock Get-UnresolvedReviewThreads {
+            $script:reviewCallCount++
+            if ($script:reviewCallCount -eq 1) {
+                throw "E_AUTH_INVALID: Authentication failed"
+            }
+
+            return @(
+                [pscustomobject]@{
+                    path = "src/recovered.ts"
+                    lineStart = 1
+                    lineEnd = 1
+                    topLevelComment = "Recovered"
+                    latestReplySummary = $null
+                }
+            )
+        }
+
+        Mock Read-Host { "y" }
+        Mock Format-UnresolvedThreadsAsText { "ok" }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:authTokenCallCount | Should -Be 2
+        $script:reviewCallCount | Should -Be 2
+        $script:lastOutput | Should -Be "ok"
+    }
+
+    It "offers login fallback in non-interactive mode when PR URL is provided and credentials are missing" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = $null
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        $script:authTokenCallCount = 0
+        Mock Get-AuthToken {
+            $script:authTokenCallCount++
+            if ($script:authTokenCallCount -eq 1) {
+                return $null
+            }
+
+            return "interactive-token"
+        }
+
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Test-CanPromptForLogin { $true }
+        Mock Assert-IsHashtableLike { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Validate-GitHubTokenForRepoAccess { }
+
+        $script:reviewCallCount = 0
+        Mock Get-UnresolvedReviewThreads {
+            $script:reviewCallCount++
+            if ($script:reviewCallCount -eq 1) {
+                throw "E_AUTH_INVALID: Authentication failed"
+            }
+
+            return @(
+                [pscustomobject]@{
+                    path = "src/recovered.ts"
+                    lineStart = 1
+                    lineEnd = 1
+                    topLevelComment = "Recovered"
+                    latestReplySummary = $null
+                }
+            )
+        }
+
+        Mock Read-Host { "y" }
+        Mock Format-UnresolvedThreadsAsText { "ok" }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:authTokenCallCount | Should -Be 2
+        $script:reviewCallCount | Should -Be 2
+        $script:lastOutput | Should -Be "ok"
+        Assert-MockCalled Read-Host -Times 1 -Scope It
+    }
+
+    It "offers login fallback in non-interactive mode when provided credentials are invalid" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "bad-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        $script:authTokenCallCount = 0
+        Mock Get-AuthToken {
+            $script:authTokenCallCount++
+            if ($script:authTokenCallCount -eq 1) {
+                return "bad-token"
+            }
+
+            return "good-token"
+        }
+
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Test-CanPromptForLogin { $true }
+        Mock Assert-IsHashtableLike { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+
+        $script:validateCallCount = 0
+        Mock Validate-GitHubTokenForRepoAccess {
+            $script:validateCallCount++
+            if ($script:validateCallCount -eq 1) {
+                throw "E_AUTH_INVALID: Token authentication failed"
+            }
+        }
+
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path = "src/recovered.ts"
+                    lineStart = 1
+                    lineEnd = 1
+                    topLevelComment = "Recovered"
+                    latestReplySummary = $null
+                }
+            )
+        }
+
+        Mock Read-Host { "y" }
+        Mock Format-UnresolvedThreadsAsText { "ok" }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:authTokenCallCount | Should -Be 2
+        $script:validateCallCount | Should -Be 2
+        $script:lastOutput | Should -Be "ok"
+        Assert-MockCalled Read-Host -Times 1 -Scope It
+    }
+
+    It "fails with E_AUTH_REQUIRED when fallback prompt is unavailable due redirected IO" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = $null
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        Mock Get-AuthToken { $null }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Test-CanPromptForLogin { $false }
+        Mock Get-UnresolvedReviewThreads { throw "E_AUTH_INVALID: Authentication failed" }
+        Mock Read-Host { "y" }
+
+        { Invoke-Main } | Should -Throw "*E_AUTH_REQUIRED*"
+        Assert-MockCalled Read-Host -Times 0 -Scope It
+    }
+}
+
+Describe "Strict-mode collection shape safety" {
+    It "normalizes analyzer-like output for <CaseLabel>" -ForEach @(
+        @{
+            CaseLabel = "null output"
+            InputValue = $null
+            ExpectedCount = 0
+        },
+        @{
+            CaseLabel = "single object output"
+            InputValue = [pscustomobject]@{ RuleName = "RuleA" }
+            ExpectedCount = 1
+        },
+        @{
+            CaseLabel = "multiple object output"
+            InputValue = @(
+                [pscustomobject]@{ RuleName = "RuleA" },
+                [pscustomobject]@{ RuleName = "RuleB" }
+            )
+            ExpectedCount = 2
+        }
+    ) {
+        param($CaseLabel, $InputValue, $ExpectedCount)
+
+        $normalized = if ($null -eq $InputValue) { @() } else { @($InputValue) }
+        ($normalized | Measure-Object).Count | Should -Be $ExpectedCount
+    }
+
+    It "documents the @($null) Count pitfall" {
+        (@($null)).Count | Should -Be 1
     }
 }

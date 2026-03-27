@@ -52,6 +52,16 @@
   Get-Help
   about_Comment_Based_Help
 #>
+
+$strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
+if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+  throw "Strict mode helper file not found at $strictModeHelpersPath"
+}
+
+. $strictModeHelpersPath
+
+$script:updated = $false
+
 function Increment-Version {
   [CmdletBinding(SupportsShouldProcess = $true)]
   [OutputType([void])]
@@ -240,7 +250,15 @@ function Increment-Version {
     Write-Host "Found package.json at: $packageJsonPath"
     $fileContentRaw = Get-Content -Path $packageJsonPath -Raw -Encoding UTF8 -ErrorAction Stop
 
-    $jsonForParsing = $null; try { $jsonForParsing = $fileContentRaw | ConvertFrom-Json -ErrorAction Stop } catch { Write-Error "Failed to parse JSON from '$($packageJsonPath)'. Error: $($_.Exception.Message)"; return }
+    $jsonForParsing = $null
+    try {
+      $jsonForParsing = ConvertFrom-JsonSingleObject -Json $fileContentRaw -Context "package.json"
+    }
+    catch {
+      Write-Error "Failed to parse JSON from '$($packageJsonPath)'. Error: $($_.Exception.Message)"
+      return
+    }
+
     if (-not $jsonForParsing.PSObject.Properties.Name.Contains('version')) { Write-Error "'version' field not found."; return }
     $originalVersionObject = $jsonForParsing.version; if ($null -eq $originalVersionObject) { Write-Error "'version' field is null."; return }
     $originalVersion = $originalVersionObject.ToString(); Write-Host "Current version: $originalVersion"
@@ -294,7 +312,6 @@ function Increment-Version {
           if ($carry -eq 0) { break }
 
           $currentPrePart = $preParts[$i]
-          $originalCurrentPrePartLength = $currentPrePart.Length # For formatting purely numeric parts
 
           # Regex to find an optional prefix and a mandatory numeric suffix in a part
           # e.g., "rc07" -> prefix="rc", num="07"; "07" -> prefix="", num="07"
@@ -424,7 +441,6 @@ function Increment-Version {
 
     Write-Host ($actionMessage -replace '\s{2,}',' ') # Clean up potential double spaces in message
     Write-Host "New version will be: $newVersion"
-    $updated = $false
 
     # Update package.json in-place: replace only the top-level "version" value to minimize diffs
     [string]$pattern = '^(?<indent>\s*)"version"\s*:\s*"[^"]*"'
@@ -455,7 +471,7 @@ function Increment-Version {
 
         [System.IO.File]::WriteAllText($packageJsonPath,$updatedRaw,$encodingToUse)
         Write-Host "Successfully updated."
-        $updated = $true
+        $script:updated = $true
       }
       catch { Write-Error "Could not write. Error: $($_.Exception.Message)"; return }
     }
@@ -465,7 +481,7 @@ function Increment-Version {
   catch { Write-Error "Unexpected error: $($_.Exception.Message)"; if ($_.Exception.ErrorRecord) { Write-Error "Details: $($_.Exception.ErrorRecord)" } }
 }
 # Post-write optional git integration
-if ($updated -and ($CommitChanges.IsPresent -or $RunPreCommit.IsPresent -or $Push.IsPresent)) {
+if ($script:updated -and ($CommitChanges.IsPresent -or $RunPreCommit.IsPresent -or $Push.IsPresent)) {
   $inside = ""
   try { $inside = (git rev-parse --is-inside-work-tree 2>$null).Trim() } catch {}
   if ($inside -ne "true") {

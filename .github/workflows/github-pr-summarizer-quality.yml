@@ -1,17 +1,17 @@
-name: GitHub PR Summarizer Quality
+name: PowerShell Quality
 
 on:
   pull_request:
     paths:
-      - 'Scripts/Utils/GitHub/**'
-      - 'Tests/GitHub/**'
+      - 'Scripts/**'
+      - 'Tests/**'
       - '.psscriptanalyzer.psd1'
       - '.github/workflows/github-pr-summarizer-quality.yml'
   push:
     branches: [ main, master ]
     paths:
-      - 'Scripts/Utils/GitHub/**'
-      - 'Tests/GitHub/**'
+      - 'Scripts/**'
+      - 'Tests/**'
       - '.psscriptanalyzer.psd1'
       - '.github/workflows/github-pr-summarizer-quality.yml'
 
@@ -30,30 +30,54 @@ jobs:
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
           Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5.0
-          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -MinimumVersion 1.21.0
+          Import-Module Pester -MinimumVersion 5.5.0 -ErrorAction Stop
+          Import-Module PSScriptAnalyzer -MinimumVersion 1.21.0 -ErrorAction Stop
+
+          $pesterVersion = (Get-Module Pester | Select-Object -First 1 -ExpandProperty Version)
+          $pssaVersion = (Get-Module PSScriptAnalyzer | Select-Object -First 1 -ExpandProperty Version)
+          Write-Host "Pester version: $pesterVersion"
+          Write-Host "PSScriptAnalyzer version: $pssaVersion"
 
       - name: Lint PowerShell
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
-          $issues = Invoke-ScriptAnalyzer -Path "Scripts/Utils/GitHub" -Settings ".psscriptanalyzer.psd1"
-          if ($issues.Count -gt 0) {
+          $ErrorActionPreference = "Stop"
+
+          $issuesRaw = Invoke-ScriptAnalyzer -Path "Scripts" -Settings ".psscriptanalyzer.psd1" -Recurse -ErrorAction Stop
+          $issues = if ($null -eq $issuesRaw) { @() } else { @($issuesRaw) }
+          $issueCount = @($issues).Count
+
+          Write-Host "Lint diagnostics: issueCount=$issueCount"
+          if ($issueCount -gt 0) {
+            Write-Host "Lint diagnostics: firstIssueType=$($issues[0].GetType().FullName)"
             $issues | Format-Table -AutoSize | Out-String | Write-Host
-            throw "PSScriptAnalyzer found $($issues.Count) issue(s)."
+            throw "PSScriptAnalyzer found $issueCount issue(s)."
           }
 
       - name: Security pattern checks
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "Security scanner diagnostics:"
+          echo "  rg_available=$(command -v rg >/dev/null 2>&1 && echo yes || echo no)"
+          if grep --version >/dev/null 2>&1; then
+            echo "  grep_version=$(grep --version | head -1)"
+          else
+            echo "  grep_version=BSD_or_non-GNU"
+          fi
+
           if command -v rg >/dev/null 2>&1; then
-            rg -n "(ghp_|github_pat_|Authorization:\\s*Bearer\\s+[A-Za-z0-9_.-]{20,}|Invoke-Expression|\\biex\\b)" Scripts/Utils/GitHub && {
+            rg -n "(ghp_|github_pat_|Authorization:\\s*Bearer\\s+[A-Za-z0-9_.-]{20,}|Invoke-Expression|\\biex\\b)" Scripts && {
               echo "Disallowed token or command pattern detected"
               exit 1
             } || true
           else
-            grep -RInE "(ghp_|github_pat_|Authorization:\s*Bearer\s+[A-Za-z0-9_.-]{20,}|Invoke-Expression|\biex\b)" Scripts/Utils/GitHub && {
+            grep -RInE "(ghp_|github_pat_|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9_.-]{20,}|Invoke-Expression|(^|[^[:alnum:]_])iex([^[:alnum:]_]|$))" Scripts && {
               echo "Disallowed token or command pattern detected"
               exit 1
             } || true
@@ -63,13 +87,56 @@ jobs:
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
-          $result = Invoke-Pester -Path "Tests/GitHub" -CodeCoverage "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1" -PassThru
+          $ErrorActionPreference = "Stop"
+
+          $repoRoot = (Get-Location).Path
+          $testPath = Join-Path -Path $repoRoot -ChildPath "Tests/GitHub"
+          $coveragePath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+
+          $result = Invoke-Pester -Path $testPath -CodeCoverage $coveragePath -PassThru -ErrorAction Stop
+          if ($null -eq $result) {
+            throw "Pester returned no result object."
+          }
+
+          Write-Host "Pester diagnostics: passed=$($result.PassedCount) failed=$($result.FailedCount)"
+          Write-Host "Pester diagnostics: hasCoverageObject=$($null -ne $result.CodeCoverage)"
+
           if ($result.FailedCount -gt 0) {
             throw "Pester tests failed: $($result.FailedCount)"
           }
 
+          if ($null -eq $result.CodeCoverage) {
+            throw "CodeCoverage object is null."
+          }
+          if ($null -eq $result.CodeCoverage.CoveragePercent) {
+            throw "CodeCoverage.CoveragePercent is null."
+          }
+
+          $minimumCoveragePercent = 75
           $coverage = [double]$result.CodeCoverage.CoveragePercent
-          Write-Host "Coverage: $coverage%"
-          if ($coverage -lt 60) {
-            throw "Coverage gate failed: $coverage% is below 60%"
+          Write-Host "Coverage: $coverage% (minimum required: $minimumCoveragePercent%)"
+          if ($coverage -lt $minimumCoveragePercent) {
+            throw "Coverage gate failed: $coverage% is below $minimumCoveragePercent%"
+          }
+
+      - name: Run Utils Pester tests
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $repoRoot = (Get-Location).Path
+          $utilsTestPath = Join-Path -Path $repoRoot -ChildPath "Tests/Utils"
+          if (-not (Test-Path -Path $utilsTestPath -PathType Container)) {
+            throw "Utils test path not found: $utilsTestPath"
+          }
+
+          $utilsResult = Invoke-Pester -Path $utilsTestPath -PassThru -ErrorAction Stop
+          if ($null -eq $utilsResult) {
+            throw "Utils Pester returned no result object."
+          }
+
+          Write-Host "Utils Pester diagnostics: passed=$($utilsResult.PassedCount) failed=$($utilsResult.FailedCount)"
+          if ($utilsResult.FailedCount -gt 0) {
+            throw "Utils Pester tests failed: $($utilsResult.FailedCount)"
           }

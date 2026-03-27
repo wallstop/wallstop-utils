@@ -1,4 +1,11 @@
 # --- Configuration ---
+$strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
+if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+  throw "Strict mode helper file not found at $strictModeHelpersPath"
+}
+
+. $strictModeHelpersPath
+
 $sourcePath = "D:\Code\Packages"
 $backupDir = "Z:\Backup\Code\Packages"
 # Define directories/files to exclude relative to the source path
@@ -123,19 +130,21 @@ try {
   # 5. Cleanup: Delete Old Backups on the Network Share
   Write-Host "Checking for old backups to remove..."
   $backups = Get-ChildItem -Path $backupDir -Filter "*.zip" | Sort-Object LastWriteTime
-  if ($backups.Count -gt $maxBackups) {
-    $toDelete = $backups | Select-Object -First ($backups.Count - $maxBackups)
-    Write-Host "Found $($toDelete.Count) old backup(s) to remove."
+  $backupTotal = Get-SafeCount -InputObject $backups
+  if ($backupTotal -gt $maxBackups) {
+    $toDelete = @($backups | Select-Object -First ($backupTotal - $maxBackups))
+    $deleteCount = Get-SafeCount -InputObject $toDelete
+    Write-Host "Found $deleteCount old backup(s) to remove."
     foreach ($file in $toDelete) {
       Write-Host "Removing old backup: $($file.FullName)"
       Remove-Item -Path $file.FullName -Force
     }
   } else {
-    Write-Host "No old backups need removal (Limit: $maxBackups, Found: $($backups.Count))."
+    Write-Host "No old backups need removal (Limit: $maxBackups, Found: $backupTotal)."
   }
 
   # --- Final Report ---
-  $backupCount = (Get-ChildItem -Path $backupDir -Filter "*.zip").Count
+  $backupCount = Get-SafeCount -InputObject (Get-ChildItem -Path $backupDir -Filter "*.zip")
   Write-Host "----------------------------------------"
   Write-Host "Backup completed successfully!"
   Write-Host "Backup file: $backupDir\$zipFileName"

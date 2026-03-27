@@ -92,6 +92,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/StrictModeHelpers.ps1"
+if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Strict mode helper file not found."
+}
+
+. $strictModeHelpersPath
+
 function Redact-SensitiveText {
     [CmdletBinding()]
     param(
@@ -172,7 +179,13 @@ function Get-HeaderValue {
 
     $possibleKeys = @($Key, $Key.ToLowerInvariant(), $Key.ToUpperInvariant())
     foreach ($candidate in $possibleKeys) {
-        if ($Headers -is [System.Collections.IDictionary] -and $Headers.Contains($candidate)) {
+        if ($Headers.PSObject.Methods.Name -contains "ContainsKey") {
+            if ($Headers.ContainsKey($candidate)) {
+                return $Headers[$candidate]
+            }
+        }
+
+        if ($Headers -is [System.Collections.IDictionary] -and $Headers.Keys -contains $candidate) {
             return $Headers[$candidate]
         }
 
@@ -183,8 +196,14 @@ function Get-HeaderValue {
 
     # Fallback for dictionary enumerables with case-insensitive keys.
     foreach ($entry in $Headers.GetEnumerator()) {
-        if ($entry.Key.ToString().Equals($Key, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $entry.Value
+        if ($null -eq $entry) {
+            continue
+        }
+
+        if ($entry.PSObject.Properties.Name -contains "Key" -and $null -ne $entry.Key) {
+            if ($entry.Key.ToString().Equals($Key, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $entry.Value
+            }
         }
     }
 
@@ -257,13 +276,14 @@ function Resolve-GitHubGraphQLEndpoint {
 }
 
 function Get-GitHubHeaders {
+    [OutputType([hashtable])]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
         [string]$AuthToken
     )
 
-    $headers = @{
+    [hashtable]$headers = @{
         "Accept" = "application/vnd.github+json"
         "User-Agent" = "wallstop-utils-unresolved-pr-comments"
     }
@@ -272,7 +292,7 @@ function Get-GitHubHeaders {
         $headers["Authorization"] = "Bearer $AuthToken"
     }
 
-    return $headers
+    return [hashtable]$headers
 }
 
 function Normalize-CommentText {
@@ -297,6 +317,17 @@ function Normalize-CommentText {
     }
 
     return ($singleLine.Substring(0, $MaxLength) + " [...]")
+}
+
+function Test-CanPromptForLogin {
+    [CmdletBinding()]
+    param()
+
+    try {
+        return (-not [Console]::IsInputRedirected) -and (-not [Console]::IsOutputRedirected)
+    } catch {
+        return $false
+    }
 }
 
 function Get-AuthToken {
@@ -326,6 +357,10 @@ function Get-AuthToken {
 
     $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
     if ($null -eq $ghCmd) {
+        if ($AllowInteractive.IsPresent) {
+            throw "E_AUTH_REQUIRED: GitHub CLI (gh) is required for interactive login but is not installed."
+        }
+
         return $null
     }
 
@@ -342,8 +377,12 @@ function Get-AuthToken {
         return $null
     }
 
+    if (-not (Test-CanPromptForLogin)) {
+        throw "E_AUTH_REQUIRED: Interactive login is unavailable because input/output is redirected. Provide -Token or set GITHUB_TOKEN/GH_TOKEN."
+    }
+
     Write-Host "No GitHub token found. Starting GitHub CLI login for $GitHubHost..." -ForegroundColor Yellow
-    & gh auth login --hostname $GitHubHost --web --git-protocol https --scopes repo
+    & gh auth login --hostname $GitHubHost --web --git-protocol https --scopes repo | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "E_AUTH_REQUIRED: GitHub CLI login was not completed."
     }
@@ -377,6 +416,7 @@ function Invoke-GitHubRequestWithRetry {
         [int]$RequestTimeoutSeconds,
 
         [Parameter(Mandatory = $true)]
+        [ValidateRange(0, [int]::MaxValue)]
         [int]$MaxRetries,
 
         [Parameter(Mandatory = $true)]
@@ -407,10 +447,25 @@ function Invoke-GitHubRequestWithRetry {
             return Invoke-RestMethod -Method POST -Uri $Uri -Headers $Headers -ContentType "application/json" -Body $jsonBody -TimeoutSec $RequestTimeoutSeconds
         } catch {
             $statusCode = Get-HttpStatusCode -Exception $_.Exception
-            $headers = Get-ResponseHeaders -Exception $_.Exception
+            $responseHeaders = Get-ResponseHeaders -Exception $_.Exception
 
             if (($statusCode -eq 429 -or $statusCode -eq 403) -and $WaitOnRateLimit.IsPresent) {
-                $resetValue = Get-HeaderValue -Headers $headers -Key "X-RateLimit-Reset"
+                $resetValue = Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Reset"
+                if ($null -eq $resetValue) {
+                    $retryAfterValue = Get-HeaderValue -Headers $responseHeaders -Key "Retry-After"
+                    if (-not [string]::IsNullOrWhiteSpace([string]$retryAfterValue)) {
+                        $retryAfterSeconds = 0
+                        if ([int]::TryParse([string]$retryAfterValue, [ref]$retryAfterSeconds) -and $retryAfterSeconds -gt 0) {
+                            $resetValue = ([DateTimeOffset]::UtcNow.AddSeconds($retryAfterSeconds + 1).ToUnixTimeSeconds()).ToString()
+                        } else {
+                            $retryAfterDate = [DateTimeOffset]::MinValue
+                            if ([DateTimeOffset]::TryParseExact([string]$retryAfterValue, "r", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$retryAfterDate)) {
+                                $resetValue = $retryAfterDate.ToUnixTimeSeconds().ToString()
+                            }
+                        }
+                    }
+                }
+
                 if ($null -ne $resetValue) {
                     $resetEpoch = [int64]0
                     if (-not [int64]::TryParse([string]$resetValue, [ref]$resetEpoch)) {
@@ -422,13 +477,26 @@ function Invoke-GitHubRequestWithRetry {
                         throw "E_RATE_LIMIT: Invalid or expired rate-limit reset timestamp."
                     }
 
-                    $waitSeconds = [Math]::Max(1, [int]($resetUtc - [datetime]::UtcNow).TotalSeconds + 1)
+                    $timeToReset = $resetUtc - [datetime]::UtcNow
+                    if ($timeToReset.TotalSeconds -gt [int]::MaxValue) {
+                        throw "E_RATE_LIMIT: Rate-limit reset timestamp is too far in the future."
+                    }
+
+                    $waitSeconds = [int][Math]::Ceiling($timeToReset.TotalSeconds)
+                    if ($waitSeconds -lt 1) {
+                        $waitSeconds = 1
+                    }
+
+                    if ([datetime]::UtcNow.AddSeconds($waitSeconds) -gt $OverallDeadlineUtc) {
+                        throw "E_NETWORK_TIMEOUT: Overall timeout would be exceeded while waiting for rate-limit reset."
+                    }
+
                     Start-Sleep -Seconds $waitSeconds
                     continue
                 }
             }
 
-            if (($statusCode -eq 429 -or $statusCode -ge 500 -or $null -eq $statusCode) -and $attempt -le $MaxRetries) {
+            if (($statusCode -eq 429 -or $statusCode -eq 403 -or $statusCode -ge 500 -or $null -eq $statusCode) -and $attempt -le $MaxRetries) {
                 $baseDelay = [Math]::Pow(2, $attempt - 1)
                 $jitterMs = Get-Random -Minimum 0 -Maximum 300
                 Start-Sleep -Milliseconds ([int]($baseDelay * 1000 + $jitterMs))
@@ -440,7 +508,12 @@ function Invoke-GitHubRequestWithRetry {
                 throw "E_AUTH_INVALID: Authentication failed. $errorText"
             }
             if ($statusCode -eq 403) {
-                throw "E_FORBIDDEN: Access denied or rate-limited. $errorText"
+                $hasRateLimitHeaders = $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Reset") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "Retry-After") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Remaining")
+                if ($hasRateLimitHeaders) {
+                    throw "E_RATE_LIMIT_403: GitHub API temporarily rate-limited this request. Retry with -WaitOnRateLimit or reduce request frequency. $errorText"
+                }
+
+                throw "E_FORBIDDEN: Access denied. $errorText"
             }
             if ($statusCode -eq 404) {
                 throw "E_NOT_FOUND: Resource not found. $errorText"
@@ -506,7 +579,8 @@ function Validate-GitHubTokenForRepoAccess {
         [datetime]$OverallDeadlineUtc,
 
         [Parameter(Mandatory = $false)]
-        [switch]$WaitOnRateLimit,
+        [ValidateRange(1, 300)]
+        [int]$RequestTimeoutSeconds = 60,
 
         [Parameter(Mandatory = $false)]
         [string[]]$SensitiveTokens = @()
@@ -519,7 +593,7 @@ function Validate-GitHubTokenForRepoAccess {
         $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $RequestTimeoutSeconds
         $repoMetadata = $null
         if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
-            $repoMetadata = $response.Content | ConvertFrom-Json
+            $repoMetadata = ConvertFrom-JsonSingleObject -Json $response.Content -Context "Repository metadata response"
         }
 
         if ($GitHubHost -eq "github.com") {
@@ -550,7 +624,17 @@ function Validate-GitHubTokenForRepoAccess {
             }
         }
     } catch {
+        $statusCode = Get-HttpStatusCode -Exception $_.Exception
         $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+
+        if ($statusCode -eq 401) {
+            throw "E_AUTH_INVALID: Token authentication failed while validating repository access. $safeMessage"
+        }
+
+        if ($statusCode -eq 403 -or $statusCode -eq 429) {
+            throw "E_AUTH_RATE_LIMITED: Token validation was rate-limited by GitHub (HTTP $statusCode). Retry after a short delay. $safeMessage"
+        }
+
         throw "E_AUTH_INSUFFICIENT_SCOPE: Token could not access repository metadata. $safeMessage"
     }
 }
@@ -595,8 +679,9 @@ function Select-PullRequestInteractively {
         throw "E_INVALID_OWNER_REPO: Invalid repository format."
     }
 
-    $pulls = Get-OpenPullRequests -Owner $ownerInput -Repo $repoInput -GitHubHost $GitHubHost -Headers $Headers -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
-    if ($pulls.Count -eq 0) {
+    $pulls = @(Get-OpenPullRequests -Owner $ownerInput -Repo $repoInput -GitHubHost $GitHubHost -Headers $Headers -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens)
+    $pullCount = Get-SafeCount -InputObject $pulls
+    if ($pullCount -eq 0) {
         throw "E_NOT_FOUND: No open pull requests were found for $ownerInput/$repoInput."
     }
 
@@ -620,7 +705,7 @@ function Select-PullRequestInteractively {
     $selectedPr = $null
     if ($selection -match "^\d+$") {
         $numeric = [int]$selection
-        if ($numeric -ge 1 -and $numeric -le $pulls.Count) {
+        if ($numeric -ge 1 -and $numeric -le $pullCount) {
             $selectedPr = $pulls[$numeric - 1]
         } else {
             $selectedPr = $pulls | Where-Object { $_.number -eq $numeric } | Select-Object -First 1
@@ -662,13 +747,18 @@ function Convert-ReviewThreadToOutputRecord {
         return $null
     }
 
-    if ($null -eq $Thread.comments -or $null -eq $Thread.comments.nodes -or $Thread.comments.nodes.Count -eq 0) {
+    if ($null -eq $Thread.comments -or $null -eq $Thread.comments.nodes) {
         return $null
     }
 
     $comments = @($Thread.comments.nodes)
+    $commentCount = Get-SafeCount -InputObject $comments
+    if ($commentCount -eq 0) {
+        return $null
+    }
+
     $top = $comments[0]
-    $latestReply = if ($comments.Count -gt 1) { $comments[$comments.Count - 1] } else { $null }
+    $latestReply = if ($commentCount -gt 1) { $comments[$commentCount - 1] } else { $null }
 
     $lineStart = if ($null -ne $Thread.startLine) { [int]$Thread.startLine } elseif ($null -ne $Thread.line) { [int]$Thread.line } else { $null }
     $lineEnd = if ($null -ne $Thread.line) { [int]$Thread.line } elseif ($null -ne $lineStart) { [int]$lineStart } else { $null }
@@ -971,6 +1061,7 @@ function Invoke-Main {
 
     # First pass target resolution may require anonymous headers for interactive listing.
     $tempHeaders = Get-GitHubHeaders -AuthToken $null
+    Assert-IsHashtableLike -Value $tempHeaders -Name "Headers"
 
     $target = Resolve-PullRequestTarget -PullRequestUrl $PullRequestUrl -Owner $Owner -Repo $Repo -GitHubHost $GitHubHost -PullRequestNumber $PullRequestNumber -Interactive:$Interactive -Headers $tempHeaders -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $initialSensitive
     if ($null -eq $target) {
@@ -978,31 +1069,58 @@ function Invoke-Main {
     }
 
     $authToken = Get-AuthToken -ExplicitToken $Token -GitHubHost $target.Host -AllowInteractive:$Interactive
+    if ($null -ne $authToken) {
+        $authToken = [string]$authToken
+    }
+
     $sensitiveTokens = @()
     if (-not [string]::IsNullOrWhiteSpace($authToken)) {
-        $sensitiveTokens += $authToken
+        $sensitiveTokens += [string]$authToken
     }
 
     $headers = Get-GitHubHeaders -AuthToken $authToken
+    Assert-IsHashtableLike -Value $headers -Name "Headers"
 
-    if (-not [string]::IsNullOrWhiteSpace($authToken)) {
-        Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
-    }
+    $allowPromptedLoginFallback = $Interactive.IsPresent -or -not [string]::IsNullOrWhiteSpace($PullRequestUrl)
 
     $endpoint = Resolve-GitHubGraphQLEndpoint -GitHubHost $target.Host
 
     try {
+        if (-not [string]::IsNullOrWhiteSpace($authToken)) {
+            Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -SensitiveTokens $sensitiveTokens
+        }
+
         $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
     } catch {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
 
-        # If unauthenticated attempt failed, offer login for private repositories in interactive mode.
-        if ([string]::IsNullOrWhiteSpace($authToken) -and $Interactive.IsPresent -and ($message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*")) {
-            $choice = Read-Host "Authentication may be required. Log in using GitHub CLI now? [y/N]"
+        $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+
+        if ($allowPromptedLoginFallback -and $isAuthRecoverableFailure -and -not (Test-CanPromptForLogin)) {
+            throw "E_AUTH_REQUIRED: Authentication is missing or invalid, but interactive login prompt is unavailable because input/output is redirected. Provide -Token or set GITHUB_TOKEN/GH_TOKEN."
+        }
+
+        if ($allowPromptedLoginFallback -and $isAuthRecoverableFailure) {
+            $choice = Read-Host "Authentication is missing or invalid. Log in using GitHub CLI now? [y/N]"
             if ($choice -match "^(y|yes)$") {
                 $authToken = Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive
-                $sensitiveTokens = @($authToken)
+                if ($null -ne $authToken) {
+                    $authToken = [string]$authToken
+                }
+
+                if ([string]::IsNullOrWhiteSpace($authToken)) {
+                    throw "E_AUTH_REQUIRED: Login completed but no token is available."
+                }
+
+                $sensitiveTokens = @()
+                if (-not [string]::IsNullOrWhiteSpace($authToken)) {
+                    $sensitiveTokens += [string]$authToken
+                }
+
                 $headers = Get-GitHubHeaders -AuthToken $authToken
+                Assert-IsHashtableLike -Value $headers -Name "Headers"
+
+                Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -SensitiveTokens $sensitiveTokens
                 $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
             } else {
                 throw $message

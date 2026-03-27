@@ -1,13 +1,21 @@
 Import-Module ~/scoop/apps/powershell-beautifier/current/PowerShell-Beautifier.psd1
 
+$strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
+if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+  throw "Strict mode helper file not found at $strictModeHelpersPath"
+}
+
+. $strictModeHelpersPath
+
 $rootDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
 Push-Location $rootDirectory
 
 # Get all .ps1 files recursively in the directory
-$ps1Files = Get-ChildItem -Path $rootDirectory -Recurse -Include *.ps1,*.psm1
+$ps1Files = @(Get-ChildItem -Path $rootDirectory -Recurse -Include *.ps1,*.psm1)
+$ps1FileCount = Get-SafeCount -InputObject $ps1Files
 
 # Check if any .ps1 files were found
-if ($ps1Files.Count -eq 0) {
+if ($ps1FileCount -eq 0) {
   Write-Host "No PowerShell script files (.ps1) found in the directory: $rootDirectory" -ForegroundColor Red
   Pop-Location
   exit 0

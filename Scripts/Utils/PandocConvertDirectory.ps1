@@ -31,6 +31,13 @@ param(
   [string]$OutputDir
 )
 
+$strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
+if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+  throw "Strict mode helper file not found at $strictModeHelpersPath"
+}
+
+. $strictModeHelpersPath
+
 # Function to Convert HTML to Markdown
 function Convert-HtmlToMarkdown {
   param(
@@ -68,14 +75,15 @@ if (-not (Test-Path -Path $OutputDir)) {
 
 # Get all .html files recursively from InputDir
 try {
-  $htmlFiles = Get-ChildItem -Path $InputDir -Recurse -Include *.html,*.htm
+  $htmlFiles = @(Get-ChildItem -Path $InputDir -Recurse -Include *.html,*.htm)
 }
 catch {
   Write-Error "Error accessing files in input directory: $InputDir. Error: $_"
   exit 1
 }
 
-if ($htmlFiles.Count -eq 0) {
+$htmlFileCount = Get-SafeCount -InputObject $htmlFiles
+if ($htmlFileCount -eq 0) {
   Write-Warning "No HTML files found in the input directory: $InputDir"
   exit 0
 }
