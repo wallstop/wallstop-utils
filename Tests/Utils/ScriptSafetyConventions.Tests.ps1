@@ -205,3 +205,195 @@ Describe "GitHub fixture hygiene" {
         @($fixtures).Count | Should -Be 0
     }
 }
+
+Describe "PowerShell formatting conventions" {
+    It "avoids standalone comma lines inside param blocks" {
+        $searchRoots = @(
+            (Join-Path -Path $script:repoRoot -ChildPath "Scripts"),
+            (Join-Path -Path $script:repoRoot -ChildPath "Tests")
+        )
+
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($root in $searchRoots) {
+            if (-not (Test-Path -Path $root -PathType Container)) {
+                continue
+            }
+
+            $files = Get-ChildItem -Path $root -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+            foreach ($file in $files) {
+                $tokens = $null
+                $parseErrors = $null
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors)
+                if ($null -eq $ast) {
+                    continue
+                }
+
+                $paramBlocks = @($ast.FindAll({
+                            param($node)
+                            $node -is [System.Management.Automation.Language.ParamBlockAst]
+                        }, $true))
+                if ($paramBlocks.Count -eq 0) {
+                    continue
+                }
+
+                $lineContent = Get-Content -Path $file.FullName
+                foreach ($token in @($tokens)) {
+                    if ($token.Kind -ne [System.Management.Automation.Language.TokenKind]::Comma) {
+                        continue
+                    }
+
+                    $lineNumber = $token.Extent.StartLineNumber
+                    if ($lineNumber -lt 1 -or $lineNumber -gt $lineContent.Count) {
+                        continue
+                    }
+
+                    if ($lineContent[$lineNumber - 1].Trim() -ne ",") {
+                        continue
+                    }
+
+                    $nextNonEmptyLine = ""
+                    for ($index = $lineNumber; $index -lt $lineContent.Count; $index++) {
+                        $candidate = $lineContent[$index].Trim()
+                        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                            $nextNonEmptyLine = $candidate
+                            break
+                        }
+                    }
+
+                    if (-not ($nextNonEmptyLine.StartsWith("[") -or $nextNonEmptyLine.StartsWith("$"))) {
+                        continue
+                    }
+
+                    $isInsideParamBlock = $false
+                    foreach ($paramBlock in $paramBlocks) {
+                        if ($lineNumber -ge $paramBlock.Extent.StartLineNumber -and $lineNumber -le $paramBlock.Extent.EndLineNumber) {
+                            $isInsideParamBlock = $true
+                            break
+                        }
+                    }
+
+                    if ($isInsideParamBlock) {
+                        $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                        $violations.Add("${relativePath}:$lineNumber") | Out-Null
+                    }
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Standalone comma lines inside param blocks reduce readability and are easy to miss in review. Violations: {0}" -f ($violations -join ", ")
+        )
+    }
+}
+
+Describe "Retry test determinism conventions" {
+    It "ensures Invoke-GitHubRequestWithRetry describe blocks define a default Start-Sleep mock" {
+        $testRoot = Join-Path -Path $script:repoRoot -ChildPath "Tests"
+        $testFiles = Get-ChildItem -Path $testRoot -Filter "*.Tests.ps1" -File -Recurse -ErrorAction Stop
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($file in $testFiles) {
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($null -eq $ast) {
+                continue
+            }
+
+            $describeCommands = @($ast.FindAll({
+                        param($node)
+                        if (-not ($node -is [System.Management.Automation.Language.CommandAst])) {
+                            return $false
+                        }
+
+                        if ($node.GetCommandName() -ne "Describe") {
+                            return $false
+                        }
+
+                        $describeNameElement = $node.CommandElements | Select-Object -Skip 1 -First 1
+                        if ($null -eq $describeNameElement) {
+                            return $false
+                        }
+
+                        try {
+                            return $describeNameElement.SafeGetValue() -eq "Invoke-GitHubRequestWithRetry"
+                        } catch {
+                            return $false
+                        }
+                    }, $true))
+
+            foreach ($describe in $describeCommands) {
+                $describeScriptBlockExpression = $describe.CommandElements | Where-Object {
+                    $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
+                } | Select-Object -First 1
+
+                if ($null -eq $describeScriptBlockExpression) {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                    $violations.Add("${relativePath}:$($describe.Extent.StartLineNumber):missing describe script block") | Out-Null
+                    continue
+                }
+
+                $describeScriptBlock = $describeScriptBlockExpression.ScriptBlock
+                $hasDefaultSleepMock = @($describeScriptBlock.FindAll({
+                            param($innerNode)
+                            if (-not ($innerNode -is [System.Management.Automation.Language.CommandAst])) {
+                                return $false
+                            }
+
+                            if ($innerNode.GetCommandName() -ne "BeforeEach" -and $innerNode.GetCommandName() -ne "BeforeAll") {
+                                return $false
+                            }
+
+                            $beforeEachScriptBlockExpression = $innerNode.CommandElements | Where-Object {
+                                $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
+                            } | Select-Object -First 1
+
+                            if ($null -eq $beforeEachScriptBlockExpression) {
+                                return $false
+                            }
+
+                            $beforeEachScriptBlock = $beforeEachScriptBlockExpression.ScriptBlock
+                            return @($beforeEachScriptBlock.FindAll({
+                                        param($mockNode)
+                                        if (-not ($mockNode -is [System.Management.Automation.Language.CommandAst])) {
+                                            return $false
+                                        }
+
+                                        if ($mockNode.GetCommandName() -ne "Mock") {
+                                            return $false
+                                        }
+
+                                        if ($mockNode.CommandElements.Count -lt 2) {
+                                            return $false
+                                        }
+
+                                        $targetElement = $mockNode.CommandElements[1]
+                                        try {
+                                            if ([string]$targetElement.SafeGetValue() -ne "Start-Sleep") {
+                                                return $false
+                                            }
+
+                                            $mockScriptBlockExpression = $mockNode.CommandElements | Where-Object {
+                                                $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
+                                            } | Select-Object -First 1
+
+                                            return $null -ne $mockScriptBlockExpression
+                                        } catch {
+                                            return $false
+                                        }
+                                    }, $true)).Count -gt 0
+                        }, $true)).Count -gt 0
+
+                if (-not $hasDefaultSleepMock) {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                    $violations.Add("${relativePath}:$($describe.Extent.StartLineNumber)") | Out-Null
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Retry test suites must default-mock Start-Sleep in BeforeEach or BeforeAll to avoid real wall-clock delays. Violations: {0}" -f ($violations -join ", ")
+        )
+    }
+}

@@ -82,9 +82,8 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateRange(30, 3600)]
-    [int]$OverallTimeoutSeconds = 300
+    [int]$OverallTimeoutSeconds = 300,
 
-    ,
     [Parameter(Mandatory = $false)]
     [switch]$NoRun
 )
@@ -587,7 +586,7 @@ function Validate-GitHubTokenForRepoAccess {
         [datetime]$OverallDeadlineUtc,
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(1, 300)]
+        [ValidateRange(5, 300)]
         [int]$RequestTimeoutSeconds = 60,
 
         [Parameter(Mandatory = $false)]

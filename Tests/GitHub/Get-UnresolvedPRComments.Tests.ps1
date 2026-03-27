@@ -324,6 +324,10 @@ Describe "Get-AuthToken" {
 }
 
 Describe "Invoke-GitHubRequestWithRetry" {
+    BeforeEach {
+        Mock Start-Sleep { }
+    }
+
     It "retries transient failures and then succeeds" {
         $script:attempt = 0
         Mock Invoke-RestMethod {
@@ -338,6 +342,7 @@ Describe "Invoke-GitHubRequestWithRetry" {
         $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 3 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
         $result.ok | Should -BeTrue
         $script:attempt | Should -Be 2
+        Assert-MockCalled Start-Sleep -Times 1 -Scope It
     }
 
     It "maps 401 to E_AUTH_INVALID" {
@@ -428,6 +433,7 @@ Describe "Invoke-GitHubRequestWithRetry" {
         }
         Mock Get-HttpStatusCode { 500 }
         Mock Get-ResponseHeaders { @{} }
+        Mock Get-Random { 123 }
         Mock Start-Sleep {
             param(
                 [int]$Milliseconds
@@ -441,10 +447,8 @@ Describe "Invoke-GitHubRequestWithRetry" {
         $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 3 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
         $result.ok | Should -BeTrue
         $script:delays.Count | Should -Be 2
-        $script:delays[0] | Should -BeGreaterOrEqual 1000
-        $script:delays[0] | Should -BeLessThan 1300
-        $script:delays[1] | Should -BeGreaterOrEqual 2000
-        $script:delays[1] | Should -BeLessThan 2300
+        $script:delays[0] | Should -Be 1123
+        $script:delays[1] | Should -Be 2123
     }
 
     It "rejects negative MaxRetries values" {
