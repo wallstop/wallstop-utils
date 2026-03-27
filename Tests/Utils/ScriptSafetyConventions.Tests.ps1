@@ -158,6 +158,42 @@ Describe "Workflow security conventions" {
     }
 }
 
+Describe "JSON parsing conventions" {
+    It "keeps strict ConvertFrom-JsonSingleObject edge-case coverage" {
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/Utils/StrictModeHelpers.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+
+        $testsContent | Should -Match 'throws for single-item JSON arrays'
+        $testsContent | Should -Match 'throws for string scalar JSON'
+        $testsContent | Should -Match 'throws for numeric scalar JSON'
+        $testsContent | Should -Match 'throws for null literal'
+    }
+
+    It "avoids direct ConvertFrom-Json in utility scripts unless explicitly justified" {
+        $utilsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils"
+        $utilsScripts = Get-ChildItem -Path $utilsRoot -Filter "*.ps1" -File -Recurse
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($scriptFile in $utilsScripts) {
+            if ($scriptFile.FullName -eq (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/StrictModeHelpers.ps1")) {
+                continue
+            }
+
+            $content = Get-Content -Path $scriptFile.FullName -Raw
+            if ($content -match '(?m)^\s*#\s*direct-json-ok:\s*ConvertFrom-Json\b') {
+                continue
+            }
+
+            if ($content -match '(?m)^[^#\r\n]*\bConvertFrom-Json\b(?!-)') {
+                $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                $violations.Add($relative) | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because ("Use ConvertFrom-JsonSingleObject for utility scripts. Violations: {0}" -f ($violations -join ', '))
+    }
+}
+
 Describe "GitHub fixture hygiene" {
     It "does not keep orphan JSON fixtures in Tests/GitHub/Fixtures" {
         $fixturesPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Fixtures"

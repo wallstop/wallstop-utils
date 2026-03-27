@@ -147,6 +147,36 @@ Current utility:
 
 - `Get-UnresolvedPRComments.ps1`: read unresolved PR review threads from GitHub and render plain-text or JSON output.
 
+## Optional Pre-Commit Validation
+
+This repository includes an opt-in local pre-commit validation flow for utility scripts.
+
+### What it runs
+
+- `Invoke-Pester -Path Tests/Utils`
+- `Invoke-ScriptAnalyzer -Path Scripts/Utils -Settings .psscriptanalyzer.psd1 -Recurse`
+
+### Use as a one-off check
+
+```powershell
+pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1
+```
+
+Use `-All` to run regardless of staged files, or `-SkipAnalyzer` if ScriptAnalyzer is not available.
+
+```powershell
+pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1 -All
+```
+
+### Opt into git hook execution
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit
+```
+
+The hook calls `Scripts/Utils/Run-PreCommitValidation.ps1` and fails the commit on test or lint errors.
+
 ## License
 
 See [LICENSE](LICENSE) for details.

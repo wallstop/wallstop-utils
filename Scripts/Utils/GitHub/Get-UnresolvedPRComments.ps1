@@ -797,7 +797,11 @@ function Convert-ReviewThreadToOutputRecord {
         return $null
     }
 
-    $comments = @($Thread.comments.nodes)
+    if ($Thread.comments.nodes -isnot [System.Array]) {
+        throw "E_MALFORMED_RESPONSE: Review thread comments.nodes must be an array."
+    }
+
+    $comments = $Thread.comments.nodes
     $commentCount = Get-SafeCount -InputObject $comments
     if ($commentCount -eq 0) {
         return $null
@@ -805,6 +809,16 @@ function Convert-ReviewThreadToOutputRecord {
 
     $top = $comments[0]
     $latestReply = if ($commentCount -gt 1) { $comments[$commentCount - 1] } else { $null }
+
+    if ($null -ne $top.body -and $top.body -isnot [string]) {
+        $topBodyType = $top.body.GetType().FullName
+        throw "E_MALFORMED_RESPONSE: Review thread top-level comment body must be a string (received '$topBodyType')."
+    }
+
+    if ($null -ne $latestReply -and $null -ne $latestReply.body -and $latestReply.body -isnot [string]) {
+        $replyBodyType = $latestReply.body.GetType().FullName
+        throw "E_MALFORMED_RESPONSE: Review thread latest reply body must be a string (received '$replyBodyType')."
+    }
 
     $lineStart = if ($null -ne $Thread.startLine) { [int]$Thread.startLine } elseif ($null -ne $Thread.line) { [int]$Thread.line } else { $null }
     $lineEnd = if ($null -ne $Thread.line) { [int]$Thread.line } elseif ($null -ne $lineStart) { [int]$lineStart } else { $null }
@@ -893,6 +907,10 @@ function Get-UnresolvedReviewThreads {
         [Parameter(Mandatory = $true)]
         [int]$MaxPages,
 
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(5, 300)]
+        [int]$RequestTimeoutSeconds = 60,
+
         [Parameter(Mandatory = $true)]
         [datetime]$OverallDeadlineUtc,
 
@@ -973,14 +991,36 @@ query GetReviewThreads(
             $errors = $response.errors
         }
 
-        if ($null -ne $errors -and @($errors).Count -gt 0) {
-            $message = [string](@($errors)[0].message)
+        $errorCount = Get-SafeCount -InputObject $errors
+        if ($null -ne $errors -and $errorCount -gt 0) {
+            $firstError = @($errors)[0]
+            $message = "GraphQL returned an error payload without a message field."
+            if ($null -ne $firstError) {
+                if ($firstError -is [System.Collections.IDictionary]) {
+                    if ($firstError.Contains("message") -and -not [string]::IsNullOrWhiteSpace([string]$firstError["message"])) {
+                        $message = [string]$firstError["message"]
+                    }
+                } elseif ($firstError.PSObject.Properties.Name -contains "message") {
+                    $messageValue = [string]$firstError.message
+                    if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
+                        $message = $messageValue
+                    }
+                }
+            }
             $safeMessage = Redact-SensitiveText -Text $message -SensitiveTokens $SensitiveTokens
             throw "E_GRAPHQL_ERROR: $safeMessage"
         }
 
-        if ($null -eq $response.data -or $null -eq $response.data.repository -or $null -eq $response.data.repository.pullRequest) {
-            throw "E_MALFORMED_RESPONSE: Missing repository or pull request data."
+        if ($null -eq $response.data) {
+            throw "E_MALFORMED_RESPONSE: Missing response.data in GraphQL response."
+        }
+
+        if ($null -eq $response.data.repository) {
+            throw "E_MALFORMED_RESPONSE: Missing response.data.repository in GraphQL response."
+        }
+
+        if ($null -eq $response.data.repository.pullRequest) {
+            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest in GraphQL response."
         }
 
         $threadsNode = $response.data.repository.pullRequest.reviewThreads
@@ -988,7 +1028,12 @@ query GetReviewThreads(
             break
         }
 
-        $threads = @($threadsNode.nodes)
+        if ($threadsNode.nodes -isnot [System.Array]) {
+            $nodesType = $threadsNode.nodes.GetType().FullName
+            throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.nodes must be an array (received '$nodesType')."
+        }
+
+        $threads = $threadsNode.nodes
         foreach ($thread in $threads) {
             if ($null -eq $thread.id) {
                 continue
@@ -1005,10 +1050,56 @@ query GetReviewThreads(
             }
         }
 
-        $hasNext = $threadsNode.pageInfo.hasNextPage
-        $nextCursor = $threadsNode.pageInfo.endCursor
+        if ($null -eq $threadsNode.pageInfo) {
+            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo in GraphQL response."
+        }
 
-        if (-not $hasNext -or [string]::IsNullOrWhiteSpace([string]$nextCursor)) {
+        $pageInfo = $threadsNode.pageInfo
+        $hasHasNextPageField = $false
+        $hasEndCursorField = $false
+        $hasNextValue = $null
+        $nextCursor = $null
+
+        if ($pageInfo -is [System.Collections.IDictionary]) {
+            $hasHasNextPageField = $pageInfo.Contains("hasNextPage")
+            $hasEndCursorField = $pageInfo.Contains("endCursor")
+            if ($hasHasNextPageField) {
+                $hasNextValue = $pageInfo["hasNextPage"]
+            }
+            if ($hasEndCursorField) {
+                $nextCursor = $pageInfo["endCursor"]
+            }
+        } else {
+            $hasHasNextPageField = $pageInfo.PSObject.Properties.Name -contains "hasNextPage"
+            $hasEndCursorField = $pageInfo.PSObject.Properties.Name -contains "endCursor"
+            if ($hasHasNextPageField) {
+                $hasNextValue = $pageInfo.hasNextPage
+            }
+            if ($hasEndCursorField) {
+                $nextCursor = $pageInfo.endCursor
+            }
+        }
+
+        if (-not $hasHasNextPageField) {
+            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage in GraphQL response."
+        }
+
+        if (-not $hasEndCursorField) {
+            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor in GraphQL response."
+        }
+
+        $hasNext = [bool]$hasNextValue
+
+        if ($null -ne $nextCursor -and $nextCursor -isnot [string]) {
+            $cursorType = $nextCursor.GetType().FullName
+            throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be a string or null (received '$cursorType')."
+        }
+
+        if ($hasNext -and [string]::IsNullOrWhiteSpace([string]$nextCursor)) {
+            throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be non-empty when hasNextPage is true."
+        }
+
+        if (-not $hasNext) {
             break
         }
 
@@ -1148,7 +1239,7 @@ function Invoke-Main {
             Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -SensitiveTokens $sensitiveTokens
         }
 
-        $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
+        $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
     } catch {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
 
@@ -1179,7 +1270,7 @@ function Invoke-Main {
                 Assert-IsHashtableLike -Value $headers -Name "Headers"
 
                 Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -SensitiveTokens $sensitiveTokens
-                $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
+                $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
             } else {
                 throw $message
             }

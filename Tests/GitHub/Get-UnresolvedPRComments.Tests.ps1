@@ -220,7 +220,7 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record.threadId | Should -Be "THREAD_1"
     }
 
-    It "handles a single comment node that is not array-wrapped" {
+    It "throws when comments nodes is not array-wrapped" {
         $thread = [pscustomobject]@{
             id = "THREAD_SINGLE"
             isResolved = $false
@@ -232,12 +232,9 @@ Describe "Convert-ReviewThreadToOutputRecord" {
             }
         }
 
-        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 7 -GitHubHost "github.com"
-        $record | Should -Not -BeNullOrEmpty
-        $record.topLevelComment | Should -Be "Single comment only"
-        $record.latestReplySummary | Should -BeNullOrEmpty
-        $record.lineStart | Should -Be 21
-        $record.lineEnd | Should -Be 21
+        {
+            [void](Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 7 -GitHubHost "github.com")
+        } | Should -Throw "*E_MALFORMED_RESPONSE*comments.nodes must be an array*"
     }
 }
 
@@ -670,6 +667,92 @@ Describe "Get-UnresolvedReviewThreads" {
 
         $thrown | Should -Match "E_GRAPHQL_ERROR"
         $thrown | Should -Not -Match [regex]::Escape($secret)
+    }
+
+    It "throws when reviewThreads nodes is not an array" {
+        Mock Invoke-GitHubRequestWithRetry {
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{
+                            reviewThreads = @{
+                                pageInfo = @{ hasNextPage = $false; endCursor = $null }
+                                nodes = @{ id = "T1" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        {
+            [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*reviewThreads.nodes must be an array*"
+    }
+
+    It "throws when comments nodes is not an array" {
+        Mock Invoke-GitHubRequestWithRetry {
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{
+                            reviewThreads = @{
+                                pageInfo = @{ hasNextPage = $false; endCursor = $null }
+                                nodes = @(
+                                    @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @{ body = "not-array" } } }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        {
+            [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*comments.nodes must be an array*"
+    }
+
+    It "throws when pageInfo is missing hasNextPage" {
+        Mock Invoke-GitHubRequestWithRetry {
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{
+                            reviewThreads = @{
+                                pageInfo = @{ endCursor = $null }
+                                nodes = @()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        {
+            [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*pageInfo.hasNextPage*"
+    }
+
+    It "throws when endCursor type is not string or null" {
+        Mock Invoke-GitHubRequestWithRetry {
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{
+                            reviewThreads = @{
+                                pageInfo = @{ hasNextPage = $true; endCursor = 42 }
+                                nodes = @()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        {
+            [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*endCursor must be a string or null*"
     }
 }
 
