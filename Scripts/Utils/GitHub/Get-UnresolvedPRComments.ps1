@@ -93,7 +93,7 @@ $ErrorActionPreference = "Stop"
 
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/StrictModeHelpers.ps1"
 if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
-    throw "E_CONFIG_ERROR: Strict mode helper file not found."
+    throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
 . $strictModeHelpersPath
@@ -219,10 +219,11 @@ function Assert-GitHubHostFormat {
         [string]$Context = "GitHub host"
     )
 
-    $normalizedHost = $GitHubHost.Trim().ToLowerInvariant()
-    if ([string]::IsNullOrWhiteSpace($normalizedHost)) {
+    if ([string]::IsNullOrWhiteSpace($GitHubHost)) {
         throw "E_INVALID_URL: Host cannot be empty in $Context."
     }
+
+    $normalizedHost = $GitHubHost.Trim().ToLowerInvariant()
 
     $hostPattern = '^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$'
     if ($normalizedHost -notmatch $hostPattern) {
@@ -249,16 +250,16 @@ function Assert-GitHubOwnerRepoFormat {
         [string]$Context = "owner/repo input"
     )
 
-    $normalizedOwner = $Owner.Trim()
-    $normalizedRepo = $Repo.Trim()
-
-    if ([string]::IsNullOrWhiteSpace($normalizedOwner)) {
+    if ([string]::IsNullOrWhiteSpace($Owner)) {
         throw "E_INVALID_OWNER_REPO: Owner cannot be empty in $Context."
     }
 
-    if ([string]::IsNullOrWhiteSpace($normalizedRepo)) {
+    if ([string]::IsNullOrWhiteSpace($Repo)) {
         throw "E_INVALID_OWNER_REPO: Repository cannot be empty in $Context."
     }
+
+    $normalizedOwner = $Owner.Trim()
+    $normalizedRepo = $Repo.Trim()
 
     $ownerPattern = '^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}$'
     if ($normalizedOwner -notmatch $ownerPattern) {
@@ -282,6 +283,10 @@ function Parse-GitHubPullRequestUrl {
         [Parameter(Mandatory = $true)]
         [string]$Url
     )
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        throw "E_INVALID_URL: Pull request URL cannot be empty."
+    }
 
     $trimmed = $Url.Trim()
     $regex = '^https://(?<host>[^/\s\?#]+)/(?<owner>[^/\s\?#]+)/(?<repo>[^/\s\?#]+)/pull/(?<pr>\d+)(?:$|/|\?|#)'

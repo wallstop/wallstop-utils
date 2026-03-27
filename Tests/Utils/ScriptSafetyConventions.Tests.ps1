@@ -301,6 +301,9 @@ Describe "JSON parsing conventions" {
         $testsContent | Should -Match 'throws for string scalar JSON'
         $testsContent | Should -Match 'throws for numeric scalar JSON'
         $testsContent | Should -Match 'throws for null literal'
+        $testsContent | Should -Match 'throws for null input and includes context'
+        $testsContent | Should -Match 'throws for empty string input'
+        $testsContent | Should -Match 'throws for whitespace input'
     }
 
     It "avoids direct ConvertFrom-Json in utility scripts unless explicitly justified" {
@@ -325,6 +328,42 @@ Describe "JSON parsing conventions" {
         }
 
         $violations.Count | Should -Be 0 -Because ("Use ConvertFrom-JsonSingleObject for utility scripts. Violations: {0}" -f ($violations -join ', '))
+    }
+}
+
+Describe "Utility configuration safety conventions" {
+    It "guards Invoke-Pester usage in Run-PreCommitValidation" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $content = Get-Content -Path $preCommitPath -Raw
+
+        $content | Should -Match 'Get-Command\s+-Name\s+Invoke-Pester'
+        $content | Should -Match 'E_CONFIG_ERROR:\s+Invoke-Pester is not available'
+    }
+
+    It "avoids hardcoded user-home Import-Module paths in utility scripts" {
+        $utilsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils"
+        $utilsScripts = Get-ChildItem -Path $utilsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($scriptFile in $utilsScripts) {
+            $content = Get-Content -Path $scriptFile.FullName -Raw
+            if ($content -match '(?im)^\s*Import-Module\s+~[/\\]' -or $content -match '(?im)^\s*Import-Module\s+\$env:USERPROFILE[/\\]') {
+                $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                $violations.Add($relative) | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because ("Hardcoded user-home module imports break portability. Violations: {0}" -f ($violations -join ', '))
+    }
+
+    It "uses rich E_CONFIG_ERROR diagnostics for strict mode helper bootstrapping" {
+        foreach ($scriptPath in $script:migratedScripts) {
+            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $scriptPath
+            $content = Get-Content -Path $fullPath -Raw
+
+            $content | Should -Match 'E_CONFIG_ERROR: Strict mode helper file not found at'
+            $content | Should -Match '\$strictModeHelpersPath'
+        }
     }
 }
 

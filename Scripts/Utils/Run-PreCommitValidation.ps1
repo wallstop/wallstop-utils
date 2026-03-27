@@ -16,10 +16,14 @@ Push-Location -Path $repoRoot
 try {
     $stagedFiles = @()
     if (-not $All) {
-        $stagedFiles = @(git diff --cached --name-only --diff-filter=ACMR)
+        $stagedFileQuery = 'git diff --cached --name-only --diff-filter=ACMR'
+        $stagedFileOutput = @(& git diff --cached --name-only --diff-filter=ACMR 2>&1)
         if ($LASTEXITCODE -ne 0) {
-            throw "E_CONFIG_ERROR: Failed to read staged files."
+            $gitErrorText = if ($stagedFileOutput.Count -gt 0) { $stagedFileOutput -join ' ' } else { '(no output)' }
+            throw "E_CONFIG_ERROR: Failed to read staged files using '$stagedFileQuery' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"
         }
+
+        $stagedFiles = $stagedFileOutput
     }
 
     $utilsTestPattern = '^(Scripts/Utils|Tests/Utils)/.+\.ps1$'
@@ -37,6 +41,13 @@ try {
     if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runAnalyzer) {
         Write-Host "No staged files requiring utility validation; skipping validation."
         return
+    }
+
+    if ($runUtilsTests -or $runGitHubTests) {
+        $pesterCommand = Get-Command -Name Invoke-Pester -ErrorAction SilentlyContinue
+        if ($null -eq $pesterCommand) {
+            throw "E_CONFIG_ERROR: Invoke-Pester is not available. Install Pester (for example: Install-Module Pester -Scope CurrentUser -MinimumVersion 5.5.0)."
+        }
     }
 
     if ($runUtilsTests) {

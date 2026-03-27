@@ -156,6 +156,17 @@ This repository includes an opt-in local pre-commit validation flow for utility 
 - `Invoke-Pester -Path Tests/Utils`
 - `Invoke-ScriptAnalyzer -Path Scripts/Utils -Settings .psscriptanalyzer.psd1 -Recurse`
 
+### Local prerequisites
+
+Install required PowerShell modules before enabling the hook:
+
+```powershell
+Install-Module Pester -Scope CurrentUser -MinimumVersion 5.5.0
+Install-Module PSScriptAnalyzer -Scope CurrentUser -MinimumVersion 1.21.0
+```
+
+If modules are missing, `Run-PreCommitValidation.ps1` fails with `E_CONFIG_ERROR` and an installation hint.
+
 ### Use as a one-off check
 
 ```powershell

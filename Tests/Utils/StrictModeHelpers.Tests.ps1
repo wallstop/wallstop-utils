@@ -84,6 +84,24 @@ Describe "ConvertFrom-JsonSingleObject" {
         } | Should -Throw "*E_MALFORMED_RESPONSE*top-level '{}' notation*"
     }
 
+    It "throws for null input and includes context" {
+        {
+            ConvertFrom-JsonSingleObject -Json $null -Context "null input"
+        } | Should -Throw "*E_MALFORMED_RESPONSE*null input*ParsedType=null*"
+    }
+
+    It "throws for empty string input" {
+        {
+            ConvertFrom-JsonSingleObject -Json '' -Context "empty input"
+        } | Should -Throw "*E_MALFORMED_RESPONSE*empty input*ParsedType=empty*"
+    }
+
+    It "throws for whitespace input" {
+        {
+            ConvertFrom-JsonSingleObject -Json " `t `n " -Context "whitespace input"
+        } | Should -Throw "*E_MALFORMED_RESPONSE*whitespace input*ParsedType=empty*"
+    }
+
     It "throws for malformed JSON and includes context" {
         {
             ConvertFrom-JsonSingleObject -Json '{"name":"wallstop",' -Context "broken payload"

@@ -66,13 +66,27 @@ function ConvertFrom-JsonSingleObject {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Json,
+        [AllowNull()]
+        [AllowEmptyString()]
+        $Json,
 
         [Parameter(Mandatory = $false)]
         [string]$Context = "JSON payload"
     )
 
+    if ($null -eq $Json) {
+        $safePreview = Get-SafeJsonPreview -Json $null
+        throw "E_MALFORMED_RESPONSE: $Context must be a single JSON object. ParsedType=null. Preview: $safePreview"
+    }
+
+    if ($Json -isnot [string]) {
+        $parsedType = $Json.GetType().FullName
+        $safePreview = Get-SafeJsonPreview -Json ([string]$Json)
+        throw "E_MALFORMED_RESPONSE: $Context must be a single JSON object string input. ParsedType=$parsedType. Preview: $safePreview"
+    }
+
     $safePreview = Get-SafeJsonPreview -Json $Json
+
     $trimmedJson = $Json.Trim()
 
     if ([string]::IsNullOrWhiteSpace($trimmedJson)) {

@@ -1,7 +1,7 @@
 # --- Configuration ---
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
 if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
-  throw "Strict mode helper file not found at $strictModeHelpersPath"
+  throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
 . $strictModeHelpersPath
