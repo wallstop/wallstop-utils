@@ -1,0 +1,43 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          },
+          "nodes": [
+            {
+              "id": "THREAD_1",
+              "isResolved": false,
+              "path": "src/main.ts",
+              "startLine": 10,
+              "line": 12,
+              "comments": {
+                "nodes": [
+                  {
+                    "body": "Please rename this variable",
+                    "createdAt": "2026-03-27T00:00:00Z",
+                    "url": "https://github.com/o/r/pull/1#discussion_r1",
+                    "author": {
+                      "login": "reviewer1"
+                    }
+                  },
+                  {
+                    "body": "Applied, please re-check",
+                    "createdAt": "2026-03-27T01:00:00Z",
+                    "url": "https://github.com/o/r/pull/1#discussion_r2",
+                    "author": {
+                      "login": "author1"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

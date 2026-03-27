@@ -1,3 +1,6 @@
 Scripts/**/*.txt
 Scripts/**/*.log
 *.DS_Store
+TestResults/
+Tests/**/Snapshots/*.actual.txt
+Scripts/Utils/GitHub/.cache/

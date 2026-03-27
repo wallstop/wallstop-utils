@@ -1,0 +1,75 @@
+name: GitHub PR Summarizer Quality
+
+on:
+  pull_request:
+    paths:
+      - 'Scripts/Utils/GitHub/**'
+      - 'Tests/GitHub/**'
+      - '.psscriptanalyzer.psd1'
+      - '.github/workflows/github-pr-summarizer-quality.yml'
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'Scripts/Utils/GitHub/**'
+      - 'Tests/GitHub/**'
+      - '.psscriptanalyzer.psd1'
+      - '.github/workflows/github-pr-summarizer-quality.yml'
+
+jobs:
+  lint-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PowerShell modules
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5.0
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+
+      - name: Lint PowerShell
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $issues = Invoke-ScriptAnalyzer -Path "Scripts/Utils/GitHub" -Settings ".psscriptanalyzer.psd1"
+          if ($issues.Count -gt 0) {
+            $issues | Format-Table -AutoSize | Out-String | Write-Host
+            throw "PSScriptAnalyzer found $($issues.Count) issue(s)."
+          }
+
+      - name: Security pattern checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v rg >/dev/null 2>&1; then
+            rg -n "(ghp_|github_pat_|Authorization:\\s*Bearer\\s+[A-Za-z0-9_.-]{20,}|Invoke-Expression|\\biex\\b)" Scripts/Utils/GitHub && {
+              echo "Disallowed token or command pattern detected"
+              exit 1
+            } || true
+          else
+            grep -RInE "(ghp_|github_pat_|Authorization:\s*Bearer\s+[A-Za-z0-9_.-]{20,}|Invoke-Expression|\biex\b)" Scripts/Utils/GitHub && {
+              echo "Disallowed token or command pattern detected"
+              exit 1
+            } || true
+          fi
+
+      - name: Run Pester with coverage
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $result = Invoke-Pester -Path "Tests/GitHub" -CodeCoverage "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1" -PassThru
+          if ($result.FailedCount -gt 0) {
+            throw "Pester tests failed: $($result.FailedCount)"
+          }
+
+          $coverage = [double]$result.CodeCoverage.CoveragePercent
+          Write-Host "Coverage: $coverage%"
+          if ($coverage -lt 60) {
+            throw "Coverage gate failed: $coverage% is below 60%"
+          }

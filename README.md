@@ -138,6 +138,15 @@ Scripts/          # Backup and restore scripts
 ./Scripts/Mac/restore_brew.sh
 ```
 
+## GitHub Utilities
+
+The repository also includes standalone GitHub-focused helper scripts under [Scripts/Utils/GitHub](Scripts/Utils/GitHub).
+These utilities do not modify backup/restore behavior.
+
+Current utility:
+
+- `Get-UnresolvedPRComments.ps1`: read unresolved PR review threads from GitHub and render plain-text or JSON output.
+
 ## License
 
 See [LICENSE](LICENSE) for details.

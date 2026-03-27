@@ -1,0 +1,7 @@
+{
+  "errors": [
+    {
+      "message": "Could not resolve to a Repository with the name 'missing/repo'."
+    }
+  ]
+}

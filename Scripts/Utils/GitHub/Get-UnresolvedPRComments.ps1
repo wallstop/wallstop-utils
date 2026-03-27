@@ -1,0 +1,1030 @@
+#!/usr/bin/env pwsh
+<#!
+.SYNOPSIS
+Fetch unresolved GitHub PR review threads and render plain text or JSON output.
+
+.DESCRIPTION
+Given a GitHub PR URL, or through an interactive owner/repo/PR picker, this script reads
+unresolved review threads and outputs each thread in the required text block format:
+---
+(path/to/file.ext) lineStart-lineEnd
+Comment message
+Latest reply summary: <text or (none)>
+---
+
+For automation, use -OutputFormat json to emit an array of objects.
+
+.PARAMETER PullRequestUrl
+GitHub pull request URL. Supports github.com and GitHub Enterprise Server hosts.
+
+.PARAMETER Owner
+Repository owner for interactive or direct owner/repo mode.
+
+.PARAMETER Repo
+Repository name for interactive or direct owner/repo mode.
+
+.PARAMETER PullRequestNumber
+Pull request number for direct owner/repo mode.
+
+.PARAMETER Token
+Explicit GitHub token. This has highest priority if provided.
+
+.PARAMETER OutputFormat
+text (default) or json.
+
+.PARAMETER Interactive
+Prompt for owner/repo and let the user select an open PR when PullRequestUrl is not provided.
+
+.PARAMETER WaitOnRateLimit
+If set, wait until rate-limit reset when 429/403 rate-limit is encountered.
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $false)]
+    [string]$PullRequestUrl,
+
+    [Parameter(Mandatory = $false)]
+    [string]$Owner,
+
+    [Parameter(Mandatory = $false)]
+    [string]$Repo,
+
+    [Parameter(Mandatory = $false)]
+    [string]$GitHubHost = "github.com",
+
+    [Parameter(Mandatory = $false)]
+    [int]$PullRequestNumber,
+
+    [Parameter(Mandatory = $false)]
+    [string]$Token,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("text", "json")]
+    [string]$OutputFormat = "text",
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Interactive,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$WaitOnRateLimit,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 100)]
+    [int]$PerPage = 100,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 100)]
+    [int]$MaxPages = 100,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(5, 300)]
+    [int]$RequestTimeoutSeconds = 60,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(30, 3600)]
+    [int]$OverallTimeoutSeconds = 300
+
+    ,
+    [Parameter(Mandatory = $false)]
+    [switch]$NoRun
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+function Redact-SensitiveText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    $redacted = $Text
+    foreach ($secret in $SensitiveTokens) {
+        if ([string]::IsNullOrWhiteSpace($secret)) {
+            continue
+        }
+
+        $escaped = [regex]::Escape($secret)
+        $redacted = [regex]::Replace($redacted, $escaped, "***REDACTED***")
+    }
+
+    # Generic token redaction for accidental echoes.
+    $redacted = $redacted -replace "ghp_[A-Za-z0-9_]{20,}", "***REDACTED***"
+    $redacted = $redacted -replace "github_pat_[A-Za-z0-9_]{20,}", "***REDACTED***"
+    $redacted = $redacted -replace "Bearer\s+[A-Za-z0-9_\-\.]{20,}", "Bearer ***REDACTED***"
+
+    return $redacted
+}
+
+function Get-HttpStatusCode {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Exception]$Exception
+    )
+
+    if ($null -ne $Exception.PSObject.Properties["Response"] -and $null -ne $Exception.Response) {
+        if ($null -ne $Exception.Response.PSObject.Properties["StatusCode"] -and $null -ne $Exception.Response.StatusCode) {
+            return [int]$Exception.Response.StatusCode
+        }
+    }
+
+    if ($Exception.PSObject.Properties["StatusCode"] -and $null -ne $Exception.StatusCode) {
+        return [int]$Exception.StatusCode
+    }
+
+    return $null
+}
+
+function Get-ResponseHeaders {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Exception]$Exception
+    )
+
+    if ($null -ne $Exception.PSObject.Properties["Response"] -and $null -ne $Exception.Response) {
+        if ($null -ne $Exception.Response.PSObject.Properties["Headers"] -and $null -ne $Exception.Response.Headers) {
+            return $Exception.Response.Headers
+        }
+    }
+
+    return $null
+}
+
+function Get-HeaderValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        $Headers,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    if ($null -eq $Headers) {
+        return $null
+    }
+
+    $possibleKeys = @($Key, $Key.ToLowerInvariant(), $Key.ToUpperInvariant())
+    foreach ($candidate in $possibleKeys) {
+        if ($Headers -is [System.Collections.IDictionary] -and $Headers.Contains($candidate)) {
+            return $Headers[$candidate]
+        }
+
+        if ($Headers.PSObject.Properties.Name -contains $candidate) {
+            return $Headers.$candidate
+        }
+    }
+
+    # Fallback for dictionary enumerables with case-insensitive keys.
+    foreach ($entry in $Headers.GetEnumerator()) {
+        if ($entry.Key.ToString().Equals($Key, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $entry.Value
+        }
+    }
+
+    return $null
+}
+
+function Parse-GitHubPullRequestUrl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Url
+    )
+
+    $trimmed = $Url.Trim()
+    $regex = "^https://(?<host>[A-Za-z0-9.-]+)/(?<owner>[A-Za-z0-9_.-]+)/(?<repo>[A-Za-z0-9_.-]+)/pull/(?<pr>\d+)(?:$|/|\?|#)"
+
+    $match = [regex]::Match($trimmed, $regex)
+    if (-not $match.Success) {
+        throw "E_INVALID_URL: Expected format https://github.com/owner/repo/pull/123"
+    }
+
+    $hostValue = $match.Groups["host"].Value.ToLowerInvariant()
+    if (-not (Test-GitHubHostAllowed -GitHubHost $hostValue)) {
+        throw "E_INVALID_URL: Host is not allowed for safety reasons."
+    }
+
+    return [pscustomobject]@{
+        Host            = $hostValue
+        Owner           = $match.Groups["owner"].Value
+        Repo            = $match.Groups["repo"].Value
+        PullRequestNumber = [int]$match.Groups["pr"].Value
+    }
+}
+
+function Test-GitHubHostAllowed {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost
+    )
+
+    $lower = $GitHubHost.ToLowerInvariant()
+    if ($lower -eq "localhost" -or $lower -eq "0.0.0.0" -or $lower -eq "127.0.0.1" -or $lower -eq "::1") {
+        return $false
+    }
+
+    if ($lower -match "^127\." -or $lower -match "^10\." -or $lower -match "^192\.168\.") {
+        return $false
+    }
+
+    if ($lower -match "^172\.(1[6-9]|2[0-9]|3[0-1])\.") {
+        return $false
+    }
+
+    return $true
+}
+
+function Resolve-GitHubGraphQLEndpoint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost
+    )
+
+    if ($GitHubHost.Equals("github.com", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return "https://api.github.com/graphql"
+    }
+
+    return "https://$GitHubHost/api/graphql"
+}
+
+function Get-GitHubHeaders {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$AuthToken
+    )
+
+    $headers = @{
+        "Accept" = "application/vnd.github+json"
+        "User-Agent" = "wallstop-utils-unresolved-pr-comments"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+        $headers["Authorization"] = "Bearer $AuthToken"
+    }
+
+    return $headers
+}
+
+function Normalize-CommentText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Text,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(10, 20000)]
+        [int]$MaxLength = 500
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return "(none)"
+    }
+
+    $singleLine = (($Text -replace "\r\n", " ") -replace "\n", " " -replace "\r", " ").Trim()
+    if ($singleLine.Length -le $MaxLength) {
+        return $singleLine
+    }
+
+    return ($singleLine.Substring(0, $MaxLength) + " [...]")
+}
+
+function Get-AuthToken {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$ExplicitToken,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$AllowInteractive
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitToken)) {
+        return $ExplicitToken.Trim()
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+        return $env:GITHUB_TOKEN.Trim()
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+        return $env:GH_TOKEN.Trim()
+    }
+
+    $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
+    if ($null -eq $ghCmd) {
+        return $null
+    }
+
+    try {
+        $tokenOutput = & gh auth token --hostname $GitHubHost 2>$null
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tokenOutput)) {
+            return $tokenOutput.Trim()
+        }
+    } catch {
+        # Continue to interactive fallback only if allowed.
+    }
+
+    if (-not $AllowInteractive.IsPresent) {
+        return $null
+    }
+
+    Write-Host "No GitHub token found. Starting GitHub CLI login for $GitHubHost..." -ForegroundColor Yellow
+    & gh auth login --hostname $GitHubHost --web --git-protocol https --scopes repo
+    if ($LASTEXITCODE -ne 0) {
+        throw "E_AUTH_REQUIRED: GitHub CLI login was not completed."
+    }
+
+    $tokenOutput = & gh auth token --hostname $GitHubHost 2>$null
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tokenOutput)) {
+        return $tokenOutput.Trim()
+    }
+
+    throw "E_AUTH_REQUIRED: Login succeeded but no token was returned by GitHub CLI."
+}
+
+function Invoke-GitHubRequestWithRetry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("GET", "POST")]
+        [string]$Method,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Headers,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [object]$Body,
+
+        [Parameter(Mandatory = $true)]
+        [int]$RequestTimeoutSeconds,
+
+        [Parameter(Mandatory = $true)]
+        [int]$MaxRetries,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$OverallDeadlineUtc,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$WaitOnRateLimit,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    $attempt = 0
+
+    while ($true) {
+        $attempt++
+
+        if ([datetime]::UtcNow -gt $OverallDeadlineUtc) {
+            throw "E_NETWORK_TIMEOUT: Overall timeout exceeded while calling GitHub API."
+        }
+
+        try {
+            if ($Method -eq "GET") {
+                return Invoke-RestMethod -Method GET -Uri $Uri -Headers $Headers -TimeoutSec $RequestTimeoutSeconds
+            }
+
+            $jsonBody = if ($null -eq $Body) { "{}" } else { $Body | ConvertTo-Json -Depth 20 }
+            return Invoke-RestMethod -Method POST -Uri $Uri -Headers $Headers -ContentType "application/json" -Body $jsonBody -TimeoutSec $RequestTimeoutSeconds
+        } catch {
+            $statusCode = Get-HttpStatusCode -Exception $_.Exception
+            $headers = Get-ResponseHeaders -Exception $_.Exception
+
+            if (($statusCode -eq 429 -or $statusCode -eq 403) -and $WaitOnRateLimit.IsPresent) {
+                $resetValue = Get-HeaderValue -Headers $headers -Key "X-RateLimit-Reset"
+                if ($null -ne $resetValue) {
+                    $resetEpoch = [int64]0
+                    if (-not [int64]::TryParse([string]$resetValue, [ref]$resetEpoch)) {
+                        throw "E_RATE_LIMIT: Invalid rate-limit reset header value."
+                    }
+
+                    $resetUtc = [DateTimeOffset]::FromUnixTimeSeconds($resetEpoch).UtcDateTime
+                    if ($resetUtc -le [datetime]::UtcNow) {
+                        throw "E_RATE_LIMIT: Invalid or expired rate-limit reset timestamp."
+                    }
+
+                    $waitSeconds = [Math]::Max(1, [int]($resetUtc - [datetime]::UtcNow).TotalSeconds + 1)
+                    Start-Sleep -Seconds $waitSeconds
+                    continue
+                }
+            }
+
+            if (($statusCode -eq 429 -or $statusCode -ge 500 -or $null -eq $statusCode) -and $attempt -le $MaxRetries) {
+                $baseDelay = [Math]::Pow(2, $attempt - 1)
+                $jitterMs = Get-Random -Minimum 0 -Maximum 300
+                Start-Sleep -Milliseconds ([int]($baseDelay * 1000 + $jitterMs))
+                continue
+            }
+
+            $errorText = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+            if ($statusCode -eq 401) {
+                throw "E_AUTH_INVALID: Authentication failed. $errorText"
+            }
+            if ($statusCode -eq 403) {
+                throw "E_FORBIDDEN: Access denied or rate-limited. $errorText"
+            }
+            if ($statusCode -eq 404) {
+                throw "E_NOT_FOUND: Resource not found. $errorText"
+            }
+
+            throw "E_GRAPHQL_ERROR: $errorText"
+        }
+    }
+}
+
+function Get-OpenPullRequests {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Owner,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Repo,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Headers,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$OverallDeadlineUtc,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$WaitOnRateLimit,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    $base = if ($GitHubHost -eq "github.com") { "https://api.github.com" } else { "https://$GitHubHost/api/v3" }
+    $uri = "$base/repos/$Owner/$Repo/pulls?state=open&per_page=50"
+
+    $pulls = Invoke-GitHubRequestWithRetry -Method GET -Uri $uri -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
+    if ($null -eq $pulls) {
+        return @()
+    }
+
+    return @($pulls)
+}
+
+function Validate-GitHubTokenForRepoAccess {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Owner,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Repo,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Headers,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$OverallDeadlineUtc,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$WaitOnRateLimit,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    $base = if ($GitHubHost -eq "github.com") { "https://api.github.com" } else { "https://$GitHubHost/api/v3" }
+    $uri = "$base/repos/$Owner/$Repo"
+
+    try {
+        $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $RequestTimeoutSeconds
+        $repoMetadata = $null
+        if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
+            $repoMetadata = $response.Content | ConvertFrom-Json
+        }
+
+        if ($GitHubHost -eq "github.com") {
+            $scopesHeader = Get-HeaderValue -Headers $response.Headers -Key "X-OAuth-Scopes"
+            if ([string]::IsNullOrWhiteSpace([string]$scopesHeader)) {
+                throw "Token scope header was not returned by GitHub."
+            }
+
+            $scopes = @()
+            foreach ($scope in ([string]$scopesHeader).Split(",")) {
+                $trimmed = $scope.Trim()
+                if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
+                    $scopes += $trimmed
+                }
+            }
+
+            $isPrivateRepo = $false
+            if ($null -ne $repoMetadata -and $repoMetadata.PSObject.Properties.Name -contains "private") {
+                $isPrivateRepo = [bool]$repoMetadata.private
+            }
+
+            if ($isPrivateRepo -and -not ($scopes -contains "repo")) {
+                throw "Token does not include required 'repo' scope for private repository access."
+            }
+
+            if (-not $isPrivateRepo -and -not (($scopes -contains "repo") -or ($scopes -contains "public_repo"))) {
+                throw "Token does not include 'repo' or 'public_repo' scope."
+            }
+        }
+    } catch {
+        $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+        throw "E_AUTH_INSUFFICIENT_SCOPE: Token could not access repository metadata. $safeMessage"
+    }
+}
+
+function Select-PullRequestInteractively {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Headers,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$OverallDeadlineUtc,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$WaitOnRateLimit,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    $ownerInput = Read-Host "GitHub owner"
+    if ([string]::IsNullOrWhiteSpace($ownerInput)) {
+        throw "E_INVALID_OWNER_REPO: Owner cannot be empty."
+    }
+
+    $repoInput = Read-Host "Repository"
+    if ([string]::IsNullOrWhiteSpace($repoInput)) {
+        throw "E_INVALID_OWNER_REPO: Repository cannot be empty."
+    }
+
+    $ownerInput = $ownerInput.Trim()
+    $repoInput = $repoInput.Trim()
+
+    if ($ownerInput -notmatch "^[A-Za-z0-9][A-Za-z0-9_-]{0,37}$") {
+        throw "E_INVALID_OWNER_REPO: Invalid owner format."
+    }
+
+    if ($repoInput -notmatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$") {
+        throw "E_INVALID_OWNER_REPO: Invalid repository format."
+    }
+
+    $pulls = Get-OpenPullRequests -Owner $ownerInput -Repo $repoInput -GitHubHost $GitHubHost -Headers $Headers -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
+    if ($pulls.Count -eq 0) {
+        throw "E_NOT_FOUND: No open pull requests were found for $ownerInput/$repoInput."
+    }
+
+    Write-Host "Open pull requests:" -ForegroundColor Cyan
+    $i = 1
+    foreach ($pr in $pulls) {
+        $title = Normalize-CommentText -Text $pr.title -MaxLength 90
+        Write-Host ("[{0}] #{1} {2}" -f $i, $pr.number, $title)
+        $i++
+    }
+
+    $selection = Read-Host "Choose an index or PR number"
+    if ([string]::IsNullOrWhiteSpace($selection)) {
+        throw "E_INVALID_URL: No selection was provided."
+    }
+
+    if ($selection -eq "q") {
+        return $null
+    }
+
+    $selectedPr = $null
+    if ($selection -match "^\d+$") {
+        $numeric = [int]$selection
+        if ($numeric -ge 1 -and $numeric -le $pulls.Count) {
+            $selectedPr = $pulls[$numeric - 1]
+        } else {
+            $selectedPr = $pulls | Where-Object { $_.number -eq $numeric } | Select-Object -First 1
+        }
+    }
+
+    if ($null -eq $selectedPr) {
+        throw "E_INVALID_URL: Selection did not match a listed pull request."
+    }
+
+    return [pscustomobject]@{
+        Host              = $GitHubHost
+        Owner             = $ownerInput
+        Repo              = $repoInput
+        PullRequestNumber = [int]$selectedPr.number
+    }
+}
+
+function Convert-ReviewThreadToOutputRecord {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Thread,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Owner,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Repo,
+
+        [Parameter(Mandatory = $true)]
+        [int]$PrNumber,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost
+    )
+
+    if ($Thread.isResolved) {
+        return $null
+    }
+
+    if ($null -eq $Thread.comments -or $null -eq $Thread.comments.nodes -or $Thread.comments.nodes.Count -eq 0) {
+        return $null
+    }
+
+    $comments = @($Thread.comments.nodes)
+    $top = $comments[0]
+    $latestReply = if ($comments.Count -gt 1) { $comments[$comments.Count - 1] } else { $null }
+
+    $lineStart = if ($null -ne $Thread.startLine) { [int]$Thread.startLine } elseif ($null -ne $Thread.line) { [int]$Thread.line } else { $null }
+    $lineEnd = if ($null -ne $Thread.line) { [int]$Thread.line } elseif ($null -ne $lineStart) { [int]$lineStart } else { $null }
+
+    $safePath = if ([string]::IsNullOrWhiteSpace($Thread.path)) { "<conversation>" } else { ($Thread.path -replace "\\", "/") }
+
+    return [pscustomobject]@{
+        path               = $safePath
+        lineStart          = $lineStart
+        lineEnd            = $lineEnd
+        topLevelComment    = Normalize-CommentText -Text $top.body -MaxLength 500
+        latestReplySummary = if ($null -ne $latestReply) { Normalize-CommentText -Text $latestReply.body -MaxLength 300 } else { $null }
+        threadId           = [string]$Thread.id
+        prNumber           = $PrNumber
+        owner              = $Owner
+        repo               = $Repo
+        url                = "https://$GitHubHost/$Owner/$Repo/pull/$PrNumber"
+    }
+}
+
+function Format-UnresolvedThreadsAsText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Records
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+
+    foreach ($record in $Records) {
+        $lineStartText = if ($null -eq $record.lineStart) { "?" } else { [string]$record.lineStart }
+        $lineEndText = if ($null -eq $record.lineEnd) { "?" } else { [string]$record.lineEnd }
+
+        $lines.Add("---")
+        $lines.Add(("({0}) {1}-{2}" -f $record.path, $lineStartText, $lineEndText))
+        $lines.Add($record.topLevelComment)
+        if ($null -eq $record.latestReplySummary) {
+            $lines.Add("Latest reply summary: (none)")
+        } else {
+            $lines.Add(("Latest reply summary: {0}" -f $record.latestReplySummary))
+        }
+        $lines.Add("---")
+    }
+
+    if ($lines.Count -eq 0) {
+        return "No unresolved review threads found."
+    }
+
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Format-UnresolvedThreadsAsJson {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Records
+    )
+
+    return ($Records | ConvertTo-Json -Depth 8)
+}
+
+function Get-UnresolvedReviewThreads {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Owner,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Repo,
+
+        [Parameter(Mandatory = $true)]
+        [int]$PrNumber,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Endpoint,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Headers,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $true)]
+        [int]$PerPage,
+
+        [Parameter(Mandatory = $true)]
+        [int]$MaxPages,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$OverallDeadlineUtc,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$WaitOnRateLimit,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+        $query = @'
+query GetReviewThreads(
+  $owner: String!,
+  $repo: String!,
+  $prNumber: Int!,
+  $first: Int!,
+  $after: String
+) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $prNumber) {
+      reviewThreads(first: $first, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          isResolved
+          path
+          startLine
+          line
+          comments(first: 100) {
+            nodes {
+              body
+              createdAt
+              url
+              author {
+                login
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+'@
+
+    $cursor = $null
+    $page = 0
+    $allRecords = New-Object System.Collections.Generic.List[object]
+    $seenThreadIds = New-Object System.Collections.Generic.HashSet[string]
+
+    while ($page -lt $MaxPages) {
+        $page++
+
+        $variables = @{
+            owner = $Owner
+            repo = $Repo
+            prNumber = $PrNumber
+            first = $PerPage
+            after = $cursor
+        }
+
+        $body = @{
+            query = $query
+            variables = $variables
+        }
+
+        $response = Invoke-GitHubRequestWithRetry -Method POST -Uri $Endpoint -Headers $Headers -Body $body -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
+
+        $errors = $null
+        if ($response -is [System.Collections.IDictionary]) {
+            if ($response.Contains("errors")) {
+                $errors = $response["errors"]
+            }
+        } elseif ($response.PSObject.Properties.Name -contains "errors") {
+            $errors = $response.errors
+        }
+
+        if ($null -ne $errors -and @($errors).Count -gt 0) {
+            $message = [string](@($errors)[0].message)
+            $safeMessage = Redact-SensitiveText -Text $message -SensitiveTokens $SensitiveTokens
+            throw "E_GRAPHQL_ERROR: $safeMessage"
+        }
+
+        if ($null -eq $response.data -or $null -eq $response.data.repository -or $null -eq $response.data.repository.pullRequest) {
+            throw "E_MALFORMED_RESPONSE: Missing repository or pull request data."
+        }
+
+        $threadsNode = $response.data.repository.pullRequest.reviewThreads
+        if ($null -eq $threadsNode -or $null -eq $threadsNode.nodes) {
+            break
+        }
+
+        $threads = @($threadsNode.nodes)
+        foreach ($thread in $threads) {
+            if ($null -eq $thread.id) {
+                continue
+            }
+
+            if ($seenThreadIds.Contains([string]$thread.id)) {
+                continue
+            }
+
+            $seenThreadIds.Add([string]$thread.id) | Out-Null
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost
+            if ($null -ne $record) {
+                $allRecords.Add($record)
+            }
+        }
+
+        $hasNext = $threadsNode.pageInfo.hasNextPage
+        $nextCursor = $threadsNode.pageInfo.endCursor
+
+        if (-not $hasNext -or [string]::IsNullOrWhiteSpace([string]$nextCursor)) {
+            break
+        }
+
+        if ($cursor -eq $nextCursor) {
+            throw "E_PAGINATION_LOOP: Cursor did not advance."
+        }
+
+        $cursor = [string]$nextCursor
+    }
+
+    return $allRecords.ToArray()
+}
+
+function Resolve-PullRequestTarget {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$PullRequestUrl,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Owner,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Repo,
+
+        [Parameter(Mandatory = $false)]
+        [string]$GitHubHost = "github.com",
+
+        [Parameter(Mandatory = $false)]
+        [int]$PullRequestNumber,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Interactive,
+
+        [Parameter(Mandatory = $false)]
+        [hashtable]$Headers,
+
+        [Parameter(Mandatory = $false)]
+        [datetime]$OverallDeadlineUtc,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$WaitOnRateLimit,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($PullRequestUrl)) {
+        return Parse-GitHubPullRequestUrl -Url $PullRequestUrl
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Owner) -and -not [string]::IsNullOrWhiteSpace($Repo) -and $PullRequestNumber -gt 0) {
+        $normalizedHost = $GitHubHost.Trim().ToLowerInvariant()
+        if ($normalizedHost -notmatch "^[A-Za-z0-9][A-Za-z0-9.-]+$") {
+            throw "E_INVALID_URL: Invalid host format."
+        }
+        if (-not (Test-GitHubHostAllowed -GitHubHost $normalizedHost)) {
+            throw "E_INVALID_URL: Host is not allowed for safety reasons."
+        }
+
+        return [pscustomobject]@{
+            Host              = $normalizedHost
+            Owner             = $Owner.Trim()
+            Repo              = $Repo.Trim()
+            PullRequestNumber = $PullRequestNumber
+        }
+    }
+
+    if ($Interactive.IsPresent) {
+        $hostInput = Read-Host "GitHub host [github.com]"
+        if ([string]::IsNullOrWhiteSpace($hostInput)) {
+            $hostInput = "github.com"
+        }
+
+        $resolvedHost = $hostInput.Trim().ToLowerInvariant()
+        if ($resolvedHost -notmatch "^[A-Za-z0-9][A-Za-z0-9.-]+$") {
+            throw "E_INVALID_URL: Invalid host format."
+        }
+
+        if (-not (Test-GitHubHostAllowed -GitHubHost $resolvedHost)) {
+            throw "E_INVALID_URL: Host is not allowed for safety reasons."
+        }
+
+        return Select-PullRequestInteractively -GitHubHost $resolvedHost -Headers $Headers -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
+    }
+
+    throw "E_INVALID_URL: Provide -PullRequestUrl or use -Interactive."
+}
+
+function Invoke-Main {
+    [CmdletBinding()]
+    param()
+
+    $overallDeadlineUtc = [datetime]::UtcNow.AddSeconds($OverallTimeoutSeconds)
+    $initialSensitive = @()
+
+    # First pass target resolution may require anonymous headers for interactive listing.
+    $tempHeaders = Get-GitHubHeaders -AuthToken $null
+
+    $target = Resolve-PullRequestTarget -PullRequestUrl $PullRequestUrl -Owner $Owner -Repo $Repo -GitHubHost $GitHubHost -PullRequestNumber $PullRequestNumber -Interactive:$Interactive -Headers $tempHeaders -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $initialSensitive
+    if ($null -eq $target) {
+        return
+    }
+
+    $authToken = Get-AuthToken -ExplicitToken $Token -GitHubHost $target.Host -AllowInteractive:$Interactive
+    $sensitiveTokens = @()
+    if (-not [string]::IsNullOrWhiteSpace($authToken)) {
+        $sensitiveTokens += $authToken
+    }
+
+    $headers = Get-GitHubHeaders -AuthToken $authToken
+
+    if (-not [string]::IsNullOrWhiteSpace($authToken)) {
+        Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
+    }
+
+    $endpoint = Resolve-GitHubGraphQLEndpoint -GitHubHost $target.Host
+
+    try {
+        $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
+    } catch {
+        $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
+
+        # If unauthenticated attempt failed, offer login for private repositories in interactive mode.
+        if ([string]::IsNullOrWhiteSpace($authToken) -and $Interactive.IsPresent -and ($message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*")) {
+            $choice = Read-Host "Authentication may be required. Log in using GitHub CLI now? [y/N]"
+            if ($choice -match "^(y|yes)$") {
+                $authToken = Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive
+                $sensitiveTokens = @($authToken)
+                $headers = Get-GitHubHeaders -AuthToken $authToken
+                $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
+            } else {
+                throw $message
+            }
+        } else {
+            throw $message
+        }
+    }
+
+    if ($OutputFormat -eq "json") {
+        Write-Output (Format-UnresolvedThreadsAsJson -Records $records)
+    } else {
+        Write-Output (Format-UnresolvedThreadsAsText -Records $records)
+    }
+}
+
+# Allow tests to dot-source without executing main flow.
+if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
+    try {
+        Invoke-Main
+    } catch {
+        Write-Error $_
+        exit 1
+    }
+}
