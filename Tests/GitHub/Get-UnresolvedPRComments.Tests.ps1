@@ -31,6 +31,25 @@ Describe "Parse-GitHubPullRequestUrl" {
     It "rejects localhost and private-network hosts" {
         { Parse-GitHubPullRequestUrl -Url "https://localhost/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
     }
+
+    It "accepts owner values up to 39 characters" {
+        $owner39 = "o" + ("a" * 38)
+        $result = Parse-GitHubPullRequestUrl -Url "https://github.com/$owner39/octo-repo/pull/123"
+
+        $result.Owner | Should -Be $owner39
+    }
+
+    It "rejects owner values longer than 39 characters" {
+        $owner40 = "o" + ("a" * 39)
+        { Parse-GitHubPullRequestUrl -Url "https://github.com/$owner40/octo-repo/pull/123" } | Should -Throw "*E_INVALID_OWNER_REPO*"
+    }
+
+    It "rejects malformed host labels" {
+        { Parse-GitHubPullRequestUrl -Url "https://.github.com/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
+        { Parse-GitHubPullRequestUrl -Url "https://github.com./octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
+        { Parse-GitHubPullRequestUrl -Url "https://-github.com/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
+        { Parse-GitHubPullRequestUrl -Url "https://github-.com/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
+    }
 }
 
 Describe "Test-GitHubHostAllowed" {
@@ -498,6 +517,52 @@ Describe "Get-OpenPullRequests" {
 }
 
 Describe "Validate-GitHubTokenForRepoAccess" {
+    BeforeEach {
+        Mock Start-Sleep { }
+    }
+
+    It "fails fast when overall deadline has already expired" {
+        Mock Invoke-WebRequest { throw "should not run" }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(-1)) } | Should -Throw "*E_NETWORK_TIMEOUT*"
+        Assert-MockCalled Invoke-WebRequest -Times 0 -Scope It
+    }
+
+    It "caps request timeout to remaining deadline budget" {
+        Mock Invoke-WebRequest {
+            return [pscustomobject]@{
+                Headers = @{ "X-OAuth-Scopes" = "repo" }
+                Content = '{"private": true}'
+            }
+        }
+
+        Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -RequestTimeoutSeconds 300 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(20))
+
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -Scope It -ParameterFilter { $TimeoutSec -gt 0 -and $TimeoutSec -le 20 }
+    }
+
+    It "retries transient 5xx failures before succeeding" {
+        $script:attempt = 0
+
+        Mock Invoke-WebRequest {
+            $script:attempt++
+            if ($script:attempt -lt 3) {
+                throw (New-Object System.Exception "temporary failure")
+            }
+
+            return [pscustomobject]@{
+                Headers = @{ "X-OAuth-Scopes" = "repo" }
+                Content = '{"private": true}'
+            }
+        }
+        Mock Get-HttpStatusCode { 503 }
+        Mock Get-ResponseHeaders { @{} }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Not -Throw
+        $script:attempt | Should -Be 3
+        Assert-MockCalled Start-Sleep -Times 2 -Scope It
+    }
+
     It "passes when repository metadata is reachable" {
         Mock Invoke-WebRequest {
             return [pscustomobject]@{
@@ -606,6 +671,41 @@ Describe "Select-PullRequestInteractively" {
         $selected.Repo | Should -Be "demo-repo"
         $selected.PullRequestNumber | Should -Be 42
         $script:capturedInteractiveTimeout | Should -Be 45
+    }
+
+    It "accepts 39-character owners in interactive mode" {
+        $owner39 = "o" + ("a" * 38)
+        $script:readIndex = 0
+        $script:responses = @($owner39, "demo-repo", "1")
+
+        Mock Read-Host {
+            $value = $script:responses[$script:readIndex]
+            $script:readIndex++
+            return $value
+        }
+
+        Mock Get-OpenPullRequests {
+            return @(
+                [pscustomobject]@{ number = 42; title = "Fix test" }
+            )
+        }
+
+        $selected = Select-PullRequestInteractively -GitHubHost "github.com" -Headers @{} -RequestTimeoutSeconds 45 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $selected.Owner | Should -Be $owner39
+    }
+
+    It "rejects owners longer than 39 characters in interactive mode" {
+        $owner40 = "o" + ("a" * 39)
+        $script:readIndex = 0
+        $script:responses = @($owner40, "demo-repo")
+
+        Mock Read-Host {
+            $value = $script:responses[$script:readIndex]
+            $script:readIndex++
+            return $value
+        }
+
+        { Select-PullRequestInteractively -GitHubHost "github.com" -Headers @{} -RequestTimeoutSeconds 45 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_OWNER_REPO*"
     }
 }
 
@@ -791,6 +891,15 @@ Describe "Resolve-PullRequestTarget" {
 
     It "requires a future deadline in interactive mode" {
         { Resolve-PullRequestTarget -Interactive -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(-1)) } | Should -Throw "*E_CONFIG_ERROR*"
+    }
+
+    It "rejects invalid direct owner values" {
+        $owner40 = "o" + ("a" * 39)
+        { Resolve-PullRequestTarget -Owner $owner40 -Repo "demo" -PullRequestNumber 99 -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_OWNER_REPO*"
+    }
+
+    It "rejects malformed direct host values" {
+        { Resolve-PullRequestTarget -Owner "octo" -Repo "demo" -GitHubHost ".github.com" -PullRequestNumber 99 -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*"
     }
 }
 

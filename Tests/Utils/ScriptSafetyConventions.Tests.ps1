@@ -39,6 +39,140 @@ Describe "Shared helper migration" {
     }
 }
 
+Describe "Scope safety conventions" {
+    It "does not reference function parameters from script scope" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts"
+        $scripts = Get-ChildItem -Path $scriptsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($scriptFile in $scripts) {
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptFile.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($null -eq $ast) {
+                continue
+            }
+
+            $functions = @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+                    }, $true))
+            if ($functions.Count -eq 0) {
+                continue
+            }
+
+            $topLevelParamNames = @()
+            if ($null -ne $ast.ParamBlock) {
+                foreach ($topParam in $ast.ParamBlock.Parameters) {
+                    $topLevelParamNames += $topParam.Name.VariablePath.UserPath
+                }
+            }
+
+            $scriptAssignedNames = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+            $scriptAssignments = @($ast.FindAll({
+                        param($node)
+                        if (-not ($node -is [System.Management.Automation.Language.AssignmentStatementAst])) {
+                            return $false
+                        }
+
+                        if (-not ($node.Left -is [System.Management.Automation.Language.VariableExpressionAst])) {
+                            return $false
+                        }
+
+                        $isInsideFunction = @($functions | Where-Object {
+                                $node.Extent.StartOffset -ge $_.Extent.StartOffset -and $node.Extent.EndOffset -le $_.Extent.EndOffset
+                            }).Count -gt 0
+
+                        return -not $isInsideFunction
+                    }, $true))
+            foreach ($assignment in $scriptAssignments) {
+                $name = $assignment.Left.VariablePath.UserPath
+                if (-not [string]::IsNullOrWhiteSpace($name)) {
+                    [void]$scriptAssignedNames.Add($name)
+                }
+            }
+
+            $scriptScopeVariables = @($ast.FindAll({
+                        param($node)
+                        if (-not ($node -is [System.Management.Automation.Language.VariableExpressionAst])) {
+                            return $false
+                        }
+
+                        if (-not $node.VariablePath.IsUnscopedVariable) {
+                            return $false
+                        }
+
+                        $isInsideFunction = @($functions | Where-Object {
+                                $node.Extent.StartOffset -ge $_.Extent.StartOffset -and $node.Extent.EndOffset -le $_.Extent.EndOffset
+                            }).Count -gt 0
+
+                        return -not $isInsideFunction
+                    }, $true))
+
+            if ($scriptScopeVariables.Count -eq 0) {
+                continue
+            }
+
+            foreach ($function in $functions) {
+                $paramNames = @()
+                if ($null -ne $function.Body -and $null -ne $function.Body.ParamBlock) {
+                    foreach ($param in $function.Body.ParamBlock.Parameters) {
+                        $paramName = $param.Name.VariablePath.UserPath
+                        if ($topLevelParamNames -contains $paramName) {
+                            continue
+                        }
+
+                        if ($scriptAssignedNames.Contains($paramName)) {
+                            continue
+                        }
+
+                        $paramNames += $paramName
+                    }
+                }
+
+                if ($paramNames.Count -eq 0) {
+                    continue
+                }
+
+                foreach ($scriptVariable in $scriptScopeVariables) {
+                    $variableName = $scriptVariable.VariablePath.UserPath
+                    if ($paramNames -contains $variableName) {
+                        $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                        $violations.Add("${relative}:$($scriptVariable.Extent.StartLineNumber) variable '$variableName' from function '$($function.Name)' referenced at script scope") | Out-Null
+                    }
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Function parameters must not leak into script scope. Violations: {0}" -f ($violations -join ", ")
+        )
+    }
+
+    It "uses centralized GitHub owner/repo and host validation helpers across entry points" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+Assert-GitHubHostFormat'
+        $content | Should -Match 'function\s+Assert-GitHubOwnerRepoFormat'
+
+        $content | Should -Match 'function\s+Parse-GitHubPullRequestUrl[\s\S]*Assert-GitHubHostFormat'
+        $content | Should -Match 'function\s+Parse-GitHubPullRequestUrl[\s\S]*Assert-GitHubOwnerRepoFormat'
+        $content | Should -Match 'function\s+Select-PullRequestInteractively[\s\S]*Assert-GitHubOwnerRepoFormat'
+        $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*Assert-GitHubHostFormat'
+        $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*Assert-GitHubOwnerRepoFormat'
+
+        $content | Should -Not -Match '\^\[A-Za-z0-9\]\[A-Za-z0-9_-\]\{0,37\}\$'
+    }
+
+    It "keeps Increment-Version direct-run invocation guard" {
+        $incrementPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Increment-Version.ps1"
+        $incrementContent = Get-Content -Path $incrementPath -Raw
+
+        $incrementContent | Should -Match 'if\s*\(\$MyInvocation\.InvocationName\s*-ne\s*"\."\)\s*\{\s*Increment-Version\s+@args\s*\}'
+    }
+}
+
 Describe "CI scope expansion" {
     It "triggers workflow on all script and test changes" {
         $workflow = Get-Content -Path $script:workflowPath -Raw

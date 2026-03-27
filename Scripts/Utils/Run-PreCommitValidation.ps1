@@ -22,21 +22,40 @@ try {
         }
     }
 
-    $relevantPattern = '^(Scripts/Utils|Tests/Utils)/.+\.ps1$'
-    $relevantFiles = @($stagedFiles | Where-Object { $_ -match $relevantPattern })
+    $utilsTestPattern = '^(Scripts/Utils|Tests/Utils)/.+\.ps1$'
+    $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
+    $scriptPattern = '^Scripts/Utils/.+\.ps1$'
 
-    if (-not $All -and $relevantFiles.Count -eq 0) {
-        Write-Host "No staged files in Scripts/Utils or Tests/Utils; skipping validation."
+    $utilsTestFiles = @($stagedFiles | Where-Object { $_ -match $utilsTestPattern })
+    $githubTestFiles = @($stagedFiles | Where-Object { $_ -match $githubTestPattern })
+    $scriptFiles = @($stagedFiles | Where-Object { $_ -match $scriptPattern })
+
+    $runUtilsTests = $All -or $utilsTestFiles.Count -gt 0
+    $runGitHubTests = $All -or $githubTestFiles.Count -gt 0
+    $runAnalyzer = $All -or $scriptFiles.Count -gt 0
+
+    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runAnalyzer) {
+        Write-Host "No staged files requiring utility validation; skipping validation."
         return
     }
 
-    Write-Host "Running Tests/Utils Pester suite..."
-    $testResult = Invoke-Pester -Path "Tests/Utils" -PassThru -ErrorAction Stop
-    if ($testResult.FailedCount -gt 0) {
-        throw "E_TEST_FAILURE: Tests/Utils failed ($($testResult.FailedCount) failing tests)."
+    if ($runUtilsTests) {
+        Write-Host "Running Tests/Utils Pester suite..."
+        $testResult = Invoke-Pester -Path "Tests/Utils" -PassThru -ErrorAction Stop
+        if ($testResult.FailedCount -gt 0) {
+            throw "E_TEST_FAILURE: Tests/Utils failed ($($testResult.FailedCount) failing tests)."
+        }
     }
 
-    if (-not $SkipAnalyzer) {
+    if ($runGitHubTests) {
+        Write-Host "Running Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1 Pester suite..."
+        $githubTestResult = Invoke-Pester -Path "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1" -PassThru -ErrorAction Stop
+        if ($githubTestResult.FailedCount -gt 0) {
+            throw "E_TEST_FAILURE: Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1 failed ($($githubTestResult.FailedCount) failing tests)."
+        }
+    }
+
+    if (-not $SkipAnalyzer -and $runAnalyzer) {
         $scriptAnalyzerCommand = Get-Command -Name Invoke-ScriptAnalyzer -ErrorAction SilentlyContinue
         if ($null -eq $scriptAnalyzerCommand) {
             throw "E_CONFIG_ERROR: Invoke-ScriptAnalyzer is not available. Install PSScriptAnalyzer or re-run with -SkipAnalyzer."

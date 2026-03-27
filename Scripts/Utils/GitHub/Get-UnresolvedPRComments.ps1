@@ -209,6 +209,73 @@ function Get-HeaderValue {
     return $null
 }
 
+function Assert-GitHubHostFormat {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Context = "GitHub host"
+    )
+
+    $normalizedHost = $GitHubHost.Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($normalizedHost)) {
+        throw "E_INVALID_URL: Host cannot be empty in $Context."
+    }
+
+    $hostPattern = '^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$'
+    if ($normalizedHost -notmatch $hostPattern) {
+        throw "E_INVALID_URL: Invalid host format in $Context. Host '$normalizedHost' (length=$($normalizedHost.Length)) must use DNS labels with alphanumeric boundaries."
+    }
+
+    if (-not (Test-GitHubHostAllowed -GitHubHost $normalizedHost)) {
+        throw "E_INVALID_URL: Host '$normalizedHost' is not allowed for safety reasons in $Context."
+    }
+
+    return $normalizedHost
+}
+
+function Assert-GitHubOwnerRepoFormat {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Owner,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Repo,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Context = "owner/repo input"
+    )
+
+    $normalizedOwner = $Owner.Trim()
+    $normalizedRepo = $Repo.Trim()
+
+    if ([string]::IsNullOrWhiteSpace($normalizedOwner)) {
+        throw "E_INVALID_OWNER_REPO: Owner cannot be empty in $Context."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($normalizedRepo)) {
+        throw "E_INVALID_OWNER_REPO: Repository cannot be empty in $Context."
+    }
+
+    $ownerPattern = '^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}$'
+    if ($normalizedOwner -notmatch $ownerPattern) {
+        throw "E_INVALID_OWNER_REPO: Invalid owner format in $Context. Owner '$normalizedOwner' (length=$($normalizedOwner.Length)) must start with alphanumeric and be 1-39 chars using letters, digits, '.', '_', or '-'."
+    }
+
+    $repoPattern = '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$'
+    if ($normalizedRepo -notmatch $repoPattern) {
+        throw "E_INVALID_OWNER_REPO: Invalid repository format in $Context. Repository '$normalizedRepo' (length=$($normalizedRepo.Length)) must start with alphanumeric and be 1-100 chars using letters, digits, '.', '_', or '-'."
+    }
+
+    return [pscustomobject]@{
+        Owner = $normalizedOwner
+        Repo = $normalizedRepo
+    }
+}
+
 function Parse-GitHubPullRequestUrl {
     [CmdletBinding()]
     param(
@@ -217,22 +284,20 @@ function Parse-GitHubPullRequestUrl {
     )
 
     $trimmed = $Url.Trim()
-    $regex = "^https://(?<host>[A-Za-z0-9.-]+)/(?<owner>[A-Za-z0-9_.-]+)/(?<repo>[A-Za-z0-9_.-]+)/pull/(?<pr>\d+)(?:$|/|\?|#)"
+    $regex = '^https://(?<host>[^/\s\?#]+)/(?<owner>[^/\s\?#]+)/(?<repo>[^/\s\?#]+)/pull/(?<pr>\d+)(?:$|/|\?|#)'
 
     $match = [regex]::Match($trimmed, $regex)
     if (-not $match.Success) {
         throw "E_INVALID_URL: Expected format https://github.com/owner/repo/pull/123"
     }
 
-    $hostValue = $match.Groups["host"].Value.ToLowerInvariant()
-    if (-not (Test-GitHubHostAllowed -GitHubHost $hostValue)) {
-        throw "E_INVALID_URL: Host is not allowed for safety reasons."
-    }
+    $hostValue = Assert-GitHubHostFormat -GitHubHost $match.Groups["host"].Value -Context "PullRequestUrl"
+    $validatedOwnerRepo = Assert-GitHubOwnerRepoFormat -Owner $match.Groups["owner"].Value -Repo $match.Groups["repo"].Value -Context "PullRequestUrl"
 
     return [pscustomobject]@{
         Host            = $hostValue
-        Owner           = $match.Groups["owner"].Value
-        Repo            = $match.Groups["repo"].Value
+        Owner           = $validatedOwnerRepo.Owner
+        Repo            = $validatedOwnerRepo.Repo
         PullRequestNumber = [int]$match.Groups["pr"].Value
     }
 }
@@ -595,88 +660,123 @@ function Validate-GitHubTokenForRepoAccess {
 
     $base = if ($GitHubHost -eq "github.com") { "https://api.github.com" } else { "https://$GitHubHost/api/v3" }
     $uri = "$base/repos/$Owner/$Repo"
+    $maxRetries = 2
+    $attempt = 0
 
-    try {
-        $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $RequestTimeoutSeconds
-        $repoMetadata = $null
-        if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
-            $repoMetadata = ConvertFrom-JsonSingleObject -Json $response.Content -Context "Repository metadata response"
+    while ($true) {
+        $attempt++
+
+        $remainingSeconds = [int][Math]::Floor(($OverallDeadlineUtc - [datetime]::UtcNow).TotalSeconds)
+        if ($remainingSeconds -lt 1) {
+            throw "E_NETWORK_TIMEOUT: Token validation deadline was exceeded before request start for $Owner/$Repo on $GitHubHost."
         }
 
-        if ($GitHubHost -eq "github.com") {
-            $scopesHeader = Get-HeaderValue -Headers $response.Headers -Key "X-OAuth-Scopes"
-            if ([string]::IsNullOrWhiteSpace([string]$scopesHeader)) {
-                throw "Token scope header was not returned by GitHub."
+        $effectiveRequestTimeoutSeconds = [Math]::Min($RequestTimeoutSeconds, $remainingSeconds)
+        if ($effectiveRequestTimeoutSeconds -lt 1) {
+            throw "E_NETWORK_TIMEOUT: Token validation timeout budget is exhausted for $Owner/$Repo on $GitHubHost."
+        }
+
+        try {
+            $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $effectiveRequestTimeoutSeconds
+            $repoMetadata = $null
+            if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
+                $repoMetadata = ConvertFrom-JsonSingleObject -Json $response.Content -Context "Repository metadata response"
             }
 
-            $scopes = @()
-            foreach ($scope in ([string]$scopesHeader).Split(",")) {
-                $trimmed = $scope.Trim()
-                if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
-                    $scopes += $trimmed
+            if ($GitHubHost -eq "github.com") {
+                $scopesHeader = Get-HeaderValue -Headers $response.Headers -Key "X-OAuth-Scopes"
+                if ([string]::IsNullOrWhiteSpace([string]$scopesHeader)) {
+                    throw "Token scope header was not returned by GitHub."
+                }
+
+                $scopes = @()
+                foreach ($scope in ([string]$scopesHeader).Split(",")) {
+                    $trimmed = $scope.Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
+                        $scopes += $trimmed
+                    }
+                }
+
+                $isPrivateRepo = $false
+                if ($null -ne $repoMetadata -and $repoMetadata.PSObject.Properties.Name -contains "private") {
+                    $isPrivateRepo = [bool]$repoMetadata.private
+                }
+
+                if ($isPrivateRepo -and -not ($scopes -contains "repo")) {
+                    throw "E_AUTH_INSUFFICIENT_SCOPE: Token does not include required 'repo' scope for private repository access."
+                }
+
+                if (-not $isPrivateRepo -and -not (($scopes -contains "repo") -or ($scopes -contains "public_repo"))) {
+                    throw "E_AUTH_INSUFFICIENT_SCOPE: Token does not include 'repo' or 'public_repo' scope."
                 }
             }
 
-            $isPrivateRepo = $false
-            if ($null -ne $repoMetadata -and $repoMetadata.PSObject.Properties.Name -contains "private") {
-                $isPrivateRepo = [bool]$repoMetadata.private
+            return
+        }
+        catch {
+            $responseHeaders = Get-ResponseHeaders -Exception $_.Exception
+            $statusCode = Get-HttpStatusCode -Exception $_.Exception
+            $rawMessage = [string]$_.Exception.Message
+            $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+
+            if ($rawMessage -like "E_AUTH_INSUFFICIENT_SCOPE:*" -or $rawMessage -like "E_MALFORMED_RESPONSE:*" -or $rawMessage -like "E_CONFIG_ERROR:*" -or $rawMessage -like "E_NETWORK_TIMEOUT:*") {
+                throw $safeMessage
             }
 
-            if ($isPrivateRepo -and -not ($scopes -contains "repo")) {
-                throw "E_AUTH_INSUFFICIENT_SCOPE: Token does not include required 'repo' scope for private repository access."
+            $isRetryableTransient = $null -eq $statusCode -or $statusCode -ge 500
+            if ($isRetryableTransient -and $attempt -le $maxRetries) {
+                $baseDelayMs = [int]([Math]::Pow(2, $attempt - 1) * 100)
+                $jitterMs = Get-Random -Minimum 0 -Maximum 150
+                $delayMs = $baseDelayMs + $jitterMs
+
+                $remainingDelayBudgetMs = [int][Math]::Floor(($OverallDeadlineUtc - [datetime]::UtcNow).TotalMilliseconds)
+                if ($remainingDelayBudgetMs -le 0 -or $delayMs -gt $remainingDelayBudgetMs) {
+                    throw "E_NETWORK_TIMEOUT: Token validation retry budget exceeded for $Owner/$Repo on $GitHubHost after attempt $attempt of $($maxRetries + 1)."
+                }
+
+                Write-Verbose "Retrying token validation request for $Owner/$Repo on $GitHubHost after transient failure (status=$statusCode, attempt=$attempt of $($maxRetries + 1))."
+                Start-Sleep -Milliseconds $delayMs
+                continue
             }
 
-            if (-not $isPrivateRepo -and -not (($scopes -contains "repo") -or ($scopes -contains "public_repo"))) {
-                throw "E_AUTH_INSUFFICIENT_SCOPE: Token does not include 'repo' or 'public_repo' scope."
+            if ($statusCode -eq 401) {
+                throw "E_AUTH_INVALID: Token authentication failed while validating repository access. $safeMessage"
             }
-        }
-    } catch {
-        $responseHeaders = Get-ResponseHeaders -Exception $_.Exception
-        $statusCode = Get-HttpStatusCode -Exception $_.Exception
-        $rawMessage = [string]$_.Exception.Message
-        $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
 
-        if ($rawMessage -like "E_AUTH_INSUFFICIENT_SCOPE:*" -or $rawMessage -like "E_MALFORMED_RESPONSE:*" -or $rawMessage -like "E_CONFIG_ERROR:*") {
-            throw $safeMessage
-        }
-
-        if ($statusCode -eq 401) {
-            throw "E_AUTH_INVALID: Token authentication failed while validating repository access. $safeMessage"
-        }
-
-        if ($statusCode -eq 429) {
-            throw "E_AUTH_RATE_LIMITED: Token validation was rate-limited by GitHub (HTTP $statusCode). Retry after a short delay. $safeMessage"
-        }
-
-        if ($statusCode -eq 403) {
-            $hasRateLimitHeaders = $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Reset") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "Retry-After") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Remaining")
-            if ($hasRateLimitHeaders) {
+            if ($statusCode -eq 429) {
                 throw "E_AUTH_RATE_LIMITED: Token validation was rate-limited by GitHub (HTTP $statusCode). Retry after a short delay. $safeMessage"
             }
 
-            $headerKeys = @()
-            if ($null -ne $responseHeaders -and $responseHeaders -is [System.Collections.IDictionary]) {
-                $headerKeys = @($responseHeaders.Keys | ForEach-Object { [string]$_ })
+            if ($statusCode -eq 403) {
+                $hasRateLimitHeaders = $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Reset") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "Retry-After") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Remaining")
+                if ($hasRateLimitHeaders) {
+                    throw "E_AUTH_RATE_LIMITED: Token validation was rate-limited by GitHub (HTTP $statusCode). Retry after a short delay. $safeMessage"
+                }
+
+                $headerKeys = @()
+                if ($null -ne $responseHeaders -and $responseHeaders -is [System.Collections.IDictionary]) {
+                    $headerKeys = @($responseHeaders.Keys | ForEach-Object { [string]$_ })
+                }
+
+                $headerDiagnostics = if ((Get-SafeCount -InputObject $headerKeys) -gt 0) {
+                    "Headers seen: $($headerKeys -join ', ')"
+                } else {
+                    "Headers seen: (none)"
+                }
+
+                throw "E_FORBIDDEN: Token could not access repository metadata for $Owner/$Repo on $GitHubHost. $headerDiagnostics $safeMessage"
             }
 
-            $headerDiagnostics = if ((Get-SafeCount -InputObject $headerKeys) -gt 0) {
-                "Headers seen: $($headerKeys -join ', ')"
-            } else {
-                "Headers seen: (none)"
+            if ($statusCode -eq 404) {
+                throw "E_NOT_FOUND: Repository $Owner/$Repo was not found on $GitHubHost. $safeMessage"
             }
 
-            throw "E_FORBIDDEN: Token could not access repository metadata for $Owner/$Repo on $GitHubHost. $headerDiagnostics $safeMessage"
-        }
+            if ($null -eq $statusCode) {
+                throw "E_NETWORK_ERROR: Token validation request did not receive an HTTP response after attempt $attempt of $($maxRetries + 1). $safeMessage"
+            }
 
-        if ($statusCode -eq 404) {
-            throw "E_NOT_FOUND: Repository $Owner/$Repo was not found on $GitHubHost. $safeMessage"
+            throw "E_GITHUB_API_ERROR($statusCode): Token validation request failed after attempt $attempt of $($maxRetries + 1). $safeMessage"
         }
-
-        if ($null -eq $statusCode) {
-            throw "E_NETWORK_ERROR: Token validation request did not receive an HTTP response. $safeMessage"
-        }
-
-        throw "E_GITHUB_API_ERROR($statusCode): Token validation request failed. $safeMessage"
     }
 }
 
@@ -716,13 +816,9 @@ function Select-PullRequestInteractively {
     $ownerInput = $ownerInput.Trim()
     $repoInput = $repoInput.Trim()
 
-    if ($ownerInput -notmatch "^[A-Za-z0-9][A-Za-z0-9_-]{0,37}$") {
-        throw "E_INVALID_OWNER_REPO: Invalid owner format."
-    }
-
-    if ($repoInput -notmatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$") {
-        throw "E_INVALID_OWNER_REPO: Invalid repository format."
-    }
+    $validatedOwnerRepo = Assert-GitHubOwnerRepoFormat -Owner $ownerInput -Repo $repoInput -Context "interactive input"
+    $ownerInput = $validatedOwnerRepo.Owner
+    $repoInput = $validatedOwnerRepo.Repo
 
     $pulls = @(Get-OpenPullRequests -Owner $ownerInput -Repo $repoInput -GitHubHost $GitHubHost -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens)
     $pullCount = Get-SafeCount -InputObject $pulls
@@ -1155,18 +1251,13 @@ function Resolve-PullRequestTarget {
     }
 
     if (-not [string]::IsNullOrWhiteSpace($Owner) -and -not [string]::IsNullOrWhiteSpace($Repo) -and $PullRequestNumber -gt 0) {
-        $normalizedHost = $GitHubHost.Trim().ToLowerInvariant()
-        if ($normalizedHost -notmatch "^[A-Za-z0-9][A-Za-z0-9.-]+$") {
-            throw "E_INVALID_URL: Invalid host format."
-        }
-        if (-not (Test-GitHubHostAllowed -GitHubHost $normalizedHost)) {
-            throw "E_INVALID_URL: Host is not allowed for safety reasons."
-        }
+        $normalizedHost = Assert-GitHubHostFormat -GitHubHost $GitHubHost -Context "direct parameters"
+        $validatedOwnerRepo = Assert-GitHubOwnerRepoFormat -Owner $Owner -Repo $Repo -Context "direct parameters"
 
         return [pscustomobject]@{
             Host              = $normalizedHost
-            Owner             = $Owner.Trim()
-            Repo              = $Repo.Trim()
+            Owner             = $validatedOwnerRepo.Owner
+            Repo              = $validatedOwnerRepo.Repo
             PullRequestNumber = $PullRequestNumber
         }
     }
@@ -1185,14 +1276,7 @@ function Resolve-PullRequestTarget {
             $hostInput = "github.com"
         }
 
-        $resolvedHost = $hostInput.Trim().ToLowerInvariant()
-        if ($resolvedHost -notmatch "^[A-Za-z0-9][A-Za-z0-9.-]+$") {
-            throw "E_INVALID_URL: Invalid host format."
-        }
-
-        if (-not (Test-GitHubHostAllowed -GitHubHost $resolvedHost)) {
-            throw "E_INVALID_URL: Host is not allowed for safety reasons."
-        }
+        $resolvedHost = Assert-GitHubHostFormat -GitHubHost $hostInput -Context "interactive host input"
 
         return Select-PullRequestInteractively -GitHubHost $resolvedHost -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
     }
