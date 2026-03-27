@@ -43,7 +43,11 @@ function ConvertFrom-JsonSingleObject {
         [string]$Context = "JSON payload"
     )
 
-    $parsed = $Json | ConvertFrom-Json -ErrorAction Stop
+    try {
+        $parsed = $Json | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "E_MALFORMED_RESPONSE: $Context could not be parsed as JSON."
+    }
     $items = @($parsed)
 
     if ((Get-SafeCount -InputObject $items) -ne 1) {

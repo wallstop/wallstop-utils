@@ -105,6 +105,78 @@ Describe "Redact-SensitiveText" {
         $redacted | Should -Not -Match [regex]::Escape($token)
         $redacted | Should -Match "\*\*\*REDACTED\*\*\*"
     }
+
+    $ghpToken = "ghp_" + ("a" * 36)
+    $patToken = "github_pat_" + ("b" * 80)
+    $headerToken = "abcdefghijklmnopqrstuvwx123456"
+
+    $cases = @(
+        @{
+            Name = "redacts generic ghp token"
+            CaseInput = "Detected token: $ghpToken"
+            SensitiveTokens = @()
+            ShouldContain = "***REDACTED***"
+            ShouldNotContain = @($ghpToken)
+            ShouldBeUnchanged = $false
+        },
+        @{
+            Name = "redacts generic github_pat token"
+            CaseInput = "Detected token: $patToken"
+            SensitiveTokens = @()
+            ShouldContain = "***REDACTED***"
+            ShouldNotContain = @($patToken)
+            ShouldBeUnchanged = $false
+        },
+        @{
+            Name = "redacts authorization bearer scheme"
+            CaseInput = "Authorization: Bearer $headerToken"
+            SensitiveTokens = @()
+            ShouldContain = "Authorization: Bearer ***REDACTED***"
+            ShouldNotContain = @($headerToken)
+            ShouldBeUnchanged = $false
+        },
+        @{
+            Name = "redacts authorization token scheme"
+            CaseInput = "Authorization: token $headerToken"
+            SensitiveTokens = @()
+            ShouldContain = "Authorization: token ***REDACTED***"
+            ShouldNotContain = @($headerToken)
+            ShouldBeUnchanged = $false
+        },
+        @{
+            Name = "does not redact too short ghp token"
+            CaseInput = "Detected token: ghp_abc123"
+            SensitiveTokens = @()
+            ShouldContain = "Detected token: ghp_abc123"
+            ShouldNotContain = @()
+            ShouldBeUnchanged = $true
+        },
+        @{
+            Name = "does not redact regex literal documentation string"
+            CaseInput = '$redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"'
+            SensitiveTokens = @()
+            ShouldContain = 'ghp_[A-Za-z0-9]{36}'
+            ShouldNotContain = @()
+            ShouldBeUnchanged = $true
+        }
+    )
+
+    It "enforces redaction behavior for <Name>" -TestCases $cases {
+        param($Name, $CaseInput, $SensitiveTokens, $ShouldContain, $ShouldNotContain, $ShouldBeUnchanged)
+
+        $redacted = Redact-SensitiveText -Text $CaseInput -SensitiveTokens $SensitiveTokens
+
+        if ($ShouldBeUnchanged) {
+            $redacted | Should -BeExactly $CaseInput
+        } else {
+            $redacted | Should -Not -BeExactly $CaseInput
+        }
+
+        $redacted | Should -Match ([regex]::Escape($ShouldContain))
+        foreach ($value in $ShouldNotContain) {
+            $redacted | Should -Not -Match ([regex]::Escape($value))
+        }
+    }
 }
 
 Describe "Convert-ReviewThreadToOutputRecord" {
@@ -395,21 +467,32 @@ Describe "Invoke-GitHubRequestWithRetry" {
         Mock Get-HttpStatusCode { 500 }
         Mock Get-ResponseHeaders { @("header-a", "header-b") }
 
-        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{ "Accept" = "application/json" } -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_GRAPHQL_ERROR*"
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{ "Accept" = "application/json" } -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_GITHUB_API_ERROR(500)*"
+    }
+
+    It "maps missing HTTP status failures to E_NETWORK_ERROR" {
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "connection reset") }
+        Mock Get-HttpStatusCode { $null }
+        Mock Get-ResponseHeaders { $null }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{ "Accept" = "application/json" } -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_NETWORK_ERROR*"
     }
 }
 
 Describe "Get-OpenPullRequests" {
     It "uses GHES /api/v3 endpoint" {
         $script:capturedUri = $null
+        $script:capturedTimeout = $null
         Mock Invoke-GitHubRequestWithRetry {
-            param($Method, $Uri)
+            param($Method, $Uri, $RequestTimeoutSeconds)
             $script:capturedUri = $Uri
+            $script:capturedTimeout = $RequestTimeoutSeconds
             return @()
         }
 
-        [void](Get-OpenPullRequests -Owner "my-org" -Repo "my-repo" -GitHubHost "ghes.example.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        [void](Get-OpenPullRequests -Owner "my-org" -Repo "my-repo" -GitHubHost "ghes.example.com" -Headers @{} -RequestTimeoutSeconds 42 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
         $script:capturedUri | Should -Be "https://ghes.example.com/api/v3/repos/my-org/my-repo/pulls?state=open&per_page=50"
+        $script:capturedTimeout | Should -Be 42
     }
 }
 
@@ -436,7 +519,7 @@ Describe "Validate-GitHubTokenForRepoAccess" {
         { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_INSUFFICIENT_SCOPE*"
     }
 
-    It "maps malformed metadata payloads to E_AUTH_INSUFFICIENT_SCOPE" {
+    It "maps malformed metadata payloads to E_MALFORMED_RESPONSE" {
         Mock Invoke-WebRequest {
             return [pscustomobject]@{
                 Headers = @{ "X-OAuth-Scopes" = "repo" }
@@ -444,7 +527,18 @@ Describe "Validate-GitHubTokenForRepoAccess" {
             }
         }
 
-        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_INSUFFICIENT_SCOPE*"
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_MALFORMED_RESPONSE*"
+    }
+
+    It "maps invalid JSON payloads to E_MALFORMED_RESPONSE" {
+        Mock Invoke-WebRequest {
+            return [pscustomobject]@{
+                Headers = @{ "X-OAuth-Scopes" = "repo" }
+                Content = '{"private":'
+            }
+        }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_MALFORMED_RESPONSE*"
     }
 
     It "maps 401 failures to E_AUTH_INVALID" {
@@ -460,12 +554,37 @@ Describe "Validate-GitHubTokenForRepoAccess" {
 
         { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_RATE_LIMITED*"
     }
+
+    It "maps 403 failures without rate-limit headers to E_FORBIDDEN" {
+        Mock Invoke-WebRequest { throw (New-Object System.Exception "forbidden") }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{} }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_FORBIDDEN*"
+    }
+
+    It "maps 403 failures with rate-limit headers to E_AUTH_RATE_LIMITED" {
+        Mock Invoke-WebRequest { throw (New-Object System.Exception "forbidden") }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{ "Retry-After" = "60" } }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_RATE_LIMITED*"
+    }
+
+    It "maps missing HTTP status to E_NETWORK_ERROR" {
+        Mock Invoke-WebRequest { throw (New-Object System.Exception "connection failed") }
+        Mock Get-HttpStatusCode { $null }
+        Mock Get-ResponseHeaders { $null }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_NETWORK_ERROR*"
+    }
 }
 
 Describe "Select-PullRequestInteractively" {
     It "accepts owner values with underscores" {
         $script:readIndex = 0
         $script:responses = @("my_org", "demo-repo", "1")
+        $script:capturedInteractiveTimeout = $null
 
         Mock Read-Host {
             $value = $script:responses[$script:readIndex]
@@ -474,15 +593,18 @@ Describe "Select-PullRequestInteractively" {
         }
 
         Mock Get-OpenPullRequests {
+            param($RequestTimeoutSeconds)
+            $script:capturedInteractiveTimeout = $RequestTimeoutSeconds
             return @(
                 [pscustomobject]@{ number = 42; title = "Fix test" }
             )
         }
 
-        $selected = Select-PullRequestInteractively -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $selected = Select-PullRequestInteractively -GitHubHost "github.com" -Headers @{} -RequestTimeoutSeconds 45 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
         $selected.Owner | Should -Be "my_org"
         $selected.Repo | Should -Be "demo-repo"
         $selected.PullRequestNumber | Should -Be 42
+        $script:capturedInteractiveTimeout | Should -Be 45
     }
 }
 
@@ -574,6 +696,14 @@ Describe "Resolve-PullRequestTarget" {
         }
 
         { Resolve-PullRequestTarget -Interactive -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*"
+    }
+
+    It "requires headers in interactive mode" {
+        { Resolve-PullRequestTarget -Interactive -Headers $null -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_CONFIG_ERROR*"
+    }
+
+    It "requires a future deadline in interactive mode" {
+        { Resolve-PullRequestTarget -Interactive -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(-1)) } | Should -Throw "*E_CONFIG_ERROR*"
     }
 }
 

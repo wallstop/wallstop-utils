@@ -71,16 +71,93 @@ jobs:
             echo "  grep_version=BSD_or_non-GNU"
           fi
 
+          token_pattern_rg='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}'
+          bearer_pattern_rg='Authorization:\s*(Bearer|token)\s+[A-Za-z0-9._-]{20,}'
+          dangerous_pattern_rg='Invoke-Expression|(^|[^[:alnum:]_])iex([^[:alnum:]_]|$)'
+          combined_rg="(${token_pattern_rg}|${bearer_pattern_rg}|${dangerous_pattern_rg})"
+
+          token_pattern_grep='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}'
+          bearer_pattern_grep='Authorization:[[:space:]]*(Bearer|token)[[:space:]]+[A-Za-z0-9._-]{20,}'
+          dangerous_pattern_grep='Invoke-Expression|(^|[^[:alnum:]_])iex([^[:alnum:]_]|$)'
+          combined_grep="(${token_pattern_grep}|${bearer_pattern_grep}|${dangerous_pattern_grep})"
+
           if command -v rg >/dev/null 2>&1; then
-            rg -n "(ghp_|github_pat_|Authorization:\\s*Bearer\\s+[A-Za-z0-9_.-]{20,}|Invoke-Expression|\\biex\\b)" Scripts && {
-              echo "Disallowed token or command pattern detected"
-              exit 1
-            } || true
+            scanner_engine="rg"
+            active_pattern="$combined_rg"
+            matches="$(rg -n "$combined_rg" Scripts || true)"
           else
-            grep -RInE "(ghp_|github_pat_|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9_.-]{20,}|Invoke-Expression|(^|[^[:alnum:]_])iex([^[:alnum:]_]|$))" Scripts && {
-              echo "Disallowed token or command pattern detected"
-              exit 1
-            } || true
+            scanner_engine="grep"
+            active_pattern="$combined_grep"
+            matches="$(grep -RInE "$combined_grep" Scripts || true)"
+          fi
+
+          match_count=0
+          if [[ -n "$matches" ]]; then
+            match_count="$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+          fi
+
+          echo "  scanner_engine=$scanner_engine"
+          echo "  active_pattern=$active_pattern"
+          echo "  match_count=$match_count"
+
+          # Engine-level behavior corpus to catch false positives and drift.
+          should_detect=(
+            'Authorization: token ghp_0123456789abcdef0123456789abcdef0123'
+            'Invoke-Expression "Write-Host demo"'
+          )
+          should_ignore=(
+            '$redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"'
+            'Write-Host "hello"'
+          )
+
+          for sample in "${should_detect[@]}"; do
+            if [[ "$scanner_engine" == "rg" ]]; then
+              if ! printf '%s\n' "$sample" | rg -n "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected a match but none was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            else
+              if ! printf '%s\n' "$sample" | grep -nE "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected a match but none was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            fi
+          done
+
+          for sample in "${should_ignore[@]}"; do
+            if [[ "$scanner_engine" == "rg" ]]; then
+              if printf '%s\n' "$sample" | rg -n "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected no match but a match was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            else
+              if printf '%s\n' "$sample" | grep -nE "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected no match but a match was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            fi
+          done
+
+          if [[ -n "$matches" ]]; then
+            echo "Disallowed token or command pattern detected"
+            printf '%s\n' "$matches"
+            exit 1
+          fi
+
+      - name: Generated artifact tracking checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tracked_artifacts="$(git ls-files coverage.xml out.txt || true)"
+          if [[ -n "$tracked_artifacts" ]]; then
+            echo "Generated artifact files must not be tracked in git:"
+            printf '%s\n' "$tracked_artifacts"
+            exit 1
           fi
 
       - name: Run Pester with coverage

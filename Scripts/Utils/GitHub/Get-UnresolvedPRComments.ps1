@@ -120,9 +120,9 @@ function Redact-SensitiveText {
     }
 
     # Generic token redaction for accidental echoes.
-    $redacted = $redacted -replace "ghp_[A-Za-z0-9_]{20,}", "***REDACTED***"
-    $redacted = $redacted -replace "github_pat_[A-Za-z0-9_]{20,}", "***REDACTED***"
-    $redacted = $redacted -replace "Bearer\s+[A-Za-z0-9_\-\.]{20,}", "Bearer ***REDACTED***"
+    $redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"
+    $redacted = $redacted -replace "github_pat_[A-Za-z0-9_]{80,}", "***REDACTED***"
+    $redacted = $redacted -replace "(Bearer|token)\s+[A-Za-z0-9_\-\.]{20,}", '$1 ***REDACTED***'
 
     return $redacted
 }
@@ -519,7 +519,11 @@ function Invoke-GitHubRequestWithRetry {
                 throw "E_NOT_FOUND: Resource not found. $errorText"
             }
 
-            throw "E_GRAPHQL_ERROR: $errorText"
+            if ($null -eq $statusCode) {
+                throw "E_NETWORK_ERROR: GitHub request failed without an HTTP status (attempt $attempt of $($MaxRetries + 1)). $errorText"
+            }
+
+            throw "E_GITHUB_API_ERROR($statusCode): GitHub request failed (attempt $attempt of $($MaxRetries + 1)). $errorText"
         }
     }
 }
@@ -538,6 +542,10 @@ function Get-OpenPullRequests {
 
         [Parameter(Mandatory = $true)]
         [hashtable]$Headers,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(5, 300)]
+        [int]$RequestTimeoutSeconds,
 
         [Parameter(Mandatory = $true)]
         [datetime]$OverallDeadlineUtc,
@@ -616,26 +624,60 @@ function Validate-GitHubTokenForRepoAccess {
             }
 
             if ($isPrivateRepo -and -not ($scopes -contains "repo")) {
-                throw "Token does not include required 'repo' scope for private repository access."
+                throw "E_AUTH_INSUFFICIENT_SCOPE: Token does not include required 'repo' scope for private repository access."
             }
 
             if (-not $isPrivateRepo -and -not (($scopes -contains "repo") -or ($scopes -contains "public_repo"))) {
-                throw "Token does not include 'repo' or 'public_repo' scope."
+                throw "E_AUTH_INSUFFICIENT_SCOPE: Token does not include 'repo' or 'public_repo' scope."
             }
         }
     } catch {
+        $responseHeaders = Get-ResponseHeaders -Exception $_.Exception
         $statusCode = Get-HttpStatusCode -Exception $_.Exception
+        $rawMessage = [string]$_.Exception.Message
         $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+
+        if ($rawMessage -like "E_AUTH_INSUFFICIENT_SCOPE:*" -or $rawMessage -like "E_MALFORMED_RESPONSE:*" -or $rawMessage -like "E_CONFIG_ERROR:*") {
+            throw $safeMessage
+        }
 
         if ($statusCode -eq 401) {
             throw "E_AUTH_INVALID: Token authentication failed while validating repository access. $safeMessage"
         }
 
-        if ($statusCode -eq 403 -or $statusCode -eq 429) {
+        if ($statusCode -eq 429) {
             throw "E_AUTH_RATE_LIMITED: Token validation was rate-limited by GitHub (HTTP $statusCode). Retry after a short delay. $safeMessage"
         }
 
-        throw "E_AUTH_INSUFFICIENT_SCOPE: Token could not access repository metadata. $safeMessage"
+        if ($statusCode -eq 403) {
+            $hasRateLimitHeaders = $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Reset") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "Retry-After") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Remaining")
+            if ($hasRateLimitHeaders) {
+                throw "E_AUTH_RATE_LIMITED: Token validation was rate-limited by GitHub (HTTP $statusCode). Retry after a short delay. $safeMessage"
+            }
+
+            $headerKeys = @()
+            if ($null -ne $responseHeaders -and $responseHeaders -is [System.Collections.IDictionary]) {
+                $headerKeys = @($responseHeaders.Keys | ForEach-Object { [string]$_ })
+            }
+
+            $headerDiagnostics = if ((Get-SafeCount -InputObject $headerKeys) -gt 0) {
+                "Headers seen: $($headerKeys -join ', ')"
+            } else {
+                "Headers seen: (none)"
+            }
+
+            throw "E_FORBIDDEN: Token could not access repository metadata for $Owner/$Repo on $GitHubHost. $headerDiagnostics $safeMessage"
+        }
+
+        if ($statusCode -eq 404) {
+            throw "E_NOT_FOUND: Repository $Owner/$Repo was not found on $GitHubHost. $safeMessage"
+        }
+
+        if ($null -eq $statusCode) {
+            throw "E_NETWORK_ERROR: Token validation request did not receive an HTTP response. $safeMessage"
+        }
+
+        throw "E_GITHUB_API_ERROR($statusCode): Token validation request failed. $safeMessage"
     }
 }
 
@@ -647,6 +689,10 @@ function Select-PullRequestInteractively {
 
         [Parameter(Mandatory = $true)]
         [hashtable]$Headers,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(5, 300)]
+        [int]$RequestTimeoutSeconds,
 
         [Parameter(Mandatory = $true)]
         [datetime]$OverallDeadlineUtc,
@@ -679,7 +725,7 @@ function Select-PullRequestInteractively {
         throw "E_INVALID_OWNER_REPO: Invalid repository format."
     }
 
-    $pulls = @(Get-OpenPullRequests -Owner $ownerInput -Repo $repoInput -GitHubHost $GitHubHost -Headers $Headers -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens)
+    $pulls = @(Get-OpenPullRequests -Owner $ownerInput -Repo $repoInput -GitHubHost $GitHubHost -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens)
     $pullCount = Get-SafeCount -InputObject $pulls
     if ($pullCount -eq 0) {
         throw "E_NOT_FOUND: No open pull requests were found for $ownerInput/$repoInput."
@@ -1001,6 +1047,10 @@ function Resolve-PullRequestTarget {
         [hashtable]$Headers,
 
         [Parameter(Mandatory = $false)]
+        [ValidateRange(5, 300)]
+        [int]$RequestTimeoutSeconds = 60,
+
+        [Parameter(Mandatory = $false)]
         [datetime]$OverallDeadlineUtc,
 
         [Parameter(Mandatory = $false)]
@@ -1032,6 +1082,14 @@ function Resolve-PullRequestTarget {
     }
 
     if ($Interactive.IsPresent) {
+        if ($null -eq $Headers) {
+            throw "E_CONFIG_ERROR: Interactive mode requires non-null request headers (required for request threading)."
+        }
+
+        if ($null -eq $OverallDeadlineUtc -or $OverallDeadlineUtc -le [datetime]::UtcNow) {
+            throw "E_CONFIG_ERROR: Interactive mode requires a future overall deadline timestamp (required for request threading)."
+        }
+
         $hostInput = Read-Host "GitHub host [github.com]"
         if ([string]::IsNullOrWhiteSpace($hostInput)) {
             $hostInput = "github.com"
@@ -1046,7 +1104,7 @@ function Resolve-PullRequestTarget {
             throw "E_INVALID_URL: Host is not allowed for safety reasons."
         }
 
-        return Select-PullRequestInteractively -GitHubHost $resolvedHost -Headers $Headers -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
+        return Select-PullRequestInteractively -GitHubHost $resolvedHost -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
     }
 
     throw "E_INVALID_URL: Provide -PullRequestUrl or use -Interactive."
@@ -1063,7 +1121,7 @@ function Invoke-Main {
     $tempHeaders = Get-GitHubHeaders -AuthToken $null
     Assert-IsHashtableLike -Value $tempHeaders -Name "Headers"
 
-    $target = Resolve-PullRequestTarget -PullRequestUrl $PullRequestUrl -Owner $Owner -Repo $Repo -GitHubHost $GitHubHost -PullRequestNumber $PullRequestNumber -Interactive:$Interactive -Headers $tempHeaders -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $initialSensitive
+    $target = Resolve-PullRequestTarget -PullRequestUrl $PullRequestUrl -Owner $Owner -Repo $Repo -GitHubHost $GitHubHost -PullRequestNumber $PullRequestNumber -Interactive:$Interactive -Headers $tempHeaders -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $initialSensitive
     if ($null -eq $target) {
         return
     }
