@@ -433,6 +433,16 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecksTests | Should -Match 'single-line batch files correctly'
     }
 
+    It "uses Get-Variable to read LASTEXITCODE in Invoke-AutoHotkeyCommand to prevent strict-mode failure" {
+        $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
+        $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
+
+        # Must use Get-Variable pattern (the only strict-mode-safe approach when LASTEXITCODE may be unset).
+        $windowsChecks | Should -Match 'Get-Variable\s+-Name\s+[''"'']LASTEXITCODE'
+        # Prevent regression: bare $LASTEXITCODE must not appear as an assignment source in this file.
+        $windowsChecks | Should -Not -Match '(?m)^\s*\$exitCode\s*=\s*\$LASTEXITCODE\b'
+    }
+
     It "keeps AppleScript migration-safe validation behavior" {
         $macChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh'
         $macChecks = Get-Content -Path $macChecksPath -Raw
@@ -508,7 +518,7 @@ Describe "Quality script executable guardrails" {
         $macChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh'
         $output = @(& $bash.Source -n $macChecksPath 2>&1)
 
-        $LASTEXITCODE | Should -Be 0 -Because (
+        $global:LASTEXITCODE | Should -Be 0 -Because (
             "bash -n failed for macOS helper: {0}" -f ($output -join '; ')
         )
     }

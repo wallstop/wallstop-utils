@@ -83,7 +83,13 @@ function Invoke-AutoHotkeyCommand {
     )
 
     $rawOutput = @(& $Executable @Arguments 2>&1)
-    $exitCode = $LASTEXITCODE
+    # Use Get-Variable with SilentlyContinue to safely read LASTEXITCODE without triggering the
+    # Set-StrictMode -Version Latest "variable not set" error. Both bare $LASTEXITCODE and the
+    # $global: qualifier throw under strict mode when the variable has never been initialized
+    # (e.g., in a fresh PowerShell session where no native command has run yet). Get-Variable
+    # returns $null without throwing when the variable is absent.
+    $lecValue = Get-Variable -Name 'LASTEXITCODE' -ValueOnly -ErrorAction SilentlyContinue
+    $exitCode = if ($null -ne $lecValue) { [int]$lecValue } else { -1 }
     $normalizedOutput = Convert-OutputToStringArray -Output $rawOutput
 
     return [PSCustomObject]@{

@@ -45,6 +45,70 @@ Describe "Test-OutputLooksLikeUnsupportedAhkSwitch" {
     }
 }
 
+Describe "Invoke-AutoHotkeyCommand" {
+    It "captures exit code from a native command without throwing under strict mode: <Case>" -TestCases @(
+        @{
+            Case     = "nonzero exit code is captured"
+            ExitCode = 5
+        },
+        @{
+            Case     = "zero exit code is captured"
+            ExitCode = 0
+        }
+    ) {
+        param([string]$Case, [int]$ExitCode)
+
+        $null = $Case
+        Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+
+        if ($IsWindows) {
+            $result = Invoke-AutoHotkeyCommand -Executable "cmd.exe" -Arguments @("/c", "exit $ExitCode")
+        } else {
+            $result = Invoke-AutoHotkeyCommand -Executable "sh" -Arguments @("-c", "exit $ExitCode")
+        }
+        $result.ExitCode | Should -Be $ExitCode
+    }
+
+    It "throws when the specified executable does not exist" {
+        { Invoke-AutoHotkeyCommand -Executable "no-such-exe-$(New-Guid)" -Arguments @() } | Should -Throw
+    }
+
+    It "Get-Variable pattern does not throw when LASTEXITCODE is unset (anti-regression proof)" {
+        # Directly proves why Get-Variable is used instead of bare $LASTEXITCODE or $global:LASTEXITCODE.
+        # Both bare and $global: forms throw under Set-StrictMode -Version Latest in a fresh session
+        # where no native command has run. Get-Variable with SilentlyContinue is the only safe pattern.
+        Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+
+        # New code pattern: Get-Variable does not throw even when the variable is absent.
+        $getVarThrew = $false
+        $getVarResult = $null
+        try {
+            $getVarResult = Get-Variable -Name 'LASTEXITCODE' -ValueOnly -ErrorAction SilentlyContinue
+        } catch {
+            $getVarThrew = $true
+        }
+        $getVarThrew | Should -Be $false -Because 'Get-Variable SilentlyContinue must return $null rather than throw'
+        $getVarResult | Should -BeNullOrEmpty
+
+        # Both bare $LASTEXITCODE and the $global: qualifier throw under strict mode when unset.
+        $bareReadThrew = $false
+        try {
+            $null = $LASTEXITCODE
+        } catch {
+            $bareReadThrew = $true
+        }
+        $bareReadThrew | Should -Be $true -Because 'bare $LASTEXITCODE throws under Set-StrictMode -Version Latest when never set'
+
+        $globalReadThrew = $false
+        try {
+            $null = $global:LASTEXITCODE
+        } catch {
+            $globalReadThrew = $true
+        }
+        $globalReadThrew | Should -Be $true -Because '$global:LASTEXITCODE also throws under Set-StrictMode -Version Latest when never set'
+    }
+}
+
 Describe "Invoke-AutoHotkeyValidationCommand" {
     It "probes validation modes and returns expected status: <Case>" -TestCases @(
         @{
