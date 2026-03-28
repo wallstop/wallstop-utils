@@ -51,6 +51,14 @@ Prompt for owner/repo and let the user select an open PR when PullRequestUrl is 
 
 .PARAMETER WaitOnRateLimit
 If set, wait until rate-limit reset when 429/403 rate-limit is encountered.
+
+.PARAMETER Truncate
+If set, truncate thread comments for compact terminal readability using legacy limits
+(500 for top-level comments, 300 for latest replies). By default comments are not truncated.
+
+.PARAMETER Copy
+If set, copy the rendered output to clipboard in addition to writing to stdout.
+Clipboard copy failures are non-fatal and emit a warning.
 #>
 [CmdletBinding()]
 param(
@@ -84,6 +92,12 @@ param(
 
     [Parameter(Mandatory = $false)]
     [switch]$WaitOnRateLimit,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Truncate,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Copy,
 
     [Parameter(Mandatory = $false)]
     [ValidateRange(1, 100)]
@@ -775,7 +789,10 @@ function Normalize-CommentText {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(10, 20000)]
-        [int]$MaxLength = 500
+        [int]$MaxLength = 500,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$DisableTruncation
     )
 
     if ([string]::IsNullOrWhiteSpace($Text)) {
@@ -783,11 +800,90 @@ function Normalize-CommentText {
     }
 
     $singleLine = (($Text -replace "\r\n", " ") -replace "\n", " " -replace "\r", " ").Trim()
+    if ($DisableTruncation.IsPresent) {
+        return $singleLine
+    }
+
     if ($singleLine.Length -le $MaxLength) {
         return $singleLine
     }
 
     return ($singleLine.Substring(0, $MaxLength) + " [...]")
+}
+
+function Get-ClipboardCommand {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param()
+
+    if ($null -ne (Get-Command Set-Clipboard -ErrorAction SilentlyContinue)) {
+        return "Set-Clipboard"
+    }
+
+    $fallbackCommands = @("pbcopy", "xclip", "xsel", "wl-copy")
+    foreach ($commandName in $fallbackCommands) {
+        if ($null -ne (Get-Command $commandName -ErrorAction SilentlyContinue)) {
+            return $commandName
+        }
+    }
+
+    return $null
+}
+
+function Copy-ToClipboard {
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [string]$Text,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    $clipboardCommand = Get-ClipboardCommand
+    if ([string]::IsNullOrWhiteSpace($clipboardCommand)) {
+        Write-Warning "W_CLIPBOARD_UNAVAILABLE: No clipboard command is available (tried Set-Clipboard, pbcopy, xclip, xsel, wl-copy)."
+        return $false
+    }
+
+    $valueToCopy = if ($null -eq $Text) { "" } else { $Text }
+
+    try {
+        switch ($clipboardCommand) {
+            "Set-Clipboard" {
+                Set-Clipboard -Value $valueToCopy
+                break
+            }
+            "pbcopy" {
+                $valueToCopy | & pbcopy
+                break
+            }
+            "xclip" {
+                $valueToCopy | & xclip -selection clipboard
+                break
+            }
+            "xsel" {
+                $valueToCopy | & xsel --clipboard --input
+                break
+            }
+            "wl-copy" {
+                $valueToCopy | & wl-copy
+                break
+            }
+            default {
+                Write-Warning "W_CLIPBOARD_UNAVAILABLE: Clipboard command '$clipboardCommand' is not supported by this script."
+                return $false
+            }
+        }
+
+        return $true
+    } catch {
+        $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+        Write-Warning "W_CLIPBOARD_COPY_FAILED: Failed to copy output using '$clipboardCommand'. $safeMessage"
+        return $false
+    }
 }
 
 function Test-CanPromptForLogin {
@@ -1311,7 +1407,10 @@ function Convert-ReviewThreadToOutputRecord {
         [int]$PrNumber,
 
         [Parameter(Mandatory = $true)]
-        [string]$GitHubHost
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Truncate
     )
 
     if ($Thread.isResolved) {
@@ -1349,13 +1448,26 @@ function Convert-ReviewThreadToOutputRecord {
     $lineEnd = if ($null -ne $Thread.line) { [int]$Thread.line } elseif ($null -ne $lineStart) { [int]$lineStart } else { $null }
 
     $safePath = if ([string]::IsNullOrWhiteSpace($Thread.path)) { "<conversation>" } else { ($Thread.path -replace "\\", "/") }
+    $topLevelComment = if ($Truncate.IsPresent) {
+        Normalize-CommentText -Text $top.body -MaxLength 500
+    } else {
+        Normalize-CommentText -Text $top.body -DisableTruncation
+    }
+
+    $latestReplySummary = if ($null -eq $latestReply) {
+        $null
+    } elseif ($Truncate.IsPresent) {
+        Normalize-CommentText -Text $latestReply.body -MaxLength 300
+    } else {
+        Normalize-CommentText -Text $latestReply.body -DisableTruncation
+    }
 
     return [pscustomobject]@{
         path               = $safePath
         lineStart          = $lineStart
         lineEnd            = $lineEnd
-        topLevelComment    = Normalize-CommentText -Text $top.body -MaxLength 500
-        latestReplySummary = if ($null -ne $latestReply) { Normalize-CommentText -Text $latestReply.body -MaxLength 300 } else { $null }
+        topLevelComment    = $topLevelComment
+        latestReplySummary = $latestReplySummary
         threadId           = [string]$Thread.id
         prNumber           = $PrNumber
         owner              = $Owner
@@ -1441,6 +1553,9 @@ function Get-UnresolvedReviewThreads {
 
         [Parameter(Mandatory = $false)]
         [switch]$WaitOnRateLimit,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Truncate,
 
         [Parameter(Mandatory = $false)]
         [string[]]$AllowedGitHubHostsNormalized = @(),
@@ -1575,7 +1690,7 @@ query GetReviewThreads(
             }
 
             $seenThreadIds.Add([string]$thread.id) | Out-Null
-            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost -Truncate:$Truncate
             if ($null -ne $record) {
                 $allRecords.Add($record)
             }
@@ -1778,7 +1893,7 @@ function Invoke-Main {
             Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
         }
 
-        $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
+        $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
     } catch {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
 
@@ -1809,7 +1924,7 @@ function Invoke-Main {
                 Assert-IsHashtableLike -Value $headers -Name "Headers"
 
                 Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
-                $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
+                $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
             } else {
                 throw $message
             }
@@ -1818,11 +1933,18 @@ function Invoke-Main {
         }
     }
 
+    $output = $null
     if ($OutputFormat -eq "json") {
-        Write-Output (Format-UnresolvedThreadsAsJson -Records $records)
+        $output = Format-UnresolvedThreadsAsJson -Records $records
     } else {
-        Write-Output (Format-UnresolvedThreadsAsText -Records $records)
+        $output = Format-UnresolvedThreadsAsText -Records $records
     }
+
+    if ($Copy.IsPresent) {
+        [void](Copy-ToClipboard -Text $output -SensitiveTokens $sensitiveTokens)
+    }
+
+    Write-Output $output
 }
 
 # Allow tests to dot-source without executing main flow.

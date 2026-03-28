@@ -382,6 +382,70 @@ Describe "Redact-SensitiveText" {
     }
 }
 
+Describe "Get-ClipboardCommand" {
+    It "prefers Set-Clipboard when available" {
+        Mock Get-Command {
+            [pscustomobject]@{ Name = "Set-Clipboard" }
+        } -ParameterFilter { $Name -eq "Set-Clipboard" }
+
+        $result = Get-ClipboardCommand
+        $result | Should -Be "Set-Clipboard"
+    }
+
+    It "falls back to xclip when Set-Clipboard and pbcopy are unavailable" {
+        Mock Get-Command { $null } -ParameterFilter { $Name -eq "Set-Clipboard" }
+        Mock Get-Command { $null } -ParameterFilter { $Name -eq "pbcopy" }
+        Mock Get-Command { [pscustomobject]@{ Name = "xclip" } } -ParameterFilter { $Name -eq "xclip" }
+
+        $result = Get-ClipboardCommand
+        $result | Should -Be "xclip"
+    }
+}
+
+Describe "Copy-ToClipboard" {
+    It "copies text using Set-Clipboard when available" {
+        Mock Get-ClipboardCommand { "Set-Clipboard" }
+        Mock Set-Clipboard { }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeTrue
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $Value -eq "copy me" }
+    }
+
+    It "returns false and warns when clipboard command is unavailable" {
+        $script:lastWarningMessage = $null
+        Mock Get-ClipboardCommand { $null }
+        Mock Write-Warning {
+            param($Message)
+            $script:lastWarningMessage = $Message
+        }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeFalse
+        $script:lastWarningMessage | Should -Match "W_CLIPBOARD_UNAVAILABLE"
+    }
+
+    It "redacts sensitive tokens when clipboard copy fails" {
+        $secret = "ghp_" + ("a" * 36)
+        $script:lastWarningMessage = $null
+        Mock Get-ClipboardCommand { "Set-Clipboard" }
+        Mock Set-Clipboard { throw "copy failure token=$secret" }
+        Mock Write-Warning {
+            param($Message)
+            $script:lastWarningMessage = $Message
+        }
+
+        $copied = Copy-ToClipboard -Text "copy me" -SensitiveTokens @($secret)
+
+        $copied | Should -BeFalse
+        $script:lastWarningMessage | Should -Match "W_CLIPBOARD_COPY_FAILED"
+        $script:lastWarningMessage | Should -Match "\*\*\*REDACTED\*\*\*"
+        $script:lastWarningMessage | Should -Not -Match [regex]::Escape($secret)
+    }
+}
+
 Describe "Convert-ReviewThreadToOutputRecord" {
     It "returns null for resolved threads" {
         $thread = [pscustomobject]@{
@@ -438,6 +502,54 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         {
             [void](Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 7 -GitHubHost "github.com")
         } | Should -Throw "*E_MALFORMED_RESPONSE*comments.nodes must be an array*"
+    }
+
+    It "keeps long comments untruncated by default" {
+        $topBody = "x" * 600
+        $replyBody = "y" * 400
+        $thread = [pscustomobject]@{
+            id = "THREAD_LONG"
+            isResolved = $false
+            path = "src/long.ts"
+            startLine = 5
+            line = 9
+            comments = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{ body = $topBody },
+                    [pscustomobject]@{ body = $replyBody }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+        $record.topLevelComment.Length | Should -Be 600
+        $record.latestReplySummary.Length | Should -Be 400
+        $record.topLevelComment | Should -Not -Match "\[\.\.\.\]"
+        $record.latestReplySummary | Should -Not -Match "\[\.\.\.\]"
+    }
+
+    It "applies legacy truncation limits when Truncate is set" {
+        $topBody = "x" * 600
+        $replyBody = "y" * 400
+        $thread = [pscustomobject]@{
+            id = "THREAD_TRUNCATE"
+            isResolved = $false
+            path = "src/long.ts"
+            startLine = 5
+            line = 9
+            comments = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{ body = $topBody },
+                    [pscustomobject]@{ body = $replyBody }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com" -Truncate
+        $record.topLevelComment.Length | Should -Be 506
+        $record.latestReplySummary.Length | Should -Be 306
+        $record.topLevelComment | Should -Match "\[\.\.\.\]$"
+        $record.latestReplySummary | Should -Match "\[\.\.\.\]$"
     }
 }
 
@@ -1174,6 +1286,60 @@ Describe "Get-UnresolvedReviewThreads" {
             [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
         } | Should -Throw "*E_MALFORMED_RESPONSE*endCursor must be a string or null*"
     }
+
+    It "returns full comment bodies by default" {
+        $topBody = "x" * 600
+        $replyBody = "y" * 400
+
+        Mock Invoke-GitHubRequestWithRetry {
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{
+                            reviewThreads = @{
+                                pageInfo = @{ hasNextPage = $false; endCursor = $null }
+                                nodes = @(
+                                    @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @(@{ body = $topBody }, @{ body = $replyBody }) } }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        $records = Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $records.Count | Should -Be 1
+        $records[0].topLevelComment.Length | Should -Be 600
+        $records[0].latestReplySummary.Length | Should -Be 400
+    }
+
+    It "applies truncation when Truncate is set" {
+        $topBody = "x" * 600
+        $replyBody = "y" * 400
+
+        Mock Invoke-GitHubRequestWithRetry {
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{
+                            reviewThreads = @{
+                                pageInfo = @{ hasNextPage = $false; endCursor = $null }
+                                nodes = @(
+                                    @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @(@{ body = $topBody }, @{ body = $replyBody }) } }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        $records = Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -Truncate
+        $records.Count | Should -Be 1
+        $records[0].topLevelComment | Should -Match "\[\.\.\.\]$"
+        $records[0].latestReplySummary | Should -Match "\[\.\.\.\]$"
+    }
 }
 
 Describe "Resolve-PullRequestTarget" {
@@ -1566,6 +1732,166 @@ Describe "Invoke-Main" {
 
         { Invoke-Main } | Should -Throw "*E_AUTH_REQUIRED*"
         Assert-MockCalled Read-Host -Times 0 -Scope It
+    }
+
+    It "copies output when Copy is set and still writes to stdout" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $Truncate = [System.Management.Automation.SwitchParameter]::new($false)
+        $Copy = [System.Management.Automation.SwitchParameter]::new($true)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path = "src/a.ts"
+                    lineStart = 1
+                    lineEnd = 1
+                    topLevelComment = "x"
+                    latestReplySummary = $null
+                }
+            )
+        }
+        Mock Format-UnresolvedThreadsAsText { "copied output" }
+        Mock Copy-ToClipboard { $true }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:lastOutput | Should -Be "copied output"
+        Assert-MockCalled Copy-ToClipboard -Times 1 -Scope It -ParameterFilter { $Text -eq "copied output" }
+    }
+
+    It "writes stdout output even when copy fails" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $Truncate = [System.Management.Automation.SwitchParameter]::new($false)
+        $Copy = [System.Management.Automation.SwitchParameter]::new($true)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path = "src/a.ts"
+                    lineStart = 1
+                    lineEnd = 1
+                    topLevelComment = "x"
+                    latestReplySummary = $null
+                }
+            )
+        }
+        Mock Format-UnresolvedThreadsAsText { "still output" }
+        Mock Copy-ToClipboard { $false }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:lastOutput | Should -Be "still output"
+        Assert-MockCalled Copy-ToClipboard -Times 1 -Scope It
+        Assert-MockCalled Write-Output -Times 1 -Scope It -ParameterFilter { $InputObject -eq "still output" }
+    }
+
+    It "threads Truncate through unresolved thread retrieval" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $Truncate = [System.Management.Automation.SwitchParameter]::new($true)
+        $Copy = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path = "src/a.ts"
+                    lineStart = 1
+                    lineEnd = 1
+                    topLevelComment = "x"
+                    latestReplySummary = $null
+                }
+            )
+        }
+        Mock Format-UnresolvedThreadsAsText { "ok" }
+        Mock Write-Output { }
+
+        Invoke-Main
+
+        Assert-MockCalled Get-UnresolvedReviewThreads -Times 1 -Scope It -ParameterFilter { $Truncate.IsPresent }
     }
 }
 

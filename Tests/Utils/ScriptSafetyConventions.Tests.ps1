@@ -665,3 +665,42 @@ Describe "Retry test determinism conventions" {
         )
     }
 }
+
+Describe "GitHub output and clipboard conventions" {
+    It "keeps Copy and Truncate parameters in the PR unresolved comments script" {
+        $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $scriptPath -Raw
+
+        $content | Should -Match '\[switch\]\$Truncate'
+        $content | Should -Match '\[switch\]\$Copy'
+        $content | Should -Match '\.PARAMETER\s+Truncate'
+        $content | Should -Match '\.PARAMETER\s+Copy'
+    }
+
+    It "keeps truncation conditional instead of unconditional in record conversion" {
+        $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $scriptPath -Raw
+
+        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*\[switch\]\$Truncate'
+        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*if\s*\(\$Truncate\.IsPresent\)'
+        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*Normalize-CommentText\s+-Text\s+\$top\.body\s+-MaxLength\s+500'
+        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*Normalize-CommentText\s+-Text\s+\$top\.body\s+-DisableTruncation'
+    }
+
+    It "keeps clipboard copy non-fatal and output additive" {
+        $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $scriptPath -Raw
+
+        $content | Should -Match 'function\s+Copy-ToClipboard[\s\S]*Write-Warning\s+"W_CLIPBOARD_UNAVAILABLE'
+        $content | Should -Match 'function\s+Copy-ToClipboard[\s\S]*Write-Warning\s+"W_CLIPBOARD_COPY_FAILED'
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*if\s*\(\$Copy\.IsPresent\)'
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*Write-Output\s+\$output'
+    }
+
+    It "keeps regression coverage for stdout on copy failure" {
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+
+        $testsContent | Should -Match 'writes stdout output even when copy fails'
+    }
+}
