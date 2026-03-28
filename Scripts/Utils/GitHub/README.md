@@ -38,6 +38,18 @@ JSON output:
 pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https://github.com/owner/repo/pull/123" -OutputFormat json
 ```
 
+Legacy compact text mode (opt-in truncation):
+
+```powershell
+pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https://github.com/owner/repo/pull/123" -Truncate
+```
+
+Copy output to clipboard and still print it to stdout:
+
+```powershell
+pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https://github.com/owner/repo/pull/123" -Copy
+```
+
 ## Output Contract (Text)
 
 ```text
@@ -47,6 +59,30 @@ Comment message
 Latest reply summary: <text or (none)>
 ---
 ```
+
+## Output Behavior
+
+- Default behavior is full (untruncated) comment and latest reply text.
+- `-Truncate` restores legacy compact output limits:
+	- top-level comments: 500 characters
+	- latest replies: 300 characters
+- `-Copy` copies the exact rendered output (`text` or `json`) to clipboard and still writes the same output to stdout.
+- Clipboard copy failures are non-fatal and emit a warning so normal output remains available.
+
+Clipboard command fallback order:
+
+1. `Set-Clipboard`
+2. `pbcopy`
+3. `xclip`
+4. `xsel`
+5. `wl-copy`
+
+If no supported clipboard command exists, the script warns and continues.
+
+## Migration Note
+
+Default text output now preserves full comment text. If an existing workflow expects compact bounded output,
+add `-Truncate` to restore legacy clipping behavior.
 
 ## Authentication Order
 
