@@ -413,8 +413,24 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecks | Should -Match '\[string\]\$TargetFiles'
         $windowsChecks | Should -Match '\[switch\]\$RequireAutoHotkey'
         $windowsChecks | Should -Match 'Resolve-RequestedTargetFilePaths'
+        $windowsChecks | Should -Match 'Invoke-AutoHotkeyValidationCommand'
+        $windowsChecks | Should -Match '/iLib'
         $windowsChecks | Should -Match 'running in targeted mode'
         $windowsChecks | Should -Match 'E_AHK_UNAVAILABLE'
+        $windowsChecks | Should -Match 'E_AHK_VALIDATE_UNAVAILABLE'
+        $windowsChecks | Should -Match '\[switch\]\$NoInvokeMain'
+        $windowsChecks | Should -Match 'if\s*\(-not\s+\$NoInvokeMain\)\s*\{\s*Invoke-Main'
+    }
+
+    It "keeps data-driven unit coverage for AutoHotkey capability probing" {
+        $windowsChecksTestsPath = Join-Path -Path $script:repoRoot -ChildPath 'Tests/Utils/Invoke-WindowsLanguageChecks.Tests.ps1'
+        $windowsChecksTests = Get-Content -Path $windowsChecksTestsPath -Raw
+
+        $windowsChecksTests | Should -Match 'Invoke-AutoHotkeyValidationCommand'
+        $windowsChecksTests | Should -Match '-TestCases'
+        $windowsChecksTests | Should -Match 'validate unsupported then iLib succeeds'
+        $windowsChecksTests | Should -Match 'Test-BatchScriptsStaticSmoke'
+        $windowsChecksTests | Should -Match 'single-line batch files correctly'
     }
 
     It "keeps AppleScript migration-safe validation behavior" {
