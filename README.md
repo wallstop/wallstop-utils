@@ -147,46 +147,110 @@ Current utility:
 
 - `Get-UnresolvedPRComments.ps1`: read unresolved PR review threads from GitHub and render plain-text or JSON output.
 
-## Optional Pre-Commit Validation
+## Script Quality Platform
 
-This repository includes an opt-in local pre-commit validation flow for utility scripts.
+This repository uses a pre-commit-first quality platform for shell, PowerShell, Lua, JSON/YAML, GitHub workflows, and OS-specific script validation.
 
-### What it runs
+### Local quality gate
+
+Local hooks are wrapper scripts in `.githooks/` that execute `pre-commit` when available.
+Default local behavior is:
+
+- `pre-commit` hook: staged-file checks and auto-fixes where applicable (including deterministic PowerShell formatting and `shellcheck`/`shfmt` for changed shell targets)
+- `pre-push` hook: full-repo validation (`--all-files`) for the pre-push stage plus legacy PowerShell fallback when `pre-commit` is unavailable
+
+Enable hooks:
+
+```bash
+python3 -m pip install --user pre-commit
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit .githooks/pre-push
+pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
+If you add or replace hook files, ensure executable mode is tracked in git:
+
+```bash
+git update-index --chmod=+x .githooks/pre-commit .githooks/pre-push
+```
+
+Run manually:
+
+```bash
+pre-commit run
+pre-commit run --all-files
+```
+
+### PowerShell utility gate (retained)
+
+The existing utility validation gate remains and is integrated into pre-commit:
 
 - `Invoke-Pester -Path Tests/Utils`
+- `Invoke-Pester -Path Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1` (when relevant files are staged)
 - `Invoke-ScriptAnalyzer -Path Scripts/Utils -Settings .psscriptanalyzer.psd1 -Recurse`
 
-### Local prerequisites
-
-Install required PowerShell modules before enabling the hook:
+Install required modules:
 
 ```powershell
 Install-Module Pester -Scope CurrentUser -MinimumVersion 5.5.0
 Install-Module PSScriptAnalyzer -Scope CurrentUser -MinimumVersion 1.21.0
 ```
 
-If modules are missing, `Run-PreCommitValidation.ps1` fails with `E_CONFIG_ERROR` and an installation hint.
-
-### Use as a one-off check
+One-off usage:
 
 ```powershell
 pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1
-```
-
-Use `-All` to run regardless of staged files, or `-SkipAnalyzer` if ScriptAnalyzer is not available.
-
-```powershell
 pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1 -All
 ```
 
-### Opt into git hook execution
+### CI quality gate (full repository)
+
+GitHub Actions workflow `.github/workflows/script-quality.yml` runs full-repo checks on PRs and pushes:
+
+- Linux: deterministic full-repo pre-commit checks with shell debt hooks skipped, plus strict changed-file `shellcheck`/`shfmt`, and dirty-tree drift detection
+- Windows: AutoHotkey `/validate` when available + batch static smoke checks + dirty-tree drift detection
+- macOS: AppleScript compile checks using text-source-first validation with `.scpt` fallback + dirty-tree drift detection
+
+### Shell debt management path
+
+To avoid a permanently-red baseline while keeping strict enforcement on new changes:
+
+- PRs/pushes enforce `shellcheck` and `shfmt` on changed shell targets only.
+- Local `pre-push` still runs non-shell full-repo quality gates (`pre-commit --hook-stage pre-push --all-files` + PowerShell utility checks).
+- Full-repo deterministic CI checks exclude shell debt-heavy hooks.
+- A manual non-blocking debt audit job is available in `.github/workflows/script-quality.yml` via `workflow_dispatch` input `run_shell_debt_audit=true`.
+
+Shell suppression governance:
+
+- Keep shell linting strict (`severity=style`) so style/info findings block regressions.
+- Prefer code fixes over suppressions.
+- If a suppression is unavoidable, it must be inline and include an adjacent reason comment.
+- Broad suppressions (for example `disable=all`) are not allowed.
+
+LLM remediation contract:
+
+- See `Scripts/Utils/Quality/LLM-REMEDIATION-CONTRACT.md` for the required fix workflow, suppression template, and verification checklist for AI-generated shell changes.
+
+Local debt cleanup commands:
 
 ```bash
-git config core.hooksPath .githooks
-chmod +x .githooks/pre-commit
+pre-commit run --all-files --hook-stage pre-commit shellcheck
+pre-commit run --all-files --hook-stage pre-commit shfmt
 ```
 
-The hook calls `Scripts/Utils/Run-PreCommitValidation.ps1` and fails the commit on test or lint errors.
+### AppleScript migration path
+
+AppleScript validation is source-first but non-breaking while migration is in progress:
+
+- If `.applescript`/`.osascript` sources exist under `Scripts/Mac` or `Config/Mac`, CI compiles those text sources.
+- If no text sources exist yet, CI validates current `.scpt` artifacts by decompiling and recompiling.
+
+### Batch validation limitations
+
+Batch validation is intentionally best effort:
+
+- checks unresolved merge markers, whitespace/editorconfig-aligned issues, and simple parenthesis-balance smoke checks
+- does not provide a complete `cmd.exe` parser-level static analysis
 
 ## License
 

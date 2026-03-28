@@ -10,6 +10,73 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Add-ModulePathCandidate {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -Path $Path -PathType Container)) {
+        return
+    }
+
+    $separator = [System.IO.Path]::PathSeparator
+    $currentEntries = @($env:PSModulePath -split [regex]::Escape([string]$separator) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($currentEntries -contains $Path) {
+        return
+    }
+
+    $env:PSModulePath = if ([string]::IsNullOrWhiteSpace($env:PSModulePath)) {
+        $Path
+    } else {
+        "$Path$separator$env:PSModulePath"
+    }
+}
+
+function Ensure-PortableUserModulePaths {
+    $userHome = [Environment]::GetFolderPath("UserProfile")
+    if ([string]::IsNullOrWhiteSpace($userHome)) {
+        return
+    }
+
+    Add-ModulePathCandidate -Path (Join-Path -Path $userHome -ChildPath ".local/share/powershell/Modules")
+
+    $snapCodeRoot = Join-Path -Path $userHome -ChildPath "snap/code"
+    if (Test-Path -Path $snapCodeRoot -PathType Container) {
+        $snapCodeProfiles = Get-ChildItem -Path $snapCodeRoot -Directory -ErrorAction SilentlyContinue
+        foreach ($profile in @($snapCodeProfiles)) {
+            Add-ModulePathCandidate -Path (Join-Path -Path $profile.FullName -ChildPath ".local/share/powershell/Modules")
+        }
+    }
+}
+
+function Get-CommandWithOptionalModuleImport {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CommandName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ModuleName,
+
+        [Parameter(Mandatory = $true)]
+        [version]$MinimumVersion
+    )
+
+    Ensure-PortableUserModulePaths
+    $command = Get-Command -Name $CommandName -ErrorAction SilentlyContinue
+    if ($null -ne $command) {
+        return $command
+    }
+
+    try {
+        Import-Module -Name $ModuleName -MinimumVersion $MinimumVersion -ErrorAction Stop | Out-Null
+    } catch {
+        return $null
+    }
+
+    return (Get-Command -Name $CommandName -ErrorAction SilentlyContinue)
+}
+
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
 Push-Location -Path $repoRoot
 
@@ -44,7 +111,7 @@ try {
     }
 
     if ($runUtilsTests -or $runGitHubTests) {
-        $pesterCommand = Get-Command -Name Invoke-Pester -ErrorAction SilentlyContinue
+        $pesterCommand = Get-CommandWithOptionalModuleImport -CommandName "Invoke-Pester" -ModuleName "Pester" -MinimumVersion ([version]"5.5.0")
         if ($null -eq $pesterCommand) {
             throw "E_CONFIG_ERROR: Invoke-Pester is not available. Install Pester (for example: Install-Module Pester -Scope CurrentUser -MinimumVersion 5.5.0)."
         }
@@ -67,7 +134,7 @@ try {
     }
 
     if (-not $SkipAnalyzer -and $runAnalyzer) {
-        $scriptAnalyzerCommand = Get-Command -Name Invoke-ScriptAnalyzer -ErrorAction SilentlyContinue
+        $scriptAnalyzerCommand = Get-CommandWithOptionalModuleImport -CommandName "Invoke-ScriptAnalyzer" -ModuleName "PSScriptAnalyzer" -MinimumVersion ([version]"1.21.0")
         if ($null -eq $scriptAnalyzerCommand) {
             throw "E_CONFIG_ERROR: Invoke-ScriptAnalyzer is not available. Install PSScriptAnalyzer or re-run with -SkipAnalyzer."
         }

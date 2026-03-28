@@ -11,6 +11,29 @@ BeforeAll {
         "Scripts/Utils/Increment-Version.ps1"
     )
     $script:workflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/github-pr-summarizer-quality.yml"
+    $script:crossLanguageWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/script-quality.yml"
+    $script:preCommitConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".pre-commit-config.yaml"
+    $script:preCommitHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-commit"
+    $script:prePushHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-push"
+    $script:qualityPowerShellScripts = @(
+        "Scripts/Utils/Quality/Assert-CleanGitTree.ps1",
+        "Scripts/Utils/Quality/Format-PowerShellFiles.ps1",
+        "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
+    )
+    $script:qualityConfigFiles = @(
+        ".pre-commit-config.yaml",
+        ".editorconfig",
+        ".shellcheckrc",
+        ".stylua.toml"
+    )
+    $script:shellConventionScripts = @(
+        "Scripts/Mac/Backup.sh",
+        "Scripts/Mac/backup_brew.sh",
+        "Scripts/Mac/restore_brew.sh",
+        "Scripts/PaperWM/PaperWMRestore.sh",
+        "Scripts/Utils/increment-version.sh",
+        "Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh"
+    )
 }
 
 Describe "Shared helper migration" {
@@ -248,13 +271,339 @@ Describe "CI scope expansion" {
     It "triggers workflow on all script and test changes" {
         $workflow = Get-Content -Path $script:workflowPath -Raw
 
-        $workflow | Should -Match "'Scripts/\*\*'"
-        $workflow | Should -Match "'Tests/\*\*'"
+        $workflow | Should -Match 'Scripts/\*\*'
+        $workflow | Should -Match 'Tests/\*\*'
     }
 
     It "runs ScriptAnalyzer against all scripts" {
         $workflow = Get-Content -Path $script:workflowPath -Raw
         $workflow | Should -Match 'Invoke-ScriptAnalyzer\s+-Path\s+"Scripts"'
+    }
+}
+
+Describe "Cross-language quality platform conventions" {
+    It "defines a pinned pre-commit configuration with required hook coverage" {
+        $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
+
+        $preCommitConfig | Should -Match 'repo:\s+https://github\.com/pre-commit/pre-commit-hooks'
+        $preCommitConfig | Should -Match 'repo:\s+https://github\.com/scop/pre-commit-shfmt'
+        $preCommitConfig | Should -Match 'repo:\s+https://github\.com/shellcheck-py/shellcheck-py'
+        $preCommitConfig | Should -Match 'repo:\s+https://github\.com/JohnnyMorganz/StyLua'
+        $preCommitConfig | Should -Match 'repo:\s+https://github\.com/rhysd/actionlint'
+        $preCommitConfig | Should -Match 'rev:\s+v\d+\.\d+\.\d+'
+
+        $preCommitConfig | Should -Match 'id:\s+check-json'
+        $preCommitConfig | Should -Match 'id:\s+check-yaml'
+        $preCommitConfig | Should -Match 'id:\s+pretty-format-json'
+        $preCommitConfig | Should -Match 'id:\s+powershell-format'
+        $preCommitConfig | Should -Match 'id:\s+shellcheck'
+        $preCommitConfig | Should -Match 'id:\s+shfmt'
+        $preCommitConfig | Should -Match 'id:\s+stylua'
+        $preCommitConfig | Should -Match 'id:\s+actionlint'
+
+        $preCommitConfig | Should -Match 'id:\s+powershell-format[\s\S]*stages:\s+\[pre-commit\]'
+        $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
+        $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation'
+        $preCommitConfig | Should -Match 'stages:\s+\[pre-push\]'
+    }
+
+    It "scopes deterministic JSON formatting away from snapshot dumps" {
+        $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
+
+        $preCommitConfig | Should -Match 'pretty-format-json[\s\S]*files:\s+''\^\(Config/Komorebi/'
+        $preCommitConfig | Should -Not -Match 'pretty-format-json[\s\S]*files:\s+''\^Config/PowerToys/'
+        $preCommitConfig | Should -Match 'exclude:\s+''\^Config/\(PowerToys/\|\\\.config/\)'''
+    }
+
+    It "keeps git hooks pre-commit-first with fallback guidance" {
+        $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
+        $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
+
+        $preCommitHook | Should -Match 'pre-commit run --hook-stage pre-commit'
+        $preCommitHook | Should -Match 'Run-PreCommitValidation\.ps1'
+        $preCommitHook | Should -Match 'python3 -m pip install --user pre-commit'
+
+        $prePushHook | Should -Match 'pre-commit run --hook-stage pre-push --all-files'
+        $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -All'
+        $prePushHook | Should -Match 'python3 -m pip install --user pre-commit'
+    }
+
+    It "explicitly propagates pwsh fallback exit status in git hooks" {
+        $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
+        $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
+
+        $preCommitHook | Should -Match 'pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation\.ps1"\s*\r?\n\s*return\s+\$\?'
+        $prePushHook | Should -Match 'pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation\.ps1" -All\s*\r?\n\s*return\s+\$\?'
+        $preCommitHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
+        $prePushHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
+    }
+
+    It "tracks pre-push hook executable mode in git" {
+        $git = Get-Command -Name git -ErrorAction SilentlyContinue
+        if ($null -eq $git) {
+            Set-ItResult -Skipped -Because "git is unavailable on this runner"
+            return
+        }
+
+        $lsFilesOutput = @(& $git.Source -C $script:repoRoot ls-files --stage -- .githooks/pre-push 2>$null)
+        if ($lsFilesOutput.Count -eq 0) {
+            Set-ItResult -Skipped -Because ".githooks/pre-push is not tracked in git in this working tree; add/stage it before validating tracked mode"
+            return
+        }
+
+        $mode = ($lsFilesOutput[0] -split '\s+')[0]
+        $mode | Should -Be '100755'
+    }
+
+    It "defines a multi-OS CI workflow with full-repo checks and dirty-tree assertions" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+
+        $workflow | Should -Match 'runs-on:\s+ubuntu-latest'
+        $workflow | Should -Match 'runs-on:\s+windows-latest'
+        $workflow | Should -Match 'runs-on:\s+macos-latest'
+
+        $workflow | Should -Match 'SKIP=shellcheck,shfmt pre-commit run --all-files'
+        $workflow | Should -Match 'Run shell hooks on changed files'
+        $workflow | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
+        $workflow | Should -Match 'Invoke-MacOSLanguageChecks\.sh'
+        $workflow | Should -Match 'Assert-CleanGitTree\.ps1'
+
+        $workflow | Should -Match 'uses:\s+actions/checkout@v\d+\.\d+\.\d+'
+        $workflow | Should -Match 'uses:\s+actions/setup-python@v\d+\.\d+\.\d+'
+        $workflow | Should -Match 'uses:\s+actions/cache@v\d+\.\d+\.\d+'
+        $workflow | Should -Match 'shell-debt-audit'
+        $workflow | Should -Match 'run_shell_debt_audit'
+    }
+
+    It "keeps AppleScript migration-safe validation behavior" {
+        $macChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh'
+        $macChecks = Get-Content -Path $macChecksPath -Raw
+
+        $macChecks | Should -Match 'no text sources found; validating existing \.scpt artifacts as migration fallback'
+        $macChecks | Should -Match '\*\.applescript'
+        $macChecks | Should -Match '\*\.scpt'
+        $macChecks | Should -Match 'osadecompile'
+        $macChecks | Should -Match 'osacompile'
+    }
+
+    It "documents batch validation limitations in Windows checks" {
+        $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
+        $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
+
+        $windowsChecks | Should -Match 'Batch checks limitation'
+        $windowsChecks | Should -Match 'best-effort static smoke checks'
+        $windowsChecks | Should -Match 'unbalanced parentheses at end-of-file'
+    }
+}
+
+Describe "Quality script executable guardrails" {
+    It "parses quality PowerShell scripts without parser errors" {
+        foreach ($relativePath in $script:qualityPowerShellScripts) {
+            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $relativePath
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+
+            $ast | Should -Not -BeNullOrEmpty -Because ("Expected AST for {0}" -f $relativePath)
+            @($parseErrors).Count | Should -Be 0 -Because (
+                "Parser errors in {0}: {1}" -f $relativePath, ((@($parseErrors) | ForEach-Object { $_.Message }) -join '; ')
+            )
+        }
+    }
+
+    It "keeps Windows quality script parser-clean" {
+        $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
+        $tokens = $null
+        $parseErrors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($windowsChecksPath, [ref]$tokens, [ref]$parseErrors)
+
+        @($parseErrors).Count | Should -Be 0 -Because (
+            "Windows quality script must parse cleanly: {0}" -f ((@($parseErrors) | ForEach-Object { $_.Message }) -join '; ')
+        )
+    }
+
+    It "keeps shell syntax-check invocation path and avoids bash nameref in macOS helper" {
+        $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
+        $macChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh'
+        $macChecks = Get-Content -Path $macChecksPath -Raw
+
+        $preCommitConfig | Should -Match 'id:\s+shellcheck'
+        $preCommitConfig | Should -Match 'id:\s+shfmt'
+        $preCommitConfig | Should -Match 'files:\s+''\^\(Scripts/\.\*\\\.sh\|\\\.githooks/\(pre-commit\|pre-push\)\)\$'''
+        $macChecks | Should -Not -Match '(?m)^\s*local\s+-n\b'
+    }
+
+    It "propagates compiled-source validation exit code in macOS helper fallback path" {
+        $macChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh'
+        $macChecks = Get-Content -Path $macChecksPath -Raw
+
+        $macChecks | Should -Match 'validate_compiled_sources\s+"\$\{compiled_sources\[@\]\}"\s*\r?\n\s*exit\s+\$\?'
+    }
+
+    It "passes bash -n syntax check for macOS helper when bash is available" {
+        $bash = Get-Command -Name bash -ErrorAction SilentlyContinue
+        if ($null -eq $bash) {
+            Set-ItResult -Skipped -Because "bash is unavailable on this runner"
+            return
+        }
+
+        $macChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh'
+        $output = @(& $bash.Source -n $macChecksPath 2>&1)
+
+        $LASTEXITCODE | Should -Be 0 -Because (
+            "bash -n failed for macOS helper: {0}" -f ($output -join '; ')
+        )
+    }
+}
+
+Describe "Quality config file conventions" {
+    It "keeps quality config files ending with a trailing newline" {
+        foreach ($relativePath in $script:qualityConfigFiles) {
+            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $relativePath
+            $bytes = [System.IO.File]::ReadAllBytes($fullPath)
+
+            $bytes.Length | Should -BeGreaterThan 0 -Because ("{0} should not be empty" -f $relativePath)
+            $bytes[$bytes.Length - 1] | Should -Be 10 -Because ("{0} must end with a newline (LF)" -f $relativePath)
+        }
+    }
+
+    It "keeps git hook wrapper scripts ending with a trailing newline" {
+        $hookPaths = @($script:preCommitHookPath, $script:prePushHookPath)
+
+        foreach ($hookPath in $hookPaths) {
+            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $hookPath)
+            $bytes = [System.IO.File]::ReadAllBytes($hookPath)
+
+            $bytes.Length | Should -BeGreaterThan 0 -Because ("{0} should not be empty" -f $relativePath)
+            $bytes[$bytes.Length - 1] | Should -Be 10 -Because ("{0} must end with a newline (LF)" -f $relativePath)
+        }
+    }
+}
+
+Describe "Shell quality conventions" {
+    It "keeps strict shell error handling in critical shell scripts" {
+        foreach ($relativePath in $script:shellConventionScripts) {
+            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $relativePath
+            $content = Get-Content -Path $fullPath -Raw
+
+            $content | Should -Match '(?m)^\s*set\s+-euo\s+pipefail\s*$'
+        }
+    }
+
+    It "keeps Home-directory glob loops quoted in Backup.sh" {
+        $backupPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/Backup.sh'
+        $backupContent = Get-Content -Path $backupPath -Raw
+
+        $backupContent | Should -Match '(?m)^\s*for\s+file\s+in\s+"\$HOME"/\.\*;\s+do\s*$'
+        $backupContent | Should -Match '(?m)^\s*for\s+file\s+in\s+"\$HOME"/\*\.\{scpt,applescript\};\s+do\s*$'
+        $backupContent | Should -Match '(?m)^\s*for\s+file\s+in\s+"\$HOME"/\*\.sh;\s+do\s*$'
+    }
+
+    It "avoids parse-ls backup selection pattern in restore_brew" {
+        $restorePath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/restore_brew.sh'
+        $restoreContent = Get-Content -Path $restorePath -Raw
+
+        $restoreContent | Should -Not -Match 'ls\s+-1\s+"\$BACKUP_DIR"/brewfile_backup\*\s+2>\s*/dev/null\s*\|\s*sort\s*\|\s*tail'
+        $restoreContent | Should -Match "while IFS= read -r -d '' candidate; do"
+    }
+
+    It "keeps restore_brew input constrained to the backup directory" {
+        $restorePath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/restore_brew.sh'
+        $restoreContent = Get-Content -Path $restorePath -Raw
+
+        $restoreContent | Should -Match 'BACKUP_DIR="\$\(cd "\$BACKUP_DIR" && pwd\)"'
+        $restoreContent | Should -Match '(?m)^\s*case\s+"\$candidate_path_abs"\s+in\s*$'
+        $restoreContent | Should -Match '"\$BACKUP_DIR"/\*\)'
+        $restoreContent | Should -Match 'Backup file must be inside'
+        $restoreContent | Should -Match '\[\[\s+-L\s+"\$candidate_path_abs"\s+\]\]'
+        $restoreContent | Should -Match 'does not match expected pattern ''brewfile_backup\*'''
+    }
+
+    It "does not execute remote installers in restore_brew" {
+        $restorePath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/restore_brew.sh'
+        $restoreContent = Get-Content -Path $restorePath -Raw
+
+        $restoreContent | Should -Not -Match 'curl\s+-fsSL\s+https://raw\.githubusercontent\.com/Homebrew/install/.+\|\s*(/bin/)?bash'
+        $restoreContent | Should -Match 'Install Homebrew first, then rerun this script\.'
+    }
+
+    It "keeps lockfile add flow explicit in increment-version" {
+        $incrementPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/increment-version.sh'
+        $incrementContent = Get-Content -Path $incrementPath -Raw
+
+        $incrementContent | Should -Not -Match '\[\[\s+-f\s+"\$lock_path"\s+\]\]\s+&&\s+git\s+add\s+--\s+"\$lock_path"\s+\|\|\s+true'
+        $incrementContent | Should -Match '(?m)^\s*if\s+\[\[\s+-f\s+"\$lock_path"\s+\]\];\s+then\s*$'
+    }
+
+    It "uses a lock directory in increment-version to avoid concurrent writes" {
+        $incrementPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/increment-version.sh'
+        $incrementContent = Get-Content -Path $incrementPath -Raw
+
+        $incrementContent | Should -Match 'function\s+acquire_lock_dir|acquire_lock_dir\s*\(\)'
+        $incrementContent | Should -Match 'mkdir\s+"\$lock_dir"'
+        $incrementContent | Should -Match 'trap\s+''release_lock_dir\s+"\$lock_dir"''\s+EXIT'
+    }
+
+    It "surfaces dconf backup warnings in PaperWM restore" {
+        $paperwmPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/PaperWM/PaperWMRestore.sh'
+        $paperwmContent = Get-Content -Path $paperwmPath -Raw
+
+        $paperwmContent | Should -Match 'Warning: Could not backup existing dconf settings:'
+        $paperwmContent | Should -Match '(?m)^\s*if\s+CURRENT_SETTINGS=\$\(dconf dump "\$DCONF_PATH"'
+    }
+
+    It "documents shell suppression governance and avoids broad disable directives" {
+        $shellcheckPath = Join-Path -Path $script:repoRoot -ChildPath '.shellcheckrc'
+        $shellcheckConfig = Get-Content -Path $shellcheckPath -Raw
+
+        $shellcheckConfig | Should -Match 'severity=style'
+        $shellcheckConfig | Should -Match 'Suppression governance'
+        $shellcheckConfig | Should -Not -Match '(?m)^\s*disable\s*=\s*all\s*$'
+    }
+
+    It "keeps shell governance and LLM remediation guidance documented" {
+        $mainReadme = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'README.md') -Raw
+        $qualityReadme = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/README.md') -Raw
+        $contractPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/LLM-REMEDIATION-CONTRACT.md'
+        $contractContent = Get-Content -Path $contractPath -Raw
+
+        $mainReadme | Should -Match 'Shell suppression governance'
+        $mainReadme | Should -Match 'LLM-REMEDIATION-CONTRACT\.md'
+        $qualityReadme | Should -Match 'Shell suppression governance'
+        $qualityReadme | Should -Match 'AI remediation workflow'
+        $contractContent | Should -Match 'Fix first'
+        $contractContent | Should -Match 'Final verification checklist'
+    }
+
+    It "requires justification text when shellcheck disable directives are present" {
+        $shellScriptsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Scripts'
+        $shellScripts = Get-ChildItem -Path $shellScriptsRoot -Filter '*.sh' -File -Recurse -ErrorAction Stop
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($scriptFile in $shellScripts) {
+            $lines = Get-Content -Path $scriptFile.FullName
+            for ($index = 0; $index -lt $lines.Count; $index++) {
+                $line = $lines[$index]
+                if ($line -notmatch '#\s*shellcheck\s+disable=') {
+                    continue
+                }
+
+                $hasInlineReason = $line -match '#\s*shellcheck\s+disable=[^\r\n]*\s+#\s+Reason:'
+                $hasNeighborReason = $false
+                if ($index + 1 -lt $lines.Count -and $lines[$index + 1] -match '#\s*Reason:') {
+                    $hasNeighborReason = $true
+                }
+
+                if (-not $hasInlineReason -and -not $hasNeighborReason) {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $violations.Add("${relativePath}:$($index + 1)") | Out-Null
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Shellcheck disable directives must include reason comments. Violations: {0}" -f ($violations -join ', ')
+        )
     }
 }
 
@@ -431,7 +780,7 @@ Describe "Utility configuration safety conventions" {
         $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
         $content = Get-Content -Path $preCommitPath -Raw
 
-        $content | Should -Match 'Get-Command\s+-Name\s+Invoke-Pester'
+        $content | Should -Match 'Get-CommandWithOptionalModuleImport\s+-CommandName\s+"Invoke-Pester"'
         $content | Should -Match 'E_CONFIG_ERROR:\s+Invoke-Pester is not available'
     }
 

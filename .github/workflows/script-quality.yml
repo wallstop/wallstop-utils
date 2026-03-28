@@ -1,0 +1,207 @@
+name: Script Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      run_shell_debt_audit:
+        description: "Run a non-blocking full-repo shell debt audit (shellcheck + shfmt)."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: script-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  precommit-linux:
+    name: pre-commit full repo (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        id: setup_python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4.2.2
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install pre-commit
+        run: python -m pip install --upgrade pip pre-commit
+
+      - name: Run deterministic non-shell hooks on full repository
+        run: SKIP=shellcheck,shfmt pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure --color always
+
+      - name: Run shell hooks on changed files
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          from_ref=""
+          to_ref="$GIT_SHA"
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            if [[ -z "$BASE_REF" ]]; then
+              echo "Pull request event is missing BASE_REF; failing shell changed-file checks."
+              exit 1
+            fi
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            from_ref="origin/$BASE_REF"
+          elif [[ -n "$EVENT_BEFORE" && "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]]; then
+            from_ref="$EVENT_BEFORE"
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            from_ref="$(git rev-parse HEAD^)"
+          else
+            echo "No baseline commit available; running shell checks for tracked shell targets in HEAD."
+            mapfile -t changed_shell_files < <(
+              git ls-files | grep -E '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$' || true
+            )
+            if [[ ${#changed_shell_files[@]} -eq 0 ]]; then
+              echo "No shell target files found; skipping shellcheck/shfmt."
+              exit 0
+            fi
+            pre-commit run --hook-stage pre-commit shellcheck --files "${changed_shell_files[@]}" --show-diff-on-failure --color always
+            pre-commit run --hook-stage pre-commit shfmt --files "${changed_shell_files[@]}" --show-diff-on-failure --color always
+            exit 0
+          fi
+
+          mapfile -t changed_shell_files < <(
+            git diff --name-only "$from_ref" "$to_ref" | grep -E '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$' || true
+          )
+
+          if [[ ${#changed_shell_files[@]} -eq 0 ]]; then
+            echo "No changed shell targets in range $from_ref..$to_ref; skipping shellcheck/shfmt."
+            exit 0
+          fi
+
+          pre-commit run --hook-stage pre-commit shellcheck --files "${changed_shell_files[@]}" --show-diff-on-failure --color always
+          pre-commit run --hook-stage pre-commit shfmt --files "${changed_shell_files[@]}" --show-diff-on-failure --color always
+
+      - name: Assert clean tree after pre-commit
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Assert-CleanGitTree.ps1 -Context "Linux pre-commit full-repo checks"
+
+  shell-debt-audit:
+    name: Shell debt audit (manual, non-blocking)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_shell_debt_audit == true }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Python
+        id: setup_python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4.2.2
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install pre-commit
+        run: python -m pip install --upgrade pip pre-commit
+
+      - name: Run full-repo shell debt audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Running non-blocking shell debt audit across the full repository."
+          pre-commit run --all-files --hook-stage pre-commit shellcheck --show-diff-on-failure --color always 2>&1 | tee shellcheck-audit.log || true
+          pre-commit run --all-files --hook-stage pre-commit shfmt --show-diff-on-failure --color always 2>&1 | tee shfmt-audit.log || true
+
+      - name: Summarize shell debt telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f shellcheck-audit.log ]]; then
+            echo "No shellcheck audit log produced."
+            exit 0
+          fi
+
+          mapfile -t codes < <(grep -oE 'SC[0-9]{4}' shellcheck-audit.log | sort | uniq -c || true)
+
+          {
+            echo "## Shell Debt Telemetry"
+            echo
+            if [[ ${#codes[@]} -eq 0 ]]; then
+              echo "No shellcheck codes reported in this audit run."
+            else
+              echo "Detected shellcheck code counts (non-blocking audit):"
+              echo
+              echo '```text'
+              printf '%s\n' "${codes[@]}"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  windows-language:
+    name: Windows language validation
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Install AutoHotkey (best effort)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          if (Get-Command choco -ErrorAction SilentlyContinue) {
+            choco install autohotkey.portable --no-progress -y
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "AutoHotkey installation via Chocolatey failed; checks will continue with best effort behavior."
+            }
+          } else {
+            Write-Warning "Chocolatey is unavailable; AutoHotkey validation will run only if AutoHotkey is already installed."
+          }
+
+      - name: Run Windows language checks
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1
+
+      - name: Assert clean tree after Windows checks
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Assert-CleanGitTree.ps1 -Context "Windows language checks"
+
+  macos-language:
+    name: macOS AppleScript validation
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Run macOS language checks
+        shell: bash
+        run: ./Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh
+
+      - name: Assert clean tree after macOS checks
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Assert-CleanGitTree.ps1 -Context "macOS language checks"

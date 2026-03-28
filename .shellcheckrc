@@ -1,0 +1,10 @@
+# Keep style-level findings blocking so new shell debt cannot land.
+external-sources=true
+source-path=SCRIPTDIR
+severity=style
+
+# Suppression governance:
+# - Prefer code fixes over suppressions.
+# - Inline suppressions are allowed only when unavoidable and must include
+#   a nearby reason comment explaining safety/intent.
+# - Broad disables (for example disable=all) are prohibited.

@@ -1,6 +1,6 @@
 # Remove-BOM PowerShell Script
 # This script removes the UTF-8 BOM (Byte Order Mark) from text files in a repository
-# 
+#
 # Features:
 # - Uses lazy directory traversal for better performance with large repositories
 # - Respects .gitignore patterns to avoid processing ignored files

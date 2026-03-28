@@ -109,7 +109,7 @@ WatchActiveWindow:
         if (winHeight < 400) {
             return
         }
-		
+
 		if (winWidth < 400) {
             return
         }

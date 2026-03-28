@@ -11,10 +11,10 @@ if defined EDITOR_RUNNING (
 ) else (
     echo Unity Editor process not found
     echo Checking for Unity Hub...
-    
+
     set "HUB_RUNNING="
     for /f %%i in ('tasklist ^| find "Unity Hub.exe"') do set HUB_RUNNING=1
-    
+
     if defined HUB_RUNNING (
         echo Unity Hub process found
         echo Attempting to focus Unity Hub...

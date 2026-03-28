@@ -19,8 +19,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Execute WezTerm backup if config exists
 WEZTERM_BACKUP="$REPO_ROOT/Scripts/Wezterm/WeztermBackup.sh"
 if [[ -x "$WEZTERM_BACKUP" ]]; then
-    echo "Running WezTerm backup..."
-    "$WEZTERM_BACKUP" || echo "Warning: WezTerm backup skipped (no config found)"
+  echo "Running WezTerm backup..."
+  "$WEZTERM_BACKUP" || echo "Warning: WezTerm backup skipped (no config found)"
 fi
 
 current_date=$(date)
@@ -38,35 +38,34 @@ applescript_count=0
 script_count=0
 
 # Find all dotfiles in the home directory and copy them to the backup directory
-for file in $HOME/.*; do
-    # Skip the special directories '.' and '..'
-    # Skip special directories and any subdirectories
-    if [[ "$file" == "$HOME/." || "$file" == "$HOME/.." || -d "$file" ]]; then
-        continue
-    fi
+for file in "$HOME"/.*; do
+  # Skip the special directories '.' and '..'
+  # Skip special directories and any subdirectories
+  if [[ "$file" == "$HOME/." || "$file" == "$HOME/.." || -d "$file" ]]; then
+    continue
+  fi
 
-    # Copy each dotfile to the backup directory
-    cp -p "$file" "$BACKUP_DIR/"
-    ((dotfile_count++))
+  # Copy each dotfile to the backup directory
+  cp -p "$file" "$BACKUP_DIR/"
+  ((dotfile_count++))
 done
 
 # Backup AppleScript files in the home directory
-for file in $HOME/*.{scpt,applescript}; do
-    # Check if the file exists to handle the case where no AppleScript files are present
-    if [[ -e "$file" ]]; then
-        cp -p "$file" "$BACKUP_DIR/"
-        ((applescript_count++))
-    fi
+for file in "$HOME"/*.{scpt,applescript}; do
+  # Check if the file exists to handle the case where no AppleScript files are present
+  if [[ -e "$file" ]]; then
+    cp -p "$file" "$BACKUP_DIR/"
+    ((applescript_count++))
+  fi
 done
 
 # Backup shell scripts in the home directory
-for file in $HOME/*.{sh}; do
-    # Check if the file exists to handle the case where no shell scripts are present
-    if [[ -e "$file" ]]; then
-        cp -p "$file" "$BACKUP_DIR/"
-        ((script_count++))
-    fi
+for file in "$HOME"/*.sh; do
+  # Check if the file exists to handle the case where no shell scripts are present
+  if [[ -e "$file" ]]; then
+    cp -p "$file" "$BACKUP_DIR/"
+    ((script_count++))
+  fi
 done
 
 echo "Backup completed. $dotfile_count dotfiles, $script_count shell scripts, and $applescript_count AppleScript files were copied to $BACKUP_DIR"
-

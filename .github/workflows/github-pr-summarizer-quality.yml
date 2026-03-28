@@ -3,17 +3,17 @@ name: PowerShell Quality
 on:
   pull_request:
     paths:
-      - 'Scripts/**'
-      - 'Tests/**'
-      - '.psscriptanalyzer.psd1'
-      - '.github/workflows/github-pr-summarizer-quality.yml'
+      - "Scripts/**"
+      - "Tests/**"
+      - ".psscriptanalyzer.psd1"
+      - ".github/workflows/github-pr-summarizer-quality.yml"
   push:
-    branches: [ main, master ]
+    branches: [main, master]
     paths:
-      - 'Scripts/**'
-      - 'Tests/**'
-      - '.psscriptanalyzer.psd1'
-      - '.github/workflows/github-pr-summarizer-quality.yml'
+      - "Scripts/**"
+      - "Tests/**"
+      - ".psscriptanalyzer.psd1"
+      - ".github/workflows/github-pr-summarizer-quality.yml"
 
 jobs:
   lint-and-test:

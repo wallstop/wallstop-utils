@@ -12,3 +12,4 @@ pre-commit.txt
 pre-push.txt
 pre-commit.log
 pre-push.log
+testResults.xml
