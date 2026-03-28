@@ -118,19 +118,71 @@ function Invoke-AutoHotkeyCommand {
         [string[]]$Arguments
     )
 
-    $rawOutput = @(& $Executable @Arguments 2>&1)
-    # Use Get-Variable with SilentlyContinue to safely read LASTEXITCODE without triggering the
-    # Set-StrictMode -Version Latest "variable not set" error. Both bare $LASTEXITCODE and the
-    # $global: qualifier throw under strict mode when the variable has never been initialized
-    # (e.g., in a fresh PowerShell session where no native command has run yet). Get-Variable
-    # returns $null without throwing when the variable is absent.
-    $lecValue = Get-Variable -Name 'LASTEXITCODE' -ValueOnly -ErrorAction SilentlyContinue
-    $exitCode = if ($null -ne $lecValue) { [int]$lecValue } else { -1 }
-    $normalizedOutput = Convert-OutputToStringArray -Output $rawOutput
+    # Process-level capture is more reliable than call-operator redirection for GUI-subsystem
+    # binaries (such as AutoHotkey64.exe on CI), where LASTEXITCODE and 2>&1 can be ambiguous.
+    $stdoutPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("ahk_stdout_{0}.log" -f ([System.Guid]::NewGuid().ToString("N")))
+    $stderrPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("ahk_stderr_{0}.log" -f ([System.Guid]::NewGuid().ToString("N")))
+    $process = $null
 
-    return [PSCustomObject]@{
-        ExitCode = $exitCode
-        Output   = $normalizedOutput
+    try {
+        $startParams = @{
+            FilePath               = $Executable
+            ArgumentList           = $Arguments
+            PassThru               = $true
+            Wait                   = $true
+            RedirectStandardOutput = $stdoutPath
+            RedirectStandardError  = $stderrPath
+            ErrorAction            = "Stop"
+        }
+        if ($IsWindows) {
+            $startParams.NoNewWindow = $true
+        }
+
+        $process = Start-Process @startParams
+
+        $stdoutLines = @()
+        if (Test-Path -Path $stdoutPath -PathType Leaf) {
+            $rawStdout = Get-Content -Path $stdoutPath -ErrorAction SilentlyContinue
+            if ($null -ne $rawStdout) {
+                $stdoutLines = @($rawStdout)
+            }
+        }
+
+        $stderrLines = @()
+        if (Test-Path -Path $stderrPath -PathType Leaf) {
+            $rawStderr = Get-Content -Path $stderrPath -ErrorAction SilentlyContinue
+            if ($null -ne $rawStderr) {
+                $stderrLines = @($rawStderr)
+            }
+        }
+
+        $rawOutput = @($stdoutLines)
+        if ($stderrLines.Count -gt 0) {
+            $rawOutput += @(
+                $stderrLines | ForEach-Object {
+                    "stderr: $_"
+                }
+            )
+        }
+
+        return [PSCustomObject]@{
+            ExitCode = [int]$process.ExitCode
+            Output   = (Convert-OutputToStringArray -Output $rawOutput)
+        }
+    } catch {
+        $argPreview = if ($Arguments.Count -gt 0) { ($Arguments -join " ") } else { "(none)" }
+        $startFailure = "E_AHK_PROCESS_EXECUTION_FAILED: executable='$Executable', args='$argPreview', error=$($_.Exception.Message)"
+
+        return [PSCustomObject]@{
+            ExitCode = -1
+            Output   = @($startFailure)
+        }
+    } finally {
+        foreach ($capturePath in @($stdoutPath, $stderrPath)) {
+            if (-not [string]::IsNullOrWhiteSpace($capturePath) -and (Test-Path -Path $capturePath -PathType Leaf)) {
+                Remove-Item -Path $capturePath -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 }
 
@@ -218,6 +270,30 @@ function Get-AutoHotkeyAttemptDiagnostics {
     }
 
     return ($parts -join " | ")
+}
+
+function Test-AutoHotkeyAttemptsProducedNoOutput {
+    param(
+        [Parameter(Mandatory = $false)]
+        [object[]]$Attempts = @()
+    )
+
+    if ($null -eq $Attempts -or $Attempts.Count -eq 0) {
+        return $false
+    }
+
+    foreach ($attempt in $Attempts) {
+        $output = @($attempt.Output)
+        if ($output.Count -eq 0) {
+            continue
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace(($output -join ""))) {
+            return $false
+        }
+    }
+
+    return $true
 }
 
 function Get-AutoHotkeyExecutablePath {
@@ -351,6 +427,7 @@ function Test-AutoHotkeyScripts {
     }
 
     Write-Host "AutoHotkey checks: validating $($ahkFiles.Count) file(s) with runtime switch probing (/validate, then /iLib fallback)."
+    Write-Host "AutoHotkey checks: using executable '$ahkExecutable'."
     $failures = New-Object System.Collections.Generic.List[string]
     $unsupportedMessage = ""
 
@@ -372,6 +449,11 @@ function Test-AutoHotkeyScripts {
 
         if ($validationResult.Status -eq "unsupported") {
             $unsupportedMessage = "'$ahkExecutable' could not validate '$relative' because all validation switch probes failed. $attemptDiagnostics"
+
+            if (Test-AutoHotkeyAttemptsProducedNoOutput -Attempts @($validationResult.Attempts)) {
+                $unsupportedMessage = "$unsupportedMessage Hint: all probe attempts returned no output. This commonly indicates a runtime execution/capture issue (for example, GUI-subsystem behavior in headless CI), not just unsupported switches."
+            }
+
             if ($RequireAutoHotkey) {
                 throw "E_AHK_VALIDATE_UNAVAILABLE: $unsupportedMessage"
             }

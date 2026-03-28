@@ -3,7 +3,7 @@
 This folder contains quality helper scripts used by local hooks and CI:
 
 - `Format-PowerShellFiles.ps1`: deterministic PowerShell formatting for staged or selected files.
-- `Invoke-WindowsLanguageChecks.ps1`: Windows-only checks for AutoHotkey (runtime probing with `/validate`, then `/iLib` fallback) and best-effort batch smoke validation.
+- `Invoke-WindowsLanguageChecks.ps1`: Windows-only checks for AutoHotkey (runtime probing with `/validate`, then `/iLib` fallback) and best-effort batch smoke validation. AutoHotkey process execution uses explicit stdout/stderr capture via `Start-Process` to avoid ambiguous GUI-subsystem behavior in headless CI.
 
 Batch smoke checks intentionally remain heuristic, but they now apply uniformly to both single-line and multi-line `.bat` files.
 - `Invoke-MacOSLanguageChecks.sh`: macOS AppleScript validation with a source-first migration path and `.scpt` fallback.
@@ -23,7 +23,7 @@ Windows lane triage playbook:
 
 - `W_GIT_BASELINE_UNAVAILABLE`: baseline commit could not be resolved; review event context and fetch history.
 - `E_AHK_RUNTIME_UNAVAILABLE`: portable AutoHotkey runtime was not set up correctly in CI.
-- `E_AHK_UNAVAILABLE` / `E_AHK_VALIDATE_UNAVAILABLE`: AutoHotkey execution contract failed under required mode (includes switch-probing diagnostics).
+- `E_AHK_UNAVAILABLE` / `E_AHK_VALIDATE_UNAVAILABLE`: AutoHotkey execution contract failed under required mode (includes switch-probing diagnostics and a runtime/capture hint when probe attempts return empty output).
 - `E_CI_TIME_BUDGET`: PR lane exceeded 180-second runtime budget; investigate cache misses, download regressions, or broadened file scope.
 
 Shell quality enforcement model:

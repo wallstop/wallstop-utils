@@ -208,7 +208,7 @@ pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1 -All
 GitHub Actions workflow `.github/workflows/script-quality.yml` runs full-repo checks on PRs and pushes:
 
 - Linux: deterministic full-repo pre-commit checks with shell debt hooks skipped, plus strict changed-file `shellcheck`/`shfmt`, and dirty-tree drift detection
-- Windows: AutoHotkey runtime switch probing (`/validate` with `/iLib` fallback) + batch static smoke checks + dirty-tree drift detection
+- Windows: AutoHotkey runtime switch probing (`/validate` with `/iLib` fallback) with process-level stdout/stderr capture for headless CI reliability + batch static smoke checks + dirty-tree drift detection
 - macOS: AppleScript compile checks using text-source-first validation with `.scpt` fallback + dirty-tree drift detection
 
 ### Shell debt management path

@@ -125,66 +125,57 @@ Describe "Test-IsAutoHotkeyV1Script" {
 }
 
 Describe "Invoke-AutoHotkeyCommand" {
-    It "captures exit code from a native command without throwing under strict mode: <Case>" -TestCases @(
+    It "captures exit code and output deterministically: <Case>" -TestCases @(
         @{
-            Case     = "nonzero exit code is captured"
-            ExitCode = 5
+            Case               = "stdout and zero exit"
+            LinuxExecutable    = "echo"
+            LinuxArguments     = @("ok-stdout")
+            WindowsExecutable  = "cmd.exe"
+            WindowsArguments   = @("/c", "echo ok-stdout")
+            LinuxExitCode      = 0
+            WindowsExitCode    = 0
+            ExpectedOutputLike = "ok-stdout"
         },
         @{
-            Case     = "zero exit code is captured"
-            ExitCode = 0
+            Case               = "stderr and nonzero exit"
+            LinuxExecutable    = "ls"
+            LinuxArguments     = @("/definitely-not-existing-path-for-tests")
+            WindowsExecutable  = "cmd.exe"
+            WindowsArguments   = @("/c", "echo problem-stderr 1>&2 && exit /b 7")
+            LinuxExitCode      = 2
+            WindowsExitCode    = 7
+            ExpectedOutputLike = "stderr:"
         }
     ) {
-        param([string]$Case, [int]$ExitCode)
+        param(
+            [string]$Case,
+            [string]$LinuxExecutable,
+            [string[]]$LinuxArguments,
+            [string]$WindowsExecutable,
+            [string[]]$WindowsArguments,
+            [int]$LinuxExitCode,
+            [int]$WindowsExitCode,
+            [string]$ExpectedOutputLike
+        )
 
         $null = $Case
-        Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
-
+        $expectedExitCode = 0
         if ($IsWindows) {
-            $result = Invoke-AutoHotkeyCommand -Executable "cmd.exe" -Arguments @("/c", "exit $ExitCode")
+            $result = Invoke-AutoHotkeyCommand -Executable $WindowsExecutable -Arguments $WindowsArguments
+            $expectedExitCode = $WindowsExitCode
         } else {
-            $result = Invoke-AutoHotkeyCommand -Executable "sh" -Arguments @("-c", "exit $ExitCode")
+            $result = Invoke-AutoHotkeyCommand -Executable $LinuxExecutable -Arguments $LinuxArguments
+            $expectedExitCode = $LinuxExitCode
         }
-        $result.ExitCode | Should -Be $ExitCode
+
+        $result.ExitCode | Should -Be $expectedExitCode
+        ($result.Output -join " ") | Should -Match ([regex]::Escape($ExpectedOutputLike))
     }
 
-    It "throws when the specified executable does not exist" {
-        { Invoke-AutoHotkeyCommand -Executable "no-such-exe-$(New-Guid)" -Arguments @() } | Should -Throw
-    }
-
-    It "Get-Variable pattern does not throw when LASTEXITCODE is unset (anti-regression proof)" {
-        # Directly proves why Get-Variable is used instead of bare $LASTEXITCODE or $global:LASTEXITCODE.
-        # Both bare and $global: forms throw under Set-StrictMode -Version Latest in a fresh session
-        # where no native command has run. Get-Variable with SilentlyContinue is the only safe pattern.
-        Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
-
-        # New code pattern: Get-Variable does not throw even when the variable is absent.
-        $getVarThrew = $false
-        $getVarResult = $null
-        try {
-            $getVarResult = Get-Variable -Name 'LASTEXITCODE' -ValueOnly -ErrorAction SilentlyContinue
-        } catch {
-            $getVarThrew = $true
-        }
-        $getVarThrew | Should -Be $false -Because 'Get-Variable SilentlyContinue must return $null rather than throw'
-        $getVarResult | Should -BeNullOrEmpty
-
-        # Both bare $LASTEXITCODE and the $global: qualifier throw under strict mode when unset.
-        $bareReadThrew = $false
-        try {
-            $null = $LASTEXITCODE
-        } catch {
-            $bareReadThrew = $true
-        }
-        $bareReadThrew | Should -Be $true -Because 'bare $LASTEXITCODE throws under Set-StrictMode -Version Latest when never set'
-
-        $globalReadThrew = $false
-        try {
-            $null = $global:LASTEXITCODE
-        } catch {
-            $globalReadThrew = $true
-        }
-        $globalReadThrew | Should -Be $true -Because '$global:LASTEXITCODE also throws under Set-StrictMode -Version Latest when never set'
+    It "returns structured error output when the specified executable does not exist" {
+        $result = Invoke-AutoHotkeyCommand -Executable "no-such-exe-$(New-Guid)" -Arguments @("--version")
+        $result.ExitCode | Should -Be -1
+        ($result.Output -join " ") | Should -Match 'E_AHK_PROCESS_EXECUTION_FAILED'
     }
 }
 
@@ -334,6 +325,39 @@ Describe "Diagnostic helpers" {
         $preview.Length | Should -BeGreaterThan 40
         $preview | Should -Match "\.\.\.$"
     }
+
+    It "classifies no-output attempt collections correctly: <Case>" -TestCases @(
+        @{
+            Case     = "all attempts empty"
+            Attempts = @(
+                [PSCustomObject]@{ Mode = "/validate"; ExitCode = -1; Output = @() },
+                [PSCustomObject]@{ Mode = "/iLib"; ExitCode = -1; Output = @("   ", "") }
+            )
+            Expected = $true
+        },
+        @{
+            Case     = "one attempt has output"
+            Attempts = @(
+                [PSCustomObject]@{ Mode = "/validate"; ExitCode = -1; Output = @() },
+                [PSCustomObject]@{ Mode = "/iLib"; ExitCode = 2; Output = @("Unknown switch /iLib") }
+            )
+            Expected = $false
+        },
+        @{
+            Case     = "empty attempt list"
+            Attempts = @()
+            Expected = $false
+        }
+    ) {
+        param(
+            [string]$Case,
+            [object[]]$Attempts,
+            [bool]$Expected
+        )
+
+        $null = $Case
+        (Test-AutoHotkeyAttemptsProducedNoOutput -Attempts $Attempts) | Should -Be $Expected
+    }
 }
 
 Describe "Test-AutoHotkeyScripts control flow" {
@@ -393,6 +417,33 @@ Describe "Test-AutoHotkeyScripts control flow" {
         {
             Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA) -RequireAutoHotkey
         } | Should -Throw "*E_AHK_VALIDATE_UNAVAILABLE*"
+
+        Assert-MockCalled -CommandName Invoke-AutoHotkeyValidationCommand -Times 1 -Exactly
+    }
+
+    It "adds explicit runtime/capture hint when all validation probes return no output in required mode" {
+        $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo-required-no-output")
+        $scriptsRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"
+        New-Item -Path $scriptsRoot -ItemType Directory -Force | Out-Null
+
+        $fileA = Join-Path -Path $scriptsRoot -ChildPath "a.ahk"
+        Set-Content -Path $fileA -Value "#Requires AutoHotkey v2" -NoNewline
+
+        Mock -CommandName Get-AutoHotkeyExecutablePath -MockWith { "AutoHotkey64.exe" }
+        Mock -CommandName Invoke-AutoHotkeyValidationCommand -MockWith {
+            return [PSCustomObject]@{
+                Status   = "unsupported"
+                Mode     = ""
+                Attempts = @(
+                    [PSCustomObject]@{ Mode = "/validate"; ExitCode = -1; Output = @() },
+                    [PSCustomObject]@{ Mode = "/iLib"; ExitCode = -1; Output = @("  ") }
+                )
+            }
+        }
+
+        {
+            Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA) -RequireAutoHotkey
+        } | Should -Throw "*Hint: all probe attempts returned no output*"
 
         Assert-MockCalled -CommandName Invoke-AutoHotkeyValidationCommand -Times 1 -Exactly
     }

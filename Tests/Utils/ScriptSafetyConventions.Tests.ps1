@@ -453,13 +453,16 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecksTests | Should -Match '#Requires AutoHotkey v2'
     }
 
-    It "uses Get-Variable to read LASTEXITCODE in Invoke-AutoHotkeyCommand to prevent strict-mode failure" {
+    It "uses Start-Process output redirection in Invoke-AutoHotkeyCommand and avoids LASTEXITCODE dependency" {
         $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
         $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
 
-        # Must use Get-Variable pattern (the only strict-mode-safe approach when LASTEXITCODE may be unset).
-        $windowsChecks | Should -Match 'Get-Variable\s+-Name\s+[''"'']LASTEXITCODE'
-        # Prevent regression: bare $LASTEXITCODE must not appear as an assignment source in this file.
+        $windowsChecks | Should -Match 'Start-Process\s+@startParams|Start-Process\s+-FilePath'
+        $windowsChecks | Should -Match 'RedirectStandardOutput'
+        $windowsChecks | Should -Match 'RedirectStandardError'
+        $windowsChecks | Should -Match 'E_AHK_PROCESS_EXECUTION_FAILED'
+
+        # Prevent regression: do not rely on raw LASTEXITCODE assignment in this helper.
         $windowsChecks | Should -Not -Match '(?m)^\s*\$exitCode\s*=\s*\$LASTEXITCODE\b'
     }
 
