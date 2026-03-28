@@ -32,6 +32,10 @@ Describe "Parse-GitHubPullRequestUrl" {
         { Parse-GitHubPullRequestUrl -Url "https://localhost/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
     }
 
+    It "rejects PullRequestUrl hosts in RFC1918 ranges" {
+        { Parse-GitHubPullRequestUrl -Url "https://192.168.1.10/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*not allowed for safety reasons*"
+    }
+
     It "accepts owner values up to 39 characters" {
         $owner39 = "o" + ("a" * 38)
         $result = Parse-GitHubPullRequestUrl -Url "https://github.com/$owner39/octo-repo/pull/123"
@@ -50,6 +54,15 @@ Describe "Parse-GitHubPullRequestUrl" {
         { Parse-GitHubPullRequestUrl -Url "https://-github.com/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
         { Parse-GitHubPullRequestUrl -Url "https://github-.com/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
     }
+
+    It "rejects URL host segments that include a port" {
+        { Parse-GitHubPullRequestUrl -Url "https://github.com:8443/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
+    }
+
+    It "rejects URL host segments that include user-info" {
+        { Parse-GitHubPullRequestUrl -Url "https://token@github.com/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
+        { Parse-GitHubPullRequestUrl -Url "https://user:pass@github.com/octo/repo/pull/10" } | Should -Throw "*E_INVALID_URL*"
+    }
 }
 
 Describe "Test-GitHubHostAllowed" {
@@ -57,12 +70,123 @@ Describe "Test-GitHubHostAllowed" {
         (Test-GitHubHostAllowed -GitHubHost "github.com") | Should -BeTrue
     }
 
-    It "rejects localhost and RFC1918 ranges" {
+    It "rejects local, private, link-local, and non-global IPv4 ranges" {
         (Test-GitHubHostAllowed -GitHubHost "localhost") | Should -BeFalse
         (Test-GitHubHostAllowed -GitHubHost "127.0.0.1") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "0.0.0.0") | Should -BeFalse
         (Test-GitHubHostAllowed -GitHubHost "10.1.2.3") | Should -BeFalse
         (Test-GitHubHostAllowed -GitHubHost "192.168.1.10") | Should -BeFalse
         (Test-GitHubHostAllowed -GitHubHost "172.16.0.1") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "100.64.0.1") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "169.254.169.254") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "224.0.0.1") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "240.0.0.1") | Should -BeFalse
+    }
+
+    It "rejects non-global IPv6 ranges" {
+        (Test-GitHubHostAllowed -GitHubHost "::1") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "::") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "fe80::1") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "fd12:3456::1") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "ff02::1") | Should -BeFalse
+    }
+
+    It "accepts globally routable IPv4 and IPv6 addresses" {
+        (Test-GitHubHostAllowed -GitHubHost "8.8.8.8") | Should -BeTrue
+        (Test-GitHubHostAllowed -GitHubHost "1.1.1.1") | Should -BeTrue
+        (Test-GitHubHostAllowed -GitHubHost "2606:4700:4700::1111") | Should -BeTrue
+    }
+
+    It "rejects IPv6-mapped local/private IPv4 addresses" {
+        (Test-GitHubHostAllowed -GitHubHost "::ffff:127.0.0.1") | Should -BeFalse
+        (Test-GitHubHostAllowed -GitHubHost "::ffff:10.1.2.3") | Should -BeFalse
+    }
+}
+
+Describe "Get-NormalizedGitHubHostAllowlist" {
+    BeforeAll {
+        $script:originalWallstopHostAllowlist = $env:WALLSTOP_GITHUB_ALLOWED_HOSTS
+        $script:originalGitHubHostAllowlist = $env:GITHUB_ALLOWED_HOSTS
+    }
+
+    BeforeEach {
+        $env:WALLSTOP_GITHUB_ALLOWED_HOSTS = $null
+        $env:GITHUB_ALLOWED_HOSTS = $null
+    }
+
+    AfterAll {
+        $env:WALLSTOP_GITHUB_ALLOWED_HOSTS = $script:originalWallstopHostAllowlist
+        $env:GITHUB_ALLOWED_HOSTS = $script:originalGitHubHostAllowlist
+    }
+
+    It "normalizes and de-duplicates explicit allowlist hosts" {
+        $normalized = @(Get-NormalizedGitHubHostAllowlist -AllowedGitHubHosts @("GitHub.COM", "github.com", "ghes.example.com"))
+
+        $normalized.Count | Should -Be 2
+        $normalized[0] | Should -Be "github.com"
+        $normalized[1] | Should -Be "ghes.example.com"
+    }
+
+    It "reads allowlist hosts from environment variable fallback" {
+        $env:WALLSTOP_GITHUB_ALLOWED_HOSTS = "github.com, ghes.example.com"
+
+        $normalized = @(Get-NormalizedGitHubHostAllowlist)
+        $normalized.Count | Should -Be 2
+        $normalized | Should -Contain "github.com"
+        $normalized | Should -Contain "ghes.example.com"
+    }
+
+    It "throws E_CONFIG_ERROR when allowlist entries are malformed" {
+        { Get-NormalizedGitHubHostAllowlist -AllowedGitHubHosts @(".github.com") } | Should -Throw "*E_CONFIG_ERROR*"
+    }
+}
+
+Describe "Assert-GitHubHostFormat" {
+    It "normalizes host casing" {
+        (Assert-GitHubHostFormat -GitHubHost "GitHub.COM" -Context "unit") | Should -Be "github.com"
+    }
+
+    It "rejects empty hosts" {
+        { Assert-GitHubHostFormat -GitHubHost " " -Context "unit" } | Should -Throw "*E_INVALID_URL*"
+    }
+
+    It "rejects host values longer than DNS limits" {
+        $label = "a" * 63
+        $hostTooLong = "$label.$label.$label.$label"
+
+        { Assert-GitHubHostFormat -GitHubHost $hostTooLong -Context "unit" } | Should -Throw "*E_INVALID_URL*"
+    }
+}
+
+Describe "Assert-GitHubHostInAllowlist" {
+    It "allows any host when allowlist is empty" {
+        { Assert-GitHubHostInAllowlist -GitHubHost "github.com" -AllowedGitHubHosts @() -Context "unit" } | Should -Not -Throw
+    }
+
+    It "enforces case-insensitive allowlist matching" {
+        { Assert-GitHubHostInAllowlist -GitHubHost "GitHub.COM" -AllowedGitHubHosts @("github.com") -Context "unit" } | Should -Not -Throw
+    }
+
+    It "rejects hosts not found in allowlist" {
+        { Assert-GitHubHostInAllowlist -GitHubHost "github.com" -AllowedGitHubHosts @("ghes.example.com") -Context "unit" } | Should -Throw "*E_INVALID_URL*"
+    }
+}
+
+Describe "Assert-GitHubRequestUri" {
+    It "requires https scheme" {
+        { Assert-GitHubRequestUri -Uri "http://api.github.com/graphql" -Context "unit" } | Should -Throw "*E_INVALID_URL*Only https*"
+    }
+
+    It "rejects user-info in URI" {
+        { Assert-GitHubRequestUri -Uri "https://token@api.github.com/graphql" -Context "unit" } | Should -Throw "*E_INVALID_URL*user-info*"
+    }
+
+    It "enforces allowlist when provided" {
+        { Assert-GitHubRequestUri -Uri "https://api.github.com/graphql" -Context "unit" -AllowedGitHubHosts @("ghes.example.com") } | Should -Throw "*E_INVALID_URL*allowed GitHub host list*"
+    }
+
+    It "accepts valid https URI and host" {
+        { Assert-GitHubRequestUri -Uri "https://api.github.com/graphql" -Context "unit" } | Should -Not -Throw
     }
 }
 
@@ -422,6 +546,20 @@ Describe "Invoke-GitHubRequestWithRetry" {
         $result.ok | Should -BeTrue
         $script:attempt | Should -Be 2
         Assert-MockCalled Start-Sleep -Times 1 -Scope It
+    }
+
+    It "rejects non-https request URIs before invoking the transport" {
+        Mock Invoke-RestMethod { throw "should not run" }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "http://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*"
+        Assert-MockCalled Invoke-RestMethod -Times 0 -Scope It
+    }
+
+    It "enforces host allowlist before invoking the transport" {
+        Mock Invoke-RestMethod { throw "should not run" }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("ghes.example.com") } | Should -Throw "*E_INVALID_URL*allowed GitHub host list*"
+        Assert-MockCalled Invoke-RestMethod -Times 0 -Scope It
     }
 
     It "maps 401 to E_AUTH_INVALID" {
@@ -1039,6 +1177,25 @@ Describe "Get-UnresolvedReviewThreads" {
 }
 
 Describe "Resolve-PullRequestTarget" {
+    It "uses host parsed from PullRequestUrl when explicit GitHubHost matching is not requested" {
+        $target = Resolve-PullRequestTarget -PullRequestUrl "https://ghes.example.com/octo/demo/pull/99" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+
+        $target.Host | Should -Be "ghes.example.com"
+        $target.Owner | Should -Be "octo"
+        $target.Repo | Should -Be "demo"
+        $target.PullRequestNumber | Should -Be 99
+    }
+
+    It "requires PullRequestUrl host to match explicit GitHubHost" {
+        { Resolve-PullRequestTarget -PullRequestUrl "https://ghes.example.com/octo/demo/pull/99" -GitHubHost "github.com" -GitHubHostProvided -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*does not match explicitly provided -GitHubHost*"
+    }
+
+    It "accepts PullRequestUrl host that matches explicit GitHubHost" {
+        $target = Resolve-PullRequestTarget -PullRequestUrl "https://gHeS.example.com/octo/demo/pull/99" -GitHubHost "GHES.EXAMPLE.COM" -GitHubHostProvided -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+
+        $target.Host | Should -Be "ghes.example.com"
+    }
+
     It "resolves direct owner/repo/number values" {
         $target = Resolve-PullRequestTarget -Owner "octo" -Repo "demo" -PullRequestNumber 99 -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
         $target.Host | Should -Be "github.com"
@@ -1078,6 +1235,18 @@ Describe "Resolve-PullRequestTarget" {
 
     It "rejects malformed direct host values" {
         { Resolve-PullRequestTarget -Owner "octo" -Repo "demo" -GitHubHost ".github.com" -PullRequestNumber 99 -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*"
+    }
+
+    It "rejects PullRequestUrl hosts that are not in the configured allowlist" {
+        { Resolve-PullRequestTarget -PullRequestUrl "https://github.com/octo/demo/pull/99" -AllowedGitHubHostsNormalized @("ghes.example.com") -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*allowed GitHub host list*"
+    }
+
+    It "rejects direct hosts that are not in the configured allowlist" {
+        { Resolve-PullRequestTarget -Owner "octo" -Repo "demo" -GitHubHost "github.com" -PullRequestNumber 99 -AllowedGitHubHostsNormalized @("ghes.example.com") -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*allowed GitHub host list*"
+    }
+
+    It "rejects RFC1918 direct hosts even if allowlisted" {
+        { Resolve-PullRequestTarget -Owner "octo" -Repo "demo" -GitHubHost "192.168.1.10" -PullRequestNumber 99 -AllowedGitHubHostsNormalized @("192.168.1.10") -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*not allowed for safety reasons*"
     }
 }
 
@@ -1139,6 +1308,7 @@ Describe "Invoke-Main" {
         $Owner = $null
         $Repo = $null
         $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @("github.com")
         $PullRequestNumber = 0
         $Token = $null
         $OutputFormat = "text"
@@ -1205,6 +1375,12 @@ Describe "Invoke-Main" {
         $script:authTokenCallCount | Should -Be 2
         $script:reviewCallCount | Should -Be 2
         $script:lastOutput | Should -Be "ok"
+        Assert-MockCalled Validate-GitHubTokenForRepoAccess -Times 1 -Scope It -ParameterFilter {
+            $AllowedGitHubHostsNormalized.Count -eq 1 -and $AllowedGitHubHostsNormalized[0] -eq "github.com"
+        }
+        Assert-MockCalled Get-UnresolvedReviewThreads -Times 2 -Scope It -ParameterFilter {
+            $AllowedGitHubHostsNormalized.Count -eq 1 -and $AllowedGitHubHostsNormalized[0] -eq "github.com"
+        }
     }
 
     It "offers login fallback in non-interactive mode when PR URL is provided and credentials are missing" {

@@ -155,14 +155,85 @@ Describe "Scope safety conventions" {
 
         $content | Should -Match 'function\s+Assert-GitHubHostFormat'
         $content | Should -Match 'function\s+Assert-GitHubOwnerRepoFormat'
+        $content | Should -Match 'function\s+Assert-GitHubRequestUri'
+        $content | Should -Match 'function\s+Assert-GitHubHostInAllowlist'
 
         $content | Should -Match 'function\s+Parse-GitHubPullRequestUrl[\s\S]*Assert-GitHubHostFormat'
         $content | Should -Match 'function\s+Parse-GitHubPullRequestUrl[\s\S]*Assert-GitHubOwnerRepoFormat'
         $content | Should -Match 'function\s+Select-PullRequestInteractively[\s\S]*Assert-GitHubOwnerRepoFormat'
         $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*Assert-GitHubHostFormat'
         $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*Assert-GitHubOwnerRepoFormat'
+        $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*GitHubHostProvided'
+        $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*Assert-GitHubHostInAllowlist'
+        $content | Should -Match 'function\s+Invoke-GitHubRequestWithRetry[\s\S]*Assert-GitHubRequestUri'
+        $content | Should -Match 'function\s+Validate-GitHubTokenForRepoAccess[\s\S]*Assert-GitHubRequestUri'
 
         $content | Should -Not -Match '\^\[A-Za-z0-9\]\[A-Za-z0-9_-\]\{0,37\}\$'
+    }
+
+    It "keeps comprehensive non-global IP host blocking for GitHub targets" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'Test-GitHubIPAddressAllowed'
+        $content | Should -Match '\$octet0\s*-eq\s*10'
+        $content | Should -Match '\$octet0\s*-eq\s*169\s*-and\s*\$octet1\s*-eq\s*254'
+        $content | Should -Match '\$octet0\s*-ge\s*224'
+        $content | Should -Match 'IsIPv6LinkLocal'
+        $content | Should -Match 'IsIPv6Multicast'
+        $content | Should -Match '\(\$bytes\[0\]\s*-band\s*0xFE\)\s*-eq\s*0xFC'
+    }
+
+    It "keeps outbound HTTP calls behind URI safety assertions" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+
+        $functions = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+                }, $true))
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        $allowedDirectHttpFunctions = @("Invoke-GitHubRequestWithRetry", "Validate-GitHubTokenForRepoAccess")
+
+        foreach ($function in $functions) {
+            $commandNames = @($function.Body.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.CommandAst]
+                    }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+            $containsDirectHttpCall = ($commandNames -contains "Invoke-RestMethod") -or ($commandNames -contains "Invoke-WebRequest")
+            if ($containsDirectHttpCall -and -not ($allowedDirectHttpFunctions -contains $function.Name)) {
+                $violations.Add("$($function.Name) uses direct HTTP call") | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because ("Direct HTTP calls must stay in approved wrappers. Violations: {0}" -f ($violations -join ", "))
+
+        $content = Get-Content -Path $fullPath -Raw
+        $content | Should -Match 'function\s+Invoke-GitHubRequestWithRetry[\s\S]*Assert-GitHubRequestUri[\s\S]*Invoke-RestMethod'
+        $content | Should -Match 'function\s+Validate-GitHubTokenForRepoAccess[\s\S]*Assert-GitHubRequestUri[\s\S]*Invoke-WebRequest'
+    }
+
+    It "threads allowlist enforcement through Invoke-Main auth retry branch" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*\$allowedGitHubHostsNormalized\s*=\s*Get-NormalizedGitHubHostAllowlist'
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*Validate-GitHubTokenForRepoAccess[^\n]*-AllowedGitHubHostsNormalized\s+\$allowedGitHubHostsNormalized'
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*Get-UnresolvedReviewThreads[^\n]*-AllowedGitHubHostsNormalized\s+\$allowedGitHubHostsNormalized'
+    }
+
+    It "keeps security regression tests for host mismatch and non-global host cases" {
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+
+        $testsContent | Should -Match '169\.254\.169\.254'
+        $testsContent | Should -Match 'fe80::1'
+        $testsContent | Should -Match 'does not match explicitly provided -GitHubHost'
+        $testsContent | Should -Match 'allowed GitHub host list'
     }
 
     It "keeps Increment-Version direct-run invocation guard" {

@@ -16,6 +16,20 @@ For automation, use -OutputFormat json to emit an array of objects.
 
 .PARAMETER PullRequestUrl
 GitHub pull request URL. Supports github.com and GitHub Enterprise Server hosts.
+When -GitHubHost is explicitly provided together with -PullRequestUrl, the parsed URL
+host must match -GitHubHost exactly after normalization.
+
+.PARAMETER GitHubHost
+GitHub host (default: github.com). Used for direct owner/repo mode and interactive
+mode. If provided with -PullRequestUrl, it must match the host parsed from the URL.
+
+.PARAMETER AllowedGitHubHosts
+Optional host allowlist for defense-in-depth host egress control. Accepts one or
+more host values. When omitted, the script also checks environment variables
+WALLSTOP_GITHUB_ALLOWED_HOSTS and GITHUB_ALLOWED_HOSTS (comma/semicolon/whitespace
+separated), in that order. If an allowlist is present, all resolved hosts and
+outbound request hosts must belong to it. Non-empty -AllowedGitHubHosts values
+always take precedence over environment fallbacks.
 
 .PARAMETER Owner
 Repository owner for interactive or direct owner/repo mode.
@@ -51,6 +65,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$GitHubHost = "github.com",
+
+    [Parameter(Mandatory = $false)]
+    [string[]]$AllowedGitHubHosts = @(),
 
     [Parameter(Mandatory = $false)]
     [int]$PullRequestNumber,
@@ -90,6 +107,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$script:TopLevelBoundParameters = @{} + $PSBoundParameters
 
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/StrictModeHelpers.ps1"
 if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
@@ -473,7 +491,7 @@ function Parse-GitHubPullRequestUrl {
     }
 
     $trimmed = $Url.Trim()
-    $regex = '^https://(?<host>[^/\s\?#]+)/(?<owner>[^/\s\?#]+)/(?<repo>[^/\s\?#]+)/pull/(?<pr>\d+)(?:$|/|\?|#)'
+    $regex = '^https://(?<host>[A-Za-z0-9.-]+)/(?<owner>[^/\s\?#]+)/(?<repo>[^/\s\?#]+)/pull/(?<pr>\d+)(?:$|/|\?|#)'
 
     $match = [regex]::Match($trimmed, $regex)
     if (-not $match.Success) {
@@ -498,20 +516,218 @@ function Test-GitHubHostAllowed {
         [string]$GitHubHost
     )
 
-    $lower = $GitHubHost.ToLowerInvariant()
-    if ($lower -eq "localhost" -or $lower -eq "0.0.0.0" -or $lower -eq "127.0.0.1" -or $lower -eq "::1") {
+    if ([string]::IsNullOrWhiteSpace($GitHubHost)) {
         return $false
     }
 
-    if ($lower -match "^127\." -or $lower -match "^10\." -or $lower -match "^192\.168\.") {
+    $lower = $GitHubHost.Trim().ToLowerInvariant()
+    if ($lower -eq "localhost") {
         return $false
     }
 
-    if ($lower -match "^172\.(1[6-9]|2[0-9]|3[0-1])\.") {
-        return $false
+    [System.Net.IPAddress]$parsedIp = $null
+    if ([System.Net.IPAddress]::TryParse($lower, [ref]$parsedIp)) {
+        return Test-GitHubIPAddressAllowed -IPAddress $parsedIp
     }
 
     return $true
+}
+
+function Test-GitHubIPAddressAllowed {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Net.IPAddress]$IPAddress
+    )
+
+    if ($IPAddress.IsIPv4MappedToIPv6) {
+        return Test-GitHubIPAddressAllowed -IPAddress $IPAddress.MapToIPv4()
+    }
+
+    if ($IPAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        $bytes = $IPAddress.GetAddressBytes()
+        $octet0 = [int]$bytes[0]
+        $octet1 = [int]$bytes[1]
+        $octet2 = [int]$bytes[2]
+
+        if ($octet0 -eq 0 -or $octet0 -eq 10 -or $octet0 -eq 127) {
+            return $false
+        }
+
+        if ($octet0 -eq 100 -and $octet1 -ge 64 -and $octet1 -le 127) {
+            return $false
+        }
+
+        if ($octet0 -eq 169 -and $octet1 -eq 254) {
+            return $false
+        }
+
+        if ($octet0 -eq 172 -and $octet1 -ge 16 -and $octet1 -le 31) {
+            return $false
+        }
+
+        if ($octet0 -eq 192 -and $octet1 -eq 168) {
+            return $false
+        }
+
+        if ($octet0 -eq 192 -and $octet1 -eq 0 -and ($octet2 -eq 0 -or $octet2 -eq 2)) {
+            return $false
+        }
+
+        if ($octet0 -eq 198 -and ($octet1 -eq 18 -or $octet1 -eq 19)) {
+            return $false
+        }
+
+        if ($octet0 -eq 198 -and $octet1 -eq 51 -and $octet2 -eq 100) {
+            return $false
+        }
+
+        if ($octet0 -eq 203 -and $octet1 -eq 0 -and $octet2 -eq 113) {
+            return $false
+        }
+
+        if ($octet0 -ge 224) {
+            return $false
+        }
+
+        return $true
+    }
+
+    if ($IPAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6) {
+        if ($IPAddress.Equals([System.Net.IPAddress]::IPv6Loopback) -or $IPAddress.Equals([System.Net.IPAddress]::IPv6None)) {
+            return $false
+        }
+
+        if ($IPAddress.IsIPv6LinkLocal -or $IPAddress.IsIPv6SiteLocal -or $IPAddress.IsIPv6Multicast) {
+            return $false
+        }
+
+        $bytes = $IPAddress.GetAddressBytes()
+        if (($bytes[0] -band 0xFE) -eq 0xFC) {
+            return $false
+        }
+
+        if ($bytes[0] -eq 0x20 -and $bytes[1] -eq 0x01 -and $bytes[2] -eq 0x0D -and $bytes[3] -eq 0xB8) {
+            return $false
+        }
+
+        return $true
+    }
+
+    return $false
+}
+
+function Get-NormalizedGitHubHostAllowlist {
+    [OutputType([string[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHosts = @()
+    )
+
+    $rawHosts = New-Object System.Collections.Generic.List[string]
+    foreach ($candidate in @($AllowedGitHubHosts)) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            $rawHosts.Add($candidate.Trim()) | Out-Null
+        }
+    }
+
+    if ($rawHosts.Count -eq 0) {
+        $envAllowlist = if (-not [string]::IsNullOrWhiteSpace($env:WALLSTOP_GITHUB_ALLOWED_HOSTS)) {
+            $env:WALLSTOP_GITHUB_ALLOWED_HOSTS
+        } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ALLOWED_HOSTS)) {
+            $env:GITHUB_ALLOWED_HOSTS
+        } else {
+            $null
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($envAllowlist)) {
+            $parts = @([regex]::Split($envAllowlist, '[,;\s]+'))
+            foreach ($part in $parts) {
+                if (-not [string]::IsNullOrWhiteSpace($part)) {
+                    $rawHosts.Add($part.Trim()) | Out-Null
+                }
+            }
+        }
+    }
+
+    if ($rawHosts.Count -eq 0) {
+        return @()
+    }
+
+    $seenHosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $normalizedHosts = New-Object System.Collections.Generic.List[string]
+    foreach ($rawHost in $rawHosts) {
+        try {
+            $normalizedHost = Assert-GitHubHostFormat -GitHubHost $rawHost -Context "AllowedGitHubHosts"
+        } catch {
+            $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens @()
+            throw "E_CONFIG_ERROR: Invalid host allowlist entry '$rawHost'. $safeMessage"
+        }
+
+        if ($seenHosts.Add($normalizedHost)) {
+            $normalizedHosts.Add($normalizedHost) | Out-Null
+        }
+    }
+
+    return $normalizedHosts.ToArray()
+}
+
+function Assert-GitHubHostInAllowlist {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHosts = @(),
+
+        [Parameter(Mandatory = $false)]
+        [string]$Context = "GitHub host"
+    )
+
+    if ((Get-SafeCount -InputObject $AllowedGitHubHosts) -eq 0) {
+        return
+    }
+
+    $normalizedHost = $GitHubHost.Trim().ToLowerInvariant()
+    if (-not (@($AllowedGitHubHosts) -contains $normalizedHost)) {
+        throw "E_INVALID_URL: Host '$normalizedHost' is not in the configured allowed GitHub host list for $Context."
+    }
+}
+
+function Assert-GitHubRequestUri {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Context = "GitHub request",
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHosts = @()
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Uri)) {
+        throw "E_INVALID_URL: Request URI cannot be empty in $Context."
+    }
+
+    [System.Uri]$parsedUri = $null
+    if (-not [System.Uri]::TryCreate($Uri, [System.UriKind]::Absolute, [ref]$parsedUri)) {
+        throw "E_INVALID_URL: Request URI '$Uri' is not a valid absolute URI in $Context."
+    }
+
+    if (-not $parsedUri.Scheme.Equals("https", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "E_INVALID_URL: Only https request URIs are allowed in $Context (received '$($parsedUri.Scheme)')."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($parsedUri.UserInfo)) {
+        throw "E_INVALID_URL: Request URI user-info is not allowed in $Context."
+    }
+
+    $normalizedHost = Assert-GitHubHostFormat -GitHubHost $parsedUri.DnsSafeHost -Context "$Context URI"
+    Assert-GitHubHostInAllowlist -GitHubHost $normalizedHost -AllowedGitHubHosts $AllowedGitHubHosts -Context "$Context URI"
 }
 
 function Resolve-GitHubGraphQLEndpoint {
@@ -521,11 +737,13 @@ function Resolve-GitHubGraphQLEndpoint {
         [string]$GitHubHost
     )
 
-    if ($GitHubHost.Equals("github.com", [System.StringComparison]::OrdinalIgnoreCase)) {
+    $normalizedHost = Assert-GitHubHostFormat -GitHubHost $GitHubHost -Context "Resolve-GitHubGraphQLEndpoint"
+
+    if ($normalizedHost.Equals("github.com", [System.StringComparison]::OrdinalIgnoreCase)) {
         return "https://api.github.com/graphql"
     }
 
-    return "https://$GitHubHost/api/graphql"
+    return "https://$normalizedHost/api/graphql"
 }
 
 function Get-GitHubHeaders {
@@ -679,10 +897,14 @@ function Invoke-GitHubRequestWithRetry {
         [switch]$WaitOnRateLimit,
 
         [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHostsNormalized = @(),
+
+        [Parameter(Mandatory = $false)]
         [string[]]$SensitiveTokens = @()
     )
 
     $attempt = 0
+    Assert-GitHubRequestUri -Uri $Uri -Context "Invoke-GitHubRequestWithRetry" -AllowedGitHubHosts $AllowedGitHubHostsNormalized
 
     while ($true) {
         $attempt++
@@ -810,13 +1032,16 @@ function Get-OpenPullRequests {
         [switch]$WaitOnRateLimit,
 
         [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHostsNormalized = @(),
+
+        [Parameter(Mandatory = $false)]
         [string[]]$SensitiveTokens = @()
     )
 
     $base = if ($GitHubHost -eq "github.com") { "https://api.github.com" } else { "https://$GitHubHost/api/v3" }
     $uri = "$base/repos/$Owner/$Repo/pulls?state=open&per_page=50"
 
-    $pulls = Invoke-GitHubRequestWithRetry -Method GET -Uri $uri -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
+    $pulls = Invoke-GitHubRequestWithRetry -Method GET -Uri $uri -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
     if ($null -eq $pulls) {
         return @()
     }
@@ -847,6 +1072,9 @@ function Validate-GitHubTokenForRepoAccess {
         [int]$RequestTimeoutSeconds = 60,
 
         [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHostsNormalized = @(),
+
+        [Parameter(Mandatory = $false)]
         [string[]]$SensitiveTokens = @()
     )
 
@@ -854,6 +1082,7 @@ function Validate-GitHubTokenForRepoAccess {
     $uri = "$base/repos/$Owner/$Repo"
     $maxRetries = 2
     $attempt = 0
+    Assert-GitHubRequestUri -Uri $uri -Context "Validate-GitHubTokenForRepoAccess" -AllowedGitHubHosts $AllowedGitHubHostsNormalized
 
     while ($true) {
         $attempt++
@@ -998,6 +1227,9 @@ function Select-PullRequestInteractively {
         [switch]$WaitOnRateLimit,
 
         [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHostsNormalized = @(),
+
+        [Parameter(Mandatory = $false)]
         [string[]]$SensitiveTokens = @()
     )
 
@@ -1018,7 +1250,7 @@ function Select-PullRequestInteractively {
     $ownerInput = $validatedOwnerRepo.Owner
     $repoInput = $validatedOwnerRepo.Repo
 
-    $pulls = @(Get-OpenPullRequests -Owner $ownerInput -Repo $repoInput -GitHubHost $GitHubHost -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens)
+    $pulls = @(Get-OpenPullRequests -Owner $ownerInput -Repo $repoInput -GitHubHost $GitHubHost -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens)
     $pullCount = Get-SafeCount -InputObject $pulls
     if ($pullCount -eq 0) {
         throw "E_NOT_FOUND: No open pull requests were found for $ownerInput/$repoInput."
@@ -1211,6 +1443,9 @@ function Get-UnresolvedReviewThreads {
         [switch]$WaitOnRateLimit,
 
         [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHostsNormalized = @(),
+
+        [Parameter(Mandatory = $false)]
         [string[]]$SensitiveTokens = @()
     )
 
@@ -1273,7 +1508,7 @@ query GetReviewThreads(
             variables = $variables
         }
 
-        $response = Invoke-GitHubRequestWithRetry -Method POST -Uri $Endpoint -Headers $Headers -Body $body -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
+        $response = Invoke-GitHubRequestWithRetry -Method POST -Uri $Endpoint -Headers $Headers -Body $body -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
 
         $errors = $null
         if ($response -is [System.Collections.IDictionary]) {
@@ -1425,6 +1660,9 @@ function Resolve-PullRequestTarget {
         [string]$GitHubHost = "github.com",
 
         [Parameter(Mandatory = $false)]
+        [switch]$GitHubHostProvided,
+
+        [Parameter(Mandatory = $false)]
         [int]$PullRequestNumber,
 
         [Parameter(Mandatory = $false)]
@@ -1444,16 +1682,30 @@ function Resolve-PullRequestTarget {
         [switch]$WaitOnRateLimit,
 
         [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHostsNormalized = @(),
+
+        [Parameter(Mandatory = $false)]
         [string[]]$SensitiveTokens = @()
     )
 
     if (-not [string]::IsNullOrWhiteSpace($PullRequestUrl)) {
-        return Parse-GitHubPullRequestUrl -Url $PullRequestUrl
+        $target = Parse-GitHubPullRequestUrl -Url $PullRequestUrl
+
+        if ($GitHubHostProvided.IsPresent) {
+            $normalizedExpectedHost = Assert-GitHubHostFormat -GitHubHost $GitHubHost -Context "GitHubHost parameter"
+            if (-not $target.Host.Equals($normalizedExpectedHost, [System.StringComparison]::Ordinal)) {
+                throw "E_INVALID_URL: PullRequestUrl host '$($target.Host)' does not match explicitly provided -GitHubHost '$normalizedExpectedHost'."
+            }
+        }
+
+        Assert-GitHubHostInAllowlist -GitHubHost $target.Host -AllowedGitHubHosts $AllowedGitHubHostsNormalized -Context "PullRequestUrl"
+        return $target
     }
 
     if (-not [string]::IsNullOrWhiteSpace($Owner) -and -not [string]::IsNullOrWhiteSpace($Repo) -and $PullRequestNumber -gt 0) {
         $normalizedHost = Assert-GitHubHostFormat -GitHubHost $GitHubHost -Context "direct parameters"
         $validatedOwnerRepo = Assert-GitHubOwnerRepoFormat -Owner $Owner -Repo $Repo -Context "direct parameters"
+        Assert-GitHubHostInAllowlist -GitHubHost $normalizedHost -AllowedGitHubHosts $AllowedGitHubHostsNormalized -Context "direct parameters"
 
         return [pscustomobject]@{
             Host              = $normalizedHost
@@ -1478,8 +1730,9 @@ function Resolve-PullRequestTarget {
         }
 
         $resolvedHost = Assert-GitHubHostFormat -GitHubHost $hostInput -Context "interactive host input"
+        Assert-GitHubHostInAllowlist -GitHubHost $resolvedHost -AllowedGitHubHosts $AllowedGitHubHostsNormalized -Context "interactive host input"
 
-        return Select-PullRequestInteractively -GitHubHost $resolvedHost -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $SensitiveTokens
+        return Select-PullRequestInteractively -GitHubHost $resolvedHost -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
     }
 
     throw "E_INVALID_URL: Provide -PullRequestUrl or use -Interactive."
@@ -1491,12 +1744,14 @@ function Invoke-Main {
 
     $overallDeadlineUtc = [datetime]::UtcNow.AddSeconds($OverallTimeoutSeconds)
     $initialSensitive = @()
+    $isGitHubHostExplicitlyProvided = $script:TopLevelBoundParameters.ContainsKey("GitHubHost")
+    $allowedGitHubHostsNormalized = Get-NormalizedGitHubHostAllowlist -AllowedGitHubHosts $AllowedGitHubHosts
 
     # First pass target resolution may require anonymous headers for interactive listing.
     $tempHeaders = Get-GitHubHeaders -AuthToken $null
     Assert-IsHashtableLike -Value $tempHeaders -Name "Headers"
 
-    $target = Resolve-PullRequestTarget -PullRequestUrl $PullRequestUrl -Owner $Owner -Repo $Repo -GitHubHost $GitHubHost -PullRequestNumber $PullRequestNumber -Interactive:$Interactive -Headers $tempHeaders -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $initialSensitive
+    $target = Resolve-PullRequestTarget -PullRequestUrl $PullRequestUrl -Owner $Owner -Repo $Repo -GitHubHost $GitHubHost -GitHubHostProvided:$isGitHubHostExplicitlyProvided -PullRequestNumber $PullRequestNumber -Interactive:$Interactive -Headers $tempHeaders -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $initialSensitive
     if ($null -eq $target) {
         return
     }
@@ -1520,10 +1775,10 @@ function Invoke-Main {
 
     try {
         if (-not [string]::IsNullOrWhiteSpace($authToken)) {
-            Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -SensitiveTokens $sensitiveTokens
+            Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
         }
 
-        $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
+        $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
     } catch {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
 
@@ -1553,8 +1808,8 @@ function Invoke-Main {
                 $headers = Get-GitHubHeaders -AuthToken $authToken
                 Assert-IsHashtableLike -Value $headers -Name "Headers"
 
-                Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -SensitiveTokens $sensitiveTokens
-                $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -SensitiveTokens $sensitiveTokens
+                Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
+                $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
             } else {
                 throw $message
             }

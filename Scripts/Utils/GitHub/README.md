@@ -66,8 +66,28 @@ For `github.com`, the script also validates `X-OAuth-Scopes` and expects:
 
 ## Host Safety Rules
 
-- Interactive host input rejects localhost and private-network ranges (`127.*`, `10.*`, `192.168.*`, `172.16.*` to `172.31.*`).
-- PR URLs using those hosts are rejected for safety.
+- Non-global IP targets are rejected for safety, including loopback, RFC1918 private ranges,
+	link-local ranges, carrier-grade NAT ranges, multicast ranges, reserved/documentation ranges,
+	and IPv6 local/multicast equivalents.
+- `-PullRequestUrl` hosts are validated using the same safety rules.
+- If `-GitHubHost` is explicitly provided together with `-PullRequestUrl`, both hosts must
+	match after normalization or the script fails with `E_INVALID_URL`.
+
+Optional host allowlist controls:
+
+- `-AllowedGitHubHosts` accepts one or more approved hosts.
+- If `-AllowedGitHubHosts` is omitted, the script uses `WALLSTOP_GITHUB_ALLOWED_HOSTS`, then
+	`GITHUB_ALLOWED_HOSTS` (comma/semicolon/whitespace separated) when present.
+- When an allowlist is active, both target resolution and outbound request URIs must match
+	the allowlist.
+
+Example:
+
+```powershell
+pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 `
+	-PullRequestUrl "https://github.com/owner/repo/pull/123" `
+	-AllowedGitHubHosts github.com
+```
 
 ## Rate Limits and Retries
 
