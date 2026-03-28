@@ -113,6 +113,66 @@ Describe "Get-HeaderValue" {
         $headers = @("a", "b")
         (Get-HeaderValue -Headers $headers -Key "X-RateLimit-Reset") | Should -BeNullOrEmpty
     }
+
+    It "returns all values from HttpHeaders via TryGetValues" {
+        $response = [System.Net.Http.HttpResponseMessage]::new()
+        try {
+            $response.Headers.Add("X-OAuth-Scopes", "repo")
+            $response.Headers.Add("X-OAuth-Scopes", "read:org")
+
+            $values = @(Get-HeaderValues -Headers $response.Headers -Key "X-OAuth-Scopes")
+            $values.Count | Should -Be 2
+            $values[0] | Should -Be "repo"
+            $values[1] | Should -Be "read:org"
+        } finally {
+            $response.Dispose()
+        }
+    }
+
+    It "reads HttpHeaders values regardless of key casing" {
+        $response = [System.Net.Http.HttpResponseMessage]::new()
+        try {
+            $response.Headers.Add("X-OAuth-Scopes", "repo")
+
+            $values = @(Get-HeaderValues -Headers $response.Headers -Key "x-oauth-scopes")
+            $values.Count | Should -Be 1
+            $values[0] | Should -Be "repo"
+        } finally {
+            $response.Dispose()
+        }
+    }
+
+    It "normalizes array-valued hashtable entries to first scalar for Get-HeaderValue" {
+        $headers = @{ "X-RateLimit-Reset" = @("123", "456") }
+        (Get-HeaderValue -Headers $headers -Key "X-RateLimit-Reset") | Should -Be "123"
+    }
+
+    It "returns all array-valued hashtable entries for Get-HeaderValues" {
+        $headers = @{ "X-OAuth-Scopes" = @("repo", "read:org") }
+        $values = @(Get-HeaderValues -Headers $headers -Key "X-OAuth-Scopes")
+
+        $values.Count | Should -Be 2
+        $values[0] | Should -Be "repo"
+        $values[1] | Should -Be "read:org"
+    }
+}
+
+Describe "Test-HasRateLimitHeaders" {
+    It "returns true when Retry-After is present" {
+        (Test-HasRateLimitHeaders -Headers @{ "Retry-After" = "30" }) | Should -BeTrue
+    }
+
+    It "returns true when X-RateLimit-Reset is present" {
+        (Test-HasRateLimitHeaders -Headers @{ "X-RateLimit-Reset" = "1700000000" }) | Should -BeTrue
+    }
+
+    It "returns false when only X-RateLimit-Remaining is present" {
+        (Test-HasRateLimitHeaders -Headers @{ "X-RateLimit-Remaining" = "5000" }) | Should -BeFalse
+    }
+
+    It "returns false when rate-limit headers contain only empty values" {
+        (Test-HasRateLimitHeaders -Headers @{ "Retry-After" = @("", " "); "X-RateLimit-Reset" = @(" ") }) | Should -BeFalse
+    }
 }
 
 Describe "Redact-SensitiveText" {
@@ -383,7 +443,6 @@ Describe "Invoke-GitHubRequestWithRetry" {
         }
         Mock Get-HttpStatusCode { 403 }
         Mock Get-ResponseHeaders { @{} }
-        Mock Start-Sleep { }
 
         $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 3 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
         $result.ok | Should -BeTrue
@@ -402,12 +461,61 @@ Describe "Invoke-GitHubRequestWithRetry" {
         }
         Mock Get-HttpStatusCode { 403 }
         Mock Get-ResponseHeaders { @{ "Retry-After" = "1" } }
-        Mock Start-Sleep { }
 
         $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit
         $result.ok | Should -BeTrue
         $script:attempt | Should -Be 2
         Assert-MockCalled Start-Sleep -Times 1 -Scope It
+    }
+
+    It "uses Retry-After RFC date fallback when waiting on rate limits" {
+        $script:attempt = 0
+        $retryAfterHttpDate = [DateTimeOffset]::UtcNow.AddSeconds(10).ToString("r")
+
+        Mock Invoke-RestMethod {
+            $script:attempt++
+            if ($script:attempt -eq 1) {
+                throw (New-Object System.Exception "rate limited")
+            }
+
+            return @{ ok = $true }
+        }
+        Mock Get-HttpStatusCode { 429 }
+        Mock Get-ResponseHeaders { @{ "Retry-After" = $retryAfterHttpDate } }
+
+        $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit
+        $result.ok | Should -BeTrue
+        $script:attempt | Should -Be 2
+        Assert-MockCalled Start-Sleep -Times 1 -Scope It
+    }
+
+    It "uses X-RateLimit-Reset when waiting on rate limits" {
+        $script:attempt = 0
+        $futureReset = [DateTimeOffset]::UtcNow.AddSeconds(10).ToUnixTimeSeconds().ToString()
+
+        Mock Invoke-RestMethod {
+            $script:attempt++
+            if ($script:attempt -eq 1) {
+                throw (New-Object System.Exception "rate limited")
+            }
+
+            return @{ ok = $true }
+        }
+        Mock Get-HttpStatusCode { 429 }
+        Mock Get-ResponseHeaders { @{ "X-RateLimit-Reset" = $futureReset } }
+
+        $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit
+        $result.ok | Should -BeTrue
+        $script:attempt | Should -Be 2
+        Assert-MockCalled Start-Sleep -Times 1 -Scope It
+    }
+
+    It "fails fast when Retry-After is present but unparseable" {
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "rate limited") }
+        Mock Get-HttpStatusCode { 429 }
+        Mock Get-ResponseHeaders { @{ "Retry-After" = "not-a-valid-retry-after" } }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit } | Should -Throw "*E_RATE_LIMIT*Invalid Retry-After value*"
     }
 
     It "throws E_RATE_LIMIT_403 when rate-limit headers exist and waiting is disabled" {
@@ -422,6 +530,22 @@ Describe "Invoke-GitHubRequestWithRetry" {
         Mock Invoke-RestMethod { throw (New-Object System.Exception "forbidden") }
         Mock Get-HttpStatusCode { 403 }
         Mock Get-ResponseHeaders { @{} }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_FORBIDDEN*"
+    }
+
+    It "does not classify 403 as rate-limited when only X-RateLimit-Remaining exists" {
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "forbidden") }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{ "X-RateLimit-Remaining" = "5000" } }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_FORBIDDEN*"
+    }
+
+    It "does not classify 403 as rate-limited when Retry-After is empty" {
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "forbidden") }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{ "Retry-After" = @("", " ") } }
 
         { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_FORBIDDEN*"
     }
@@ -480,6 +604,22 @@ Describe "Invoke-GitHubRequestWithRetry" {
         Mock Get-ResponseHeaders { @{ "X-RateLimit-Reset" = "0" } }
 
         { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit } | Should -Throw "*E_RATE_LIMIT*"
+    }
+
+    It "throws deterministic E_RATE_LIMIT when Retry-After has multiple values" {
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "rate limited") }
+        Mock Get-HttpStatusCode { 429 }
+        Mock Get-ResponseHeaders { @{ "Retry-After" = @("5", "10") } }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit } | Should -Throw "*E_RATE_LIMIT*Expected exactly one value*Retry-After*"
+    }
+
+    It "throws deterministic E_RATE_LIMIT when X-RateLimit-Reset has multiple values" {
+        Mock Invoke-RestMethod { throw (New-Object System.Exception "rate limited") }
+        Mock Get-HttpStatusCode { 429 }
+        Mock Get-ResponseHeaders { @{ "X-RateLimit-Reset" = @("1700000000", "1700000100") } }
+
+        { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit } | Should -Throw "*E_RATE_LIMIT*Expected exactly one value*X-RateLimit-Reset*"
     }
 
     It "does not fail with hashtable conversion when response headers are array-shaped" {
@@ -574,6 +714,28 @@ Describe "Validate-GitHubTokenForRepoAccess" {
         { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Not -Throw
     }
 
+    It "supports multi-value OAuth scope headers" {
+        Mock Invoke-WebRequest {
+            return [pscustomobject]@{
+                Headers = @{ "X-OAuth-Scopes" = @("repo", "read:org") }
+                Content = '{"private": true}'
+            }
+        }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Not -Throw
+    }
+
+    It "rejects OAuth scope headers that contain only whitespace values" {
+        Mock Invoke-WebRequest {
+            return [pscustomobject]@{
+                Headers = @{ "X-OAuth-Scopes" = @(" ", "") }
+                Content = '{"private": true}'
+            }
+        }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_MALFORMED_RESPONSE*X-OAuth-Scopes*"
+    }
+
     It "maps access failure to E_AUTH_INSUFFICIENT_SCOPE" {
         Mock Invoke-WebRequest {
             return [pscustomobject]@{
@@ -635,6 +797,22 @@ Describe "Validate-GitHubTokenForRepoAccess" {
         Mock Get-ResponseHeaders { @{ "Retry-After" = "60" } }
 
         { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_AUTH_RATE_LIMITED*"
+    }
+
+    It "maps 403 failures with only X-RateLimit-Remaining to E_FORBIDDEN" {
+        Mock Invoke-WebRequest { throw (New-Object System.Exception "forbidden") }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{ "X-RateLimit-Remaining" = "5000" } }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_FORBIDDEN*"
+    }
+
+    It "maps 403 failures with empty Retry-After to E_FORBIDDEN" {
+        Mock Invoke-WebRequest { throw (New-Object System.Exception "forbidden") }
+        Mock Get-HttpStatusCode { 403 }
+        Mock Get-ResponseHeaders { @{ "Retry-After" = @("", " ") } }
+
+        { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_FORBIDDEN*"
     }
 
     It "maps missing HTTP status to E_NETWORK_ERROR" {

@@ -162,7 +162,216 @@ function Get-ResponseHeaders {
     return $null
 }
 
+function Convert-ToStringArray {
+    [OutputType([string[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    if ($Value -is [string]) {
+        return @($Value)
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $result = New-Object System.Collections.Generic.List[string]
+        foreach ($item in $Value) {
+            if ($null -eq $item) {
+                continue
+            }
+
+            $result.Add([string]$item) | Out-Null
+        }
+
+        return @($result)
+    }
+
+    return @([string]$Value)
+}
+
+function Get-HeaderValues {
+    [OutputType([string[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        $Headers,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    if ($null -eq $Headers) {
+        return @()
+    }
+
+    $possibleKeys = @($Key, $Key.ToLowerInvariant(), $Key.ToUpperInvariant())
+    foreach ($candidate in $possibleKeys) {
+        if ($Headers.PSObject.Methods.Name -contains "TryGetValues") {
+            $values = $null
+            try {
+                if ($Headers.TryGetValues($candidate, [ref]$values)) {
+                    return @(Convert-ToStringArray -Value $values)
+                }
+            } catch {
+                # Continue to alternative lookup paths.
+            }
+        }
+
+        if ($Headers.PSObject.Methods.Name -contains "ContainsKey") {
+            if ($Headers.ContainsKey($candidate)) {
+                return @(Convert-ToStringArray -Value $Headers[$candidate])
+            }
+        }
+
+        if ($Headers -is [System.Collections.IDictionary] -and $Headers.Keys -contains $candidate) {
+            return @(Convert-ToStringArray -Value $Headers[$candidate])
+        }
+
+        if ($Headers.PSObject.Properties.Name -contains $candidate) {
+            return @(Convert-ToStringArray -Value $Headers.$candidate)
+        }
+    }
+
+    if ($Headers.PSObject.Methods.Name -notcontains "GetEnumerator") {
+        return @()
+    }
+
+    # Fallback for dictionary enumerables with case-insensitive keys.
+    foreach ($entry in $Headers.GetEnumerator()) {
+        if ($null -eq $entry) {
+            continue
+        }
+
+        if ($entry.PSObject.Properties.Name -contains "Key" -and $null -ne $entry.Key) {
+            if ([string]$entry.Key -ieq $Key) {
+                return @(Convert-ToStringArray -Value $entry.Value)
+            }
+        }
+    }
+
+    return @()
+}
+
+function Get-HeaderValueDiagnostics {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$Values = @()
+    )
+
+    $valueCount = Get-SafeCount -InputObject $Values
+    if ($valueCount -eq 0) {
+        return "Header '$Key' returned no values."
+    }
+
+    $preview = @($Values | Select-Object -First 3 | ForEach-Object {
+            if ($_.Length -gt 80) {
+                $_.Substring(0, 80) + "..."
+            } else {
+                $_
+            }
+        })
+
+    $previewText = if ($preview.Count -gt 0) {
+        "'" + ($preview -join "', '") + "'"
+    } else {
+        "(none)"
+    }
+
+    if ($valueCount -gt 3) {
+        return "Header '$Key' returned $valueCount values. Preview: $previewText, '...'."
+    }
+
+    return "Header '$Key' returned $valueCount value(s). Values: $previewText."
+}
+
+function Get-SingleHeaderValueOrThrow {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        $Headers,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Context,
+
+        [Parameter(Mandatory = $false)]
+        [string]$ErrorCode = "E_MALFORMED_RESPONSE",
+
+        [Parameter(Mandatory = $false)]
+        [switch]$AllowMissing
+    )
+
+    $values = @(Get-HeaderValues -Headers $Headers -Key $Key)
+    $valueCount = Get-SafeCount -InputObject $values
+    if ($valueCount -eq 0) {
+        if ($AllowMissing.IsPresent) {
+            return $null
+        }
+
+        throw "${ErrorCode}: Missing $Context. $(Get-HeaderValueDiagnostics -Key $Key -Values $values)"
+    }
+
+    if ($valueCount -gt 1) {
+        throw "${ErrorCode}: Expected exactly one value for $Context but received $valueCount. $(Get-HeaderValueDiagnostics -Key $Key -Values $values)"
+    }
+
+    return $values[0]
+}
+
+function Get-FirstNonEmptyStringValue {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Value
+    )
+
+    $values = @(Convert-ToStringArray -Value $Value)
+    foreach ($candidate in $values) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Test-HasRateLimitHeaders {
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        $Headers
+    )
+
+    if ($null -eq $Headers) {
+        return $false
+    }
+
+    # GitHub rate-limit classification relies on reset/retry headers.
+    $resetValue = Get-FirstNonEmptyStringValue -Value (Get-HeaderValues -Headers $Headers -Key "X-RateLimit-Reset")
+    $retryAfterValue = Get-FirstNonEmptyStringValue -Value (Get-HeaderValues -Headers $Headers -Key "Retry-After")
+
+    return (-not [string]::IsNullOrWhiteSpace($resetValue)) -or (-not [string]::IsNullOrWhiteSpace($retryAfterValue))
+}
+
 function Get-HeaderValue {
+    [OutputType([string])]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
@@ -176,37 +385,12 @@ function Get-HeaderValue {
         return $null
     }
 
-    $possibleKeys = @($Key, $Key.ToLowerInvariant(), $Key.ToUpperInvariant())
-    foreach ($candidate in $possibleKeys) {
-        if ($Headers.PSObject.Methods.Name -contains "ContainsKey") {
-            if ($Headers.ContainsKey($candidate)) {
-                return $Headers[$candidate]
-            }
-        }
-
-        if ($Headers -is [System.Collections.IDictionary] -and $Headers.Keys -contains $candidate) {
-            return $Headers[$candidate]
-        }
-
-        if ($Headers.PSObject.Properties.Name -contains $candidate) {
-            return $Headers.$candidate
-        }
+    $values = @(Get-HeaderValues -Headers $Headers -Key $Key)
+    if ((Get-SafeCount -InputObject $values) -eq 0) {
+        return $null
     }
 
-    # Fallback for dictionary enumerables with case-insensitive keys.
-    foreach ($entry in $Headers.GetEnumerator()) {
-        if ($null -eq $entry) {
-            continue
-        }
-
-        if ($entry.PSObject.Properties.Name -contains "Key" -and $null -ne $entry.Key) {
-            if ($entry.Key.ToString().Equals($Key, [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $entry.Value
-            }
-        }
-    }
-
-    return $null
+    return $values[0]
 }
 
 function Assert-GitHubHostFormat {
@@ -519,17 +703,20 @@ function Invoke-GitHubRequestWithRetry {
             $responseHeaders = Get-ResponseHeaders -Exception $_.Exception
 
             if (($statusCode -eq 429 -or $statusCode -eq 403) -and $WaitOnRateLimit.IsPresent) {
-                $resetValue = Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Reset"
+                $resetValue = Get-SingleHeaderValueOrThrow -Headers $responseHeaders -Key "X-RateLimit-Reset" -Context "X-RateLimit-Reset while handling status $statusCode" -ErrorCode "E_RATE_LIMIT" -AllowMissing
                 if ($null -eq $resetValue) {
-                    $retryAfterValue = Get-HeaderValue -Headers $responseHeaders -Key "Retry-After"
-                    if (-not [string]::IsNullOrWhiteSpace([string]$retryAfterValue)) {
+                    $retryAfterValue = Get-SingleHeaderValueOrThrow -Headers $responseHeaders -Key "Retry-After" -Context "Retry-After while handling status $statusCode" -ErrorCode "E_RATE_LIMIT" -AllowMissing
+                    if (-not [string]::IsNullOrWhiteSpace($retryAfterValue)) {
+                        $retryAfterCandidate = $retryAfterValue.Trim()
                         $retryAfterSeconds = 0
-                        if ([int]::TryParse([string]$retryAfterValue, [ref]$retryAfterSeconds) -and $retryAfterSeconds -gt 0) {
+                        if ([int]::TryParse($retryAfterCandidate, [ref]$retryAfterSeconds) -and $retryAfterSeconds -gt 0) {
                             $resetValue = ([DateTimeOffset]::UtcNow.AddSeconds($retryAfterSeconds + 1).ToUnixTimeSeconds()).ToString()
                         } else {
                             $retryAfterDate = [DateTimeOffset]::MinValue
-                            if ([DateTimeOffset]::TryParseExact([string]$retryAfterValue, "r", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$retryAfterDate)) {
+                            if ([DateTimeOffset]::TryParseExact($retryAfterCandidate, "r", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$retryAfterDate)) {
                                 $resetValue = $retryAfterDate.ToUnixTimeSeconds().ToString()
+                            } else {
+                                throw "E_RATE_LIMIT: Invalid Retry-After value '$retryAfterCandidate'. $(Get-HeaderValueDiagnostics -Key 'Retry-After' -Values @($retryAfterValue))"
                             }
                         }
                     }
@@ -537,8 +724,8 @@ function Invoke-GitHubRequestWithRetry {
 
                 if ($null -ne $resetValue) {
                     $resetEpoch = [int64]0
-                    if (-not [int64]::TryParse([string]$resetValue, [ref]$resetEpoch)) {
-                        throw "E_RATE_LIMIT: Invalid rate-limit reset header value."
+                    if (-not [int64]::TryParse($resetValue, [ref]$resetEpoch)) {
+                        throw "E_RATE_LIMIT: Invalid rate-limit reset value '$resetValue'. $(Get-HeaderValueDiagnostics -Key 'X-RateLimit-Reset' -Values @($resetValue))"
                     }
 
                     $resetUtc = [DateTimeOffset]::FromUnixTimeSeconds($resetEpoch).UtcDateTime
@@ -577,7 +764,7 @@ function Invoke-GitHubRequestWithRetry {
                 throw "E_AUTH_INVALID: Authentication failed. $errorText"
             }
             if ($statusCode -eq 403) {
-                $hasRateLimitHeaders = $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Reset") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "Retry-After") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Remaining")
+                $hasRateLimitHeaders = Test-HasRateLimitHeaders -Headers $responseHeaders
                 if ($hasRateLimitHeaders) {
                     throw "E_RATE_LIMIT_403: GitHub API temporarily rate-limited this request. Retry with -WaitOnRateLimit or reduce request frequency. $errorText"
                 }
@@ -689,17 +876,23 @@ function Validate-GitHubTokenForRepoAccess {
             }
 
             if ($GitHubHost -eq "github.com") {
-                $scopesHeader = Get-HeaderValue -Headers $response.Headers -Key "X-OAuth-Scopes"
-                if ([string]::IsNullOrWhiteSpace([string]$scopesHeader)) {
-                    throw "Token scope header was not returned by GitHub."
+                $scopeHeaderValues = @(Get-HeaderValues -Headers $response.Headers -Key "X-OAuth-Scopes")
+                if ((Get-SafeCount -InputObject $scopeHeaderValues) -eq 0) {
+                    throw "E_MALFORMED_RESPONSE: Token scope header was not returned by GitHub."
                 }
 
                 $scopes = @()
-                foreach ($scope in ([string]$scopesHeader).Split(",")) {
-                    $trimmed = $scope.Trim()
-                    if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
-                        $scopes += $trimmed
+                foreach ($scopeHeaderValue in $scopeHeaderValues) {
+                    foreach ($scope in $scopeHeaderValue.Split(",")) {
+                        $trimmed = $scope.Trim()
+                        if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
+                            $scopes += $trimmed
+                        }
                     }
+                }
+
+                if ($scopes.Count -eq 0) {
+                    throw "E_MALFORMED_RESPONSE: Token scope header did not contain any non-empty scope values. $(Get-HeaderValueDiagnostics -Key 'X-OAuth-Scopes' -Values $scopeHeaderValues)"
                 }
 
                 $isPrivateRepo = $false
@@ -730,9 +923,9 @@ function Validate-GitHubTokenForRepoAccess {
 
             $isRetryableTransient = $null -eq $statusCode -or $statusCode -ge 500
             if ($isRetryableTransient -and $attempt -le $maxRetries) {
-                $baseDelayMs = [int]([Math]::Pow(2, $attempt - 1) * 100)
-                $jitterMs = Get-Random -Minimum 0 -Maximum 150
-                $delayMs = $baseDelayMs + $jitterMs
+                $baseDelaySeconds = [Math]::Pow(2, $attempt - 1)
+                $jitterMs = Get-Random -Minimum 0 -Maximum 300
+                $delayMs = [int]($baseDelaySeconds * 1000 + $jitterMs)
 
                 $remainingDelayBudgetMs = [int][Math]::Floor(($OverallDeadlineUtc - [datetime]::UtcNow).TotalMilliseconds)
                 if ($remainingDelayBudgetMs -le 0 -or $delayMs -gt $remainingDelayBudgetMs) {
@@ -753,7 +946,7 @@ function Validate-GitHubTokenForRepoAccess {
             }
 
             if ($statusCode -eq 403) {
-                $hasRateLimitHeaders = $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Reset") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "Retry-After") -or $null -ne (Get-HeaderValue -Headers $responseHeaders -Key "X-RateLimit-Remaining")
+                $hasRateLimitHeaders = Test-HasRateLimitHeaders -Headers $responseHeaders
                 if ($hasRateLimitHeaders) {
                     throw "E_AUTH_RATE_LIMITED: Token validation was rate-limited by GitHub (HTTP $statusCode). Retry after a short delay. $safeMessage"
                 }
@@ -1097,11 +1290,14 @@ query GetReviewThreads(
             $message = "GraphQL returned an error payload without a message field."
             if ($null -ne $firstError) {
                 if ($firstError -is [System.Collections.IDictionary]) {
-                    if ($firstError.Contains("message") -and -not [string]::IsNullOrWhiteSpace([string]$firstError["message"])) {
-                        $message = [string]$firstError["message"]
+                    if ($firstError.Contains("message")) {
+                        $messageValue = Get-FirstNonEmptyStringValue -Value $firstError["message"]
+                        if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
+                            $message = $messageValue
+                        }
                     }
                 } elseif ($firstError.PSObject.Properties.Name -contains "message") {
-                    $messageValue = [string]$firstError.message
+                    $messageValue = Get-FirstNonEmptyStringValue -Value $firstError.message
                     if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
                         $message = $messageValue
                     }

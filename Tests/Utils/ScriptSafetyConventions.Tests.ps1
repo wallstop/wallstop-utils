@@ -199,7 +199,31 @@ Describe "GitHub API resilience conventions" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
 
-        $content | Should -Match 'Get-HeaderValue\s+-Headers\s+\$responseHeaders\s+-Key\s+"Retry-After"'
+        $content | Should -Match 'Get-SingleHeaderValueOrThrow\s+-Headers\s+\$responseHeaders\s+-Key\s+"Retry-After"'
+    }
+
+    It "uses strict single-value extraction for X-RateLimit-Reset in wait path" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'Get-SingleHeaderValueOrThrow\s+-Headers\s+\$responseHeaders\s+-Key\s+"X-RateLimit-Reset"'
+    }
+
+    It "uses a shared helper for 403 rate-limit header classification" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+Test-HasRateLimitHeaders'
+        $content | Should -Match 'Invoke-GitHubRequestWithRetry[\s\S]*\$hasRateLimitHeaders\s*=\s*Test-HasRateLimitHeaders\s+-Headers\s+\$responseHeaders'
+        $content | Should -Match 'Validate-GitHubTokenForRepoAccess[\s\S]*\$hasRateLimitHeaders\s*=\s*Test-HasRateLimitHeaders\s+-Headers\s+\$responseHeaders'
+    }
+
+    It "does not use X-RateLimit-Remaining as a standalone 403 rate-limit signal" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Not -Match 'Test-HasRateLimitHeaders[\s\S]*X-RateLimit-Remaining'
+        $content | Should -Not -Match '\$hasRateLimitHeaders\s*=\s*\([^\n]*X-RateLimit-Remaining'
     }
 
     It "uses fail-fast auth rate-limit classification" {
