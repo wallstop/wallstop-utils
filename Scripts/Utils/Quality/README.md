@@ -9,6 +9,21 @@ This folder contains quality helper scripts used by local hooks and CI:
 
 These scripts are intentionally strict in CI and best-effort where platform tooling is optional.
 
+Windows CI operating model:
+
+- PR fast lane: Windows language validation runs only when `*.ahk` or `*.bat` targets change.
+- PR budget: targeted Windows checks must complete within 180 seconds; CI fails fast on budget breach.
+- Runtime source: PR lane must use the cached portable AutoHotkey runtime and must not depend on heavyweight package-manager installs.
+- Nightly deep lane: full-repository Windows validation runs on schedule (and optional manual dispatch) to preserve comprehensive coverage.
+- Fallback semantics: when baseline commit resolution is unavailable, CI validates all tracked Windows language targets in the current HEAD.
+
+Windows lane triage playbook:
+
+- `W_GIT_BASELINE_UNAVAILABLE`: baseline commit could not be resolved; review event context and fetch history.
+- `E_AHK_RUNTIME_UNAVAILABLE`: portable AutoHotkey runtime was not set up correctly in CI.
+- `E_AHK_UNAVAILABLE` / `E_AHK_VALIDATE_UNAVAILABLE`: AutoHotkey execution contract failed under required mode.
+- `E_CI_TIME_BUDGET`: PR lane exceeded 180-second runtime budget; investigate cache misses, download regressions, or broadened file scope.
+
 Shell quality enforcement model:
 
 - Local and PR/push enforcement is strict on changed shell targets (`Scripts/*.sh`, `.githooks/*`) via `shellcheck` and `shfmt`.

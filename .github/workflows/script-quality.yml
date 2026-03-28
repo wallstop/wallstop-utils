@@ -4,10 +4,17 @@ on:
   pull_request:
   push:
     branches: [main, master]
+  schedule:
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       run_shell_debt_audit:
         description: "Run a non-blocking full-repo shell debt audit (shellcheck + shfmt)."
+        required: false
+        default: false
+        type: boolean
+      run_windows_deep_audit:
+        description: "Run full-repo Windows language validation (AutoHotkey + batch) on demand."
         required: false
         default: false
         type: boolean
@@ -26,18 +33,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
 
       - name: Setup Python
         id: setup_python
-        uses: actions/setup-python@v5.3.0
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: "3.12"
 
       - name: Cache pre-commit environments
-        uses: actions/cache@v4.2.2
+        uses: actions/cache@v5.0.4
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -70,9 +77,14 @@ jobs:
             from_ref="origin/$BASE_REF"
           elif [[ -n "$EVENT_BEFORE" && "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]]; then
             from_ref="$EVENT_BEFORE"
-          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            from_ref="$(git rev-parse HEAD^)"
           else
+            head_parent="$(git rev-parse --verify HEAD^ 2>/dev/null || true)"
+            if [[ -n "$head_parent" ]]; then
+              from_ref="$head_parent"
+            fi
+          fi
+
+          if [[ -z "$from_ref" ]]; then
             echo "No baseline commit available; running shell checks for tracked shell targets in HEAD."
             mapfile -t changed_shell_files < <(
               git ls-files | grep -E '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$' || true
@@ -109,16 +121,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Python
         id: setup_python
-        uses: actions/setup-python@v5.3.0
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: "3.12"
 
       - name: Cache pre-commit environments
-        uses: actions/cache@v4.2.2
+        uses: actions/cache@v5.0.4
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -162,33 +174,205 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   windows-language:
-    name: Windows language validation
+    name: Windows language validation (PR fast lane)
+    if: ${{ github.event_name != 'schedule' }}
     runs-on: windows-latest
+    timeout-minutes: 6
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
 
-      - name: Install AutoHotkey (best effort)
+      - name: Detect changed Windows language targets
+        id: detect_windows_targets
         shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          GIT_SHA: ${{ github.sha }}
         run: |
-          $ErrorActionPreference = "Continue"
-          if (Get-Command choco -ErrorAction SilentlyContinue) {
-            choco install autohotkey.portable --no-progress -y
-            if ($LASTEXITCODE -ne 0) {
-              Write-Warning "AutoHotkey installation via Chocolatey failed; checks will continue with best effort behavior."
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $targetPattern = '^(Scripts/AutoHotKey/.*\.ahk|Config/\.config/.*\.ahk|Scripts/.*\.bat)$'
+          $fromRef = ""
+          $toRef = $env:GIT_SHA
+          $changedTargets = @()
+
+          if ($env:EVENT_NAME -eq "pull_request") {
+            if ([string]::IsNullOrWhiteSpace($env:BASE_REF)) {
+              throw "Pull request event is missing BASE_REF; failing Windows changed-file checks."
             }
+
+            git fetch --no-tags --depth=1 origin $env:BASE_REF
+            $fromRef = "origin/$($env:BASE_REF)"
+          } elseif (-not [string]::IsNullOrWhiteSpace($env:EVENT_BEFORE) -and $env:EVENT_BEFORE -ne "0000000000000000000000000000000000000000") {
+            $fromRef = $env:EVENT_BEFORE
           } else {
-            Write-Warning "Chocolatey is unavailable; AutoHotkey validation will run only if AutoHotkey is already installed."
+            $headParentCandidate = (git rev-parse --verify HEAD^ 2>$null)
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($headParentCandidate)) {
+              $fromRef = $headParentCandidate.Trim()
+            }
           }
 
-      - name: Run Windows language checks
+          if ([string]::IsNullOrWhiteSpace($fromRef)) {
+            Write-Warning "W_GIT_BASELINE_UNAVAILABLE: No baseline commit available; running Windows checks for tracked targets in HEAD."
+            $changedTargets = @(git ls-files | Where-Object { $_ -match $targetPattern })
+          } else {
+            $changedTargets = @(git diff --name-only $fromRef $toRef | Where-Object { $_ -match $targetPattern })
+          }
+
+          $changedTargets = @(
+            $changedTargets |
+              ForEach-Object { $_.Trim() } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              Sort-Object -Unique
+          )
+
+          if ($changedTargets.Count -eq 0) {
+            "has_changes=false" >> $env:GITHUB_OUTPUT
+            "target_count=0" >> $env:GITHUB_OUTPUT
+            "target_files<<EOF" >> $env:GITHUB_OUTPUT
+            "" >> $env:GITHUB_OUTPUT
+            "EOF" >> $env:GITHUB_OUTPUT
+            Write-Host "No changed Windows language targets detected; Windows checks will be skipped."
+            return
+          }
+
+          "has_changes=true" >> $env:GITHUB_OUTPUT
+          "target_count=$($changedTargets.Count)" >> $env:GITHUB_OUTPUT
+          "target_files<<EOF" >> $env:GITHUB_OUTPUT
+          $changedTargets | ForEach-Object { "$_" >> $env:GITHUB_OUTPUT }
+          "EOF" >> $env:GITHUB_OUTPUT
+
+          Write-Host "Detected $($changedTargets.Count) changed Windows language target(s)."
+
+      - name: Skip Windows language checks (no Windows targets changed)
+        if: ${{ steps.detect_windows_targets.outputs.has_changes != 'true' }}
         shell: pwsh
-        run: ./Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1
+        run: |
+          Write-Host "Windows checks skipped because no *.ahk or *.bat targets changed in this event scope."
+
+      - name: Cache AutoHotkey portable runtime
+        if: ${{ steps.detect_windows_targets.outputs.has_changes == 'true' }}
+        uses: actions/cache@v5.0.4
+        with:
+          path: .tools/autohotkey
+          key: autohotkey-portable-${{ runner.os }}-2.0.19
+
+      - name: Setup AutoHotkey portable runtime
+        if: ${{ steps.detect_windows_targets.outputs.has_changes == 'true' }}
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $version = "2.0.19"
+          $installRoot = Join-Path -Path $PWD -ChildPath ".tools/autohotkey"
+          $exePath = Join-Path -Path $installRoot -ChildPath "AutoHotkey64.exe"
+
+          if (-not (Test-Path -Path $exePath -PathType Leaf)) {
+            New-Item -Path $installRoot -ItemType Directory -Force | Out-Null
+            $archivePath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "AutoHotkey_$version.zip"
+            $downloadUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$version/AutoHotkey_$version.zip"
+
+            Write-Host "Downloading AutoHotkey portable runtime from $downloadUrl"
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+            Expand-Archive -Path $archivePath -DestinationPath $installRoot -Force
+          }
+
+          if (-not (Test-Path -Path $exePath -PathType Leaf)) {
+            throw "E_AHK_RUNTIME_UNAVAILABLE: Expected AutoHotkey64.exe at '$exePath' after setup."
+          }
+
+          $installRoot >> $env:GITHUB_PATH
+          Write-Host "AutoHotkey runtime ready at: $exePath"
+
+      - name: Run Windows language checks (targeted)
+        if: ${{ steps.detect_windows_targets.outputs.has_changes == 'true' }}
+        shell: pwsh
+        env:
+          WINDOWS_TARGET_FILES: ${{ steps.detect_windows_targets.outputs.target_files }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $start = Get-Date
+          ./Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1 -TargetFiles $env:WINDOWS_TARGET_FILES -RequireAutoHotkey
+          $elapsedSeconds = [int]([Math]::Round(((Get-Date) - $start).TotalSeconds, 0))
+
+          Write-Host "Windows language checks duration: $elapsedSeconds seconds"
+          if ($elapsedSeconds -gt 180) {
+            throw "E_CI_TIME_BUDGET: Windows PR lane exceeded 180-second budget ($elapsedSeconds seconds)."
+          }
 
       - name: Assert clean tree after Windows checks
+        if: ${{ steps.detect_windows_targets.outputs.has_changes == 'true' }}
         shell: pwsh
         run: ./Scripts/Utils/Quality/Assert-CleanGitTree.ps1 -Context "Windows language checks"
+
+  windows-language-nightly:
+    name: Windows language validation (nightly deep lane)
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_deep_audit == true) }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Cache AutoHotkey portable runtime
+        uses: actions/cache@v5.0.4
+        with:
+          path: .tools/autohotkey
+          key: autohotkey-portable-${{ runner.os }}-2.0.19
+
+      - name: Setup AutoHotkey portable runtime
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $version = "2.0.19"
+          $installRoot = Join-Path -Path $PWD -ChildPath ".tools/autohotkey"
+          $exePath = Join-Path -Path $installRoot -ChildPath "AutoHotkey64.exe"
+
+          if (-not (Test-Path -Path $exePath -PathType Leaf)) {
+            New-Item -Path $installRoot -ItemType Directory -Force | Out-Null
+            $archivePath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "AutoHotkey_$version.zip"
+            $downloadUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$version/AutoHotkey_$version.zip"
+
+            Write-Host "Downloading AutoHotkey portable runtime from $downloadUrl"
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+            Expand-Archive -Path $archivePath -DestinationPath $installRoot -Force
+          }
+
+          if (-not (Test-Path -Path $exePath -PathType Leaf)) {
+            throw "E_AHK_RUNTIME_UNAVAILABLE: Expected AutoHotkey64.exe at '$exePath' after setup."
+          }
+
+          $installRoot >> $env:GITHUB_PATH
+          Write-Host "AutoHotkey runtime ready at: $exePath"
+
+      - name: Run Windows language checks (full repository)
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $start = Get-Date
+          ./Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1 -RequireAutoHotkey
+          $elapsedSeconds = [int]([Math]::Round(((Get-Date) - $start).TotalSeconds, 0))
+
+          Write-Host "Nightly Windows language checks duration: $elapsedSeconds seconds"
+          "Nightly Windows checks duration: $elapsedSeconds seconds" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Assert clean tree after nightly Windows checks
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Assert-CleanGitTree.ps1 -Context "Windows language checks (nightly deep lane)"
 
   macos-language:
     name: macOS AppleScript validation
@@ -196,7 +380,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v6.0.2
 
       - name: Run macOS language checks
         shell: bash

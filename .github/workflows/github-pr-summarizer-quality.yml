@@ -24,7 +24,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
 
       - name: Setup PowerShell modules
         shell: pwsh
@@ -73,11 +73,13 @@ jobs:
 
           token_pattern_rg='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}'
           bearer_pattern_rg='Authorization:\s*(Bearer|token)\s+[A-Za-z0-9._-]{20,}'
+          # shellcheck disable=SC2016 # Reason: regex intentionally includes a literal end-of-line anchor '$'.
           dangerous_pattern_rg='Invoke-Expression|(^|[^[:alnum:]_])iex([^[:alnum:]_]|$)'
           combined_rg="(${token_pattern_rg}|${bearer_pattern_rg}|${dangerous_pattern_rg})"
 
           token_pattern_grep='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}'
           bearer_pattern_grep='Authorization:[[:space:]]*(Bearer|token)[[:space:]]+[A-Za-z0-9._-]{20,}'
+          # shellcheck disable=SC2016 # Reason: regex intentionally includes a literal end-of-line anchor '$'.
           dangerous_pattern_grep='Invoke-Expression|(^|[^[:alnum:]_])iex([^[:alnum:]_]|$)'
           combined_grep="(${token_pattern_grep}|${bearer_pattern_grep}|${dangerous_pattern_grep})"
 
@@ -105,6 +107,7 @@ jobs:
             'Authorization: token ghp_0123456789abcdef0123456789abcdef0123'
             'Invoke-Expression "Write-Host demo"'
           )
+          # shellcheck disable=SC2016 # Reason: corpus samples are literal PowerShell snippets and must keep '$' unexpanded.
           should_ignore=(
             '$redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"'
             'Write-Host "hello"'

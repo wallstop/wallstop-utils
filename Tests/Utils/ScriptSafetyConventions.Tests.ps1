@@ -315,6 +315,12 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Match 'exclude:\s+''\^Config/\(PowerToys/\|\\\.config/\)'''
     }
 
+    It "excludes encrypted snapshot directories from check-json validation" {
+        $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
+
+        $preCommitConfig | Should -Match 'id:\s+check-json[\s\S]*exclude:\s+''\^Config/\(PowerToys/\|\\\.config/\)'''
+    }
+
     It "keeps git hooks pre-commit-first with fallback guidance" {
         $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
@@ -373,6 +379,42 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Match 'uses:\s+actions/cache@v\d+\.\d+\.\d+'
         $workflow | Should -Match 'shell-debt-audit'
         $workflow | Should -Match 'run_shell_debt_audit'
+    }
+
+    It "keeps fast and deep Windows CI lanes with runtime guardrails" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+
+        $workflow | Should -Match 'windows-language:\s*\r?\n\s+name:\s+Windows language validation \(PR fast lane\)'
+        $workflow | Should -Match 'windows-language:[\s\S]*timeout-minutes:\s+6'
+        $workflow | Should -Match 'windows-language:[\s\S]*Detect changed Windows language targets'
+        $workflow | Should -Match 'windows-language:[\s\S]*E_CI_TIME_BUDGET'
+        $workflow | Should -Not -Match 'windows-language:[\s\S]*choco\s+install'
+
+        $workflow | Should -Match 'windows-language-nightly:'
+        $workflow | Should -Match 'windows-language-nightly:[\s\S]*timeout-minutes:\s+15'
+        $workflow | Should -Match 'run_windows_deep_audit'
+        $workflow | Should -Match 'schedule:\s*\r?\n\s+-\s+cron:'
+    }
+
+    It "keeps Node24-ready pinned action versions in quality workflows" {
+        $crossLanguageWorkflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+        $powerShellWorkflow = Get-Content -Path $script:workflowPath -Raw
+
+        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/checkout@v6\.\d+\.\d+'
+        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/setup-python@v6\.\d+\.\d+'
+        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/cache@v5\.\d+\.\d+'
+        $powerShellWorkflow | Should -Match 'uses:\s+actions/checkout@v6\.\d+\.\d+'
+    }
+
+    It "keeps targeted Windows helper script contract for changed-file validation" {
+        $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
+        $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
+
+        $windowsChecks | Should -Match '\[string\]\$TargetFiles'
+        $windowsChecks | Should -Match '\[switch\]\$RequireAutoHotkey'
+        $windowsChecks | Should -Match 'Resolve-RequestedTargetFilePaths'
+        $windowsChecks | Should -Match 'running in targeted mode'
+        $windowsChecks | Should -Match 'E_AHK_UNAVAILABLE'
     }
 
     It "keeps AppleScript migration-safe validation behavior" {
@@ -726,6 +768,13 @@ Describe "Workflow security conventions" {
 
         $workflow | Should -Match "dangerous_pattern_rg='Invoke-Expression\|\(\^\|\[\^\[:alnum:\]_\]\)iex\(\[\^\[:alnum:\]_\]\|\$\)'"
         $workflow | Should -Match "dangerous_pattern_grep='Invoke-Expression\|\(\^\|\[\^\[:alnum:\]_\]\)iex\(\[\^\[:alnum:\]_\]\|\$\)'"
+    }
+
+    It "documents SC2016 suppressions for literal regex and PowerShell corpus samples" {
+        $workflow = Get-Content -Path $script:workflowPath -Raw
+
+        $workflow | Should -Match '# shellcheck disable=SC2016 # Reason: regex intentionally includes a literal end-of-line anchor'
+        $workflow | Should -Match '# shellcheck disable=SC2016 # Reason: corpus samples are literal PowerShell snippets'
     }
 
     It "guards against tracking generated coverage artifacts" {

@@ -13,3 +13,4 @@ pre-push.txt
 pre-commit.log
 pre-push.log
 testResults.xml
+pr-description.md

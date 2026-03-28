@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$TargetFiles = "",
+    [switch]$RequireAutoHotkey
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -28,33 +31,108 @@ function Get-AutoHotkeyExecutablePath {
     return $null
 }
 
+function Resolve-RequestedTargetFilePaths {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string]$TargetFiles
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TargetFiles)) {
+        return @()
+    }
+
+    $requested = New-Object System.Collections.Generic.List[string]
+    $candidates = @($TargetFiles -split "(`r`n|`n|`r|;)")
+    foreach ($candidateRaw in $candidates) {
+        $candidate = $candidateRaw.Trim()
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        $resolvedPath = $null
+        if ([System.IO.Path]::IsPathRooted($candidate)) {
+            if (Test-Path -Path $candidate -PathType Leaf) {
+                $resolvedPath = (Resolve-Path -Path $candidate -ErrorAction Stop).Path
+            }
+        } else {
+            $relativePath = $candidate.Replace('/', [System.IO.Path]::DirectorySeparatorChar).Replace('\\', [System.IO.Path]::DirectorySeparatorChar)
+            $absoluteCandidate = Join-Path -Path $RepoRoot -ChildPath $relativePath
+            if (Test-Path -Path $absoluteCandidate -PathType Leaf) {
+                $resolvedPath = (Resolve-Path -Path $absoluteCandidate -ErrorAction Stop).Path
+            }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($resolvedPath)) {
+            continue
+        }
+
+        $extension = [System.IO.Path]::GetExtension($resolvedPath).ToLowerInvariant()
+        if ($extension -ne ".ahk" -and $extension -ne ".bat") {
+            continue
+        }
+
+        $requested.Add($resolvedPath) | Out-Null
+    }
+
+    if ($requested.Count -eq 0) {
+        return @()
+    }
+
+    return @($requested | Sort-Object -Unique)
+}
+
 function Test-AutoHotkeyScripts {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$RepoRoot
-    )
+        [string]$RepoRoot,
 
-    $searchRoots = @(
-        (Join-Path -Path $RepoRoot -ChildPath "Scripts/AutoHotKey"),
-        (Join-Path -Path $RepoRoot -ChildPath "Config/.config")
+        [Parameter(Mandatory = $false)]
+        [string[]]$RequestedTargetFilePaths = @(),
+
+        [Parameter(Mandatory = $false)]
+        [switch]$RequireAutoHotkey
     )
 
     $ahkFiles = New-Object System.Collections.Generic.List[System.IO.FileInfo]
-    foreach ($root in $searchRoots) {
-        if (Test-Path -Path $root -PathType Container) {
-            Get-ChildItem -Path $root -Filter "*.ahk" -File -Recurse -ErrorAction Stop | ForEach-Object {
-                $ahkFiles.Add($_) | Out-Null
+    if ($RequestedTargetFilePaths.Count -gt 0) {
+        foreach ($targetPath in $RequestedTargetFilePaths) {
+            if ([System.IO.Path]::GetExtension($targetPath).ToLowerInvariant() -ne ".ahk") {
+                continue
+            }
+
+            if (Test-Path -Path $targetPath -PathType Leaf) {
+                $ahkFiles.Add((Get-Item -LiteralPath $targetPath -ErrorAction Stop)) | Out-Null
+            }
+        }
+    } else {
+        $searchRoots = @(
+            (Join-Path -Path $RepoRoot -ChildPath "Scripts/AutoHotKey"),
+            (Join-Path -Path $RepoRoot -ChildPath "Config/.config")
+        )
+
+        foreach ($root in $searchRoots) {
+            if (Test-Path -Path $root -PathType Container) {
+                Get-ChildItem -Path $root -Filter "*.ahk" -File -Recurse -ErrorAction Stop | ForEach-Object {
+                    $ahkFiles.Add($_) | Out-Null
+                }
             }
         }
     }
 
     if ($ahkFiles.Count -eq 0) {
-        Write-Host "AutoHotkey checks: no .ahk files found; skipping."
+        Write-Host "AutoHotkey checks: no .ahk files found for selected scope; skipping."
         return
     }
 
     $ahkExecutable = Get-AutoHotkeyExecutablePath
     if ([string]::IsNullOrWhiteSpace($ahkExecutable)) {
+        if ($RequireAutoHotkey) {
+            throw "E_AHK_UNAVAILABLE: AutoHotkey executable not found while AutoHotkey validation is required."
+        }
+
         Write-Warning "W_AHK_UNAVAILABLE: AutoHotkey executable not found. Skipping AutoHotkey validation."
         return
     }
@@ -62,6 +140,10 @@ function Test-AutoHotkeyScripts {
     $helpOutput = @(& $ahkExecutable "/?" 2>&1)
     $supportsValidate = (($helpOutput -join "`n") -match "(?im)(^|\\s)/validate(\\s|$)")
     if (-not $supportsValidate) {
+        if ($RequireAutoHotkey) {
+            throw "E_AHK_VALIDATE_UNAVAILABLE: '$ahkExecutable' does not advertise /validate while AutoHotkey validation is required."
+        }
+
         Write-Warning "W_AHK_VALIDATE_UNAVAILABLE: '$ahkExecutable' does not advertise /validate. Skipping AutoHotkey compile validation."
         return
     }
@@ -86,12 +168,29 @@ function Test-AutoHotkeyScripts {
 function Test-BatchScriptsStaticSmoke {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$RepoRoot
+        [string]$RepoRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$RequestedTargetFilePaths = @()
     )
 
-    $batchFiles = @(Get-ChildItem -Path (Join-Path -Path $RepoRoot -ChildPath "Scripts") -Filter "*.bat" -File -Recurse -ErrorAction Stop)
+    $batchFiles = @()
+    if ($RequestedTargetFilePaths.Count -gt 0) {
+        $batchFiles = @(
+            $RequestedTargetFilePaths |
+                Where-Object { [System.IO.Path]::GetExtension($_).ToLowerInvariant() -eq ".bat" } |
+                ForEach-Object {
+                    if (Test-Path -Path $_ -PathType Leaf) {
+                        Get-Item -LiteralPath $_ -ErrorAction Stop
+                    }
+                }
+        )
+    } else {
+        $batchFiles = @(Get-ChildItem -Path (Join-Path -Path $RepoRoot -ChildPath "Scripts") -Filter "*.bat" -File -Recurse -ErrorAction Stop)
+    }
+
     if ($batchFiles.Count -eq 0) {
-        Write-Host "Batch checks: no .bat files found; skipping."
+        Write-Host "Batch checks: no .bat files found for selected scope; skipping."
         return
     }
 
@@ -148,8 +247,13 @@ function Test-BatchScriptsStaticSmoke {
 }
 
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
+$requestedTargetFilePaths = Resolve-RequestedTargetFilePaths -RepoRoot $repoRoot -TargetFiles $TargetFiles
 
-Test-AutoHotkeyScripts -RepoRoot $repoRoot
-Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot
+if ($requestedTargetFilePaths.Count -gt 0) {
+    Write-Host "Windows language checks: running in targeted mode for $($requestedTargetFilePaths.Count) file(s)."
+}
+
+Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths -RequireAutoHotkey:$RequireAutoHotkey
+Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths
 
 Write-Host "Windows language checks passed."
