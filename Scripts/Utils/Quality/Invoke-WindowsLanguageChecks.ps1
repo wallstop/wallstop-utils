@@ -73,6 +73,42 @@ function Test-OutputLooksLikeUnsupportedAhkSwitch {
     )
 }
 
+function Test-IsAutoHotkeyV1Script {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Content
+    )
+
+    # Patterns that appear in AHK v1 but are absent or invalid in AHK v2
+    $v1Markers = @(
+        '(?m)^\s*#NoEnv\b',
+        '(?m)^\s*#Persistent\b',
+        '(?m)^\s*SendMode\s+\w',          # v1: SendMode Input  (v2: SendMode("Input"))
+        '(?m)^\s*SetWorkingDir\s+%',       # v1: SetWorkingDir %A_ScriptDir%
+        '(?m)^\s*CoordMode\s*,\s*\w',      # v1: CoordMode, Mouse, Screen
+        '(?m)^\s*SetTimer\s*,\s*\w',       # v1: SetTimer, Label, Period
+        '(?m)^\s*WinGet\s*,\s*\w',         # v1: WinGet, Var, Sub, Win
+        '(?m)^\s*WinGetTitle\s*,\s*\w',    # v1: WinGetTitle, Var, Win
+        '(?m)^\s*WinGetClass\s*,\s*\w',    # v1: WinGetClass, Var, Win
+        '(?m)^\s*WinGetPos\s*,\s*\w',      # v1: WinGetPos, X, Y, W, H, Win
+        '(?m)^\s*MouseGetPos\s*,\s*\w',    # v1: MouseGetPos, X, Y
+        '(?m)^\s*MouseMove\s*,\s*\S',      # v1: MouseMove, X, Y, Speed
+        '(?m)^\s*IfWinExist\s*,',          # v1: IfWinExist, Win
+        '(?m)^\s*WinActivate\s*,',         # v1: WinActivate, Win
+        '(?m)^\s*WinWaitActive\s*,',       # v1: WinWaitActive, Win
+        '(?m)^\s*VarSetCapacity\s*\(',     # v1: VarSetCapacity(Var, Size)
+        '(?m)^\s*(Loop|Loop\s*,)\s*%'      # v1: Loop, % expr
+    )
+
+    foreach ($pattern in $v1Markers) {
+        if ($Content -match $pattern) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Invoke-AutoHotkeyCommand {
     param(
         [Parameter(Mandatory = $true)]
@@ -139,7 +175,17 @@ function Invoke-AutoHotkeyValidationCommand {
             }
         }
 
-        if (-not (Test-OutputLooksLikeUnsupportedAhkSwitch -Output $attemptResult.Output)) {
+        $hasActualOutput = (
+            $null -ne $attemptResult.Output -and
+            $attemptResult.Output.Count -gt 0 -and
+            -not [string]::IsNullOrWhiteSpace($attemptResult.Output -join "")
+        )
+
+        # Only report definitive validation failure when there is actual diagnostic output that does
+        # not look like an unsupported-switch message. A non-zero exit code with NO output (e.g.,
+        # exit code -1 returned by AHK v2 when processing an AHK v1 script) is ambiguous — fall
+        # through to try the next validation mode before concluding the validation is unsupported.
+        if ($hasActualOutput -and -not (Test-OutputLooksLikeUnsupportedAhkSwitch -Output $attemptResult.Output)) {
             return [PSCustomObject]@{
                 Status   = "validation-failed"
                 Mode     = $attempt.Mode
@@ -310,6 +356,13 @@ function Test-AutoHotkeyScripts {
 
     foreach ($file in $ahkFiles) {
         $relative = [System.IO.Path]::GetRelativePath($RepoRoot, $file.FullName)
+
+        $fileContent = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
+        if (Test-IsAutoHotkeyV1Script -Content $fileContent) {
+            $failures.Add("$relative :: E_AHK_V1_SYNTAX_DETECTED: Script uses AHK v1 syntax. Migrate to AHK v2 (https://www.autohotkey.com/docs/v2/).") | Out-Null
+            continue
+        }
+
         $validationResult = Invoke-AutoHotkeyValidationCommand -Executable $ahkExecutable -ScriptPath $file.FullName
         $attemptDiagnostics = Get-AutoHotkeyAttemptDiagnostics -Attempts @($validationResult.Attempts)
 

@@ -1,37 +1,47 @@
-#NoEnv  ; Recommended for performance and compatibility with future AutoHotkey releases.
-SendMode Input  ; Recommended for new scripts due to its superior speed and reliability.
-SetWorkingDir %A_ScriptDir%  ; Ensures a consistent starting directory.
-#Persistent  ; Keeps the script running
+#Requires AutoHotkey v2.0
 
-; Initialize variables
-lastActiveWindow := ""
-CoordMode, Mouse, Screen  ; Ensure mouse coordinates are in screen mode
-CoordMode, Win, Screen    ; Ensure window coordinates are in screen mode
+SendMode("Input")
+SetWorkingDir(A_ScriptDir)
+CoordMode("Mouse", "Screen")
+CoordMode("Win", "Screen")
+
+global lastActiveWindow := ""
+
+; Define excluded window classes (including taskbar previews)
+global excludedClasses := ["Progman", "WorkerW", "Shell_TrayWnd", "Button", "ApplicationFrameWindow", "Windows.UI.Core.CoreWindow", "#32770", "msctls_progress32", "DirectUIHWND"]
+global progressBarTitles := ["Progress", "Loading...", "Copying...", "Loading", "Copying", "Hold On", "Hold On..."]
+
+SetTimer(WatchActiveWindow, 100)
 
 ; Function to write logs
 WriteLog(msg) {
 }
 
-; Define excluded window classes (including taskbar previews)
-excludedClasses := ["Progman", "WorkerW", "Shell_TrayWnd", "Button", "ApplicationFrameWindow", "Windows.UI.Core.CoreWindow", "#32770", "msctls_progress32", "DirectUIHWND"]
-progressBarTitles := ["Progress", "Loading...", "Copying...", "Loading", "Copying", "Hold On", "Hold On..."]
+; Returns true if val equals any element in arr (case-insensitive)
+ArrayIncludes(arr, val) {
+    for _, item in arr {
+        if (item = val) {
+            return true
+        }
+    }
+    return false
+}
 
-; Set a timer to check active window every 100 milliseconds
-SetTimer, WatchActiveWindow, 100
-return  ; End of the auto-execute section
-
-; Function to check if a window is a descendant of another
+; Function to check if a window is a descendant of another via owner chain
 IsDescendantWindow(ancestorHWND, descendantHWND) {
-    if (!ancestorHWND || !descendantHWND)
+    if (!ancestorHWND || !descendantHWND) {
         return false
+    }
     current := descendantHWND
     while (current) {
-        if (current = ancestorHWND)
+        if (current = ancestorHWND) {
             return true
+        }
         ; Get owner window using Windows API GetWindow with GW_OWNER (4)
-        owner := DllCall("GetWindow", "ptr", current, "uint", 4, "ptr")
-        if (!owner)
+        owner := DllCall("GetWindow", "Ptr", current, "UInt", 4, "Ptr")
+        if (!owner) {
             break
+        }
         current := owner
     }
     return false
@@ -39,27 +49,39 @@ IsDescendantWindow(ancestorHWND, descendantHWND) {
 
 ; Helper function to get window rect via WinAPI
 GetWindowRect(hWnd) {
-    VarSetCapacity(rect, 16, 0)
-    if (DllCall("GetWindowRect", "ptr", hWnd, "ptr", &rect)) {
-        left := NumGet(rect, 0, "int")
-        top := NumGet(rect, 4, "int")
-        right := NumGet(rect, 8, "int")
-        bottom := NumGet(rect, 12, "int")
+    rect := Buffer(16, 0)
+    if (DllCall("GetWindowRect", "Ptr", hWnd, "Ptr", rect)) {
+        left   := NumGet(rect, 0,  "Int")
+        top    := NumGet(rect, 4,  "Int")
+        right  := NumGet(rect, 8,  "Int")
+        bottom := NumGet(rect, 12, "Int")
         return {left: left, top: top, right: right, bottom: bottom}
     }
     return {left: 0, top: 0, right: 0, bottom: 0}
 }
 
-WatchActiveWindow:
-    ; Get the ID of the currently active window
-    WinGet, activeWinID, ID, A
+WatchActiveWindow() {
+    global lastActiveWindow, excludedClasses, progressBarTitles
+
+    try {
+        activeWinID := WinGetID("A")
+    } catch {
+        return
+    }
+    if (!activeWinID) {
+        return
+    }
 
     ; Check if the active window has changed
-    if (activeWinID != lastActiveWindow)
-    {
+    if (activeWinID != lastActiveWindow) {
         ; Get window title and class
-        WinGetTitle, winTitle, ahk_id %activeWinID%
-        WinGetClass, winClass, ahk_id %activeWinID%
+        try {
+            winTitle := WinGetTitle("ahk_id " activeWinID)
+            winClass := WinGetClass("ahk_id " activeWinID)
+        } catch {
+            lastActiveWindow := activeWinID
+            return
+        }
 
         WriteLog("New Active Window ID: " . activeWinID . " | Title: " . winTitle . " | Class: " . winClass)
 
@@ -74,34 +96,31 @@ WatchActiveWindow:
             }
         }
 
-        if (winTitle in progressBarTitles) {
+        if (ArrayIncludes(progressBarTitles, winTitle)) {
             excluded := true
             return
         }
 
-        if (excluded)
-            return  ; Skip processing excluded windows
+        if (excluded) {
+            return
+        }
 
         ; If there was a previously active window, check if the new window is its descendant
         if (lastActiveWindow) {
             if (IsDescendantWindow(lastActiveWindow, activeWinID)) {
                 WriteLog("New active window is a descendant of the last active window. No mouse movement.")
-                ; Update last active window and exit
                 lastActiveWindow := activeWinID
                 return
             }
         }
 
-        ; Optional: Add a short delay to ensure the window is ready
-        Sleep, 50
+        Sleep(50)
 
         ; Get the window's position and size
-        WinGetPos, winX, winY, winWidth, winHeight, ahk_id %activeWinID%
-
-        ; Handle potential errors in retrieving window position
-        if ErrorLevel {
+        try {
+            WinGetPos(&winX, &winY, &winWidth, &winHeight, "ahk_id " activeWinID)
+        } catch {
             WriteLog("Failed to get window position for ID: " . activeWinID)
-            ; Update last active window and exit
             lastActiveWindow := activeWinID
             return
         }
@@ -110,7 +129,7 @@ WatchActiveWindow:
             return
         }
 
-		if (winWidth < 400) {
+        if (winWidth < 400) {
             return
         }
 
@@ -121,7 +140,7 @@ WatchActiveWindow:
         centerY := winY + (winHeight // 2)
 
         ; Get the current mouse position
-        MouseGetPos, mouseX, mouseY
+        MouseGetPos(&mouseX, &mouseY)
 
         WriteLog("Current Mouse Position: " . mouseX . "," . mouseY)
 
@@ -133,11 +152,12 @@ WatchActiveWindow:
         }
 
         ; Check if the mouse is within any child controls of the active window
-        ; This helps if there are child windows/controls outside the main window bounds
-        WinGet, ChildList, ControlListHwnd, ahk_id %activeWinID%
-        Loop, Parse, ChildList, `n
-        {
-            childHwnd := A_LoopField
+        try {
+            childControls := WinGetControlsHwnd("ahk_id " activeWinID)
+        } catch {
+            childControls := []
+        }
+        for childHwnd in childControls {
             rect := GetWindowRect(childHwnd)
             if (mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom) {
                 WriteLog("Mouse is within a child window/control of the active window. No movement.")
@@ -146,11 +166,10 @@ WatchActiveWindow:
             }
         }
 
-        ; If we reach here, mouse is not inside the active window or any child windows/controls
-        MouseMove, %centerX%, %centerY%, 0  ; The '0' speed makes the movement instant
+        ; Mouse is not inside the active window or any child windows — move it to center
+        MouseMove(centerX, centerY, 0)
         WriteLog("Mouse moved to center: " . centerX . "," . centerY)
 
-        ; Update the last active window
         lastActiveWindow := activeWinID
     }
-return
+}

@@ -422,6 +422,19 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecks | Should -Match 'if\s*\(-not\s+\$NoInvokeMain\)\s*\{\s*Invoke-Main'
     }
 
+    It "keeps AHK v1 syntax detection and empty-output ambiguity handling in validator" {
+        $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
+        $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
+
+        # v1 syntax detection function must exist
+        $windowsChecks | Should -Match 'function\s+Test-IsAutoHotkeyV1Script'
+        $windowsChecks | Should -Match 'E_AHK_V1_SYNTAX_DETECTED'
+        # Validator must guard against treating empty-output ambiguous exit codes as definitive failures
+        $windowsChecks | Should -Match '\$hasActualOutput'
+        # Detection must be wired into the per-file loop
+        $windowsChecks | Should -Match 'Test-IsAutoHotkeyV1Script\s+-Content'
+    }
+
     It "keeps data-driven unit coverage for AutoHotkey capability probing" {
         $windowsChecksTestsPath = Join-Path -Path $script:repoRoot -ChildPath 'Tests/Utils/Invoke-WindowsLanguageChecks.Tests.ps1'
         $windowsChecksTests = Get-Content -Path $windowsChecksTestsPath -Raw
@@ -431,6 +444,13 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecksTests | Should -Match 'validate unsupported then iLib succeeds'
         $windowsChecksTests | Should -Match 'Test-BatchScriptsStaticSmoke'
         $windowsChecksTests | Should -Match 'single-line batch files correctly'
+        # Anti-regression: exit=-1 with no output must be covered specifically
+        $windowsChecksTests | Should -Match 'exit=-1.*no output|no output.*exit=-1'
+        # v1 detection tests must be present
+        $windowsChecksTests | Should -Match 'Test-IsAutoHotkeyV1Script'
+        $windowsChecksTests | Should -Match '#NoEnv directive'
+        # Policy test for all repo AHK scripts requiring v2 must be present
+        $windowsChecksTests | Should -Match '#Requires AutoHotkey v2'
     }
 
     It "uses Get-Variable to read LASTEXITCODE in Invoke-AutoHotkeyCommand to prevent strict-mode failure" {
@@ -441,6 +461,18 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecks | Should -Match 'Get-Variable\s+-Name\s+[''"'']LASTEXITCODE'
         # Prevent regression: bare $LASTEXITCODE must not appear as an assignment source in this file.
         $windowsChecks | Should -Not -Match '(?m)^\s*\$exitCode\s*=\s*\$LASTEXITCODE\b'
+    }
+
+    It "all repository AHK scripts declare #Requires AutoHotkey v2" {
+        $ahkFiles = @(
+            Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/AutoHotKey') -Filter '*.ahk' -File -Recurse -ErrorAction SilentlyContinue
+        )
+        $ahkFiles.Count | Should -BeGreaterThan 0 -Because 'at least one .ahk file must exist under Scripts/AutoHotKey'
+
+        foreach ($file in $ahkFiles) {
+            $content = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
+            $content | Should -Match '(?m)^\s*#Requires\s+AutoHotkey\s+v2' -Because "$($file.Name) must declare #Requires AutoHotkey v2.0 at the top"
+        }
     }
 
     It "keeps AppleScript migration-safe validation behavior" {

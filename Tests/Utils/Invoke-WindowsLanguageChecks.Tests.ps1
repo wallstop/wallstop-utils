@@ -45,6 +45,85 @@ Describe "Test-OutputLooksLikeUnsupportedAhkSwitch" {
     }
 }
 
+Describe "Test-IsAutoHotkeyV1Script" {
+    It "detects v1 syntax markers correctly: <Case>" -TestCases @(
+        @{
+            Case     = "#NoEnv directive"
+            Content  = "#NoEnv`nSendMode Input"
+            Expected = $true
+        },
+        @{
+            Case     = "#Persistent directive"
+            Content  = "#Persistent`nSetTimer, Label, 100"
+            Expected = $true
+        },
+        @{
+            Case     = "comma-syntax SetTimer"
+            Content  = "SetTimer, WatchWindows, 1000"
+            Expected = $true
+        },
+        @{
+            Case     = "variable-percent SetWorkingDir"
+            Content  = "SetWorkingDir %A_ScriptDir%"
+            Expected = $true
+        },
+        @{
+            Case     = "comma-syntax CoordMode"
+            Content  = "CoordMode, Mouse, Screen"
+            Expected = $true
+        },
+        @{
+            Case     = "comma-syntax WinGet"
+            Content  = "WinGet, activeWin, ID, A"
+            Expected = $true
+        },
+        @{
+            Case     = "comma-syntax WinGetTitle"
+            Content  = "WinGetTitle, winTitle, ahk_id %hwnd%"
+            Expected = $true
+        },
+        @{
+            Case     = "comma-syntax MouseMove"
+            Content  = "MouseMove, %x%, %y%, 0"
+            Expected = $true
+        },
+        @{
+            Case     = "VarSetCapacity call"
+            Content  = "VarSetCapacity(rect, 16, 0)"
+            Expected = $true
+        },
+        @{
+            Case     = "IfWinExist command"
+            Content  = "IfWinExist, ahk_exe Discord.exe"
+            Expected = $true
+        },
+        @{
+            Case     = "clean v2 script with Requires"
+            Content  = "#Requires AutoHotkey v2.0`nSetWorkingDir(A_ScriptDir)"
+            Expected = $false
+        },
+        @{
+            Case     = "clean v2 SetTimer function call"
+            Content  = "SetTimer(MyFunc, 100)"
+            Expected = $false
+        },
+        @{
+            Case     = "empty script"
+            Content  = ""
+            Expected = $false
+        }
+    ) {
+        param(
+            [string]$Case,
+            [string]$Content,
+            [bool]$Expected
+        )
+
+        $null = $Case
+        (Test-IsAutoHotkeyV1Script -Content $Content) | Should -Be $Expected
+    }
+}
+
 Describe "Invoke-AutoHotkeyCommand" {
     It "captures exit code from a native command without throwing under strict mode: <Case>" -TestCases @(
         @{
@@ -148,6 +227,50 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
             ExpectedStatus    = "validation-failed"
             ExpectedMode      = "/validate"
             ExpectedCallCount = 1
+        },
+        @{
+            # Regression: AHK v2 returns exit=-1 with no output when processing a v1 script.
+            # This is ambiguous — must fall through to /iLib rather than reporting validation-failed.
+            Case = "validate returns exit=-1 with no output falls through to iLib success"
+            CommandResults = @(
+                [PSCustomObject]@{ ExitCode = -1; Output = @() },
+                [PSCustomObject]@{ ExitCode = 0; Output = @() }
+            )
+            ExpectedStatus    = "ok"
+            ExpectedMode      = "/iLib"
+            ExpectedCallCount = 2
+        },
+        @{
+            # Both modes return exit=-1 with no output: should be "unsupported", not "validation-failed".
+            Case = "both modes return exit=-1 with no output yields unsupported"
+            CommandResults = @(
+                [PSCustomObject]@{ ExitCode = -1; Output = @() },
+                [PSCustomObject]@{ ExitCode = -1; Output = @() }
+            )
+            ExpectedStatus    = "unsupported"
+            ExpectedMode      = ""
+            ExpectedCallCount = 2
+        },
+        @{
+            # Non-standard exit code but with actual diagnostic output → real failure.
+            Case = "non-standard exit code with error output is validation-failed"
+            CommandResults = @(
+                [PSCustomObject]@{ ExitCode = 3; Output = @("Error at line 5: unexpected token") }
+            )
+            ExpectedStatus    = "validation-failed"
+            ExpectedMode      = "/validate"
+            ExpectedCallCount = 1
+        },
+        @{
+            # Whitespace-only output is treated as no output — ambiguous, falls through.
+            Case = "whitespace-only output falls through to iLib"
+            CommandResults = @(
+                [PSCustomObject]@{ ExitCode = 2; Output = @("   ", "") },
+                [PSCustomObject]@{ ExitCode = 0; Output = @() }
+            )
+            ExpectedStatus    = "ok"
+            ExpectedMode      = "/iLib"
+            ExpectedCallCount = 2
         }
     ) {
         param(
