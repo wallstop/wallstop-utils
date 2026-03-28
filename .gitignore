@@ -1,3 +1,14 @@
 Scripts/**/*.txt
 Scripts/**/*.log
 *.DS_Store
+TestResults/
+Tests/**/Snapshots/*.actual.txt
+Scripts/Utils/GitHub/.cache/
+logs_*
+*.zip
+coverage.xml
+out.txt
+pre-commit.txt
+pre-push.txt
+pre-commit.log
+pre-push.log

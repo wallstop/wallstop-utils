@@ -1,0 +1,219 @@
+name: PowerShell Quality
+
+on:
+  pull_request:
+    paths:
+      - 'Scripts/**'
+      - 'Tests/**'
+      - '.psscriptanalyzer.psd1'
+      - '.github/workflows/github-pr-summarizer-quality.yml'
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'Scripts/**'
+      - 'Tests/**'
+      - '.psscriptanalyzer.psd1'
+      - '.github/workflows/github-pr-summarizer-quality.yml'
+
+jobs:
+  lint-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PowerShell modules
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5.0
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -MinimumVersion 1.21.0
+          Import-Module Pester -MinimumVersion 5.5.0 -ErrorAction Stop
+          Import-Module PSScriptAnalyzer -MinimumVersion 1.21.0 -ErrorAction Stop
+
+          $pesterVersion = (Get-Module Pester | Select-Object -First 1 -ExpandProperty Version)
+          $pssaVersion = (Get-Module PSScriptAnalyzer | Select-Object -First 1 -ExpandProperty Version)
+          Write-Host "Pester version: $pesterVersion"
+          Write-Host "PSScriptAnalyzer version: $pssaVersion"
+
+      - name: Lint PowerShell
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $issuesRaw = Invoke-ScriptAnalyzer -Path "Scripts" -Settings ".psscriptanalyzer.psd1" -Recurse -ErrorAction Stop
+          $issues = if ($null -eq $issuesRaw) { @() } else { @($issuesRaw) }
+          $issueCount = @($issues).Count
+
+          Write-Host "Lint diagnostics: issueCount=$issueCount"
+          if ($issueCount -gt 0) {
+            Write-Host "Lint diagnostics: firstIssueType=$($issues[0].GetType().FullName)"
+            $issues | Format-Table -AutoSize | Out-String | Write-Host
+            throw "PSScriptAnalyzer found $issueCount issue(s)."
+          }
+
+      - name: Security pattern checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Security scanner diagnostics:"
+          echo "  rg_available=$(command -v rg >/dev/null 2>&1 && echo yes || echo no)"
+          if grep --version >/dev/null 2>&1; then
+            echo "  grep_version=$(grep --version | head -1)"
+          else
+            echo "  grep_version=BSD_or_non-GNU"
+          fi
+
+          token_pattern_rg='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}'
+          bearer_pattern_rg='Authorization:\s*(Bearer|token)\s+[A-Za-z0-9._-]{20,}'
+          dangerous_pattern_rg='Invoke-Expression|(^|[^[:alnum:]_])iex([^[:alnum:]_]|$)'
+          combined_rg="(${token_pattern_rg}|${bearer_pattern_rg}|${dangerous_pattern_rg})"
+
+          token_pattern_grep='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}'
+          bearer_pattern_grep='Authorization:[[:space:]]*(Bearer|token)[[:space:]]+[A-Za-z0-9._-]{20,}'
+          dangerous_pattern_grep='Invoke-Expression|(^|[^[:alnum:]_])iex([^[:alnum:]_]|$)'
+          combined_grep="(${token_pattern_grep}|${bearer_pattern_grep}|${dangerous_pattern_grep})"
+
+          if command -v rg >/dev/null 2>&1; then
+            scanner_engine="rg"
+            active_pattern="$combined_rg"
+            matches="$(rg -n "$combined_rg" Scripts || true)"
+          else
+            scanner_engine="grep"
+            active_pattern="$combined_grep"
+            matches="$(grep -RInE "$combined_grep" Scripts || true)"
+          fi
+
+          match_count=0
+          if [[ -n "$matches" ]]; then
+            match_count="$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+          fi
+
+          echo "  scanner_engine=$scanner_engine"
+          echo "  active_pattern=$active_pattern"
+          echo "  match_count=$match_count"
+
+          # Engine-level behavior corpus to catch false positives and drift.
+          should_detect=(
+            'Authorization: token ghp_0123456789abcdef0123456789abcdef0123'
+            'Invoke-Expression "Write-Host demo"'
+          )
+          should_ignore=(
+            '$redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"'
+            'Write-Host "hello"'
+          )
+
+          for sample in "${should_detect[@]}"; do
+            if [[ "$scanner_engine" == "rg" ]]; then
+              if ! printf '%s\n' "$sample" | rg -n "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected a match but none was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            else
+              if ! printf '%s\n' "$sample" | grep -nE "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected a match but none was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            fi
+          done
+
+          for sample in "${should_ignore[@]}"; do
+            if [[ "$scanner_engine" == "rg" ]]; then
+              if printf '%s\n' "$sample" | rg -n "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected no match but a match was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            else
+              if printf '%s\n' "$sample" | grep -nE "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected no match but a match was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            fi
+          done
+
+          if [[ -n "$matches" ]]; then
+            echo "Disallowed token or command pattern detected"
+            printf '%s\n' "$matches"
+            exit 1
+          fi
+
+      - name: Generated artifact tracking checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tracked_artifacts="$(git ls-files coverage.xml out.txt || true)"
+          if [[ -n "$tracked_artifacts" ]]; then
+            echo "Generated artifact files must not be tracked in git:"
+            printf '%s\n' "$tracked_artifacts"
+            exit 1
+          fi
+
+      - name: Run Pester with coverage
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $repoRoot = (Get-Location).Path
+          $testPath = Join-Path -Path $repoRoot -ChildPath "Tests/GitHub"
+          $coveragePath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+
+          $result = Invoke-Pester -Path $testPath -CodeCoverage $coveragePath -PassThru -ErrorAction Stop
+          if ($null -eq $result) {
+            throw "Pester returned no result object."
+          }
+
+          Write-Host "Pester diagnostics: passed=$($result.PassedCount) failed=$($result.FailedCount)"
+          Write-Host "Pester diagnostics: hasCoverageObject=$($null -ne $result.CodeCoverage)"
+
+          if ($result.FailedCount -gt 0) {
+            throw "Pester tests failed: $($result.FailedCount)"
+          }
+
+          if ($null -eq $result.CodeCoverage) {
+            throw "CodeCoverage object is null."
+          }
+          if ($null -eq $result.CodeCoverage.CoveragePercent) {
+            throw "CodeCoverage.CoveragePercent is null."
+          }
+
+          $minimumCoveragePercent = 75
+          $coverage = [double]$result.CodeCoverage.CoveragePercent
+          Write-Host "Coverage: $coverage% (minimum required: $minimumCoveragePercent%)"
+          if ($coverage -lt $minimumCoveragePercent) {
+            throw "Coverage gate failed: $coverage% is below $minimumCoveragePercent%"
+          }
+
+      - name: Run Utils Pester tests
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $repoRoot = (Get-Location).Path
+          $utilsTestPath = Join-Path -Path $repoRoot -ChildPath "Tests/Utils"
+          if (-not (Test-Path -Path $utilsTestPath -PathType Container)) {
+            throw "Utils test path not found: $utilsTestPath"
+          }
+
+          $utilsResult = Invoke-Pester -Path $utilsTestPath -PassThru -ErrorAction Stop
+          if ($null -eq $utilsResult) {
+            throw "Utils Pester returned no result object."
+          }
+
+          Write-Host "Utils Pester diagnostics: passed=$($utilsResult.PassedCount) failed=$($utilsResult.FailedCount)"
+          if ($utilsResult.FailedCount -gt 0) {
+            throw "Utils Pester tests failed: $($utilsResult.FailedCount)"
+          }

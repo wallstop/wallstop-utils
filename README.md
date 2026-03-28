@@ -138,6 +138,56 @@ Scripts/          # Backup and restore scripts
 ./Scripts/Mac/restore_brew.sh
 ```
 
+## GitHub Utilities
+
+The repository also includes standalone GitHub-focused helper scripts under [Scripts/Utils/GitHub](Scripts/Utils/GitHub).
+These utilities do not modify backup/restore behavior.
+
+Current utility:
+
+- `Get-UnresolvedPRComments.ps1`: read unresolved PR review threads from GitHub and render plain-text or JSON output.
+
+## Optional Pre-Commit Validation
+
+This repository includes an opt-in local pre-commit validation flow for utility scripts.
+
+### What it runs
+
+- `Invoke-Pester -Path Tests/Utils`
+- `Invoke-ScriptAnalyzer -Path Scripts/Utils -Settings .psscriptanalyzer.psd1 -Recurse`
+
+### Local prerequisites
+
+Install required PowerShell modules before enabling the hook:
+
+```powershell
+Install-Module Pester -Scope CurrentUser -MinimumVersion 5.5.0
+Install-Module PSScriptAnalyzer -Scope CurrentUser -MinimumVersion 1.21.0
+```
+
+If modules are missing, `Run-PreCommitValidation.ps1` fails with `E_CONFIG_ERROR` and an installation hint.
+
+### Use as a one-off check
+
+```powershell
+pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1
+```
+
+Use `-All` to run regardless of staged files, or `-SkipAnalyzer` if ScriptAnalyzer is not available.
+
+```powershell
+pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1 -All
+```
+
+### Opt into git hook execution
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit
+```
+
+The hook calls `Scripts/Utils/Run-PreCommitValidation.ps1` and fails the commit on test or lint errors.
+
 ## License
 
 See [LICENSE](LICENSE) for details.

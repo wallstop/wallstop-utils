@@ -52,6 +52,14 @@
   Get-Help
   about_Comment_Based_Help
 #>
+
+$strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
+if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+  throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $strictModeHelpersPath
+
 function Increment-Version {
   [CmdletBinding(SupportsShouldProcess = $true)]
   [OutputType([void])]
@@ -80,6 +88,14 @@ function Increment-Version {
     [Parameter(Mandatory = $false)]
     [switch]$Push
   )
+
+  $operationContext = @{
+    Updated         = $false
+    PackageJsonPath = $null
+    OriginalVersion = $null
+    NewVersion      = $null
+    GitStage        = "not-requested"
+  }
 
   # Check for custom help invocation first
   if ($PSBoundParameters.ContainsKey('HelpArgument')) {
@@ -237,13 +253,23 @@ function Increment-Version {
   try {
     $packageJsonPath = Get-NearestPackageJsonInternal
     if (-not $packageJsonPath) { Write-Error "package.json not found."; return }
+    $operationContext.PackageJsonPath = $packageJsonPath
     Write-Host "Found package.json at: $packageJsonPath"
     $fileContentRaw = Get-Content -Path $packageJsonPath -Raw -Encoding UTF8 -ErrorAction Stop
 
-    $jsonForParsing = $null; try { $jsonForParsing = $fileContentRaw | ConvertFrom-Json -ErrorAction Stop } catch { Write-Error "Failed to parse JSON from '$($packageJsonPath)'. Error: $($_.Exception.Message)"; return }
+    $jsonForParsing = $null
+    try {
+      $jsonForParsing = ConvertFrom-JsonSingleObject -Json $fileContentRaw -Context "package.json"
+    }
+    catch {
+      Write-Error "Failed to parse JSON from '$($packageJsonPath)'. Error: $($_.Exception.Message)"
+      return
+    }
+
     if (-not $jsonForParsing.PSObject.Properties.Name.Contains('version')) { Write-Error "'version' field not found."; return }
     $originalVersionObject = $jsonForParsing.version; if ($null -eq $originalVersionObject) { Write-Error "'version' field is null."; return }
     $originalVersion = $originalVersionObject.ToString(); Write-Host "Current version: $originalVersion"
+    $operationContext.OriginalVersion = $originalVersion
 
     $semVerRegex = '^(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(?:-(?<prerelease>(?:\d+|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:\d+|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
     $match = [regex]::Match($originalVersion,$semVerRegex)
@@ -294,7 +320,6 @@ function Increment-Version {
           if ($carry -eq 0) { break }
 
           $currentPrePart = $preParts[$i]
-          $originalCurrentPrePartLength = $currentPrePart.Length # For formatting purely numeric parts
 
           # Regex to find an optional prefix and a mandatory numeric suffix in a part
           # e.g., "rc07" -> prefix="rc", num="07"; "07" -> prefix="", num="07"
@@ -424,7 +449,7 @@ function Increment-Version {
 
     Write-Host ($actionMessage -replace '\s{2,}',' ') # Clean up potential double spaces in message
     Write-Host "New version will be: $newVersion"
-    $updated = $false
+    $operationContext.NewVersion = $newVersion
 
     # Update package.json in-place: replace only the top-level "version" value to minimize diffs
     [string]$pattern = '^(?<indent>\s*)"version"\s*:\s*"[^"]*"'
@@ -455,82 +480,115 @@ function Increment-Version {
 
         [System.IO.File]::WriteAllText($packageJsonPath,$updatedRaw,$encodingToUse)
         Write-Host "Successfully updated."
-        $updated = $true
+        $operationContext.Updated = $true
       }
       catch { Write-Error "Could not write. Error: $($_.Exception.Message)"; return }
     }
     else { Write-Host "Operation cancelled." }
 
+    $gitActionRequested = $CommitChanges.IsPresent -or $RunPreCommit.IsPresent -or $Push.IsPresent
+    if (-not $operationContext.Updated -and $gitActionRequested) {
+      $operationContext.GitStage = "skipped-not-updated"
+      Write-Warning "Git integration was requested but skipped because version update was not completed."
+      Write-Verbose ("Diagnostics: updated={0}; packageJsonPath='{1}'; originalVersion='{2}'; newVersion='{3}'; gitStage='{4}'" -f $operationContext.Updated, $operationContext.PackageJsonPath, $operationContext.OriginalVersion, $operationContext.NewVersion, $operationContext.GitStage)
+    }
+
+    if ($operationContext.Updated -and $gitActionRequested) {
+      $operationContext.GitStage = "starting"
+      $inside = ""
+      try { $inside = (git rev-parse --is-inside-work-tree 2>$null).Trim() } catch {}
+      if ($inside -ne "true") {
+        $operationContext.GitStage = "skipped-not-git-repo"
+        Write-Warning "Not a git repository; skipping commit/push."
+      }
+      else {
+        $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+        $primary = @("master","main")
+        if (-not $AllowNonMainBranch.IsPresent -and -not ($primary -contains $branch)) {
+          $operationContext.GitStage = "skipped-non-primary-branch"
+          Write-Warning "On branch '$branch'. Version bumps are restricted to master/main. Use -AllowNonMainBranch to override."
+        }
+        else {
+          try { git fetch --prune | Out-Null } catch {}
+          # Safe, optional fast-forward pull: only if clean, no merge/rebase in progress, and behind without local commits
+          $gitDir = (git rev-parse --git-dir 2>$null)
+          $mergeInProgress = if ($gitDir) { Test-Path -LiteralPath (Join-Path $gitDir 'MERGE_HEAD') } else { $false }
+          $rebaseInProgress = if ($gitDir) { (Test-Path -LiteralPath (Join-Path $gitDir 'rebase-apply')) -or (Test-Path -LiteralPath (Join-Path $gitDir 'rebase-merge')) } else { $false }
+          $wtClean = $true
+          try { git diff --no-ext-diff --quiet --exit-code; if ($LASTEXITCODE -ne 0) { $wtClean = $false } } catch { $wtClean = $false }
+          if (-not $mergeInProgress -and -not $rebaseInProgress -and $wtClean) {
+            try {
+              $countsRaw = git rev-list --left-right --count "@{u}...HEAD" 2>$null
+              if ($countsRaw) {
+                $parts = $countsRaw -split '\s+'
+                if ($parts.Length -ge 2) {
+                  [int]$behind = $parts[0]; [int]$ahead = $parts[1]
+                  if ($behind -gt 0 -and $ahead -eq 0) {
+                    git pull --ff-only | Out-Null
+                  }
+                }
+              }
+            }
+            catch {}
+          }
+
+          $operationContext.GitStage = "staging"
+          git add -- "$($operationContext.PackageJsonPath)" | Out-Null
+          $lockPath = Join-Path (Split-Path -Path $operationContext.PackageJsonPath) "package-lock.json"
+          if (Test-Path $lockPath -PathType Leaf) { git add -- "$lockPath" | Out-Null }
+          if ($RunPreCommit.IsPresent) {
+            if (Get-Command pre-commit -ErrorAction SilentlyContinue) {
+              try { pre-commit run -a | Out-Null } catch {}
+              git add -a | Out-Null
+            }
+            else {
+              if (Get-Command npm -ErrorAction SilentlyContinue) {
+                try { npm run format:json --silent | Out-Null } catch {}
+                try { npm run format:md --silent | Out-Null } catch {}
+                try { npm run format:yaml --silent | Out-Null } catch {}
+              }
+              if (Test-Path "scripts/fix-eol.js") { try { node scripts/fix-eol.js -v | Out-Null } catch {} }
+              if (Test-Path ".config/dotnet-tools.json") {
+                if (Get-Command dotnet -ErrorAction SilentlyContinue) {
+                  try { dotnet tool restore | Out-Null } catch {}
+                  try { dotnet tool run csharpier format | Out-Null } catch {}
+                }
+              }
+              git add -a | Out-Null
+            }
+          }
+          $operationContext.GitStage = "committing"
+          $msg = "chore(version): bump to $($operationContext.NewVersion)"
+          $args = @("commit","-m",$msg)
+          if ($NoVerify.IsPresent) { $args += "--no-verify" }
+          & git @args
+          if ($LASTEXITCODE -ne 0) {
+            git add -a | Out-Null
+            git commit -m $msg --no-verify | Out-Null
+          }
+          if ($Push.IsPresent) {
+            $operationContext.GitStage = "pushing"
+            git push -u origin $branch | Out-Null
+          }
+
+          if (-not $Push.IsPresent) {
+            $operationContext.GitStage = "completed-no-push"
+          }
+          else {
+            $operationContext.GitStage = "completed"
+          }
+        }
+      }
+
+      Write-Verbose ("Diagnostics: updated={0}; packageJsonPath='{1}'; originalVersion='{2}'; newVersion='{3}'; gitStage='{4}'" -f $operationContext.Updated, $operationContext.PackageJsonPath, $operationContext.OriginalVersion, $operationContext.NewVersion, $operationContext.GitStage)
+    }
+
   }
   catch { Write-Error "Unexpected error: $($_.Exception.Message)"; if ($_.Exception.ErrorRecord) { Write-Error "Details: $($_.Exception.ErrorRecord)" } }
 }
-# Post-write optional git integration
-if ($updated -and ($CommitChanges.IsPresent -or $RunPreCommit.IsPresent -or $Push.IsPresent)) {
-  $inside = ""
-  try { $inside = (git rev-parse --is-inside-work-tree 2>$null).Trim() } catch {}
-  if ($inside -ne "true") {
-    Write-Warning "Not a git repository; skipping commit/push."
-  } else {
-    $branch = (git rev-parse --abbrev-ref HEAD).Trim()
-    $primary = @("master","main")
-    if (-not $AllowNonMainBranch.IsPresent -and -not ($primary -contains $branch)) {
-      Write-Warning "On branch '$branch'. Version bumps are restricted to master/main. Use -AllowNonMainBranch to override."
-    } else {
-      try { git fetch --prune | Out-Null } catch {}
-      # Safe, optional fast-forward pull: only if clean, no merge/rebase in progress, and behind without local commits
-      $gitDir = (git rev-parse --git-dir 2>$null)
-      $mergeInProgress = if ($gitDir) { Test-Path -LiteralPath (Join-Path $gitDir 'MERGE_HEAD') } else { $false }
-      $rebaseInProgress = if ($gitDir) { (Test-Path -LiteralPath (Join-Path $gitDir 'rebase-apply')) -or (Test-Path -LiteralPath (Join-Path $gitDir 'rebase-merge')) } else { $false }
-      $wtClean = $true
-      try { git diff --no-ext-diff --quiet --exit-code; if ($LASTEXITCODE -ne 0) { $wtClean = $false } } catch { $wtClean = $false }
-      if (-not $mergeInProgress -and -not $rebaseInProgress -and $wtClean) {
-        try {
-          $countsRaw = git rev-list --left-right --count "@{u}...HEAD" 2>$null
-          if ($countsRaw) {
-            $parts = $countsRaw -split '\s+'
-            if ($parts.Length -ge 2) {
-              [int]$behind = $parts[0]; [int]$ahead = $parts[1]
-              if ($behind -gt 0 -and $ahead -eq 0) {
-                git pull --ff-only | Out-Null
-              }
-            }
-          }
-        } catch {}
-      }
-      git add -- "$packageJsonPath" | Out-Null
-      $lockPath = Join-Path (Split-Path -Path $packageJsonPath) "package-lock.json"
-      if (Test-Path $lockPath -PathType Leaf) { git add -- "$lockPath" | Out-Null }
-      if ($RunPreCommit.IsPresent) {
-        if (Get-Command pre-commit -ErrorAction SilentlyContinue) {
-          try { pre-commit run -a | Out-Null } catch {}
-          git add -a | Out-Null
-        } else {
-          if (Get-Command npm -ErrorAction SilentlyContinue) {
-            try { npm run format:json --silent | Out-Null } catch {}
-            try { npm run format:md --silent | Out-Null } catch {}
-            try { npm run format:yaml --silent | Out-Null } catch {}
-          }
-          if (Test-Path "scripts/fix-eol.js") { try { node scripts/fix-eol.js -v | Out-Null } catch {} }
-          if (Test-Path ".config/dotnet-tools.json") {
-            if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-              try { dotnet tool restore | Out-Null } catch {}
-              try { dotnet tool run csharpier format | Out-Null } catch {}
-            }
-          }
-          git add -a | Out-Null
-        }
-      }
-      $msg = "chore(version): bump to $newVersion"
-      $args = @("commit","-m",$msg)
-      if ($NoVerify.IsPresent) { $args += "--no-verify" }
-      & git @args
-      if ($LASTEXITCODE -ne 0) {
-        git add -a | Out-Null
-        git commit -m $msg --no-verify | Out-Null
-      }
-      if ($Push.IsPresent) { git push -u origin $branch | Out-Null }
-    }
-  }
+
+if ($MyInvocation.InvocationName -ne ".") {
+  Increment-Version @args
 }
 
 
