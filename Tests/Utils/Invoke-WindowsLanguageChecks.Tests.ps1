@@ -124,27 +124,82 @@ Describe "Test-IsAutoHotkeyV1Script" {
     }
 }
 
+Describe "Convert-CapturedTextToLines" {
+    It "normalizes captured text consistently: <Case>" -TestCases @(
+        @{
+            Case     = "empty text"
+            Text     = ""
+            Expected = @()
+        },
+        @{
+            Case     = "single line with trailing newline"
+            Text     = "ok`n"
+            Expected = @("ok")
+        },
+        @{
+            Case     = "multiline CRLF with trailing newline"
+            Text     = "line1`r`nline2`r`n"
+            Expected = @("line1", "line2")
+        },
+        @{
+            Case     = "single line without newline"
+            Text     = "no-newline"
+            Expected = @("no-newline")
+        }
+    ) {
+        param(
+            [string]$Case,
+            [string]$Text,
+            [string[]]$Expected
+        )
+
+        $null = $Case
+        $result = @(Convert-CapturedTextToLines -Text $Text)
+        ($result -join "`n") | Should -Be ($Expected -join "`n")
+    }
+}
+
 Describe "Invoke-AutoHotkeyCommand" {
     It "captures exit code and output deterministically: <Case>" -TestCases @(
         @{
             Case               = "stdout and zero exit"
-            LinuxExecutable    = "/usr/bin/printf"
-            LinuxArguments     = @("ok-stdout\n")
-            WindowsExecutable  = "cmd.exe"
-            WindowsArguments   = @("/c", "echo ok-stdout")
+            LinuxExecutable    = "pwsh"
+            LinuxArguments     = @("-NoLogo", "-NoProfile", "-Command", "Write-Output 'ok-stdout'")
+            WindowsExecutable  = "pwsh"
+            WindowsArguments   = @("-NoLogo", "-NoProfile", "-Command", "Write-Output 'ok-stdout'")
             LinuxExitCode      = 0
             WindowsExitCode    = 0
             ExpectedOutputLike = "ok-stdout"
         },
         @{
             Case               = "stderr and nonzero exit"
-            LinuxExecutable    = "grep"
-            LinuxArguments     = @("--nonexistent-option-for-tests")
-            WindowsExecutable  = "cmd.exe"
-            WindowsArguments   = @("/c", "echo problem-stderr 1>&2 && exit /b 7")
-            LinuxExitCode      = 2
+            LinuxExecutable    = "pwsh"
+            LinuxArguments     = @("-NoLogo", "-NoProfile", "-Command", "Write-Error 'problem-stderr'; exit 7")
+            WindowsExecutable  = "pwsh"
+            WindowsArguments   = @("-NoLogo", "-NoProfile", "-Command", "Write-Error 'problem-stderr'; exit 7")
+            LinuxExitCode      = 7
             WindowsExitCode    = 7
-            ExpectedOutputLike = "stderr:"
+            ExpectedOutputLike = "problem-stderr"
+        },
+        @{
+            Case               = "stdout without trailing newline"
+            LinuxExecutable    = "pwsh"
+            LinuxArguments     = @("-NoLogo", "-NoProfile", "-Command", "[Console]::Out.Write('ok-no-newline')")
+            WindowsExecutable  = "pwsh"
+            WindowsArguments   = @("-NoLogo", "-NoProfile", "-Command", "[Console]::Out.Write('ok-no-newline')")
+            LinuxExitCode      = 0
+            WindowsExitCode    = 0
+            ExpectedOutputLike = "ok-no-newline"
+        },
+        @{
+            Case               = "large stderr stream remains deterministic"
+            LinuxExecutable    = "pwsh"
+            LinuxArguments     = @("-NoLogo", "-NoProfile", "-Command", '1..1500 | ForEach-Object { [Console]::Error.WriteLine("problem-stderr-$_") }; exit 9')
+            WindowsExecutable  = "pwsh"
+            WindowsArguments   = @("-NoLogo", "-NoProfile", "-Command", '1..1500 | ForEach-Object { [Console]::Error.WriteLine("problem-stderr-$_") }; exit 9')
+            LinuxExitCode      = 9
+            WindowsExitCode    = 9
+            ExpectedOutputLike = "problem-stderr-750"
         }
     ) {
         param(
@@ -163,13 +218,26 @@ Describe "Invoke-AutoHotkeyCommand" {
         if ($IsWindows) {
             $result = Invoke-AutoHotkeyCommand -Executable $WindowsExecutable -Arguments $WindowsArguments
             $expectedExitCode = $WindowsExitCode
-        } else {
+        }
+        else {
             $result = Invoke-AutoHotkeyCommand -Executable $LinuxExecutable -Arguments $LinuxArguments
             $expectedExitCode = $LinuxExitCode
         }
 
         $result.ExitCode | Should -Be $expectedExitCode
-        ($result.Output -join " ") | Should -Match ([regex]::Escape($ExpectedOutputLike))
+        $outputText = ($result.Output -join " ")
+        $diagnostics = if ($null -ne $result.Diagnostics) {
+            $result.Diagnostics | ConvertTo-Json -Compress -Depth 4
+        }
+        else {
+            "(none)"
+        }
+
+        $outputText | Should -Match ([regex]::Escape($ExpectedOutputLike)) -Because "Case='$Case' should capture expected text. diagnostics=$diagnostics"
+
+        $result.Diagnostics | Should -Not -BeNullOrEmpty -Because "capture diagnostics should always be present"
+        $expectedCaptureMode = if ($IsWindows) { "start-process-redirect" } else { "dotnet-process" }
+        $result.Diagnostics.CaptureMode | Should -Be $expectedCaptureMode
     }
 
     It "returns structured error output when the specified executable does not exist" {
@@ -182,8 +250,8 @@ Describe "Invoke-AutoHotkeyCommand" {
 Describe "Invoke-AutoHotkeyValidationCommand" {
     It "probes validation modes and returns expected status: <Case>" -TestCases @(
         @{
-            Case = "validate succeeds immediately"
-            CommandResults = @(
+            Case              = "validate succeeds immediately"
+            CommandResults    = @(
                 [PSCustomObject]@{ ExitCode = 0; Output = @("ok") }
             )
             ExpectedStatus    = "ok"
@@ -191,8 +259,8 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
             ExpectedCallCount = 1
         },
         @{
-            Case = "validate unsupported then iLib succeeds"
-            CommandResults = @(
+            Case              = "validate unsupported then iLib succeeds"
+            CommandResults    = @(
                 [PSCustomObject]@{ ExitCode = 2; Output = @("Unknown switch /validate") },
                 [PSCustomObject]@{ ExitCode = 0; Output = @("ok") }
             )
@@ -201,8 +269,8 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
             ExpectedCallCount = 2
         },
         @{
-            Case = "both validation modes unsupported"
-            CommandResults = @(
+            Case              = "both validation modes unsupported"
+            CommandResults    = @(
                 [PSCustomObject]@{ ExitCode = 2; Output = @("Unknown switch /validate") },
                 [PSCustomObject]@{ ExitCode = 2; Output = @("Invalid command line option /iLib") }
             )
@@ -211,8 +279,8 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
             ExpectedCallCount = 2
         },
         @{
-            Case = "validate reports real script failure"
-            CommandResults = @(
+            Case              = "validate reports real script failure"
+            CommandResults    = @(
                 [PSCustomObject]@{ ExitCode = 1; Output = @("Error: Missing close-quote") }
             )
             ExpectedStatus    = "validation-failed"
@@ -222,8 +290,8 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
         @{
             # Regression: AHK v2 returns exit=-1 with no output when processing a v1 script.
             # This is ambiguous — must fall through to /iLib rather than reporting validation-failed.
-            Case = "validate returns exit=-1 with no output falls through to iLib success"
-            CommandResults = @(
+            Case              = "validate returns exit=-1 with no output falls through to iLib success"
+            CommandResults    = @(
                 [PSCustomObject]@{ ExitCode = -1; Output = @() },
                 [PSCustomObject]@{ ExitCode = 0; Output = @() }
             )
@@ -233,8 +301,8 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
         },
         @{
             # Both modes return exit=-1 with no output: should be "unsupported", not "validation-failed".
-            Case = "both modes return exit=-1 with no output yields unsupported"
-            CommandResults = @(
+            Case              = "both modes return exit=-1 with no output yields unsupported"
+            CommandResults    = @(
                 [PSCustomObject]@{ ExitCode = -1; Output = @() },
                 [PSCustomObject]@{ ExitCode = -1; Output = @() }
             )
@@ -244,8 +312,8 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
         },
         @{
             # Non-standard exit code but with actual diagnostic output → real failure.
-            Case = "non-standard exit code with error output is validation-failed"
-            CommandResults = @(
+            Case              = "non-standard exit code with error output is validation-failed"
+            CommandResults    = @(
                 [PSCustomObject]@{ ExitCode = 3; Output = @("Error at line 5: unexpected token") }
             )
             ExpectedStatus    = "validation-failed"
@@ -254,8 +322,8 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
         },
         @{
             # Whitespace-only output is treated as no output — ambiguous, falls through.
-            Case = "whitespace-only output falls through to iLib"
-            CommandResults = @(
+            Case              = "whitespace-only output falls through to iLib"
+            CommandResults    = @(
                 [PSCustomObject]@{ ExitCode = 2; Output = @("   ", "") },
                 [PSCustomObject]@{ ExitCode = 0; Output = @() }
             )
@@ -283,8 +351,18 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
             $current = $CommandResults[$script:commandCallIndex]
             $script:commandCallIndex += 1
             return [PSCustomObject]@{
-                ExitCode = [int]$current.ExitCode
-                Output   = @($current.Output)
+                ExitCode    = [int]$current.ExitCode
+                Output      = @($current.Output)
+                Diagnostics = [PSCustomObject]@{
+                    CaptureMode         = "test-mock"
+                    Executable          = "mock"
+                    ArgumentCount       = 0
+                    StdOutLineCount     = @($current.Output).Count
+                    StdErrLineCount     = 0
+                    TimeoutMilliseconds = 0
+                    StdOutCaptureExists = $false
+                    StdErrCaptureExists = $false
+                }
             }
         }
 
@@ -495,7 +573,8 @@ Describe "Test-BatchScriptsStaticSmoke" {
             {
                 Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot -RequestedTargetFilePaths @($batchFilePath)
             } | Should -Throw $ErrorPattern
-        } else {
+        }
+        else {
             {
                 Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot -RequestedTargetFilePaths @($batchFilePath)
             } | Should -Not -Throw

@@ -18,6 +18,7 @@ on:
 jobs:
   lint-and-test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -207,7 +208,13 @@ jobs:
           $testPath = Join-Path -Path $repoRoot -ChildPath "Tests/GitHub"
           $coveragePath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
 
-          $result = Invoke-Pester -Path $testPath -CodeCoverage $coveragePath -PassThru -ErrorAction Stop
+          $configuration = [PesterConfiguration]::Default
+          $configuration.Run.Path = @($testPath)
+          $configuration.Run.PassThru = $true
+          $configuration.CodeCoverage.Enabled = $true
+          $configuration.CodeCoverage.Path = @($coveragePath)
+
+          $result = Invoke-Pester -Configuration $configuration -ErrorAction Stop
           if ($null -eq $result) {
             throw "Pester returned no result object."
           }
@@ -245,7 +252,11 @@ jobs:
             throw "Utils test path not found: $utilsTestPath"
           }
 
-          $utilsResult = Invoke-Pester -Path $utilsTestPath -PassThru -ErrorAction Stop
+          $utilsConfiguration = [PesterConfiguration]::Default
+          $utilsConfiguration.Run.Path = @($utilsTestPath)
+          $utilsConfiguration.Run.PassThru = $true
+
+          $utilsResult = Invoke-Pester -Configuration $utilsConfiguration -ErrorAction Stop
           if ($null -eq $utilsResult) {
             throw "Utils Pester returned no result object."
           }

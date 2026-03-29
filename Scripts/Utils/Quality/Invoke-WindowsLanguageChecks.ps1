@@ -20,13 +20,14 @@ function Convert-OutputToStringArray {
 
     return @(
         $Output |
-            ForEach-Object {
-                if ($null -eq $_) {
-                    ""
-                } else {
-                    [string]$_
-                }
+        ForEach-Object {
+            if ($null -eq $_) {
+                ""
             }
+            else {
+                [string]$_
+            }
+        }
     )
 }
 
@@ -109,6 +110,68 @@ function Test-IsAutoHotkeyV1Script {
     return $false
 }
 
+function Convert-CapturedTextToLines {
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyString()]
+        [string]$Text = ""
+    )
+
+    if ([string]::IsNullOrEmpty($Text)) {
+        return @()
+    }
+
+    $normalized = $Text -replace "`r", ""
+    $lines = @($normalized -split "`n")
+
+    while ($lines.Count -gt 0 -and [string]::IsNullOrEmpty($lines[$lines.Count - 1])) {
+        if ($lines.Count -eq 1) {
+            return @()
+        }
+
+        $lines = @($lines[0..($lines.Count - 2)])
+    }
+
+    return @($lines)
+}
+
+function Read-RedirectCaptureFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $false)]
+        [int]$MaxAttempts = 5,
+
+        [Parameter(Mandatory = $false)]
+        [int]$RetryDelayMilliseconds = 20
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return @()
+    }
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        if (Test-Path -Path $Path -PathType Leaf) {
+            try {
+                $capturedText = Get-Content -Path $Path -Raw -ErrorAction Stop
+                return @(Convert-CapturedTextToLines -Text $capturedText)
+            }
+            catch {
+                if ($attempt -lt $MaxAttempts) {
+                    Start-Sleep -Milliseconds $RetryDelayMilliseconds
+                    continue
+                }
+            }
+        }
+        elseif ($attempt -lt $MaxAttempts) {
+            Start-Sleep -Milliseconds $RetryDelayMilliseconds
+        }
+    }
+
+    return @()
+}
+
 function Invoke-AutoHotkeyCommand {
     param(
         [Parameter(Mandatory = $true)]
@@ -119,41 +182,94 @@ function Invoke-AutoHotkeyCommand {
     )
 
     # Process-level capture is more reliable than call-operator redirection for GUI-subsystem
-    # binaries (such as AutoHotkey64.exe on CI), where LASTEXITCODE and 2>&1 can be ambiguous.
+    # binaries (such as AutoHotkey64.exe on CI), and keeps behavior consistent cross-platform.
     $stdoutPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("ahk_stdout_{0}.log" -f ([System.Guid]::NewGuid().ToString("N")))
     $stderrPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("ahk_stderr_{0}.log" -f ([System.Guid]::NewGuid().ToString("N")))
     $process = $null
+    $stdoutLines = @()
+    $stderrLines = @()
+    $captureMode = if ($IsWindows) { "start-process-redirect" } else { "dotnet-process" }
+    $processTimeoutMilliseconds = 30000
+    $streamDrainTimeoutMilliseconds = 1000
 
     try {
-        $startParams = @{
-            FilePath               = $Executable
-            ArgumentList           = $Arguments
-            PassThru               = $true
-            Wait                   = $true
-            RedirectStandardOutput = $stdoutPath
-            RedirectStandardError  = $stderrPath
-            ErrorAction            = "Stop"
-        }
         if ($IsWindows) {
+            $startParams = @{
+                FilePath               = $Executable
+                ArgumentList           = $Arguments
+                PassThru               = $true
+                Wait                   = $true
+                RedirectStandardOutput = $stdoutPath
+                RedirectStandardError  = $stderrPath
+                ErrorAction            = "Stop"
+            }
             $startParams.NoNewWindow = $true
+
+            $process = Start-Process @startParams
+
+            $stdoutLines = @(Read-RedirectCaptureFile -Path $stdoutPath)
+            $stderrLines = @(Read-RedirectCaptureFile -Path $stderrPath)
         }
+        else {
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $Executable
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
 
-        $process = Start-Process @startParams
-
-        $stdoutLines = @()
-        if (Test-Path -Path $stdoutPath -PathType Leaf) {
-            $rawStdout = Get-Content -Path $stdoutPath -ErrorAction SilentlyContinue
-            if ($null -ne $rawStdout) {
-                $stdoutLines = @($rawStdout)
+            foreach ($argument in $Arguments) {
+                [void]$startInfo.ArgumentList.Add($argument)
             }
-        }
 
-        $stderrLines = @()
-        if (Test-Path -Path $stderrPath -PathType Leaf) {
-            $rawStderr = Get-Content -Path $stderrPath -ErrorAction SilentlyContinue
-            if ($null -ne $rawStderr) {
-                $stderrLines = @($rawStderr)
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+
+            if (-not $process.Start()) {
+                throw "Process start returned false."
             }
+
+            $captureStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            $stdoutReadTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrReadTask = $process.StandardError.ReadToEndAsync()
+
+            if (-not $process.WaitForExit($processTimeoutMilliseconds)) {
+                try {
+                    $process.Kill()
+                }
+                catch {
+                    # Preserve original timeout context if kill fails.
+                }
+                throw "E_AHK_PROCESS_TIMEOUT: executable='$Executable', timeout_ms=$processTimeoutMilliseconds"
+            }
+
+            $remainingStreamWaitMilliseconds = $processTimeoutMilliseconds - [int]$captureStopwatch.ElapsedMilliseconds
+            if ($remainingStreamWaitMilliseconds -lt $streamDrainTimeoutMilliseconds) {
+                $remainingStreamWaitMilliseconds = $streamDrainTimeoutMilliseconds
+            }
+
+            if (-not [System.Threading.Tasks.Task]::WaitAll(@($stdoutReadTask, $stderrReadTask), $remainingStreamWaitMilliseconds)) {
+                throw "E_AHK_STREAM_CAPTURE_TIMEOUT: executable='$Executable', timeout_ms=$remainingStreamWaitMilliseconds"
+            }
+
+            if ($stdoutReadTask.IsFaulted -or $stderrReadTask.IsFaulted) {
+                $streamFaults = New-Object System.Collections.Generic.List[string]
+                if ($stdoutReadTask.IsFaulted -and $null -ne $stdoutReadTask.Exception) {
+                    $streamFaults.Add("stdout=$($stdoutReadTask.Exception.GetBaseException().Message)") | Out-Null
+                }
+                if ($stderrReadTask.IsFaulted -and $null -ne $stderrReadTask.Exception) {
+                    $streamFaults.Add("stderr=$($stderrReadTask.Exception.GetBaseException().Message)") | Out-Null
+                }
+
+                $faultSummary = if ($streamFaults.Count -gt 0) { ($streamFaults -join "; ") } else { "unknown stream fault" }
+                throw "E_AHK_STREAM_CAPTURE_FAILED: executable='$Executable', details='$faultSummary'"
+            }
+
+            $stdoutText = $stdoutReadTask.GetAwaiter().GetResult()
+            $stderrText = $stderrReadTask.GetAwaiter().GetResult()
+
+            $stdoutLines = @(Convert-CapturedTextToLines -Text $stdoutText)
+            $stderrLines = @(Convert-CapturedTextToLines -Text $stderrText)
         }
 
         $rawOutput = @($stdoutLines)
@@ -165,19 +281,64 @@ function Invoke-AutoHotkeyCommand {
             )
         }
 
-        return [PSCustomObject]@{
-            ExitCode = [int]$process.ExitCode
-            Output   = (Convert-OutputToStringArray -Output $rawOutput)
+        $captureDiagnostics = [PSCustomObject]@{
+            CaptureMode                    = $captureMode
+            Executable                     = $Executable
+            ArgumentCount                  = $Arguments.Count
+            StdOutLineCount                = $stdoutLines.Count
+            StdErrLineCount                = $stderrLines.Count
+            TimeoutMilliseconds            = $processTimeoutMilliseconds
+            StreamDrainTimeoutMilliseconds = $streamDrainTimeoutMilliseconds
+            StdOutCaptureExists            = (Test-Path -Path $stdoutPath -PathType Leaf)
+            StdErrCaptureExists            = (Test-Path -Path $stderrPath -PathType Leaf)
         }
-    } catch {
-        $argPreview = if ($Arguments.Count -gt 0) { ($Arguments -join " ") } else { "(none)" }
-        $startFailure = "E_AHK_PROCESS_EXECUTION_FAILED: executable='$Executable', args='$argPreview', error=$($_.Exception.Message)"
 
         return [PSCustomObject]@{
-            ExitCode = -1
-            Output   = @($startFailure)
+            ExitCode    = [int]$process.ExitCode
+            Output      = (Convert-OutputToStringArray -Output $rawOutput)
+            Diagnostics = $captureDiagnostics
         }
-    } finally {
+    }
+    catch {
+        $argPreview = if ($Arguments.Count -gt 0) { ($Arguments -join " ") } else { "(none)" }
+        $exceptionMessage = $_.Exception.Message
+        $startFailure = if ($exceptionMessage -match '^E_AHK_[A-Z_]+:') {
+            $exceptionMessage
+        }
+        else {
+            "E_AHK_PROCESS_EXECUTION_FAILED: mode='$captureMode', executable='$Executable', args='$argPreview', error=$exceptionMessage"
+        }
+
+        return [PSCustomObject]@{
+            ExitCode    = -1
+            Output      = @($startFailure)
+            Diagnostics = [PSCustomObject]@{
+                CaptureMode                    = $captureMode
+                Executable                     = $Executable
+                ArgumentCount                  = $Arguments.Count
+                StdOutLineCount                = 0
+                StdErrLineCount                = 0
+                TimeoutMilliseconds            = $processTimeoutMilliseconds
+                StreamDrainTimeoutMilliseconds = $streamDrainTimeoutMilliseconds
+                StdOutCaptureExists            = (Test-Path -Path $stdoutPath -PathType Leaf)
+                StdErrCaptureExists            = (Test-Path -Path $stderrPath -PathType Leaf)
+            }
+        }
+    }
+    finally {
+        if ($null -ne $process) {
+            try {
+                if (-not $process.HasExited) {
+                    $process.Kill()
+                }
+            }
+            catch {
+                # Best-effort process cleanup.
+            }
+
+            $process.Dispose()
+        }
+
         foreach ($capturePath in @($stdoutPath, $stderrPath)) {
             if (-not [string]::IsNullOrWhiteSpace($capturePath) -and (Test-Path -Path $capturePath -PathType Leaf)) {
                 Remove-Item -Path $capturePath -Force -ErrorAction SilentlyContinue
@@ -217,7 +378,7 @@ function Invoke-AutoHotkeyValidationCommand {
             Output   = @($commandResult.Output)
         }
 
-        $attemptResults += ,$attemptResult
+        $attemptResults += , $attemptResult
 
         if ($attemptResult.ExitCode -eq 0) {
             return [PSCustomObject]@{
@@ -346,7 +507,8 @@ function Resolve-RequestedTargetFilePaths {
             if (Test-Path -Path $candidate -PathType Leaf) {
                 $resolvedPath = (Resolve-Path -Path $candidate -ErrorAction Stop).Path
             }
-        } else {
+        }
+        else {
             $relativePath = $candidate.Replace('/', [System.IO.Path]::DirectorySeparatorChar).Replace('\\', [System.IO.Path]::DirectorySeparatorChar)
             $absoluteCandidate = Join-Path -Path $RepoRoot -ChildPath $relativePath
             if (Test-Path -Path $absoluteCandidate -PathType Leaf) {
@@ -396,7 +558,8 @@ function Test-AutoHotkeyScripts {
                 $ahkFiles.Add((Get-Item -LiteralPath $targetPath -ErrorAction Stop)) | Out-Null
             }
         }
-    } else {
+    }
+    else {
         $searchRoots = @(
             (Join-Path -Path $RepoRoot -ChildPath "Scripts/AutoHotKey"),
             (Join-Path -Path $RepoRoot -ChildPath "Config/.config")
@@ -487,14 +650,15 @@ function Test-BatchScriptsStaticSmoke {
     if ($RequestedTargetFilePaths.Count -gt 0) {
         $batchFiles = @(
             $RequestedTargetFilePaths |
-                Where-Object { [System.IO.Path]::GetExtension($_).ToLowerInvariant() -eq ".bat" } |
-                ForEach-Object {
-                    if (Test-Path -Path $_ -PathType Leaf) {
-                        Get-Item -LiteralPath $_ -ErrorAction Stop
-                    }
+            Where-Object { [System.IO.Path]::GetExtension($_).ToLowerInvariant() -eq ".bat" } |
+            ForEach-Object {
+                if (Test-Path -Path $_ -PathType Leaf) {
+                    Get-Item -LiteralPath $_ -ErrorAction Stop
                 }
+            }
         )
-    } else {
+    }
+    else {
         $batchFiles = @(Get-ChildItem -Path (Join-Path -Path $RepoRoot -ChildPath "Scripts") -Filter "*.bat" -File -Recurse -ErrorAction Stop)
     }
 

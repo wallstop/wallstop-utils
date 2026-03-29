@@ -21,6 +21,8 @@ Retain full-repository Windows validation in nightly/manual deep lanes.
 
 1. Nightly lane retains full-repository validation.
 2. AutoHotkey command execution uses deterministic stdout/stderr capture.
+3. Non-Windows command capture keeps stdout/stderr draining asynchronous with bounded timeouts to avoid pipe-buffer deadlocks.
+4. Timeout and stream-capture failures emit distinct `E_AHK_*` diagnostics so CI logs stay actionable.
 
 ## Notes
 

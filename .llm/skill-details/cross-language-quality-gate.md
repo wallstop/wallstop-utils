@@ -26,6 +26,8 @@ Current invariants to preserve:
 2. Keep generated artifact ordering deterministic across operating systems by using culture-invariant sorting in generator scripts.
 3. Keep stale-artifact checks actionable by emitting first-mismatch diagnostics and content hashes when comparisons fail.
 4. Keep cross-platform generated-index checks deterministic by using explicit UTF-8 file reads and normalizing path separators to `/` before generating or validating markdown links.
+5. For multi-OS matrix quality workflows, prefer `fail-fast: false` when preserving complete diagnostics is more valuable than early cancellation.
+6. Prefer `Invoke-Pester -Configuration` in CI over legacy `-Path`/`-CodeCoverage` parameter sets to avoid deprecation drift and warning noise.
 
 ## Commands
 
