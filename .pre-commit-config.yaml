@@ -3,7 +3,7 @@ default_install_hook_types: [pre-commit, pre-push]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v6.0.0
     hooks:
       - id: check-merge-conflict
       - id: check-json
@@ -30,14 +30,14 @@ repos:
         stages: [pre-commit]
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.10.0.1
+    rev: v0.11.0.1
     hooks:
       - id: shellcheck
         files: '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$'
         stages: [pre-commit]
 
   - repo: https://github.com/JohnnyMorganz/StyLua
-    rev: v0.20.0
+    rev: v2.4.0
     hooks:
       - id: stylua
         args: [--config-path, .stylua.toml]
@@ -52,7 +52,7 @@ repos:
         files: '^(\.github/workflows/.*\.(yml|yaml)|Config/Komorebi/applications\.yaml)$'
 
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.7
+    rev: v1.7.11
     hooks:
       - id: actionlint
         files: '^\.github/workflows/.*\.(yml|yaml)$'
