@@ -20,13 +20,17 @@ try {
   $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
   $backupFolder = "$env:USERPROFILE\Documents\WT_Settings_Backup"
   if (-not (Test-Path -Path $backupFolder)) {
-    New-Item -Path $backupFolder -ItemType Directory
+    New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
   }
 
   $currentBackupFile = Join-Path -Path $backupFolder -ChildPath "settings_backup_$timestamp.json"
-  Copy-Item -Path $settingsPath -Destination $currentBackupFile
-
-  Write-Host "Current settings backed up to $currentBackupFile"
+  if (Test-Path -Path $windowsTerminalSettings) {
+    Copy-Item -Path $windowsTerminalSettings -Destination $currentBackupFile -Force
+    Write-Host "Current settings backed up to $currentBackupFile"
+  }
+  else {
+    Write-Warning "E_WT_RESTORE_NO_LIVE_SETTINGS: No live Windows Terminal settings found at '$windowsTerminalSettings'; skipping safety backup."
+  }
 
   # Replace the current settings with the backup file
   Copy-Item -Path $settingsPath -Destination $windowsTerminalSettings -Force

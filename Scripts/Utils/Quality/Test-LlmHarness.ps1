@@ -37,7 +37,7 @@ function ConvertTo-MarkdownAnchor {
         [System.Collections.Generic.Dictionary[string, int]]$AnchorCounts
     )
 
-    $normalizedHeading = [regex]::Replace($HeadingText, '\[[^\]]+\]\([^\)]+\)', '$1')
+    $normalizedHeading = [regex]::Replace($HeadingText, '\[([^\]]+)\]\([^\)]+\)', '$1')
     $normalizedHeading = [regex]::Replace($normalizedHeading, '<[^>]+>', '')
     $normalizedHeading = $normalizedHeading -replace '`', ''
     $normalizedHeading = $normalizedHeading.ToLowerInvariant()

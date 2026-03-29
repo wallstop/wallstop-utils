@@ -21,7 +21,8 @@ All front-end wrapper files must point here and should not duplicate policy text
 5. Do not introduce heavyweight installs into PR fast lanes.
 6. Keep generated content deterministic and reproducible.
 7. After major changes, run full validation before ending a session.
-8. When a failure reveals a repeatable category, codify the invariant in skills/context/tests.
+8. Prefer PEP 668-safe pre-commit bootstrap guidance (`pipx` or dedicated venv); avoid `python3 -m pip install --user pre-commit`.
+9. When a failure reveals a repeatable category, codify the invariant in skills/context/tests.
 
 ## Working Agreement For Agents
 

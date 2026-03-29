@@ -180,9 +180,12 @@ find_package_json() {
 increment_prerelease_rollover() {
   local prerelease="$1"
   local carry=1
+  local -a parts
+  local IFS='.'
+  local formatted_num
 
   # Split prerelease into parts
-  IFS='.' read -ra parts <<< "$prerelease"
+  read -ra parts <<< "$prerelease"
 
   # Check if last part needs conceptual .0 appended
   local last_idx=$((${#parts[@]} - 1))
@@ -253,11 +256,14 @@ increment_prerelease_rollover() {
 # Increment pre-release using Default mode
 increment_prerelease_default() {
   local prerelease="$1"
+  local -a parts
+  local IFS='.'
 
-  IFS='.' read -ra parts <<< "$prerelease"
+  read -ra parts <<< "$prerelease"
   local last_idx=$((${#parts[@]} - 1))
   local last_part="${parts[$last_idx]}"
   local original_length=${#last_part}
+  local formatted_num
 
   if [[ $last_part =~ ^[0-9]+$ ]]; then
     local num_val=$((10#$last_part + 1))
@@ -267,8 +273,12 @@ increment_prerelease_default() {
     parts+=("1")
   fi
 
-  IFS='.'
-  echo "${parts[*]}"
+  local result
+  result=$(
+    IFS='.'
+    echo "${parts[*]}"
+  )
+  echo "$result"
 }
 
 # Main version increment with RolloverAt9

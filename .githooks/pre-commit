@@ -28,8 +28,14 @@ fi
 
 echo "pre-commit is not installed; falling back to legacy PowerShell checks."
 echo "Recommended bootstrap:"
-echo "  python3 -m pip install --user pre-commit"
 echo "  pipx install pre-commit"
+echo "    or via venv:"
+echo "      python3 -m venv ~/.local/venvs/pre-commit"
+echo "      ~/.local/venvs/pre-commit/bin/pip install pre-commit"
+echo "      mkdir -p ~/.local/bin"
+echo "      ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit"
+echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
+echo "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"
 echo "  pre-commit install --hook-type pre-commit --hook-type pre-push"
 echo "Major changes should close with: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1"
 run_legacy_validation

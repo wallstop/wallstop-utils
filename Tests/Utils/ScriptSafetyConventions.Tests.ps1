@@ -437,11 +437,36 @@ Describe "Cross-language quality platform conventions" {
 
         $preCommitHook | Should -Match 'pre-commit run --hook-stage pre-commit'
         $preCommitHook | Should -Match 'Run-PreCommitValidation\.ps1'
-        $preCommitHook | Should -Match 'python3 -m pip install --user pre-commit'
+        $preCommitHook | Should -Match 'pipx install pre-commit'
+        $preCommitHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
+        $preCommitHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
 
         $prePushHook | Should -Match 'pre-commit run --hook-stage pre-push --all-files'
         $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -All'
-        $prePushHook | Should -Match 'python3 -m pip install --user pre-commit'
+        $prePushHook | Should -Match 'pipx install pre-commit'
+        $prePushHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
+        $prePushHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
+    }
+
+    It "keeps pre-commit bootstrap guidance aligned with PEP 668-safe flows" {
+        $readme = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'README.md') -Raw
+        $fullValidation = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw
+        $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
+        $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
+
+        $readme | Should -Match 'pipx install pre-commit'
+        $readme | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
+        $readme | Should -Match '~/.bashrc'
+        $readme | Should -Not -Match 'python3 -m pip install --user pre-commit'
+
+        $fullValidation | Should -Match 'E_VALIDATION_PREREQ_MISSING'
+        $fullValidation | Should -Match 'pipx install pre-commit'
+        $fullValidation | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
+        $fullValidation | Should -Match '~/.bashrc or ~/.zshrc'
+        $fullValidation | Should -Not -Match 'python3 -m pip install --user pre-commit'
+
+        $preCommitHook | Should -Match '~/.bashrc or ~/.zshrc'
+        $prePushHook | Should -Match '~/.bashrc or ~/.zshrc'
     }
 
     It "explicitly propagates pwsh fallback exit status in git hooks" {
@@ -703,6 +728,15 @@ Describe "Quality config file conventions" {
         $gitattributes | Should -Match '(?m)^\*\.cmd\s+text\s+eol=crlf\s*$' -Because ".gitattributes must keep .cmd files as CRLF for cmd.exe"
     }
 
+    It "keeps .editorconfig aligned with Windows command-script line endings" {
+        $editorconfigPath = Join-Path -Path $script:repoRoot -ChildPath '.editorconfig'
+        Test-Path -Path $editorconfigPath -PathType Leaf | Should -BeTrue -Because ".editorconfig must exist"
+
+        $editorconfig = (Get-Content -Path $editorconfigPath -Raw) -replace "`r", ''
+        $editorconfig | Should -Match '(?m)^\[\*\.\{bat,cmd\}\]\s*$' -Because ".editorconfig must include a dedicated .bat/.cmd section"
+        $editorconfig | Should -Match '(?ms)\[\*\.\{bat,cmd\}\]\s*\n\s*end_of_line\s*=\s*crlf' -Because ".editorconfig must keep .bat/.cmd as CRLF to match .gitattributes"
+    }
+
     It "keeps .tools ignored as an ephemeral cache safety net" {
         # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
         $gitignore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.gitignore') -Raw) -replace "`r", ''
@@ -803,6 +837,16 @@ Describe "Shell quality conventions" {
         $incrementContent | Should -Match 'trap\s+''release_lock_dir\s+"\$lock_dir"''\s+EXIT'
     }
 
+    It "keeps prerelease IFS changes scoped in increment-version" {
+        $incrementPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/increment-version.sh'
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $incrementContent = (Get-Content -Path $incrementPath -Raw) -replace "`r", ''
+
+        $incrementContent | Should -Match 'increment_prerelease_rollover\(\)[\s\S]*local IFS=''\.'''
+        $incrementContent | Should -Match 'increment_prerelease_default\(\)[\s\S]*local IFS=''\.'''
+        $incrementContent | Should -Not -Match 'increment_prerelease_default\(\)[\s\S]*\n\s*IFS=''\.''\s*\n\s*echo\s+"\$\{parts\[\*\]\}"\s*\n\s*\}'
+    }
+
     It "surfaces dconf backup warnings in PaperWM restore" {
         $paperwmPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/PaperWM/PaperWMRestore.sh'
         # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
@@ -866,6 +910,47 @@ Describe "Shell quality conventions" {
         $violations.Count | Should -Be 0 -Because (
             "Shellcheck disable directives must include reason comments. Violations: {0}" -f ($violations -join ', ')
         )
+    }
+}
+
+Describe "Restore script safety conventions" {
+    It "uses defined destination variables in PowerToys restore messages" {
+        $powerToysRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/PowerToys/PowerToysRestore.ps1') -Raw) -replace "`r", ''
+
+        $powerToysRestore | Should -Match '\$targetPath'
+        $powerToysRestore | Should -Not -Match '\$targetFolder'
+    }
+
+    It "backs up live Windows Terminal settings and guards missing live files" {
+        $windowsTerminalRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WindowsTerminal/WindowsTerminalRestore.ps1') -Raw) -replace "`r", ''
+
+        $windowsTerminalRestore | Should -Not -Match 'Copy-Item\s+-Path\s+\$settingsPath\s+-Destination\s+\$currentBackupFile'
+        $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsTerminalSettings\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
+        $windowsTerminalRestore | Should -Match 'E_WT_RESTORE_NO_LIVE_SETTINGS'
+    }
+
+    It "guards PowerShell profile backups on first-time machines" {
+        $powershellRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Powershell/PowershellRestore.ps1') -Raw) -replace "`r", ''
+
+        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$powershellSettings\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$powershellSettings\s+-Destination\s+\$powershellBackupFile'
+        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsPowershellSettings\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsPowershellSettings\s+-Destination\s+\$windowsPowershellBackupFile'
+        $powershellRestore | Should -Match 'E_PS_RESTORE_NO_POWERSHELL_PROFILE'
+        $powershellRestore | Should -Match 'E_PS_RESTORE_NO_WINDOWS_POWERSHELL_PROFILE'
+    }
+
+    It "validates required Komorebi source files before restore copy" {
+        $komorebiRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiRestore.ps1') -Raw) -replace "`r", ''
+
+        $komorebiRestore | Should -Match '\$missingSources\s*=\s*@\('
+        $komorebiRestore | Should -Match 'E_KOMOREBI_RESTORE_SOURCE_MISSING'
+        $komorebiRestore | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiSourceConfig,\s*\$komorebiSourceBarConfig,\s*\$komorebiSourceApplications\)\)'
+    }
+
+    It "fails fast when Config restore backup directory is empty" {
+        $configRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Config/ConfigRestore.ps1') -Raw) -replace "`r", ''
+
+        $configRestore | Should -Match 'Get-ChildItem\s+-Path\s+\$backupDir\s+-Force\s+-ErrorAction\s+Stop'
+        $configRestore | Should -Match 'E_CONFIG_RESTORE_EMPTY_BACKUP'
     }
 }
 

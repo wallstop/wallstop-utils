@@ -51,7 +51,7 @@ try {
     $statusBeforeValidation = Get-StatusSnapshot
 
     if (-not (Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue)) {
-        throw "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'python3 -m pip install --user pre-commit' and run 'pre-commit install --hook-type pre-commit --hook-type pre-push'."
+        throw "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install pre-commit; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=$HOME/.local/bin:$PATH and persist that export in ~/.bashrc or ~/.zshrc), then run 'pre-commit install --hook-type pre-commit --hook-type pre-push'."
     }
 
     Invoke-NativeCommand -Label "pre-commit stage (all files)" -FailureCode "E_VALIDATION_PRECOMMIT_FAILED" -Remediation "Fix hook findings, then rerun this command." -ScriptBlock {

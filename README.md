@@ -8,17 +8,17 @@ This repository contains scripts to backup and restore various application confi
 
 ## Supported Applications
 
-| Application | Windows | macOS | Linux |
-|-------------|---------|-------|-------|
-| PowerShell | ✅ | - | - |
-| PowerToys | ✅ | - | - |
-| Windows Terminal | ✅ | - | - |
-| Komorebi | ✅ | - | - |
-| Scoop | ✅ | - | - |
-| WezTerm | -* | ✅ | ✅ |
-| Homebrew | - | ✅ | - |
+| Application      | Windows | macOS | Linux |
+| ---------------- | ------- | ----- | ----- |
+| PowerShell       | ✅      | -     | -     |
+| PowerToys        | ✅      | -     | -     |
+| Windows Terminal | ✅      | -     | -     |
+| Komorebi         | ✅      | -     | -     |
+| Scoop            | ✅      | -     | -     |
+| WezTerm          | -\*     | ✅    | ✅    |
+| Homebrew         | -       | ✅    | -     |
 
-*WezTerm supports Windows, but backup/restore scripts are currently Linux/macOS only.
+\*WezTerm supports Windows, but backup/restore scripts are currently Linux/macOS only.
 
 ## WezTerm Configuration
 
@@ -30,10 +30,10 @@ This repository contains scripts to backup and restore various application confi
 
 WezTerm supports multiple configuration file locations:
 
-| Location | Platform | Priority |
-|----------|----------|----------|
+| Location                        | Platform    | Priority      |
+| ------------------------------- | ----------- | ------------- |
 | `~/.config/wezterm/wezterm.lua` | Linux/macOS | Primary (XDG) |
-| `~/.wezterm.lua` | macOS | Alternative |
+| `~/.wezterm.lua`                | macOS       | Alternative   |
 
 ### Scripts
 
@@ -70,6 +70,7 @@ Restores your WezTerm configuration from the repository.
 ```
 
 The restore script:
+
 - Automatically detects your OS and existing configuration
 - Creates a timestamped backup of your current config before overwriting
 - Supports explicit destination selection via flags
@@ -115,11 +116,13 @@ Scripts/          # Backup and restore scripts
 ### Quick Backup (All)
 
 **Windows:**
+
 ```powershell
 .\Scripts\Backup.ps1
 ```
 
 **macOS:**
+
 ```bash
 ./Scripts/Mac/Backup.sh
 ```
@@ -127,11 +130,13 @@ Scripts/          # Backup and restore scripts
 ### Quick Restore (All)
 
 **Windows:**
+
 ```powershell
 .\Scripts\Restore.ps1
 ```
 
 **macOS:**
+
 ```bash
 # Run individual restore scripts as needed
 ./Scripts/Wezterm/WeztermRestore.sh
@@ -188,7 +193,15 @@ Default local behavior is:
 Enable hooks:
 
 ```bash
-python3 -m pip install --user pre-commit
+pipx install pre-commit
+# or use a dedicated pre-commit venv when pipx is unavailable:
+python3 -m venv ~/.local/venvs/pre-commit
+~/.local/venvs/pre-commit/bin/pip install pre-commit
+mkdir -p ~/.local/bin
+ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit
+export PATH="$HOME/.local/bin:$PATH"
+# persist PATH for future shells:
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 git config core.hooksPath .githooks
 chmod +x .githooks/pre-commit .githooks/pre-push
 pre-commit install --hook-type pre-commit --hook-type pre-push
