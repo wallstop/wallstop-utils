@@ -24,6 +24,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 8. Prefer PEP 668-safe pre-commit bootstrap guidance (`pipx` or dedicated venv); avoid `python3 -m pip install --user pre-commit`.
 9. When a failure reveals a repeatable category, codify the invariant in skills/context/tests.
 10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
+11. Keep harness diagnostics low-noise: use `Write-Verbose` for advisory telemetry and reserve `Write-Warning` for actionable degradation only.
 
 ## Working Agreement For Agents
 
@@ -137,33 +138,15 @@ Scripts under `Scripts/Utils/` must run on Windows, macOS, and Linux with PowerS
 
 For shell automation under `Scripts/`, keep commands portable, deterministic, and safe for AI-assisted edits.
 
-1. Start Bash scripts with strict mode:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-```
-
-- Note: this baseline is Bash-specific. `pipefail` is not available in POSIX `sh`.
-- Use this for Bash-targeted scripts in `Scripts/`. For strict POSIX `sh`, omit `pipefail` and handle pipeline errors explicitly.
-
+1. Start Bash scripts with strict mode (`#!/usr/bin/env bash` and `set -euo pipefail`); this baseline is Bash-specific, so strict POSIX `sh` scripts should omit `pipefail` and handle pipeline failures explicitly.
 2. Quote variable expansions (`"$var"`) and prefer `printf` over `echo` for portable output formatting.
 3. Keep data on stdout and diagnostics on stderr (`>&2`) so pipelines remain predictable.
 4. Use null-delimited file flows for path safety: `find ... -print0 | xargs -0 ...` or `while IFS= read -r -d ''`.
 5. Prefer modern grep forms: use `grep -E` and `grep -F`; do not introduce deprecated `egrep` or `fgrep`.
-6. Account for GNU vs BSD differences:
-
-- Avoid non-portable in-place edits like bare `sed -i` across mixed environments.
-- Prefer temp-file rewrite patterns when scripts must run on both Linux and macOS.
-
+6. Account for GNU vs BSD differences by avoiding non-portable in-place edits like bare `sed -i`, and prefer temp-file rewrite patterns when scripts must run on both Linux and macOS.
 7. For large ASCII-heavy text processing, consider `LC_ALL=C` with grep/awk/sed/sort for deterministic collation and possible speedups.
 8. Keep performance claims contextual. Optimize only after measuring; avoid premature rewrites that reduce readability.
-9. For agentic and unattended execution:
-
-- Add dry-run support for mutating scripts.
-- Make operations idempotent (safe to run repeatedly).
-- Bound long-running external calls with an explicit timeout strategy appropriate to the host.
-
+9. For agentic and unattended execution, add dry-run support for mutating scripts, make operations idempotent, and bound long-running external calls with an explicit timeout strategy appropriate to the host.
 10. Preflight-check external dependencies with `command -v` and fail fast with actionable errors.
 11. Validate shell changes with syntax + lint + tests where available (`bash -n`, `shellcheck`, `bats`).
 12. Prefer script files over large inline one-liners when logic is non-trivial; keep behavior reviewable and testable.

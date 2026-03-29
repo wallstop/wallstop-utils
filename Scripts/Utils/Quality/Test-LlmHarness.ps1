@@ -165,9 +165,25 @@ function ConvertTo-PortablePath {
     return ($PathValue -replace '[\\/]+', '/')
 }
 
+function Test-UsesCanonicalTriOsPhrase {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text
+    )
+
+    $hasWindows = $Text -match '(?i)\bwindows\b'
+    $hasMacOs = $Text -match '(?i)\bmacos\b'
+    $hasLinux = $Text -match '(?i)\blinux\b'
+    if (-not ($hasWindows -and $hasMacOs -and $hasLinux)) {
+        return $true
+    }
+
+    return $Text -match '(?i)\bwindows,\s*macos,\s*and\s+linux\b'
+}
+
 $repoRoot = Get-RepositoryRoot -CandidateRoot $RootPath
 $errors = New-Object System.Collections.Generic.List[string]
-$warnings = New-Object System.Collections.Generic.List[string]
+$diagnostics = New-Object System.Collections.Generic.List[string]
 
 $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
 $skillsIndexPath = Join-Path -Path $repoRoot -ChildPath '.llm/skills-index.md'
@@ -216,10 +232,19 @@ foreach ($wrapper in $requiredWrappers) {
 
 $llmMarkdownFiles = @()
 if (Test-Path -Path (Join-Path -Path $repoRoot -ChildPath '.llm') -PathType Container) {
+    $llmScanStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $llmMarkdownFiles = @(
         Get-ChildItem -Path (Join-Path -Path $repoRoot -ChildPath '.llm') -Filter '*.md' -File -Recurse -ErrorAction Stop |
         Sort-Object FullName
     )
+    $llmScanStopwatch.Stop()
+    $diagnostics.Add((
+            "LLM markdown scan diagnostics: files={0}; elapsedMs={1}; maxLines={2}; warningLines={3}" -f
+            $llmMarkdownFiles.Count,
+            $llmScanStopwatch.ElapsedMilliseconds,
+            $MaxLines,
+            $WarningLines
+        )) | Out-Null
 }
 
 if ($llmMarkdownFiles.Count -eq 0) {
@@ -236,7 +261,7 @@ foreach ($file in $llmMarkdownFiles) {
     }
 
     if ($lineCount -gt $WarningLines) {
-        $warnings.Add("$relativePath is near the line limit ($lineCount lines)") | Out-Null
+        $diagnostics.Add("$relativePath is near the line limit ($lineCount lines)") | Out-Null
     }
 }
 
@@ -252,8 +277,10 @@ if ($skillFiles.Count -lt 1) {
     $errors.Add("At least one skill card is required in .llm/skills (found $($skillFiles.Count)).") | Out-Null
 }
 elseif ($skillFiles.Count -lt 8 -or $skillFiles.Count -gt 10) {
-    $warnings.Add("Skill count is outside the recommended range of 8-10 (found $($skillFiles.Count)).") | Out-Null
+    $diagnostics.Add("Skill count is outside the recommended range of 8-10 (found $($skillFiles.Count)).") | Out-Null
 }
+
+$diagnostics.Add("Skill metadata diagnostics: skillFiles=$($skillFiles.Count)") | Out-Null
 
 $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
 $anchorLinkPattern = '\[[^\]]+\]\(\.\./skill-details/(?<detailsPath>(?:[^/#)\s]+/)*[^/#)\s]+\.md)#(?<anchor>[^)\s]+)\)'
@@ -266,6 +293,11 @@ foreach ($skillFile in $skillFiles) {
     if (-not $match.Success) {
         $errors.Add("$relativePath is missing trigger metadata comment.") | Out-Null
         continue
+    }
+
+    $triggerDescription = $match.Groups['description'].Value.Trim()
+    if (-not (Test-UsesCanonicalTriOsPhrase -Text $triggerDescription)) {
+        $errors.Add("$relativePath trigger description must use the canonical phrase 'Windows, macOS, and Linux' when listing all three operating systems.") | Out-Null
     }
 
     $skillLineCount = [System.IO.File]::ReadAllLines($skillFile.FullName, [System.Text.Encoding]::UTF8).Length
@@ -363,15 +395,16 @@ if (Test-Path -Path $contextPath -PathType Leaf) {
             $dependabotContent -match '(?m)^\s*applies-to:\s*(?:"security-updates"|security-updates)\s*$'
         )
 
-        $warnings.Add((
-                "Dependabot/context diagnostics: ecosystems={0}; schedule={1}/{2}/{3}/{4}; groupedByUpdateType={5}" -f
-                ($configuredEcosystems -join ','),
-                $scheduleDiagnostics.IntervalWeeklyCount,
-                $scheduleDiagnostics.DayMondayCount,
-                $scheduleDiagnostics.Time0300Count,
-                $scheduleDiagnostics.TimezoneUtcCount,
-                $usesPerUpdateTypeGroups
-            )) | Out-Null
+        $dependabotDiagnostic = (
+            "Dependabot/context diagnostics: ecosystems={0}; schedule={1}/{2}/{3}/{4}; groupedByUpdateType={5}" -f
+            ($configuredEcosystems -join ','),
+            $scheduleDiagnostics.IntervalWeeklyCount,
+            $scheduleDiagnostics.DayMondayCount,
+            $scheduleDiagnostics.Time0300Count,
+            $scheduleDiagnostics.TimezoneUtcCount,
+            $usesPerUpdateTypeGroups
+        )
+        $diagnostics.Add($dependabotDiagnostic) | Out-Null
 
         foreach ($ecosystem in $configuredEcosystems) {
             $ecosystemPattern = '(?i)(?<![A-Za-z0-9-])' + [System.Text.RegularExpressions.Regex]::Escape($ecosystem) + '(?![A-Za-z0-9-])'
@@ -440,8 +473,8 @@ else {
     }
 }
 
-foreach ($warning in $warnings) {
-    Write-Warning $warning
+foreach ($diagnostic in $diagnostics) {
+    Write-Verbose $diagnostic
 }
 
 if ($errors.Count -gt 0) {

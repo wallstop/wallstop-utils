@@ -1286,7 +1286,12 @@ Describe "Dependabot update automation conventions" {
 Describe "Dependabot manifest coverage drift conventions" {
     It "requires explicit ecosystem coverage when common dependency manifests are introduced" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
-        $ignoredPathPattern = '(?:^|[\\/])(\.git|\.venv|\.cache|\.tox|\.pytest_cache|\.egg-info|\.bundle|\.dart_tool|\.flutter-plugins|node_modules|dist|build|venv|vendor|target|__pycache__)(?:[\\/]|$)'
+        $ignoredDirectoryNames = @('.git', '.venv', '.cache', '.tox', '.pytest_cache', '.egg-info', '.bundle', '.dart_tool', '.flutter-plugins', 'node_modules', 'dist', 'build', 'venv', 'vendor', 'target', '__pycache__')
+        $ignoredPathAlternation = (
+            $ignoredDirectoryNames |
+            ForEach-Object { [System.Text.RegularExpressions.Regex]::Escape($_) }
+        ) -join '|'
+        $ignoredPathPattern = "(?:^|[\\/])($ignoredPathAlternation)(?:[\\/]|$)"
 
         $manifestMappings = @(
             @{ Filter = 'package.json'; Ecosystem = 'npm' },
@@ -1310,20 +1315,84 @@ Describe "Dependabot manifest coverage drift conventions" {
 
         $violations = New-Object System.Collections.Generic.List[string]
         $scanStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        $allRepoFiles = @(
-            Get-ChildItem -Path $script:repoRoot -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch $ignoredPathPattern }
-        )
+        $scanMode = 'git-ls-files'
+        $fallbackReason = ''
+
+        try {
+            $relativePaths = @(
+                git -C $script:repoRoot ls-files --cached --others --exclude-standard 2>$null |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique
+            )
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "git ls-files exited with code $LASTEXITCODE"
+            }
+
+            $allRepoFiles = @(
+                $relativePaths |
+                Where-Object { $_ -notmatch $ignoredPathPattern } |
+                ForEach-Object {
+                    $absolutePath = Join-Path -Path $script:repoRoot -ChildPath $_
+                    if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
+                        Get-Item -LiteralPath $absolutePath -ErrorAction SilentlyContinue
+                    }
+                } |
+                Where-Object { $null -ne $_ }
+            )
+        }
+        catch {
+            # Fallback keeps this guardrail operational even outside a git worktree while pruning ignored directories up-front.
+            $scanMode = 'fallback-pruned-recursion'
+            $fallbackReason = $_.Exception.Message
+            $pendingDirectories = New-Object 'System.Collections.Generic.Queue[string]'
+            $pendingDirectories.Enqueue($script:repoRoot)
+            $collectedFiles = New-Object 'System.Collections.Generic.List[System.IO.FileInfo]'
+
+            while ($pendingDirectories.Count -gt 0) {
+                $currentDirectory = $pendingDirectories.Dequeue()
+                $entries = @(Get-ChildItem -Path $currentDirectory -Force -ErrorAction SilentlyContinue)
+
+                foreach ($entry in $entries) {
+                    if ($entry.PSIsContainer) {
+                        if ($ignoredDirectoryNames -contains $entry.Name) {
+                            continue
+                        }
+
+                        if (($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                            continue
+                        }
+
+                        $pendingDirectories.Enqueue($entry.FullName)
+                        continue
+                    }
+
+                    if ($entry -is [System.IO.FileInfo]) {
+                        $collectedFiles.Add($entry) | Out-Null
+                    }
+                }
+            }
+
+            $allRepoFiles = @(
+                $collectedFiles |
+                Sort-Object FullName
+            )
+        }
+
         $scanStopwatch.Stop()
-        $scanDiagnostics = "repoFilesScanned={0}; manifestMappings={1}; scanElapsedMs={2}" -f $allRepoFiles.Count, $manifestMappings.Count, $scanStopwatch.ElapsedMilliseconds
+        $scanDiagnostics = "scanMode={0}; repoFilesScanned={1}; manifestMappings={2}; scanElapsedMs={3}" -f $scanMode, $allRepoFiles.Count, $manifestMappings.Count, $scanStopwatch.ElapsedMilliseconds
+        if (-not [string]::IsNullOrWhiteSpace($fallbackReason)) {
+            $scanDiagnostics = "$scanDiagnostics; fallbackReason=$fallbackReason"
+        }
 
         foreach ($mapping in $manifestMappings) {
-            $matches = @(
+            $foundFiles = @(
                 $allRepoFiles |
                 Where-Object { $_.Name -like $mapping.Filter }
             )
 
-            if ($matches.Count -eq 0) {
+            if ($foundFiles.Count -eq 0) {
                 continue
             }
 
@@ -1333,12 +1402,12 @@ Describe "Dependabot manifest coverage drift conventions" {
             }
 
             $sampleFiles = @(
-                $matches |
+                $foundFiles |
                 Select-Object -First 3 |
                 ForEach-Object { [System.IO.Path]::GetRelativePath($script:repoRoot, $_.FullName) }
             )
 
-            $violations.Add(("{0} requires ecosystem '{1}' (matches={2}; example files: {3}; diagnostics: {4})" -f $mapping.Filter, $mapping.Ecosystem, $matches.Count, ($sampleFiles -join '; '), $scanDiagnostics)) | Out-Null
+            $violations.Add(("{0} requires ecosystem '{1}' (matches={2}; example files: {3}; diagnostics: {4})" -f $mapping.Filter, $mapping.Ecosystem, $foundFiles.Count, ($sampleFiles -join '; '), $scanDiagnostics)) | Out-Null
         }
 
         $violations.Count | Should -Be 0 -Because (
@@ -1430,12 +1499,15 @@ Describe "Utility configuration safety conventions" {
         $content = Get-Content -Path $validatorPath -Raw
 
         $content | Should -Match 'Dependabot/context diagnostics'
+        $content | Should -Match 'foreach\s*\(\$diagnostic\s+in\s+\$diagnostics\)\s*\{\s*Write-Verbose\s+\$diagnostic'
+        $content | Should -Not -Match 'Write-Warning\s+\$warning'
         $content | Should -Match 'per\\s\+update\\s\+type'
         $content | Should -Match 'monday\\D\+03:00\\D\+utc'
         $content | Should -Match 'default\\s\+HFS\\\+'
         $content | Should -Match 'Case\\s\+Sensitivity\\s\+And\\s\+File\\s\+System\\s\+Differences'
         $content | Should -Match '\(\?<section>\.\*\?\)'
         $content | Should -Match '\\bAPFS\\b'
+        $content | Should -Match 'Windows,\s*macOS,\s*and\s+Linux'
     }
 
     It "avoids hardcoded user-home Import-Module paths in utility scripts" {

@@ -1,4 +1,4 @@
-<!-- trigger: cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity | Write portable PowerShell that runs on Windows macOS and Linux | Platform | skill-details/cross-platform-powershell.md -->
+<!-- trigger: cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity | Write portable PowerShell that runs on Windows, macOS, and Linux | Platform | skill-details/cross-platform-powershell.md -->
 
 # Cross-Platform PowerShell
 
