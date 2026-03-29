@@ -590,5 +590,3 @@ function Increment-Version {
 if ($MyInvocation.InvocationName -ne ".") {
   Increment-Version @args
 }
-
-

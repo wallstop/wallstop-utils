@@ -1,0 +1,29 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{ps1,psm1,psd1}]
+indent_size = 4
+
+[*.{yml,yaml,json,lua,sh,bat,ahk}]
+indent_size = 2
+
+[*.{bat,cmd}]
+end_of_line = crlf
+
+[Config/PowerToys/**]
+insert_final_newline = false
+trim_trailing_whitespace = false
+
+[Config/.config/**]
+insert_final_newline = false
+trim_trailing_whitespace = false

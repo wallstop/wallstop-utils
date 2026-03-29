@@ -15,7 +15,7 @@ try {
   }
 
   Robocopy.exe $copyFrom $targetPath *.json /S
-  Write-Host "PowerToys configuration settings restored from $targetFolder."
+  Write-Host "PowerToys configuration settings restored from $copyFrom to $targetPath."
 }
 finally {
   Pop-Location

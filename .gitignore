@@ -1,6 +1,7 @@
 Scripts/**/*.txt
 Scripts/**/*.log
 *.DS_Store
+.tools/
 TestResults/
 Tests/**/Snapshots/*.actual.txt
 Scripts/Utils/GitHub/.cache/
@@ -12,3 +13,8 @@ pre-commit.txt
 pre-push.txt
 pre-commit.log
 pre-push.log
+testResults.xml
+pr-description.md
+
+.tmp_logs/
+.venv/

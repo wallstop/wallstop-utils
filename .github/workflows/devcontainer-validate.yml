@@ -1,0 +1,221 @@
+name: Devcontainer Validate
+
+on:
+  pull_request:
+    paths:
+      - ".devcontainer/**"
+      - ".githooks/**"
+      - ".github/workflows/devcontainer-validate.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - ".devcontainer/**"
+      - ".githooks/**"
+      - ".github/workflows/devcontainer-validate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devcontainer-validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Primary job: run post-create.sh in the same environment as the devcontainer
+  # and verify that all expected post-conditions hold.
+  # ---------------------------------------------------------------------------
+  validate-post-create:
+    name: Validate post-create.sh (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: Lint post-create.sh and githook scripts
+        run: |
+          shellcheck --severity=style .devcontainer/post-create.sh
+          shellcheck --severity=style .githooks/pre-commit
+          shellcheck --severity=style .githooks/pre-push
+
+      - name: Snapshot ~/.bashrc state before post-create.sh
+        shell: bash
+        id: pre_run_snapshot
+        run: |
+          set -euo pipefail
+          # Count how many times HOME/.local/bin already appears in ~/.bashrc.
+          # On a fresh ubuntu-24.04 runner, this should be 0 (unlike ~/.profile
+          # which carries a pre-existing entry from the base image).
+          if [[ -f "${HOME}/.bashrc" ]]; then
+            count=$(grep -cF 'HOME/.local/bin' "${HOME}/.bashrc" || true)
+          else
+            count=0
+          fi
+          echo "bashrc_preexisting_count=${count}" >> "$GITHUB_OUTPUT"
+          echo "Pre-run ~/.bashrc HOME/.local/bin occurrences: ${count}"
+
+      - name: Run post-create.sh
+        run: bash .devcontainer/post-create.sh
+
+      - name: Verify pre-commit is discoverable
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          if ! command -v pre-commit > /dev/null 2>&1; then
+            echo "ERROR: pre-commit is not on PATH after post-create.sh ran."
+            exit 1
+          fi
+          pre-commit --version
+          echo "pre-commit is available: $(command -v pre-commit)"
+
+      - name: Verify git hooks are configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          hook_path="$(git config --local core.hooksPath || true)"
+          if [[ "${hook_path}" != ".githooks" ]]; then
+            echo "ERROR: core.hooksPath is '${hook_path}'; expected '.githooks'."
+            exit 1
+          fi
+          echo "core.hooksPath correctly set to: ${hook_path}"
+
+      - name: Verify ~/.bashrc PATH persistence (not a false-positive against pre-existing entry)
+        shell: bash
+        env:
+          PRE_RUN_COUNT: ${{ steps.pre_run_snapshot.outputs.bashrc_preexisting_count }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "${HOME}/.bashrc" ]]; then
+            echo "ERROR: ~/.bashrc does not exist after post-create.sh ran."
+            exit 1
+          fi
+          after_count=$(grep -cF 'HOME/.local/bin' "${HOME}/.bashrc" || true)
+          echo "Post-run ~/.bashrc HOME/.local/bin occurrences: ${after_count}"
+          # Either: a new entry was added (after > before), or the entry was already
+          # there (pre_run_count > 0) and the dedup guard correctly skipped adding it.
+          if [[ "${after_count}" -lt "${PRE_RUN_COUNT:-0}" ]]; then
+            echo "ERROR: PATH entries were removed from ~/.bashrc unexpectedly."
+            exit 1
+          fi
+          if [[ "${PRE_RUN_COUNT:-0}" -eq 0 && "${after_count}" -eq 0 ]]; then
+            echo "ERROR: ~/.bashrc had no PATH entry before OR after running post-create.sh."
+            exit 1
+          fi
+          if [[ "${after_count}" -gt 1 ]]; then
+            echo "ERROR: Duplicate PATH entries in ~/.bashrc (${after_count} occurrences). Dedup guard failed."
+            exit 1
+          fi
+          echo "PATH persistence check passed (count=${after_count}, pre-run=${PRE_RUN_COUNT:-0})."
+
+      - name: Confirm idempotence (run post-create.sh a second time)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .devcontainer/post-create.sh
+          # Verify no duplicate PATH entries were added on the second run.
+          dup_count=$(grep -cF 'HOME/.local/bin' "${HOME}/.bashrc" || true)
+          if [[ "${dup_count}" -gt 1 ]]; then
+            echo "ERROR: Second run added duplicate PATH entries to ~/.bashrc (${dup_count} occurrences)."
+            exit 1
+          fi
+          echo "Second run completed without errors or duplicate entries."
+
+  # ---------------------------------------------------------------------------
+  # Coverage job: exercise the venv fallback strategy (Strategy 3) by removing
+  # pipx from PATH so the script is forced past Strategies 1 and 2.
+  # This is the strategy that fixes the PEP 668 externally-managed-environment
+  # error and must have explicit integration test coverage.
+  # ---------------------------------------------------------------------------
+  validate-venv-strategy:
+    name: Validate venv fallback strategy (ubuntu-24.04, no pipx)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Python (system-style, no pipx pre-install)
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install python3-venv and pin pipx to never-install
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-venv
+          # Force Strategy 3 (venv) by ensuring pipx cannot be obtained through any mechanism.
+          #
+          # Step 1: Purge any pre-installed pipx binary.
+          sudo apt-get remove -y --purge pipx 2>/dev/null || true
+          for pipx_path in $(which -a pipx 2>/dev/null || true); do
+            [[ -f "${pipx_path}" ]] && sudo rm -f "${pipx_path}"
+          done
+          #
+          # Step 2: Pin pipx to priority -1 via APT preferences so that
+          # Strategy 2's `sudo apt-get install pipx` cannot reinstall it.
+          # This is necessary because Strategy 2 calls apt-get under sudo, which
+          # uses secure_path and bypasses any user-space PATH wrapper approach.
+          printf 'Package: pipx\nPin: release *\nPin-Priority: -1\n' \
+            | sudo tee /etc/apt/preferences.d/no-pipx > /dev/null
+          echo "APT pin for pipx set to priority -1; apt-get cannot reinstall it."
+          #
+          # Step 3: Verify pipx is definitively absent.
+          if command -v pipx > /dev/null 2>&1; then
+            echo "ERROR: pipx is still present at $(command -v pipx) after removal and pin."
+            exit 1
+          fi
+          echo "pipx absent and APT-pinned. Strategy 3 (venv) will be forced."
+
+      - name: Run post-create.sh (must succeed via venv strategy)
+        run: bash .devcontainer/post-create.sh
+
+      - name: Verify pre-commit was installed via venv strategy (exact artifact check)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          # Confirm pre-commit is available from ~/.local/bin.
+          if ! command -v pre-commit > /dev/null 2>&1; then
+            echo "ERROR: pre-commit not found on PATH after venv-strategy run."
+            exit 1
+          fi
+          pre_commit_path="$(command -v pre-commit)"
+          echo "pre-commit found at: ${pre_commit_path}"
+
+          # Strategy 3 produces exactly: a symlink at ~/.local/bin/pre-commit
+          # pointing to ~/.local/venvs/pre-commit/bin/pre-commit.
+          # We require BOTH conditions to be true — a non-symlink binary or
+          # a symlink pointing elsewhere means Strategy 3 was NOT used.
+          expected_symlink="${HOME}/.local/bin/pre-commit"
+          expected_target="${HOME}/.local/venvs/pre-commit/bin/pre-commit"
+
+          if [[ ! -L "${expected_symlink}" ]]; then
+            echo "ERROR: ${expected_symlink} is not a symlink."
+            echo "Strategy 3 (venv) creates a symlink; a non-symlink binary means a different strategy ran."
+            exit 1
+          fi
+          link_target="$(readlink "${expected_symlink}")"
+          echo "Symlink target: ${link_target}"
+          if [[ "${link_target}" != "${expected_target}" ]]; then
+            echo "ERROR: ${expected_symlink} points to '${link_target}'."
+            echo "Expected it to point to '${expected_target}'."
+            exit 1
+          fi
+          echo "Confirmed: ~/.local/bin/pre-commit is a symlink to the venv binary (Strategy 3 verified)."
+
+          pre-commit --version

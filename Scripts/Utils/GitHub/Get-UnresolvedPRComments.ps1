@@ -204,7 +204,7 @@ function Convert-ToStringArray {
     )
 
     if ($null -eq $Value) {
-        return @()
+        return @() # array-unwrap-safe: callers always wrap with @()
     }
 
     if ($Value -is [string]) {
@@ -239,7 +239,7 @@ function Get-HeaderValues {
     )
 
     if ($null -eq $Headers) {
-        return @()
+        return @() # array-unwrap-safe: callers always wrap with @()
     }
 
     $possibleKeys = @($Key, $Key.ToLowerInvariant(), $Key.ToUpperInvariant())
@@ -271,7 +271,7 @@ function Get-HeaderValues {
     }
 
     if ($Headers.PSObject.Methods.Name -notcontains "GetEnumerator") {
-        return @()
+        return @() # array-unwrap-safe: callers always wrap with @()
     }
 
     # Fallback for dictionary enumerables with case-insensitive keys.
@@ -287,7 +287,7 @@ function Get-HeaderValues {
         }
     }
 
-    return @()
+    return @() # array-unwrap-safe: callers always wrap with @()
 }
 
 function Get-HeaderValueDiagnostics {
@@ -666,7 +666,7 @@ function Get-NormalizedGitHubHostAllowlist {
     }
 
     if ($rawHosts.Count -eq 0) {
-        return @()
+        return @() # array-unwrap-safe: callers always wrap with @()
     }
 
     $seenHosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -1139,7 +1139,7 @@ function Get-OpenPullRequests {
 
     $pulls = Invoke-GitHubRequestWithRetry -Method GET -Uri $uri -Headers $Headers -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
     if ($null -eq $pulls) {
-        return @()
+        return @() # array-unwrap-safe: callers always wrap with @()
     }
 
     return @($pulls)

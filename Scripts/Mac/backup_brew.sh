@@ -7,19 +7,19 @@
 # If no backup_directory is provided, defaults to ~/brew_backups
 # ===================================================================
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+# Exit on errors, undefined variables, and failed pipelines
+set -euo pipefail
 
 # Function to display usage
 usage() {
-    echo "Usage: $0 [backup_directory]"
-    echo "If no backup_directory is provided, defaults to ~/brew_backups"
-    exit 1
+  echo "Usage: $0 [backup_directory]"
+  echo "If no backup_directory is provided, defaults to ~/brew_backups"
+  exit 1
 }
 
 # Check for help flag
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    usage
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
 fi
 
 script_dir="$(dirname "${BASH_SOURCE[0]}")"

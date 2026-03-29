@@ -1,0 +1,445 @@
+name: Script Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      run_shell_debt_audit:
+        description: "Run a non-blocking full-repo shell debt audit (shellcheck + shfmt)."
+        required: false
+        default: false
+        type: boolean
+      run_windows_deep_audit:
+        description: "Run full-repo Windows language validation (AutoHotkey + batch) on demand."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: script-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  precommit-linux:
+    name: pre-commit full repo (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        id: setup_python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v5.0.4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install pre-commit
+        run: python -m pip install --upgrade pip pre-commit
+
+      - name: Assert pre-commit availability
+        run: pre-commit --version
+
+      - name: Run deterministic non-shell hooks on full repository
+        run: SKIP=shellcheck,shfmt pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure --color always
+
+      - name: Run LLM harness validator explicitly
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Test-LlmHarness.ps1
+
+      - name: Run shell hooks on changed files
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          from_ref=""
+          to_ref="$GIT_SHA"
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            if [[ -z "$BASE_REF" ]]; then
+              echo "Pull request event is missing BASE_REF; failing shell changed-file checks."
+              exit 1
+            fi
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            from_ref="origin/$BASE_REF"
+          elif [[ -n "$EVENT_BEFORE" && "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]]; then
+            from_ref="$EVENT_BEFORE"
+          else
+            head_parent="$(git rev-parse --verify HEAD^ 2>/dev/null || true)"
+            if [[ -n "$head_parent" ]]; then
+              from_ref="$head_parent"
+            fi
+          fi
+
+          if [[ -z "$from_ref" ]]; then
+            echo "No baseline commit available; running shell checks for tracked shell targets in HEAD."
+            mapfile -t changed_shell_files < <(
+              git ls-files | grep -E '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$' || true
+            )
+            if [[ ${#changed_shell_files[@]} -eq 0 ]]; then
+              echo "No shell target files found; skipping shellcheck/shfmt."
+              exit 0
+            fi
+            pre-commit run --hook-stage pre-commit shellcheck --files "${changed_shell_files[@]}" --show-diff-on-failure --color always
+            pre-commit run --hook-stage pre-commit shfmt --files "${changed_shell_files[@]}" --show-diff-on-failure --color always
+            exit 0
+          fi
+
+          mapfile -t changed_shell_files < <(
+            git diff --name-only "$from_ref" "$to_ref" | grep -E '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$' || true
+          )
+
+          if [[ ${#changed_shell_files[@]} -eq 0 ]]; then
+            echo "No changed shell targets in range $from_ref..$to_ref; skipping shellcheck/shfmt."
+            exit 0
+          fi
+
+          pre-commit run --hook-stage pre-commit shellcheck --files "${changed_shell_files[@]}" --show-diff-on-failure --color always
+          pre-commit run --hook-stage pre-commit shfmt --files "${changed_shell_files[@]}" --show-diff-on-failure --color always
+
+      - name: Assert clean tree after pre-commit
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Assert-CleanGitTree.ps1 -Context "Linux pre-commit full-repo checks"
+
+  shell-debt-audit:
+    name: Shell debt audit (manual, non-blocking)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_shell_debt_audit == true }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Python
+        id: setup_python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v5.0.4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install pre-commit
+        run: python -m pip install --upgrade pip pre-commit
+
+      - name: Run full-repo shell debt audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Running non-blocking shell debt audit across the full repository."
+          pre-commit run --all-files --hook-stage pre-commit shellcheck --show-diff-on-failure --color always 2>&1 | tee shellcheck-audit.log || true
+          pre-commit run --all-files --hook-stage pre-commit shfmt --show-diff-on-failure --color always 2>&1 | tee shfmt-audit.log || true
+
+      - name: Summarize shell debt telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f shellcheck-audit.log ]]; then
+            echo "No shellcheck audit log produced."
+            exit 0
+          fi
+
+          mapfile -t codes < <(grep -oE 'SC[0-9]{4}' shellcheck-audit.log | sort | uniq -c || true)
+
+          {
+            echo "## Shell Debt Telemetry"
+            echo
+            if [[ ${#codes[@]} -eq 0 ]]; then
+              echo "No shellcheck codes reported in this audit run."
+            else
+              echo "Detected shellcheck code counts (non-blocking audit):"
+              echo
+              echo '```text'
+              printf '%s\n' "${codes[@]}"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  windows-language:
+    name: Windows language validation (PR fast lane)
+    if: ${{ github.event_name != 'schedule' }}
+    runs-on: windows-latest
+    timeout-minutes: 6
+    env:
+      AHK_RUNTIME_VERSION: "2.0.19"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed Windows language targets
+        id: detect_windows_targets
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $targetPattern = '^(Scripts/AutoHotKey/.*\.ahk|Config/\.config/.*\.ahk|Scripts/.*\.bat)$'
+          $fromRef = ""
+          $toRef = $env:GIT_SHA
+          $changedTargets = @()
+
+          if ($env:EVENT_NAME -eq "pull_request") {
+            if ([string]::IsNullOrWhiteSpace($env:BASE_REF)) {
+              throw "Pull request event is missing BASE_REF; failing Windows changed-file checks."
+            }
+
+            git fetch --no-tags --depth=1 origin $env:BASE_REF
+            $fromRef = "origin/$($env:BASE_REF)"
+          } elseif (-not [string]::IsNullOrWhiteSpace($env:EVENT_BEFORE) -and $env:EVENT_BEFORE -ne "0000000000000000000000000000000000000000") {
+            $fromRef = $env:EVENT_BEFORE
+          } else {
+            $headParentCandidate = (git rev-parse --verify HEAD^ 2>$null)
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($headParentCandidate)) {
+              $fromRef = $headParentCandidate.Trim()
+            }
+          }
+
+          if ([string]::IsNullOrWhiteSpace($fromRef)) {
+            Write-Warning "W_GIT_BASELINE_UNAVAILABLE: No baseline commit available; running Windows checks for tracked targets in HEAD."
+            $changedTargets = @(git ls-files | Where-Object { $_ -match $targetPattern })
+          } else {
+            $changedTargets = @(git diff --name-only $fromRef $toRef | Where-Object { $_ -match $targetPattern })
+          }
+
+          $changedTargets = @(
+            $changedTargets |
+              ForEach-Object { $_.Trim() } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              Sort-Object -Unique
+          )
+
+          if ($changedTargets.Count -eq 0) {
+            "has_changes=false" >> $env:GITHUB_OUTPUT
+            "target_count=0" >> $env:GITHUB_OUTPUT
+            "target_files<<EOF" >> $env:GITHUB_OUTPUT
+            "" >> $env:GITHUB_OUTPUT
+            "EOF" >> $env:GITHUB_OUTPUT
+            Write-Host "No changed Windows language targets detected; Windows checks will be skipped."
+            return
+          }
+
+          "has_changes=true" >> $env:GITHUB_OUTPUT
+          "target_count=$($changedTargets.Count)" >> $env:GITHUB_OUTPUT
+          "target_files<<EOF" >> $env:GITHUB_OUTPUT
+          $changedTargets | ForEach-Object { "$_" >> $env:GITHUB_OUTPUT }
+          "EOF" >> $env:GITHUB_OUTPUT
+
+          Write-Host "Detected $($changedTargets.Count) changed Windows language target(s)."
+
+      - name: Skip Windows language checks (no Windows targets changed)
+        if: ${{ steps.detect_windows_targets.outputs.has_changes != 'true' }}
+        shell: pwsh
+        run: |
+          Write-Host "Windows checks skipped because no *.ahk or *.bat targets changed in this event scope."
+
+      - name: Cache AutoHotkey portable runtime
+        if: ${{ steps.detect_windows_targets.outputs.has_changes == 'true' }}
+        uses: actions/cache@v5.0.4
+        with:
+          path: ${{ runner.temp }}/autohotkey-portable-${{ env.AHK_RUNTIME_VERSION }}
+          key: autohotkey-portable-${{ runner.os }}-${{ env.AHK_RUNTIME_VERSION }}
+
+      - name: Setup AutoHotkey portable runtime
+        if: ${{ steps.detect_windows_targets.outputs.has_changes == 'true' }}
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $version = $env:AHK_RUNTIME_VERSION
+          $installRoot = Join-Path -Path $env:RUNNER_TEMP -ChildPath "autohotkey-portable-$version"
+          $exePath = Join-Path -Path $installRoot -ChildPath "AutoHotkey64.exe"
+
+          if (-not (Test-Path -Path $exePath -PathType Leaf)) {
+            New-Item -Path $installRoot -ItemType Directory -Force | Out-Null
+            $archivePath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "AutoHotkey_$version.zip"
+            $downloadUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$version/AutoHotkey_$version.zip"
+
+            Write-Host "Downloading AutoHotkey portable runtime from $downloadUrl"
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+            Expand-Archive -Path $archivePath -DestinationPath $installRoot -Force
+          }
+
+          if (-not (Test-Path -Path $exePath -PathType Leaf)) {
+            throw "E_AHK_RUNTIME_UNAVAILABLE: Expected AutoHotkey64.exe at '$exePath' after setup."
+          }
+
+          $installRoot >> $env:GITHUB_PATH
+          Write-Host "AutoHotkey runtime ready at: $exePath"
+
+      - name: Run Windows language checks (targeted)
+        if: ${{ steps.detect_windows_targets.outputs.has_changes == 'true' }}
+        shell: pwsh
+        env:
+          WINDOWS_TARGET_FILES: ${{ steps.detect_windows_targets.outputs.target_files }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $start = Get-Date
+          ./Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1 -TargetFiles $env:WINDOWS_TARGET_FILES -RequireAutoHotkey
+          $elapsedSeconds = [int]([Math]::Round(((Get-Date) - $start).TotalSeconds, 0))
+
+          Write-Host "Windows language checks duration: $elapsedSeconds seconds"
+          if ($elapsedSeconds -gt 180) {
+            throw "E_CI_TIME_BUDGET: Windows PR lane exceeded 180-second budget ($elapsedSeconds seconds)."
+          }
+
+      - name: Assert clean tree after Windows checks
+        if: ${{ steps.detect_windows_targets.outputs.has_changes == 'true' }}
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Assert-CleanGitTree.ps1 -Context "Windows language checks"
+
+  windows-language-nightly:
+    name: Windows language validation (nightly deep lane)
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_deep_audit == true) }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      AHK_RUNTIME_VERSION: "2.0.19"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Cache AutoHotkey portable runtime
+        uses: actions/cache@v5.0.4
+        with:
+          path: ${{ runner.temp }}/autohotkey-portable-${{ env.AHK_RUNTIME_VERSION }}
+          key: autohotkey-portable-${{ runner.os }}-${{ env.AHK_RUNTIME_VERSION }}
+
+      - name: Setup AutoHotkey portable runtime
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $version = $env:AHK_RUNTIME_VERSION
+          $installRoot = Join-Path -Path $env:RUNNER_TEMP -ChildPath "autohotkey-portable-$version"
+          $exePath = Join-Path -Path $installRoot -ChildPath "AutoHotkey64.exe"
+
+          if (-not (Test-Path -Path $exePath -PathType Leaf)) {
+            New-Item -Path $installRoot -ItemType Directory -Force | Out-Null
+            $archivePath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "AutoHotkey_$version.zip"
+            $downloadUrl = "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$version/AutoHotkey_$version.zip"
+
+            Write-Host "Downloading AutoHotkey portable runtime from $downloadUrl"
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+            Expand-Archive -Path $archivePath -DestinationPath $installRoot -Force
+          }
+
+          if (-not (Test-Path -Path $exePath -PathType Leaf)) {
+            throw "E_AHK_RUNTIME_UNAVAILABLE: Expected AutoHotkey64.exe at '$exePath' after setup."
+          }
+
+          $installRoot >> $env:GITHUB_PATH
+          Write-Host "AutoHotkey runtime ready at: $exePath"
+
+      - name: Run Windows language checks (full repository)
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $start = Get-Date
+          ./Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1 -RequireAutoHotkey
+          $elapsedSeconds = [int]([Math]::Round(((Get-Date) - $start).TotalSeconds, 0))
+
+          Write-Host "Nightly Windows language checks duration: $elapsedSeconds seconds"
+          "Nightly Windows checks duration: $elapsedSeconds seconds" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Assert clean tree after nightly Windows checks
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Assert-CleanGitTree.ps1 -Context "Windows language checks (nightly deep lane)"
+
+  macos-language:
+    name: macOS AppleScript validation
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Run macOS language checks
+        shell: bash
+        run: ./Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh
+
+      - name: Assert clean tree after macOS checks
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Assert-CleanGitTree.ps1 -Context "macOS language checks"
+
+  validation-summary:
+    name: Validation summary
+    if: ${{ always() }}
+    needs:
+      - precommit-linux
+      - windows-language
+      - windows-language-nightly
+      - macos-language
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Summarize validation lane results
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $laneResults = [ordered]@{
+            "precommit-linux"        = "${{ needs.precommit-linux.result }}"
+            "windows-language"       = "${{ needs.windows-language.result }}"
+            "windows-language-nightly" = "${{ needs.windows-language-nightly.result }}"
+            "macos-language"         = "${{ needs.macos-language.result }}"
+          }
+
+          $failedLanes = @()
+          foreach ($laneName in $laneResults.Keys) {
+            $result = $laneResults[$laneName]
+            Write-Host "$laneName => $result"
+
+            if ($result -eq "failure" -or $result -eq "cancelled") {
+              $failedLanes += $laneName
+            }
+          }
+
+          "## Script Quality Validation Summary" >> $env:GITHUB_STEP_SUMMARY
+          foreach ($laneName in $laneResults.Keys) {
+            "- ${laneName}: $($laneResults[$laneName])" >> $env:GITHUB_STEP_SUMMARY
+          }
+
+          if ($failedLanes.Count -gt 0) {
+            throw "E_VALIDATION_SUMMARY_FAILED: failing lanes detected ($($failedLanes -join ', '))."
+          }

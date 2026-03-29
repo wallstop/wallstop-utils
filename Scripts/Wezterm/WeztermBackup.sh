@@ -12,23 +12,23 @@ set -euo pipefail
 
 # Function to display usage
 usage() {
-    echo "Usage: $0"
-    echo "Backs up WezTerm configuration to the repository"
-    echo ""
-    echo "Supported config locations (checked in order):"
-    echo "  - ~/.config/wezterm/wezterm.lua (Linux/macOS XDG)"
-    echo "  - ~/.wezterm.lua (macOS home directory)"
-    exit 1
+  echo "Usage: $0"
+  echo "Backs up WezTerm configuration to the repository"
+  echo ""
+  echo "Supported config locations (checked in order):"
+  echo "  - ~/.config/wezterm/wezterm.lua (Linux/macOS XDG)"
+  echo "  - ~/.wezterm.lua (macOS home directory)"
+  exit 1
 }
 
 # Check for help flag
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    usage
+  usage
 fi
 
 # Get the directory where the script is located and resolve to absolute path
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKUP_DIR="$(cd "$SCRIPT_DIR/../../Config/Wezterm" 2>/dev/null && pwd || echo "$SCRIPT_DIR/../../Config/Wezterm")"
+BACKUP_DIR="$(cd "$SCRIPT_DIR/../../Config/Wezterm" 2> /dev/null && pwd || echo "$SCRIPT_DIR/../../Config/Wezterm")"
 
 # Define the config file name
 CONFIG_FILE="wezterm.lua"
@@ -38,28 +38,28 @@ OS_TYPE="$(uname -s)"
 
 # Function to find WezTerm config
 find_wezterm_config() {
-    # Check XDG config location (Linux and macOS)
-    if [[ -f "$HOME/.config/wezterm/$CONFIG_FILE" ]]; then
-        echo "$HOME/.config/wezterm/$CONFIG_FILE"
-        return 0
-    fi
-    
-    # Check home directory location (common on macOS)
-    if [[ -f "$HOME/.wezterm.lua" ]]; then
-        echo "$HOME/.wezterm.lua"
-        return 0
-    fi
-    
-    return 1
+  # Check XDG config location (Linux and macOS)
+  if [[ -f "$HOME/.config/wezterm/$CONFIG_FILE" ]]; then
+    echo "$HOME/.config/wezterm/$CONFIG_FILE"
+    return 0
+  fi
+
+  # Check home directory location (common on macOS)
+  if [[ -f "$HOME/.wezterm.lua" ]]; then
+    echo "$HOME/.wezterm.lua"
+    return 0
+  fi
+
+  return 1
 }
 
 # Find the source config file
 SOURCE_CONFIG=$(find_wezterm_config) || {
-    echo "Error: WezTerm configuration file not found."
-    echo "Checked locations:"
-    echo "  - $HOME/.config/wezterm/$CONFIG_FILE"
-    echo "  - $HOME/.wezterm.lua"
-    exit 1
+  echo "Error: WezTerm configuration file not found."
+  echo "Checked locations:"
+  echo "  - $HOME/.config/wezterm/$CONFIG_FILE"
+  echo "  - $HOME/.wezterm.lua"
+  exit 1
 }
 
 echo "Detected OS: $OS_TYPE"

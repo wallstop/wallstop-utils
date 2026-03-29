@@ -4,9 +4,39 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-if command -v pwsh >/dev/null 2>&1; then
-  pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1"
-else
-  echo "pwsh is required for pre-commit validation."
+run_legacy_validation() {
+  if command -v pwsh > /dev/null 2>&1; then
+    pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1"
+    return $?
+  fi
+
+  echo "pre-commit is unavailable and pwsh was not found; cannot run legacy PowerShell quality gates."
+  echo "Install pre-commit with: pipx install pre-commit"
+  echo "  (or via venv: python3 -m venv ~/.local/venvs/pre-commit"
+  echo "                ~/.local/venvs/pre-commit/bin/pip install pre-commit"
+  echo "                mkdir -p ~/.local/bin"
+  echo "                ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit"
+  echo "                export PATH=\"\$HOME/.local/bin:\$PATH\")"
+  echo "Install PowerShell from: https://learn.microsoft.com/powershell/scripting/install/installing-powershell"
   exit 1
+}
+
+if command -v pre-commit > /dev/null 2>&1; then
+  pre-commit run --hook-stage pre-commit --show-diff-on-failure --color always
+  exit $?
 fi
+
+echo "pre-commit is not installed; falling back to legacy PowerShell checks."
+echo "Recommended bootstrap:"
+echo "  pipx install pre-commit"
+echo "    or via venv:"
+echo "      python3 -m venv ~/.local/venvs/pre-commit"
+echo "      ~/.local/venvs/pre-commit/bin/pip install pre-commit"
+echo "      mkdir -p ~/.local/bin"
+echo "      ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit"
+echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
+echo "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"
+echo "  pre-commit install --hook-type pre-commit --hook-type pre-push"
+echo "Major changes should close with: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1"
+run_legacy_validation
+exit $?

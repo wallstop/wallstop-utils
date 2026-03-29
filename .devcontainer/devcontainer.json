@@ -1,0 +1,138 @@
+{
+  "name": "wallstop-utils Dev",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "updateRemoteUserUID": false,
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": "true",
+      "installOhMyZsh": "true",
+      "upgradePackages": "false",
+      "username": "vscode"
+    },
+    "ghcr.io/devcontainers/features/powershell:1": {},
+    "ghcr.io/devcontainers/features/python:1": {
+      "installTools": "true",
+      "version": "3.12"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "remoteUser": "vscode",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "GitHub.vscode-pull-request-github",
+        "GitHub.vscode-github-actions",
+        "anthropic.claude-code",
+        "openai.chatgpt",
+        "eamodio.gitlens",
+        "mhutchie.git-graph",
+        "usernamehw.errorlens",
+        "editorconfig.editorconfig",
+        "streetsidesoftware.code-spell-checker",
+        "yzhang.markdown-all-in-one",
+        "davidanson.vscode-markdownlint",
+        "bierner.markdown-preview-github-styles",
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-xml",
+        "esbenp.prettier-vscode",
+        "timonwong.shellcheck",
+        "foxundermoon.shell-format",
+        "ms-vscode.powershell",
+        "pspester.pester-test",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "mark-wiemer.vscode-autohotkey-plus-plus",
+        "thqby.vscode-autohotkey2-lsp",
+        "idleberg.applescript",
+        "sumneko.lua",
+        "ms-azuretools.vscode-docker",
+        "PKief.material-icon-theme",
+        "enkia.tokyo-night",
+        "Catppuccin.catppuccin-vsc",
+        "sdras.night-owl",
+        "oderwat.indent-rainbow",
+        "gruntfuggly.todo-tree"
+      ],
+      "settings": {
+        "workbench.colorTheme": "Tokyo Night Storm",
+        "workbench.iconTheme": "material-icon-theme",
+        "editor.fontFamily": "JetBrains Mono, Fira Code, Cascadia Code, monospace",
+        "editor.fontLigatures": true,
+        "editor.cursorBlinking": "phase",
+        "editor.cursorSmoothCaretAnimation": "on",
+        "editor.minimap.enabled": true,
+        "editor.bracketPairColorization.enabled": true,
+        "editor.guides.bracketPairs": true,
+        "editor.stickyScroll.enabled": true,
+        "editor.formatOnSave": true,
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.fontFamily": "JetBrains Mono, Fira Code, Cascadia Code, monospace",
+        "terminal.integrated.gpuAcceleration": "on",
+        "git.autofetch": true,
+        "git.confirmSync": false,
+        "powershell.powerShellDefaultVersion": "PowerShell (Core)",
+        "powershell.codeFormatting.whitespaceAfterSeparator": true,
+        "shellcheck.enable": true,
+        "shellformat.flag": "-i 2 -ci -sr",
+        "prettier.requireConfig": false,
+        "yaml.format.enable": true,
+        "todo-tree.general.tags": [
+          "TODO",
+          "FIXME",
+          "NOTE",
+          "REVIEW"
+        ],
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+          }
+        },
+        "ruff.enable": true,
+        "[toml]": {
+          "editor.defaultFormatter": "tamasfe.even-better-toml"
+        },
+        "evenBetterToml.formatter.alignEntries": false,
+        "[xml]": {
+          "editor.defaultFormatter": "redhat.vscode-xml"
+        },
+        "xml.format.enabled": true,
+        "xml.format.splitAttributes": false,
+        "[lua]": {
+          "editor.defaultFormatter": "sumneko.lua"
+        },
+        "Lua.diagnostics.enable": true,
+        "Lua.completion.enable": true,
+        "Lua.workspace.checkThirdParty": false,
+        "[json]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[jsonc]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[markdown]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[shellscript]": {
+          "editor.defaultFormatter": "foxundermoon.shell-format"
+        },
+        "[yaml]": {
+          "editor.defaultFormatter": "redhat.vscode-yaml"
+        },
+        "autohotkey2.warn.varUnset": true,
+        "pester.testsPath": "Tests"
+      }
+    }
+  }
+}
