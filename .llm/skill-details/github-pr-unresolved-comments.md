@@ -22,17 +22,18 @@ Keep clipboard behavior deterministic and non-breaking:
 
 - `-Copy` is best-effort by default and must never suppress stdout output.
 - Copy attempts use ordered fallback strategies, including OSC52-capable PowerShell path when available.
+- Native clipboard tools (pbcopy, xclip, xsel, wl-copy) must check `$LASTEXITCODE` after invocation; non-zero means the attempt failed and the next strategy should be tried.
 - `-CopyStrict` is opt-in and must fail fast if used without `-Copy`.
 - When `-CopyStrict` is present and copy fails, throw `E_CLIPBOARD_COPY_FAILED`.
 - Warning/error text must continue redacting sensitive tokens.
 
 ## Output File Contract
 
-When `-OutputPath` is supplied:
+When `-OutputPath` is supplied (capture `$PSBoundParameters` at script scope into `$script:TopLevelBoundParameters` and use `.ContainsKey("OutputPath")` to detect, not `IsNullOrWhiteSpace`):
 
 - Resolve to an absolute path deterministically.
 - Create missing parent directories.
-- Write UTF-8 content via `[System.IO.File]::WriteAllText(..., [System.Text.Encoding]::UTF8)`.
+- Write UTF-8 content without BOM via `[System.IO.File]::WriteAllText(..., [System.Text.UTF8Encoding]::new($false))`.
 - Keep stdout output unchanged for automation compatibility.
 - Use explicit `E_INVALID_OUTPUT_PATH` / `E_OUTPUT_WRITE_FAILED` diagnostics.
 

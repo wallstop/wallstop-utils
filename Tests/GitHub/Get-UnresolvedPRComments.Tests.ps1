@@ -2025,6 +2025,7 @@ Describe "Invoke-Main" {
         $MaxPages = 100
         $RequestTimeoutSeconds = 60
         $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{ "OutputPath" = $OutputPath }
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{
@@ -2080,6 +2081,7 @@ Describe "Invoke-Main" {
         $MaxPages = 100
         $RequestTimeoutSeconds = 60
         $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{

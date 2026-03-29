@@ -270,7 +270,27 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'if\s*\(\$Copy\.IsPresent\)\s*\{[\s\S]*E_CLIPBOARD_COPY_FAILED'
         $content | Should -Match 'function\s+Write-RenderedOutputToFile'
         $content | Should -Match 'Write-RenderedOutputToFile\s+-Text\s+\$output\s+-OutputPath\s+\$OutputPath'
-        $content | Should -Match '\[System\.IO\.File\]::WriteAllText\(\$resolvedPath,\s*\$content,\s*\[System\.Text\.Encoding\]::UTF8\)'
+        $content | Should -Match '\[System\.IO\.File\]::WriteAllText\(\$resolvedPath,\s*\$content,\s*\[System\.Text\.UTF8Encoding\]::new\(\$false\)\)'
+    }
+
+    It "checks LASTEXITCODE after native clipboard commands in Copy-ToClipboard" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        foreach ($tool in @("pbcopy", "xclip", "xsel", "wl-copy")) {
+            $escapedTool = [regex]::Escape($tool)
+            $content | Should -Match (
+                "function\s+Copy-ToClipboard[\s\S]*""$escapedTool""\s*\{[\s\S]*?LASTEXITCODE\s+-ne\s+0[\s\S]*?continue[\s\S]*?return\s+\`$true"
+            ) -Because "Copy-ToClipboard must check LASTEXITCODE after '$tool' to detect silent native command failures"
+        }
+    }
+
+    It "uses PSBoundParameters for OutputPath gating in Invoke-Main" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*TopLevelBoundParameters\.ContainsKey\("OutputPath"\)'
+        $content | Should -Not -Match 'function\s+Invoke-Main[\s\S]*IsNullOrWhiteSpace\(\$OutputPath\)[\s\S]*Write-RenderedOutputToFile'
     }
 
     It "keeps PowerShell argument-completion metadata for unresolved PR comments" {
@@ -1428,6 +1448,41 @@ Describe "GitHub output and clipboard conventions" {
         $testsContent = Get-Content -Path $testsPath -Raw
 
         $testsContent | Should -Match 'writes stdout output even when copy fails'
+    }
+}
+
+Describe "UTF-8 encoding conventions" {
+    It "uses no-BOM UTF-8 for all WriteAllText calls in production scripts" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts"
+        $scripts = Get-ChildItem -Path $scriptsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($scriptFile in $scripts) {
+            $lines = @(Get-Content -Path $scriptFile.FullName)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match 'WriteAllText\(' -and $lines[$i] -match '\[System\.Text\.Encoding\]::UTF8') {
+                    $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $violations.Add("${relative}:$($i + 1)") | Out-Null
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "WriteAllText must use [System.Text.UTF8Encoding]::new(`$false) (no BOM) instead of [System.Text.Encoding]::UTF8 (emits BOM). Violations: {0}" -f ($violations -join ', ')
+        )
+    }
+}
+
+Describe "Skills index generation conventions" {
+    It "includes a known-casing dictionary in ConvertTo-SkillTitle" {
+        $indexGeneratorPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1"
+        $content = Get-Content -Path $indexGeneratorPath -Raw
+
+        $content | Should -Match 'function\s+ConvertTo-SkillTitle[\s\S]*\$knownCasing'
+        $content | Should -Match '\$knownCasing\.ContainsKey\('
+        foreach ($term in @("github", "powershell", "pr", "api", "ci", "llm")) {
+            $content | Should -Match "`"$term`"\s*=" -Because "knownCasing dictionary must include '$term' to prevent incorrect title casing"
+        }
     }
 }
 

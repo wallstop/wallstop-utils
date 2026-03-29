@@ -11,7 +11,7 @@ This file is generated. Do not edit generated sections manually.
 | --- | --- | --- | --- |
 | [Config Snapshot Safety](./skills/config-snapshot-safety.md) | [Expanded Guide](./skill-details/config-snapshot-safety.md) | config snapshots, encrypted payloads, json validation exclusions | Keep config snapshot handling and exclusions safe |
 | [Cross Language Quality Gate](./skills/cross-language-quality-gate.md) | [Expanded Guide](./skill-details/cross-language-quality-gate.md) | quality gate, pre-commit, ci parity, clean tree, full validation, session close | Apply cross-language local and CI validation flow |
-| [Powershell Strict Mode Helpers](./skills/powershell-strict-mode-helpers.md) | [Expanded Guide](./skill-details/powershell-strict-mode-helpers.md) | powershell, strict mode, lastexitcode, helper function | Implement strict-mode-safe PowerShell behavior |
+| [PowerShell Strict Mode Helpers](./skills/powershell-strict-mode-helpers.md) | [Expanded Guide](./skill-details/powershell-strict-mode-helpers.md) | powershell, strict mode, lastexitcode, helper function | Implement strict-mode-safe PowerShell behavior |
 
 ## Quality
 
@@ -25,13 +25,13 @@ This file is generated. Do not edit generated sections manually.
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
 | [Devcontainer Bootstrap](./skills/devcontainer-bootstrap.md) | [Expanded Guide](./skill-details/devcontainer-bootstrap.md) | devcontainer, bootstrap, toolchain, setup parity | Use devcontainer bootstrap for consistent quality tooling |
-| [Macos Applescript Validation](./skills/macos-applescript-validation.md) | [Expanded Guide](./skill-details/macos-applescript-validation.md) | macos, applescript, osacompile, migration fallback | Keep macOS AppleScript validation migration-safe |
+| [macOS AppleScript Validation](./skills/macos-applescript-validation.md) | [Expanded Guide](./skill-details/macos-applescript-validation.md) | macos, applescript, osacompile, migration fallback | Keep macOS AppleScript validation migration-safe |
 | [Windows Language Validation](./skills/windows-language-validation.md) | [Expanded Guide](./skill-details/windows-language-validation.md) | windows, autohotkey, batch, fast lane, runtime budget | Preserve Windows PR lane validation contracts |
 
 ## GitHub
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
-| [Github Pr Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, host allowlist, retries, clipboard fallback, output file, powershell completion | Preserve GitHub utility safety and UX contracts |
+| [GitHub PR Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, host allowlist, retries, clipboard fallback, output file, powershell completion | Preserve GitHub utility safety and UX contracts |
 
 <!-- END GENERATED SKILLS INDEX -->

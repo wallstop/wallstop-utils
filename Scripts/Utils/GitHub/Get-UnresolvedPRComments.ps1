@@ -934,18 +934,34 @@ function Copy-ToClipboard {
                 }
                 "pbcopy" {
                     $valueToCopy | & pbcopy
+                    if ($LASTEXITCODE -ne 0) {
+                        $attemptErrors.Add("[pbcopy] exited with code $LASTEXITCODE") | Out-Null
+                        continue
+                    }
                     return $true
                 }
                 "xclip" {
                     $valueToCopy | & xclip -selection clipboard
+                    if ($LASTEXITCODE -ne 0) {
+                        $attemptErrors.Add("[xclip] exited with code $LASTEXITCODE") | Out-Null
+                        continue
+                    }
                     return $true
                 }
                 "xsel" {
                     $valueToCopy | & xsel --clipboard --input
+                    if ($LASTEXITCODE -ne 0) {
+                        $attemptErrors.Add("[xsel] exited with code $LASTEXITCODE") | Out-Null
+                        continue
+                    }
                     return $true
                 }
                 "wl-copy" {
                     $valueToCopy | & wl-copy
+                    if ($LASTEXITCODE -ne 0) {
+                        $attemptErrors.Add("[wl-copy] exited with code $LASTEXITCODE") | Out-Null
+                        continue
+                    }
                     return $true
                 }
                 default {
@@ -1029,7 +1045,7 @@ function Write-RenderedOutputToFile {
     $content = if ($null -eq $Text) { "" } else { $Text }
 
     try {
-        [System.IO.File]::WriteAllText($resolvedPath, $content, [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText($resolvedPath, $content, [System.Text.UTF8Encoding]::new($false))
         return $resolvedPath
     }
     catch {
@@ -2124,7 +2140,7 @@ function Invoke-Main {
         }
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
+    if ($script:TopLevelBoundParameters.ContainsKey("OutputPath")) {
         [void](Write-RenderedOutputToFile -Text $output -OutputPath $OutputPath -SensitiveTokens $sensitiveTokens)
     }
 
