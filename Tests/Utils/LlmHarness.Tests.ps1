@@ -55,10 +55,10 @@ Describe "LLM harness structure" {
         Test-Path -Path $script:contextPath -PathType Leaf | Should -BeTrue
         Test-Path -Path $script:skillsIndexPath -PathType Leaf | Should -BeTrue
 
-        $content = Get-Content -Path $script:contextPath -Raw -Encoding UTF8
+        $content = [System.IO.File]::ReadAllText($script:contextPath, [System.Text.Encoding]::UTF8)
         $content | Should -Match '\(\./skills-index\.md\)'
 
-        $indexContent = Get-Content -Path $script:skillsIndexPath -Raw -Encoding UTF8
+        $indexContent = [System.IO.File]::ReadAllText($script:skillsIndexPath, [System.Text.Encoding]::UTF8)
         ([regex]::Matches($indexContent, '<!-- BEGIN GENERATED SKILLS INDEX -->')).Count | Should -Be 1
         ([regex]::Matches($indexContent, '<!-- END GENERATED SKILLS INDEX -->')).Count | Should -Be 1
     }
@@ -69,7 +69,7 @@ Describe "LLM harness structure" {
             $wrapperPath = Join-Path -Path $script:repoRoot -ChildPath $wrapper
             Test-Path -Path $wrapperPath -PathType Leaf | Should -BeTrue -Because "$wrapper must exist"
 
-            $content = Get-Content -Path $wrapperPath -Raw -Encoding UTF8
+            $content = [System.IO.File]::ReadAllText($wrapperPath, [System.Text.Encoding]::UTF8)
             $content | Should -Match '(?i)\.llm/context\.md' -Because "$wrapper must point to .llm/context.md"
         }
     }
@@ -89,12 +89,12 @@ Describe "LLM harness structure" {
 
         $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
         foreach ($skillFile in $skillFiles) {
-            $content = Get-Content -Path $skillFile.FullName -Raw -Encoding UTF8
+            $content = [System.IO.File]::ReadAllText($skillFile.FullName, [System.Text.Encoding]::UTF8)
             $match = [regex]::Match($content, $triggerPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
             $match.Success | Should -BeTrue -Because "$($skillFile.Name) must include trigger metadata"
             $content | Should -Match '\(\.\./skill-details/.+?\.md\)' -Because "$($skillFile.Name) must link to expanded guide"
 
-            $lineCount = [System.IO.File]::ReadAllLines($skillFile.FullName).Length
+            $lineCount = [System.IO.File]::ReadAllLines($skillFile.FullName, [System.Text.Encoding]::UTF8).Length
             $lineCount | Should -BeLessOrEqual 80 -Because "$($skillFile.Name) must remain lightweight"
 
             $detailsPath = ($match.Groups['details'].Value.Trim() -replace '[\\/]+', '/')
@@ -107,14 +107,14 @@ Describe "LLM harness structure" {
         }
 
         foreach ($detailsFile in $skillDetailFiles) {
-            $lineCount = [System.IO.File]::ReadAllLines($detailsFile.FullName).Length
+            $lineCount = [System.IO.File]::ReadAllLines($detailsFile.FullName, [System.Text.Encoding]::UTF8).Length
             $lineCount | Should -BeLessOrEqual 300 -Because "$($detailsFile.Name) must remain within 300 lines"
         }
     }
 
     It "keeps generated index markdown structure deterministic" {
         # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
-        $indexContent = (Get-Content -Path $script:skillsIndexPath -Raw -Encoding UTF8) -replace "`r", ''
+        $indexContent = ([System.IO.File]::ReadAllText($script:skillsIndexPath, [System.Text.Encoding]::UTF8)) -replace "`r", ''
 
         $indexContent | Should -Match '(?m)^# Skills Index$'
         $indexContent | Should -Match '(?m)^##\s+Core$'
@@ -216,7 +216,7 @@ Describe "LLM harness automation" {
             Copy-Item -Path $script:indexUpdaterPath -Destination $tempUpdaterPath -Force
             & $tempUpdaterPath -RootPath $tempRoot
 
-            $generatedIndex = (Get-Content -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md') -Raw -Encoding UTF8) -replace "`r", ''
+            $generatedIndex = ([System.IO.File]::ReadAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), [System.Text.Encoding]::UTF8)) -replace "`r", ''
             $generatedIndex | Should -Match '(?m)^\| \[Example Skill\]\(\./skills/example-skill\.md\) \| \[Expanded Guide\]\(\./skill-details/example-detail\.md\) \|'
             $generatedIndex | Should -Not -Match '\\' -Because 'generated markdown links should always use POSIX path separators'
 

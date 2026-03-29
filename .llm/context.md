@@ -83,6 +83,26 @@ When writing tests that use `Get-Content -Raw` with `(?m)...$` multiline regex:
 - Patterns using `\b`, `\w`, `\S` etc. instead of `$` are not affected.
 - String comparisons across files must also normalize both sides.
 
+## Windows File-Handle Safety
+
+PowerShell's `Get-Content -Raw` can hold file handles open longer than expected on Windows,
+causing `IOException: The process cannot access the file` when another read follows quickly.
+
+- In production scripts that read temp/generated files, prefer `[System.IO.File]::ReadAllText()`:
+  `[System.IO.File]::ReadAllText($resolvedPath, [System.Text.Encoding]::UTF8)`
+- This opens with `FileShare.Read` and closes immediately after reading.
+- Always pass resolved absolute paths (e.g., from `.FullName` or `Resolve-Path`).
+- Always specify `[System.Text.Encoding]::UTF8` explicitly for consistency.
+
+## Start-Process Exit Code Race Condition
+
+`Start-Process -Wait -PassThru` on Windows has a known race where `.ExitCode` may not
+be populated when the cmdlet returns, especially under heavy I/O.
+
+- Always call `$process.WaitForExit($timeoutMs)` after `Start-Process -Wait -PassThru`.
+- Check the boolean return to detect timeouts.
+- Do not gate on `$process.HasExited` — it can race with the same underlying issue.
+
 ## Contribution Rules
 
 1. Add or update skill files in `.llm/skills`.

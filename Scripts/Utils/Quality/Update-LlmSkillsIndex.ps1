@@ -154,7 +154,7 @@ function Get-SkillMetadata {
         [string]$Root
     )
 
-    $content = Get-Content -Path $SkillPath -Raw -Encoding UTF8 -ErrorAction Stop
+    $content = [System.IO.File]::ReadAllText($SkillPath, [System.Text.Encoding]::UTF8)
     $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
     $match = [System.Text.RegularExpressions.Regex]::Match(
         $content,
@@ -283,7 +283,7 @@ foreach ($skillFile in $skillFiles) {
 
 $generatedLines = New-GeneratedIndexLines -Skills $skillEntries
 $newIndexContent = (($generatedLines -join "`n") + "`n")
-$currentIndexContent = Get-Content -Path $indexPath -Raw -Encoding UTF8 -ErrorAction Stop
+$currentIndexContent = [System.IO.File]::ReadAllText($indexPath, [System.Text.Encoding]::UTF8)
 
 # Normalize line endings for cross-platform comparison (Windows checkout may add CR).
 $normalizedNew = Normalize-ComparisonContent -Content $newIndexContent

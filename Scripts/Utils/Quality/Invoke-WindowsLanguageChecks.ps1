@@ -154,7 +154,7 @@ function Read-RedirectCaptureFile {
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         if (Test-Path -Path $Path -PathType Leaf) {
             try {
-                $capturedText = Get-Content -Path $Path -Raw -ErrorAction Stop
+                $capturedText = [System.IO.File]::ReadAllText((Resolve-Path $Path).Path, [System.Text.Encoding]::UTF8)
                 return @(Convert-CapturedTextToLines -Text $capturedText)
             }
             catch {
@@ -206,6 +206,17 @@ function Invoke-AutoHotkeyCommand {
             $startParams.NoNewWindow = $true
 
             $process = Start-Process @startParams
+
+            # Start-Process -Wait -PassThru has a known race on Windows where the returned
+            # Process object may not yet have a valid ExitCode even though -Wait was specified.
+            # Calling WaitForExit() on the object guarantees the kernel-level exit code is
+            # available and the redirect file handles are fully flushed before we read them.
+            if ($null -ne $process) {
+                $waitCompleted = $process.WaitForExit($processTimeoutMilliseconds)
+                if (-not $waitCompleted) {
+                    Write-Host "WARNING: Process did not exit within timeout of ${processTimeoutMilliseconds}ms"
+                }
+            }
 
             $stdoutLines = @(Read-RedirectCaptureFile -Path $stdoutPath)
             $stderrLines = @(Read-RedirectCaptureFile -Path $stderrPath)

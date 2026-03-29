@@ -224,14 +224,26 @@ Describe "Invoke-AutoHotkeyCommand" {
             $expectedExitCode = $LinuxExitCode
         }
 
-        $result.ExitCode | Should -Be $expectedExitCode
-        $outputText = ($result.Output -join " ")
+        # Emit diagnostic context unconditionally so CI logs always contain enough info
+        # to diagnose exit-code or output-capture regressions without re-running the build.
         $diagnostics = if ($null -ne $result.Diagnostics) {
             $result.Diagnostics | ConvertTo-Json -Compress -Depth 4
         }
         else {
             "(none)"
         }
+        $outputLineCount = @($result.Output).Count
+        $outputPreview = if ($outputLineCount -gt 6) {
+            (@($result.Output[0..2]) + @("... ($outputLineCount total lines) ...") + @($result.Output[($outputLineCount - 2)..($outputLineCount - 1)])) -join "`n"
+        }
+        else {
+            $result.Output -join "`n"
+        }
+        Write-Host "[Invoke-AutoHotkeyCommand diag] Case='$Case' ExitCode=$($result.ExitCode) ExpectedExitCode=$expectedExitCode OutputLines=$outputLineCount IsWindows=$IsWindows diagnostics=$diagnostics"
+        Write-Host "[Invoke-AutoHotkeyCommand diag] OutputPreview:`n$outputPreview"
+
+        $result.ExitCode | Should -Be $expectedExitCode -Because "Case='$Case' expected exit code $expectedExitCode but got $($result.ExitCode). diagnostics=$diagnostics"
+        $outputText = ($result.Output -join " ")
 
         $outputText | Should -Match ([regex]::Escape($ExpectedOutputLike)) -Because "Case='$Case' should capture expected text. diagnostics=$diagnostics"
 

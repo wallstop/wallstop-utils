@@ -206,7 +206,7 @@ foreach ($wrapper in $requiredWrappers) {
         continue
     }
 
-    $wrapperContent = Get-Content -Path $wrapperPath -Raw -Encoding UTF8 -ErrorAction Stop
+    $wrapperContent = [System.IO.File]::ReadAllText($wrapperPath, [System.Text.Encoding]::UTF8)
     if ($wrapperContent -notmatch '(?i)\.llm/context\.md') {
         $errors.Add("Wrapper file '$wrapper' does not point to .llm/context.md") | Out-Null
     }
@@ -257,7 +257,7 @@ $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[
 $anchorLinkPattern = '\[[^\]]+\]\(\.\./skill-details/(?<detailsPath>(?:[^/#)\s]+/)*[^/#)\s]+\.md)#(?<anchor>[^)\s]+)\)'
 $detailsAnchorsByPath = @{}
 foreach ($skillFile in $skillFiles) {
-    $skillContent = Get-Content -Path $skillFile.FullName -Raw -Encoding UTF8 -ErrorAction Stop
+    $skillContent = [System.IO.File]::ReadAllText($skillFile.FullName, [System.Text.Encoding]::UTF8)
     $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $skillFile.FullName)
 
     $match = [regex]::Match($skillContent, $triggerPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
@@ -332,14 +332,14 @@ foreach ($skillFile in $skillFiles) {
 }
 
 if (Test-Path -Path $contextPath -PathType Leaf) {
-    $contextContent = Get-Content -Path $contextPath -Raw -Encoding UTF8 -ErrorAction Stop
+    $contextContent = [System.IO.File]::ReadAllText($contextPath, [System.Text.Encoding]::UTF8)
     if ($contextContent -notmatch '\(\./skills-index\.md\)') {
         $errors.Add('.llm/context.md must link to .llm/skills-index.md.') | Out-Null
     }
 }
 
 if (Test-Path -Path $skillsIndexPath -PathType Leaf) {
-    $indexContent = Get-Content -Path $skillsIndexPath -Raw -Encoding UTF8 -ErrorAction Stop
+    $indexContent = [System.IO.File]::ReadAllText($skillsIndexPath, [System.Text.Encoding]::UTF8)
     $beginCount = [regex]::Matches($indexContent, '<!-- BEGIN GENERATED SKILLS INDEX -->').Count
     $endCount = [regex]::Matches($indexContent, '<!-- END GENERATED SKILLS INDEX -->').Count
 
