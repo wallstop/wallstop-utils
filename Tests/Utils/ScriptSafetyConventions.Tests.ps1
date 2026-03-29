@@ -285,6 +285,23 @@ Describe "Scope safety conventions" {
         }
     }
 
+    It "keeps OSC52-first ordering in clipboard command priority" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $functionMatch = [regex]::Match($content, 'function\s+Get-ClipboardCommandPriority\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $functionMatch.Success | Should -BeTrue -Because "Get-ClipboardCommandPriority should exist so clipboard ordering contracts can be validated"
+        $functionBody = $functionMatch.Groups["body"].Value
+
+        $functionBody | Should -Match 'if\s*\(\$supportsOsc52\s*-and\s*\(Test-ShouldUseClipboardOsc52\)\)' -Because "OSC52 strategy must remain explicitly gated by capability and terminal-context checks"
+
+        $osc52AddIndex = $functionBody.IndexOf('$commands.Add("Set-Clipboard-AsOSC52")', [System.StringComparison]::Ordinal)
+        $setClipboardAddIndex = $functionBody.IndexOf('$commands.Add("Set-Clipboard")', [System.StringComparison]::Ordinal)
+        $osc52AddIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include Set-Clipboard-AsOSC52"
+        $setClipboardAddIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include Set-Clipboard"
+        $osc52AddIndex | Should -BeLessThan $setClipboardAddIndex -Because "clipboard strategy order is a behavior contract: OSC52 attempt must run before plain Set-Clipboard"
+    }
+
     It "uses PSBoundParameters for OutputPath gating in Invoke-Main" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw

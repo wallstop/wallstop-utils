@@ -26,6 +26,8 @@ Keep clipboard behavior deterministic and non-breaking:
 - `-CopyStrict` is opt-in and must fail fast if used without `-Copy`.
 - When `-CopyStrict` is present and copy fails, throw `E_CLIPBOARD_COPY_FAILED`.
 - Warning/error text must continue redacting sensitive tokens.
+- Unit tests must assert OSC52-first failover behavior: when `Set-Clipboard -AsOSC52` fails, fallback must continue to plain `Set-Clipboard` and still succeed when possible.
+- Safety conventions should enforce both OSC52 gating (`$supportsOsc52` + `Test-ShouldUseClipboardOsc52`) and OSC52-before-Set-Clipboard priority ordering in `Get-ClipboardCommandPriority`.
 
 ## Output File Contract
 
