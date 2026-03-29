@@ -3,7 +3,7 @@
 This folder contains quality helper scripts used by local hooks and CI:
 
 - `Format-PowerShellFiles.ps1`: deterministic PowerShell formatting for staged or selected files.
-- `Invoke-WindowsLanguageChecks.ps1`: Windows-only checks for AutoHotkey (runtime probing with `/validate`, then `/iLib` fallback) and best-effort batch smoke validation. AutoHotkey process execution uses explicit stdout/stderr capture via `Start-Process` to avoid ambiguous GUI-subsystem behavior in headless CI.
+- `Invoke-WindowsLanguageChecks.ps1`: Windows-only checks for AutoHotkey (runtime probing with `/validate`, then `/iLib` fallback) and best-effort batch smoke validation. AutoHotkey process execution uses `System.Diagnostics.Process` with `ArgumentList.Add()` for reliable stdout/stderr capture across all platforms, avoiding `Start-Process -ArgumentList` which mangles special characters on Windows.
 
 Batch smoke checks intentionally remain heuristic, but they now apply uniformly to both single-line and multi-line `.bat` files.
 - `Invoke-MacOSLanguageChecks.sh`: macOS AppleScript validation with a source-first migration path and `.scpt` fallback.

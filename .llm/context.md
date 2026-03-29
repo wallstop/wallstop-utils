@@ -103,6 +103,20 @@ be populated when the cmdlet returns, especially under heavy I/O.
 - Check the boolean return to detect timeouts.
 - Do not gate on `$process.HasExited` — it can race with the same underlying issue.
 
+## Start-Process Argument Mangling
+
+`Start-Process -ArgumentList` on Windows mangles arguments containing curly braces,
+double quotes, and other special characters. Prefer `System.Diagnostics.Process` with
+`ProcessStartInfo.ArgumentList.Add()` which properly escapes arguments on all platforms.
+
+## PowerShell Empty Array Return Safety
+
+`return @()` inside a function silently returns `$null` instead of an empty array.
+
+- Use `return , @()` (comma operator) when callers access `.Count` directly on the result.
+- If callers always wrap with `@()`, the bare `return @()` is safe — add `# array-unwrap-safe`.
+- A convention test in `ScriptSafetyConventions.Tests.ps1` enforces this in `Scripts/`.
+
 ## Contribution Rules
 
 1. Add or update skill files in `.llm/skills`.

@@ -577,19 +577,23 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecksTests = Get-Content -Path $windowsChecksTestsPath -Raw
 
         $windowsChecksTests | Should -Match 'captures exit code and output deterministically'
-        $windowsChecksTests | Should -Match 'LinuxExecutable\s*='
-        $windowsChecksTests | Should -Match 'WindowsExecutable\s*='
+        $windowsChecksTests | Should -Match 'Executable\s*='
+        $windowsChecksTests | Should -Match 'Arguments\s*='
     }
 
-    It "uses Start-Process output redirection in Invoke-AutoHotkeyCommand and avoids LASTEXITCODE dependency" {
+    It "uses System.Diagnostics.Process with ArgumentList in Invoke-AutoHotkeyCommand and avoids LASTEXITCODE dependency" {
         $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
         $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
 
-        $windowsChecks | Should -Match 'Start-Process\s+@startParams|Start-Process\s+-FilePath'
+        $windowsChecks | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
+        $windowsChecks | Should -Match 'ArgumentList\.Add'
         $windowsChecks | Should -Match 'RedirectStandardOutput'
         $windowsChecks | Should -Match 'RedirectStandardError'
         $windowsChecks | Should -Match 'E_AHK_PROCESS_EXECUTION_FAILED'
 
+        # Prevent regression: do not rely on Start-Process which mangles special characters
+        # (curly braces, double quotes) in arguments on Windows.
+        $windowsChecks | Should -Not -Match 'Start-Process\s+@startParams|Start-Process\s+-FilePath'
         # Prevent regression: do not rely on raw LASTEXITCODE assignment in this helper.
         $windowsChecks | Should -Not -Match '(?m)^\s*\$exitCode\s*=\s*\$LASTEXITCODE\b'
     }
@@ -1318,5 +1322,27 @@ Describe "GitHub output and clipboard conventions" {
         $testsContent = Get-Content -Path $testsPath -Raw
 
         $testsContent | Should -Match 'writes stdout output even when copy fails'
+    }
+}
+
+Describe "PowerShell return safety conventions" {
+    It "does not use unsuppressed 'return @()' in production scripts" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts"
+        $scripts = Get-ChildItem -Path $scriptsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($scriptFile in $scripts) {
+            $lines = @(Get-Content -Path $scriptFile.FullName)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '\breturn\s+@\(\)' -and $lines[$i] -notmatch '#\s*array-unwrap-safe') {
+                    $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $violations.Add("${relative}:$($i + 1)") | Out-Null
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "'return @()' silently returns `$null` instead of an empty array. Use 'return , @()' (comma operator) to preserve the array wrapper, or add '# array-unwrap-safe' if callers always wrap with @(). Violations: {0}" -f ($violations -join ', ')
+        )
     }
 }

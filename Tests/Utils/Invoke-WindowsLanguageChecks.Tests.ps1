@@ -163,66 +163,44 @@ Describe "Invoke-AutoHotkeyCommand" {
     It "captures exit code and output deterministically: <Case>" -TestCases @(
         @{
             Case               = "stdout and zero exit"
-            LinuxExecutable    = "pwsh"
-            LinuxArguments     = @("-NoLogo", "-NoProfile", "-Command", "Write-Output 'ok-stdout'")
-            WindowsExecutable  = "pwsh"
-            WindowsArguments   = @("-NoLogo", "-NoProfile", "-Command", "Write-Output 'ok-stdout'")
-            LinuxExitCode      = 0
-            WindowsExitCode    = 0
+            Executable         = "pwsh"
+            Arguments          = @("-NoLogo", "-NoProfile", "-Command", "Write-Output 'ok-stdout'")
+            ExpectedExitCode   = 0
             ExpectedOutputLike = "ok-stdout"
         },
         @{
             Case               = "stderr and nonzero exit"
-            LinuxExecutable    = "pwsh"
-            LinuxArguments     = @("-NoLogo", "-NoProfile", "-Command", "Write-Error 'problem-stderr'; exit 7")
-            WindowsExecutable  = "pwsh"
-            WindowsArguments   = @("-NoLogo", "-NoProfile", "-Command", "Write-Error 'problem-stderr'; exit 7")
-            LinuxExitCode      = 7
-            WindowsExitCode    = 7
+            Executable         = "pwsh"
+            Arguments          = @("-NoLogo", "-NoProfile", "-Command", "Write-Error 'problem-stderr'; exit 7")
+            ExpectedExitCode   = 7
             ExpectedOutputLike = "problem-stderr"
         },
         @{
             Case               = "stdout without trailing newline"
-            LinuxExecutable    = "pwsh"
-            LinuxArguments     = @("-NoLogo", "-NoProfile", "-Command", "[Console]::Out.Write('ok-no-newline')")
-            WindowsExecutable  = "pwsh"
-            WindowsArguments   = @("-NoLogo", "-NoProfile", "-Command", "[Console]::Out.Write('ok-no-newline')")
-            LinuxExitCode      = 0
-            WindowsExitCode    = 0
+            Executable         = "pwsh"
+            Arguments          = @("-NoLogo", "-NoProfile", "-Command", "[Console]::Out.Write('ok-no-newline')")
+            ExpectedExitCode   = 0
             ExpectedOutputLike = "ok-no-newline"
         },
         @{
             Case               = "large stderr stream remains deterministic"
-            LinuxExecutable    = "pwsh"
-            LinuxArguments     = @("-NoLogo", "-NoProfile", "-Command", '1..1500 | ForEach-Object { [Console]::Error.WriteLine("problem-stderr-$_") }; exit 9')
-            WindowsExecutable  = "pwsh"
-            WindowsArguments   = @("-NoLogo", "-NoProfile", "-Command", '1..1500 | ForEach-Object { [Console]::Error.WriteLine("problem-stderr-$_") }; exit 9')
-            LinuxExitCode      = 9
-            WindowsExitCode    = 9
+            Executable         = "pwsh"
+            Arguments          = @("-NoLogo", "-NoProfile", "-Command", '1..1500 | ForEach-Object { [Console]::Error.WriteLine("problem-stderr-$_") }; exit 9')
+            ExpectedExitCode   = 9
             ExpectedOutputLike = "problem-stderr-750"
         }
     ) {
         param(
             [string]$Case,
-            [string]$LinuxExecutable,
-            [string[]]$LinuxArguments,
-            [string]$WindowsExecutable,
-            [string[]]$WindowsArguments,
-            [int]$LinuxExitCode,
-            [int]$WindowsExitCode,
+            [string]$Executable,
+            [string[]]$Arguments,
+            [int]$ExpectedExitCode,
             [string]$ExpectedOutputLike
         )
 
         $null = $Case
-        $expectedExitCode = 0
-        if ($IsWindows) {
-            $result = Invoke-AutoHotkeyCommand -Executable $WindowsExecutable -Arguments $WindowsArguments
-            $expectedExitCode = $WindowsExitCode
-        }
-        else {
-            $result = Invoke-AutoHotkeyCommand -Executable $LinuxExecutable -Arguments $LinuxArguments
-            $expectedExitCode = $LinuxExitCode
-        }
+        $expectedExitCode = $ExpectedExitCode
+        $result = Invoke-AutoHotkeyCommand -Executable $Executable -Arguments $Arguments
 
         # Emit diagnostic context unconditionally so CI logs always contain enough info
         # to diagnose exit-code or output-capture regressions without re-running the build.
@@ -248,8 +226,7 @@ Describe "Invoke-AutoHotkeyCommand" {
         $outputText | Should -Match ([regex]::Escape($ExpectedOutputLike)) -Because "Case='$Case' should capture expected text. diagnostics=$diagnostics"
 
         $result.Diagnostics | Should -Not -BeNullOrEmpty -Because "capture diagnostics should always be present"
-        $expectedCaptureMode = if ($IsWindows) { "start-process-redirect" } else { "dotnet-process" }
-        $result.Diagnostics.CaptureMode | Should -Be $expectedCaptureMode
+        $result.Diagnostics.CaptureMode | Should -Be "dotnet-process"
     }
 
     It "returns structured error output when the specified executable does not exist" {
