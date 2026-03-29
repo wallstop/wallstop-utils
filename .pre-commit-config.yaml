@@ -90,6 +90,6 @@ repos:
         name: llm-harness-validation
         entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Test-LlmHarness.ps1
         language: system
-        files: '^(\.llm/.*\.md|AGENTS\.md|\.github/copilot-instructions\.md|CLAUDE\.md|GEMINI\.md|CURSOR\.md|OPENAI\.md|CODEX\.md|Scripts/Utils/Quality/(Update-LlmSkillsIndex|Test-LlmHarness)\.ps1|Tests/Utils/LlmHarness\.Tests\.ps1)$'
+        files: '^(\.llm/.*\.md|AGENTS\.md|\.github/copilot-instructions\.md|CLAUDE\.md|Scripts/Utils/Quality/(Update-LlmSkillsIndex|Test-LlmHarness)\.ps1|Tests/Utils/LlmHarness\.Tests\.ps1)$'
         pass_filenames: false
         stages: [pre-commit, pre-push]

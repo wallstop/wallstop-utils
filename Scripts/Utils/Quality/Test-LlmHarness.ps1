@@ -95,7 +95,34 @@ function Get-MarkdownHeadingAnchors {
         }
     }
 
-    return $anchors
+    return , $anchors
+}
+
+function Get-WrapperContractEntries {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ContextFilePath
+    )
+
+    $entries = @()
+    $inSection = $false
+
+    foreach ($line in [System.IO.File]::ReadLines($ContextFilePath)) {
+        if ($line -match '^\s{0,3}##\s+Wrapper Contract\s*$') {
+            $inSection = $true
+            continue
+        }
+
+        if ($inSection -and $line -match '^\s{0,3}##\s') {
+            break
+        }
+
+        if ($inSection -and $line -match '^\s*-\s+`([^`]+)`') {
+            $entries += $Matches[1]
+        }
+    }
+
+    return $entries
 }
 
 function Test-IsPathWithinDirectory {
@@ -134,15 +161,6 @@ $skillsIndexPath = Join-Path -Path $repoRoot -ChildPath '.llm/skills-index.md'
 $skillsDir = Join-Path -Path $repoRoot -ChildPath '.llm/skills'
 $skillDetailsDir = Join-Path -Path $repoRoot -ChildPath '.llm/skill-details'
 $updateScriptPath = Join-Path -Path $repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
-$requiredWrappers = @(
-    'AGENTS.md',
-    '.github/copilot-instructions.md',
-    'CLAUDE.md',
-    'GEMINI.md',
-    'CURSOR.md',
-    'OPENAI.md',
-    'CODEX.md'
-)
 
 if (-not (Test-Path -Path $contextPath -PathType Leaf)) {
     $errors.Add("Missing required context file: .llm/context.md") | Out-Null
@@ -158,6 +176,14 @@ if (-not (Test-Path -Path $skillsDir -PathType Container)) {
 
 if (-not (Test-Path -Path $skillDetailsDir -PathType Container)) {
     $errors.Add("Missing required skill details directory: .llm/skill-details") | Out-Null
+}
+
+$requiredWrappers = @()
+if (Test-Path -Path $contextPath -PathType Leaf) {
+    $requiredWrappers = @(Get-WrapperContractEntries -ContextFilePath $contextPath)
+    if ($requiredWrappers.Count -eq 0) {
+        $errors.Add("Wrapper Contract section in .llm/context.md lists no wrapper files.") | Out-Null
+    }
 }
 
 foreach ($wrapper in $requiredWrappers) {

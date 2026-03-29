@@ -9,15 +9,29 @@ BeforeAll {
     $script:skillDetailsDir = Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details'
     $script:validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Test-LlmHarness.ps1'
     $script:indexUpdaterPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
-    $script:wrapperFiles = @(
-        'AGENTS.md',
-        '.github/copilot-instructions.md',
-        'CLAUDE.md',
-        'GEMINI.md',
-        'CURSOR.md',
-        'OPENAI.md',
-        'CODEX.md'
-    )
+
+    # Derive wrapper list from context.md (single source of truth) instead of hardcoding.
+    $script:wrapperFiles = @()
+    $inSection = $false
+    foreach ($line in [System.IO.File]::ReadLines($script:contextPath)) {
+        if ($line -match '^\s{0,3}##\s+Wrapper Contract\s*$') {
+            $inSection = $true
+            continue
+        }
+        if ($inSection -and $line -match '^\s{0,3}##\s') {
+            break
+        }
+        if ($inSection -and $line -match '^\s*-\s+`([^`]+)`') {
+            $script:wrapperFiles += $Matches[1]
+        }
+    }
+
+    # Helper: generate fixture context.md content with Wrapper Contract section.
+    $script:fixtureContextContent = "# Context`n`nSee [Skills Index](./skills-index.md).`n`n## Wrapper Contract`n`nThe following wrapper files are thin pointers and must remain non-authoritative:`n`n"
+    foreach ($w in $script:wrapperFiles) {
+        $script:fixtureContextContent += "- ``$w```n"
+    }
+    $script:fixtureContextContent += "`n## End`n"
 }
 
 Describe "LLM harness structure" {
@@ -34,6 +48,7 @@ Describe "LLM harness structure" {
     }
 
     It "keeps wrapper files as pointers to .llm/context.md" {
+        $script:wrapperFiles.Count | Should -BeGreaterOrEqual 1 -Because "Wrapper Contract section must list at least one file"
         foreach ($wrapper in $script:wrapperFiles) {
             $wrapperPath = Join-Path -Path $script:repoRoot -ChildPath $wrapper
             Test-Path -Path $wrapperPath -PathType Leaf | Should -BeTrue -Because "$wrapper must exist"
@@ -122,7 +137,7 @@ Describe "LLM harness automation" {
 
             [System.IO.File]::WriteAllText(
                 (Join-Path -Path $tempRoot -ChildPath '.llm/context.md'),
-                '# Context`n`nSee [Skills Index](./skills-index.md).`n',
+                $script:fixtureContextContent,
                 $utf8NoBom
             )
             [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), '# Skills Index`n', $utf8NoBom)
@@ -140,7 +155,7 @@ Describe "LLM harness automation" {
             [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill.md'), $skillCardContent, $utf8NoBom)
             [System.IO.File]::WriteAllText(
                 (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/example-detail.md'),
-                '# Example Detail`n`n## Existing Heading`n',
+                "# Example Detail`n`n## Existing Heading`n",
                 $utf8NoBom
             )
 
@@ -184,7 +199,7 @@ Describe "LLM harness automation" {
 
             [System.IO.File]::WriteAllText(
                 (Join-Path -Path $tempRoot -ChildPath '.llm/context.md'),
-                '# Context`n`nSee [Skills Index](./skills-index.md).`n',
+                $script:fixtureContextContent,
                 $utf8NoBom
             )
             [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), '# Skills Index`n', $utf8NoBom)
@@ -202,7 +217,7 @@ Describe "LLM harness automation" {
             [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill.md'), $skillCardContent, $utf8NoBom)
             [System.IO.File]::WriteAllText(
                 (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/nested/example-detail.md'),
-                '# Example Detail`n`n## Existing Heading`n',
+                "# Example Detail`n`n## Existing Heading`n",
                 $utf8NoBom
             )
 
@@ -237,7 +252,7 @@ Describe "LLM harness automation" {
 
             [System.IO.File]::WriteAllText(
                 (Join-Path -Path $tempRoot -ChildPath '.llm/context.md'),
-                '# Context`n`nSee [Skills Index](./skills-index.md).`n',
+                $script:fixtureContextContent,
                 $utf8NoBom
             )
             [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), '# Skills Index`n', $utf8NoBom)
@@ -255,7 +270,7 @@ Describe "LLM harness automation" {
             [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill.md'), $skillCardContent, $utf8NoBom)
             [System.IO.File]::WriteAllText(
                 (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/safe/example-detail.md'),
-                '# Example Detail`n`n## Existing Heading`n',
+                "# Example Detail`n`n## Existing Heading`n",
                 $utf8NoBom
             )
 

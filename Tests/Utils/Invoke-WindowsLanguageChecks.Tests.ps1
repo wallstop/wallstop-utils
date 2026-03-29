@@ -128,8 +128,8 @@ Describe "Invoke-AutoHotkeyCommand" {
     It "captures exit code and output deterministically: <Case>" -TestCases @(
         @{
             Case               = "stdout and zero exit"
-            LinuxExecutable    = "echo"
-            LinuxArguments     = @("ok-stdout")
+            LinuxExecutable    = "/usr/bin/printf"
+            LinuxArguments     = @("ok-stdout\n")
             WindowsExecutable  = "cmd.exe"
             WindowsArguments   = @("/c", "echo ok-stdout")
             LinuxExitCode      = 0
@@ -138,8 +138,8 @@ Describe "Invoke-AutoHotkeyCommand" {
         },
         @{
             Case               = "stderr and nonzero exit"
-            LinuxExecutable    = "ls"
-            LinuxArguments     = @("/definitely-not-existing-path-for-tests")
+            LinuxExecutable    = "grep"
+            LinuxArguments     = @("--nonexistent-option-for-tests")
             WindowsExecutable  = "cmd.exe"
             WindowsArguments   = @("/c", "echo problem-stderr 1>&2 && exit /b 7")
             LinuxExitCode      = 2

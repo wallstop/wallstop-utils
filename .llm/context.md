@@ -72,10 +72,6 @@ The following wrapper files are thin pointers and must remain non-authoritative:
 - `AGENTS.md`
 - `.github/copilot-instructions.md`
 - `CLAUDE.md`
-- `GEMINI.md`
-- `CURSOR.md`
-- `OPENAI.md`
-- `CODEX.md`
 
 ## Contribution Rules
 

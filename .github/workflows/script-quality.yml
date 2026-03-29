@@ -437,7 +437,7 @@ jobs:
 
           "## Script Quality Validation Summary" >> $env:GITHUB_STEP_SUMMARY
           foreach ($laneName in $laneResults.Keys) {
-            "- $laneName: $($laneResults[$laneName])" >> $env:GITHUB_STEP_SUMMARY
+            "- ${laneName}: $($laneResults[$laneName])" >> $env:GITHUB_STEP_SUMMARY
           }
 
           if ($failedLanes.Count -gt 0) {
