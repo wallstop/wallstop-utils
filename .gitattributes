@@ -1,0 +1,7 @@
+# Enforce consistent line endings across platforms.
+# All text files default to LF to prevent CRLF mismatches in CI and regex patterns.
+* text=auto eol=lf
+
+# Windows-native batch scripts require CRLF for cmd.exe compatibility.
+*.bat text eol=crlf
+*.cmd text eol=crlf

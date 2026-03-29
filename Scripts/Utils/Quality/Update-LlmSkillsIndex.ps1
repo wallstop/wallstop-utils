@@ -191,8 +191,12 @@ $generatedLines = New-GeneratedIndexLines -Skills $skillEntries
 $newIndexContent = (($generatedLines -join "`n") + "`n")
 $currentIndexContent = Get-Content -Path $indexPath -Raw -ErrorAction Stop
 
+# Normalize line endings for cross-platform comparison (Windows checkout may add CR).
+$normalizedNew = $newIndexContent -replace "`r`n", "`n" -replace "`r", "`n"
+$normalizedCurrent = $currentIndexContent -replace "`r`n", "`n" -replace "`r", "`n"
+
 if ($Check) {
-    if ($newIndexContent -ne $currentIndexContent) {
+    if ($normalizedNew -ne $normalizedCurrent) {
         throw "E_LLM_INDEX_STALE: Generated skills index is stale. Run Update-LlmSkillsIndex.ps1 and commit .llm/skills-index.md."
     }
 
@@ -200,7 +204,7 @@ if ($Check) {
     return
 }
 
-if ($newIndexContent -eq $currentIndexContent) {
+if ($normalizedNew -eq $normalizedCurrent) {
     Write-Host 'LLM skills index is already up to date.'
     return
 }

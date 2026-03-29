@@ -578,8 +578,20 @@ Describe "Quality script executable guardrails" {
 }
 
 Describe "Quality config file conventions" {
+    It "keeps .gitattributes enforcing LF line endings to prevent cross-platform regex failures" {
+        $gitattributesPath = Join-Path -Path $script:repoRoot -ChildPath '.gitattributes'
+        Test-Path -Path $gitattributesPath -PathType Leaf | Should -BeTrue -Because ".gitattributes must exist to enforce consistent line endings"
+
+        # Normalize to LF so multiline regex anchors work on all platforms.
+        $gitattributes = (Get-Content -Path $gitattributesPath -Raw) -replace "`r", ''
+        $gitattributes | Should -Match '(?m)^\*\s+text=auto\s+eol=lf\s*$' -Because ".gitattributes must default all text files to LF"
+        $gitattributes | Should -Match '(?m)^\*\.bat\s+text\s+eol=crlf\s*$' -Because ".gitattributes must keep .bat files as CRLF for cmd.exe"
+        $gitattributes | Should -Match '(?m)^\*\.cmd\s+text\s+eol=crlf\s*$' -Because ".gitattributes must keep .cmd files as CRLF for cmd.exe"
+    }
+
     It "keeps .tools ignored as an ephemeral cache safety net" {
-        $gitignore = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.gitignore') -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $gitignore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.gitignore') -Raw) -replace "`r", ''
         $gitignore | Should -Match '(?m)^\.tools/$'
     }
 
@@ -610,7 +622,8 @@ Describe "Shell quality conventions" {
     It "keeps strict shell error handling in critical shell scripts" {
         foreach ($relativePath in $script:shellConventionScripts) {
             $fullPath = Join-Path -Path $script:repoRoot -ChildPath $relativePath
-            $content = Get-Content -Path $fullPath -Raw
+            # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+            $content = (Get-Content -Path $fullPath -Raw) -replace "`r", ''
 
             $content | Should -Match '(?m)^\s*set\s+-euo\s+pipefail\s*$'
         }
@@ -618,7 +631,8 @@ Describe "Shell quality conventions" {
 
     It "keeps Home-directory glob loops quoted in Backup.sh" {
         $backupPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/Backup.sh'
-        $backupContent = Get-Content -Path $backupPath -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $backupContent = (Get-Content -Path $backupPath -Raw) -replace "`r", ''
 
         $backupContent | Should -Match '(?m)^\s*for\s+file\s+in\s+"\$HOME"/\.\*;\s+do\s*$'
         $backupContent | Should -Match '(?m)^\s*for\s+file\s+in\s+"\$HOME"/\*\.\{scpt,applescript\};\s+do\s*$'
@@ -627,7 +641,8 @@ Describe "Shell quality conventions" {
 
     It "avoids parse-ls backup selection pattern in restore_brew" {
         $restorePath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/restore_brew.sh'
-        $restoreContent = Get-Content -Path $restorePath -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $restoreContent = (Get-Content -Path $restorePath -Raw) -replace "`r", ''
 
         $restoreContent | Should -Not -Match 'ls\s+-1\s+"\$BACKUP_DIR"/brewfile_backup\*\s+2>\s*/dev/null\s*\|\s*sort\s*\|\s*tail'
         $restoreContent | Should -Match "while IFS= read -r -d '' candidate; do"
@@ -635,7 +650,8 @@ Describe "Shell quality conventions" {
 
     It "keeps restore_brew input constrained to the backup directory" {
         $restorePath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/restore_brew.sh'
-        $restoreContent = Get-Content -Path $restorePath -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $restoreContent = (Get-Content -Path $restorePath -Raw) -replace "`r", ''
 
         $restoreContent | Should -Match 'BACKUP_DIR="\$\(cd "\$BACKUP_DIR" && pwd\)"'
         $restoreContent | Should -Match '(?m)^\s*case\s+"\$candidate_path_abs"\s+in\s*$'
@@ -647,7 +663,8 @@ Describe "Shell quality conventions" {
 
     It "does not execute remote installers in restore_brew" {
         $restorePath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/restore_brew.sh'
-        $restoreContent = Get-Content -Path $restorePath -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $restoreContent = (Get-Content -Path $restorePath -Raw) -replace "`r", ''
 
         $restoreContent | Should -Not -Match 'curl\s+-fsSL\s+https://raw\.githubusercontent\.com/Homebrew/install/.+\|\s*(/bin/)?bash'
         $restoreContent | Should -Match 'Install Homebrew first, then rerun this script\.'
@@ -655,7 +672,8 @@ Describe "Shell quality conventions" {
 
     It "keeps lockfile add flow explicit in increment-version" {
         $incrementPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/increment-version.sh'
-        $incrementContent = Get-Content -Path $incrementPath -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $incrementContent = (Get-Content -Path $incrementPath -Raw) -replace "`r", ''
 
         $incrementContent | Should -Not -Match '\[\[\s+-f\s+"\$lock_path"\s+\]\]\s+&&\s+git\s+add\s+--\s+"\$lock_path"\s+\|\|\s+true'
         $incrementContent | Should -Match '(?m)^\s*if\s+\[\[\s+-f\s+"\$lock_path"\s+\]\];\s+then\s*$'
@@ -663,7 +681,8 @@ Describe "Shell quality conventions" {
 
     It "uses a lock directory in increment-version to avoid concurrent writes" {
         $incrementPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/increment-version.sh'
-        $incrementContent = Get-Content -Path $incrementPath -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $incrementContent = (Get-Content -Path $incrementPath -Raw) -replace "`r", ''
 
         $incrementContent | Should -Match 'function\s+acquire_lock_dir|acquire_lock_dir\s*\(\)'
         $incrementContent | Should -Match 'mkdir\s+"\$lock_dir"'
@@ -672,7 +691,8 @@ Describe "Shell quality conventions" {
 
     It "surfaces dconf backup warnings in PaperWM restore" {
         $paperwmPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/PaperWM/PaperWMRestore.sh'
-        $paperwmContent = Get-Content -Path $paperwmPath -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $paperwmContent = (Get-Content -Path $paperwmPath -Raw) -replace "`r", ''
 
         $paperwmContent | Should -Match 'Warning: Could not backup existing dconf settings:'
         $paperwmContent | Should -Match '(?m)^\s*if\s+CURRENT_SETTINGS=\$\(dconf dump "\$DCONF_PATH"'
@@ -680,7 +700,8 @@ Describe "Shell quality conventions" {
 
     It "documents shell suppression governance and avoids broad disable directives" {
         $shellcheckPath = Join-Path -Path $script:repoRoot -ChildPath '.shellcheckrc'
-        $shellcheckConfig = Get-Content -Path $shellcheckPath -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $shellcheckConfig = (Get-Content -Path $shellcheckPath -Raw) -replace "`r", ''
 
         $shellcheckConfig | Should -Match 'severity=style'
         $shellcheckConfig | Should -Match 'Suppression governance'

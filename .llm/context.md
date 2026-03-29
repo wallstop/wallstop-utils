@@ -73,6 +73,16 @@ The following wrapper files are thin pointers and must remain non-authoritative:
 - `.github/copilot-instructions.md`
 - `CLAUDE.md`
 
+## Cross-Platform Line Ending Safety
+
+Repository enforces LF via `.gitattributes` (`* text=auto eol=lf`).
+When writing tests that use `Get-Content -Raw` with `(?m)...$` multiline regex:
+
+- Always normalize: `$content = (Get-Content -Path $path -Raw) -replace "\r", ''`
+- The `$` anchor in `(?m)` mode fails with CRLF because `\r` sits between text and `\n`.
+- Patterns using `\b`, `\w`, `\S` etc. instead of `$` are not affected.
+- String comparisons across files must also normalize both sides.
+
 ## Contribution Rules
 
 1. Add or update skill files in `.llm/skills`.

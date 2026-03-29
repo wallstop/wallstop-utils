@@ -10,6 +10,22 @@ BeforeAll {
     $script:validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Test-LlmHarness.ps1'
     $script:indexUpdaterPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
 
+    # Helper: remove temp directories reliably on Windows where file handles may linger.
+    $script:RemoveTempRoot = {
+        param([string]$Path)
+        if (-not (Test-Path -Path $Path)) { return }
+        try {
+            Remove-Item -Path $Path -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            # Windows may hold file handles after script execution; wait for GC and retry.
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
+            Start-Sleep -Milliseconds 200
+            Remove-Item -Path $Path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     # Derive wrapper list from context.md (single source of truth) instead of hardcoding.
     $script:wrapperFiles = @()
     $inSection = $false
@@ -97,7 +113,8 @@ Describe "LLM harness structure" {
     }
 
     It "keeps generated index markdown structure deterministic" {
-        $indexContent = Get-Content -Path $script:skillsIndexPath -Raw
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $indexContent = (Get-Content -Path $script:skillsIndexPath -Raw) -replace "`r", ''
 
         $indexContent | Should -Match '(?m)^# Skills Index$'
         $indexContent | Should -Match '(?m)^##\s+Core$'
@@ -175,9 +192,7 @@ Describe "LLM harness automation" {
             $validationFailure.Exception.Message | Should -Match '(?i)E_LLM_SKILL_ANCHOR_MISSING'
         }
         finally {
-            if (Test-Path -Path $tempRoot) {
-                Remove-Item -Path $tempRoot -Recurse -Force
-            }
+            & $script:RemoveTempRoot $tempRoot
         }
     }
 
@@ -228,9 +243,7 @@ Describe "LLM harness automation" {
             { & $script:validatorPath -RootPath $tempRoot } | Should -Not -Throw
         }
         finally {
-            if (Test-Path -Path $tempRoot) {
-                Remove-Item -Path $tempRoot -Recurse -Force
-            }
+            & $script:RemoveTempRoot $tempRoot
         }
     }
 
@@ -290,9 +303,7 @@ Describe "LLM harness automation" {
             $validationFailure.Exception.Message | Should -Match '(?i)E_LLM_SKILL_ANCHOR_SCOPE_VIOLATION'
         }
         finally {
-            if (Test-Path -Path $tempRoot) {
-                Remove-Item -Path $tempRoot -Recurse -Force
-            }
+            & $script:RemoveTempRoot $tempRoot
         }
     }
 }
