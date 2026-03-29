@@ -1909,6 +1909,49 @@ Describe "Invoke-Main" {
         Assert-MockCalled Write-Output -Times 1 -Scope It -ParameterFilter { $InputObject -eq "still output" }
     }
 
+    It "writes no-unresolved message when review thread retrieval returns zero objects" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $Truncate = [System.Management.Automation.SwitchParameter]::new($false)
+        $Copy = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads { @() }
+
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:lastOutput | Should -Be "No unresolved review threads found."
+    }
+
     It "fails fast when CopyStrict is set without Copy" {
         $Copy = [System.Management.Automation.SwitchParameter]::new($false)
         $CopyStrict = [System.Management.Automation.SwitchParameter]::new($true)
