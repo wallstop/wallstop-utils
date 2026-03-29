@@ -424,16 +424,18 @@ if (Test-Path -Path $crossPlatformDetailsPath -PathType Leaf) {
     )
     $windowsOnlySection = if ($windowsOnlySectionMatch.Success) { $windowsOnlySectionMatch.Groups['section'].Value } else { '' }
     $legacyNoExistHeader = $windowsOnlySection -match '(?im)^Commands and APIs that do not exist on Linux/macOS:\s*$'
-    $hasGetWmiWindowsOnly = $windowsOnlySection -match '(?i)Get-WmiObject' -and $windowsOnlySection -match '(?i)Windows-only'
-    $hasGetCimProviderLanguage = $windowsOnlySection -match '(?i)Get-CimInstance' -and $windowsOnlySection -match '(?i)(provider-dependent|providers?\s+are\s+often\s+limited|often\s+limited)'
+    $hasGetWmiWindowsOnly = $windowsOnlySection -match '(?im)^\|\s*`Get-WmiObject`[^|\r\n]*Windows-only[^|\r\n]*\|'
+    $hasGetCimProviderLanguage = $windowsOnlySection -match '(?im)^\|\s*`Get-CimInstance`[^|\r\n]*(provider-dependent|limited)[^|\r\n]*\|[^|\r\n]*(provider-dependent|providers?/data\s+are\s+often\s+limited|providers?\s+are\s+often\s+limited|provider[^|\r\n]*(limited|availability|support))'
     $hasCimProviderCaveat = $hasGetWmiWindowsOnly -and $hasGetCimProviderLanguage
+    $hasCombinedWmiCimTableRow = $windowsOnlySection -match '(?im)^\|\s*`Get-WmiObject`\s*/\s*`Get-CimInstance`\s*\|'
     $diagnostics.Add((
-            "Cross-platform command availability diagnostics: hasWindowsOnlySection={0}; legacyNoExistHeader={1}; hasGetWmiWindowsOnly={2}; hasGetCimProviderLanguage={3}; hasCimProviderCaveat={4}" -f
+            "Cross-platform command availability diagnostics: hasWindowsOnlySection={0}; legacyNoExistHeader={1}; hasGetWmiWindowsOnly={2}; hasGetCimProviderLanguage={3}; hasCimProviderCaveat={4}; hasCombinedWmiCimTableRow={5}" -f
             $windowsOnlySectionMatch.Success,
             $legacyNoExistHeader,
             $hasGetWmiWindowsOnly,
             $hasGetCimProviderLanguage,
-            $hasCimProviderCaveat
+            $hasCimProviderCaveat,
+            $hasCombinedWmiCimTableRow
         )) | Out-Null
 
     if (-not $windowsOnlySectionMatch.Success) {
@@ -446,6 +448,10 @@ if (Test-Path -Path $crossPlatformDetailsPath -PathType Leaf) {
 
     if (-not $hasCimProviderCaveat) {
         $errors.Add('.llm/skill-details/cross-platform-powershell.md must clarify that Get-WmiObject is Windows-only and Get-CimInstance on non-Windows is provider-dependent/limited.') | Out-Null
+    }
+
+    if ($hasCombinedWmiCimTableRow) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md must not combine Get-WmiObject and Get-CimInstance in the same Windows-only table row; document separate guidance to avoid availability ambiguity.') | Out-Null
     }
 
     if ($crossPlatformContent -match '(?i)default\s+HFS\+') {

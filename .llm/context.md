@@ -79,6 +79,9 @@ The following wrapper files are thin pointers and must remain non-authoritative:
 LLM harness staged-file wrapper triggers are routed through `Run-PreCommitValidation.ps1`
 and must be derived from this list at runtime. Do not hardcode wrapper filenames in
 static hook regex patterns.
+All Wrapper Contract parsing must go through
+`Scripts/Utils/Common/LlmWrapperContractHelpers.ps1` (`Get-WrapperContractEntries`).
+Do not duplicate inline parser logic in scripts or tests.
 
 ## Cross-Platform Line Ending Safety
 

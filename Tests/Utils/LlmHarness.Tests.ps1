@@ -9,6 +9,13 @@ BeforeAll {
     $script:skillDetailsDir = Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details'
     $script:validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Test-LlmHarness.ps1'
     $script:indexUpdaterPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
+    $wrapperHelperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/LlmWrapperContractHelpers.ps1'
+
+    if (-not (Test-Path -Path $wrapperHelperPath -PathType Leaf)) {
+        throw "E_CONFIG_ERROR: LLM wrapper helper file not found at '$wrapperHelperPath'."
+    }
+
+    . $wrapperHelperPath
 
     # Helper: remove temp directories reliably on Windows where file handles may linger.
     $script:RemoveTempRoot = {
@@ -26,21 +33,13 @@ BeforeAll {
         }
     }
 
-    # Derive wrapper list from context.md (single source of truth) instead of hardcoding.
-    $script:wrapperFiles = @()
-    $inSection = $false
-    foreach ($line in [System.IO.File]::ReadLines($script:contextPath, [System.Text.Encoding]::UTF8)) {
-        if ($line -match '^\s{0,3}##\s+Wrapper Contract\s*$') {
-            $inSection = $true
-            continue
-        }
-        if ($inSection -and $line -match '^\s{0,3}##\s') {
-            break
-        }
-        if ($inSection -and $line -match '^\s*-\s+`([^`]+)`') {
-            $script:wrapperFiles += $Matches[1]
-        }
-    }
+    # Derive wrapper list from context.md via shared helper to keep parser behavior aligned.
+    $script:wrapperFiles = @(Get-WrapperContractEntries -ContextFilePath $script:contextPath -DefaultFallback @())
+    $script:wrapperContractDiagnostics = (
+        "Wrapper contract diagnostics (test fixture): wrapperCount={0}; wrappers={1}" -f
+        $script:wrapperFiles.Count,
+        ($script:wrapperFiles -join ',')
+    )
 
     # Helper: generate fixture context.md content with Wrapper Contract section.
     $script:fixtureContextContent = "# Context`n`nSee [Skills Index](./skills-index.md).`n`n## Wrapper Contract`n`nThe following wrapper files are thin pointers and must remain non-authoritative:`n`n"
@@ -51,6 +50,43 @@ BeforeAll {
 }
 
 Describe "LLM harness structure" {
+    It "derives wrapper files through the shared parser helper" {
+        $script:wrapperFiles.Count | Should -BeGreaterOrEqual 1 -Because $script:wrapperContractDiagnostics
+    }
+
+    It "normalizes and orders Wrapper Contract entries deterministically" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("llm-wrapper-{0}" -f ([System.Guid]::NewGuid().ToString('N')))
+        $tempContextPath = Join-Path -Path $tempRoot -ChildPath 'context.md'
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+        try {
+            New-Item -Path $tempRoot -ItemType Directory -Force | Out-Null
+
+            $tempContextContent = @'
+# Context
+
+## Wrapper Contract
+
+- `claude.md`
+- `AGENTS.md`
+- `.github\\copilot-instructions.md`
+- `agents.md`
+
+## End
+'@
+            [System.IO.File]::WriteAllText($tempContextPath, $tempContextContent, $utf8NoBom)
+
+            $entries = @(Get-WrapperContractEntries -ContextFilePath $tempContextPath -DefaultFallback @())
+            $entries.Count | Should -Be 3
+            $entries[0] | Should -Be '.github/copilot-instructions.md'
+            $entries[1] | Should -Be 'AGENTS.md'
+            $entries[2] | Should -Be 'claude.md'
+        }
+        finally {
+            & $script:RemoveTempRoot $tempRoot
+        }
+    }
+
     It "keeps authoritative context that points to dedicated skills index" {
         Test-Path -Path $script:contextPath -PathType Leaf | Should -BeTrue
         Test-Path -Path $script:skillsIndexPath -PathType Leaf | Should -BeTrue

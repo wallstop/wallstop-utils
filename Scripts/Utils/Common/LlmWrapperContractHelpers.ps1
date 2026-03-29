@@ -13,7 +13,7 @@ function Get-WrapperContractEntries {
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
         ForEach-Object { ($_ -replace '[\\/]+', '/').Trim() } |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        Sort-Object -Unique
+        Sort-Object { $_.ToUpperInvariant() } -Unique
     )
 
     if (-not (Test-Path -Path $ContextFilePath -PathType Leaf)) {
@@ -45,7 +45,7 @@ function Get-WrapperContractEntries {
     }
 
     if ($entries.Count -gt 0) {
-        return @($entries | Sort-Object)
+        return @($entries | Sort-Object { $_.ToUpperInvariant() })
     }
 
     return $normalizedFallback

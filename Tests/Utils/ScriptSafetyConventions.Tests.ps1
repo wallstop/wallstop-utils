@@ -1532,6 +1532,9 @@ Describe "Utility configuration safety conventions" {
         $windowsOnlySection | Should -Match '(?i)Windows-only'
         $windowsOnlySection | Should -Match '(?i)Get-CimInstance'
         $windowsOnlySection | Should -Match '(?i)(provider-dependent|providers?\s+are\s+often\s+limited|often\s+limited)'
+        $windowsOnlySection | Should -Not -Match '(?im)^\|\s*`Get-WmiObject`\s*/\s*`Get-CimInstance`\s*\|'
+        $windowsOnlySection | Should -Match '(?im)^\|\s*`Get-WmiObject`[^|]*Windows-only'
+        $windowsOnlySection | Should -Match '(?im)^\|\s*`Get-CimInstance`[^|]*(provider-dependent|limited)'
         $windowsOnlySection | Should -Match '(?i)\[System\.Windows\.Forms\]'
         $windowsOnlySection | Should -Match '(?i)Windows\s+UI\s+only'
         $windowsOnlySection | Should -Not -Match '(?i)\[System\.Windows\.Forms\][^\r\n|]*Not\s+available'
@@ -1562,6 +1565,16 @@ Describe "Utility configuration safety conventions" {
         }
     }
 
+    It "derives LLM harness fixture wrapper entries via shared helper in tests" {
+        $llmHarnessTestsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/Utils/LlmHarness.Tests.ps1"
+        $content = Get-Content -Path $llmHarnessTestsPath -Raw
+
+        $content | Should -Match 'LlmWrapperContractHelpers\.ps1'
+        $content | Should -Match '\$script:wrapperFiles\s*=\s*@\(Get-WrapperContractEntries\s+-ContextFilePath\s+\$script:contextPath\s+-DefaultFallback\s+@\(\)\)'
+        $content | Should -Not -Match '\[System\.IO\.File\]::ReadLines\(\$script:contextPath,\s*\[System\.Text\.Encoding\]::UTF8\)'
+        $content | Should -Match 'wrapperCount='
+    }
+
     It "keeps docs-to-config consistency diagnostics in Test-LlmHarness" {
         $validatorPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Test-LlmHarness.ps1"
         $content = Get-Content -Path $validatorPath -Raw
@@ -1573,6 +1586,8 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'hasGetWmiWindowsOnly'
         $content | Should -Match 'hasGetCimProviderLanguage'
         $content | Should -Match 'hasCimProviderCaveat'
+        $content | Should -Match 'hasCombinedWmiCimTableRow'
+        $content | Should -Match 'must not combine Get-WmiObject and Get-CimInstance'
         $content | Should -Match 'foreach\s*\(\$diagnostic\s+in\s+\$diagnostics\)\s*\{\s*Write-Verbose\s+\$diagnostic'
         $content | Should -Not -Match 'Write-Warning\s+\$warning'
         $content | Should -Match 'per\\s\+update\\s\+type'

@@ -134,16 +134,17 @@ Avoid `Invoke-Expression`; it is slow, unsafe, and breaks static analysis.
 
 Commands and APIs that are Windows-only, or whose behavior is Windows-specific:
 
-| Windows-Only                        | Cross-Platform Alternative                               |
-| ----------------------------------- | -------------------------------------------------------- |
-| `Get-WmiObject` / `Get-CimInstance` | Windows-only WMI; use native OS tools on non-Windows     |
-| `Registry` provider (`HKLM:\`)      | Config files or environment variables                    |
-| `Start-Process -Verb RunAs`         | `sudo` on Unix (but prompt-interactive)                  |
-| `[System.Windows.Forms]`            | Windows UI only; use CLI alternatives                    |
-| `Get-Clipboard` / `Set-Clipboard`   | Platform-specific: `pbcopy/pbpaste`, `xclip`, `clip.exe` |
-| `$env:APPDATA`, `$env:LOCALAPPDATA` | `$HOME/.config`, `$HOME/.local/share` (XDG)              |
-| `$env:TEMP`                         | `[System.IO.Path]::GetTempPath()`                        |
-| `$env:PATH` split by `;`            | Split by `;` on Windows, `:` on Unix                     |
+| Command / API                                       | Cross-Platform Guidance                                                 |
+| --------------------------------------------------- | ----------------------------------------------------------------------- |
+| `Get-WmiObject` (Windows-only)                      | Prefer `Get-CimInstance` on Windows; on non-Windows use native OS tools |
+| `Get-CimInstance` (non-Windows: provider-dependent) | Available in PowerShell 7+, but CIM providers/data are often limited    |
+| `Registry` provider (`HKLM:\`)                      | Config files or environment variables                                   |
+| `Start-Process -Verb RunAs`                         | `sudo` on Unix (but prompt-interactive)                                 |
+| `[System.Windows.Forms]`                            | Windows UI only; use CLI alternatives                                   |
+| `Get-Clipboard` / `Set-Clipboard`                   | Platform-specific: `pbcopy/pbpaste`, `xclip`, `clip.exe`                |
+| `$env:APPDATA`, `$env:LOCALAPPDATA`                 | `$HOME/.config`, `$HOME/.local/share` (XDG)                             |
+| `$env:TEMP`                                         | `[System.IO.Path]::GetTempPath()`                                       |
+| `$env:PATH` split by `;`                            | Split by `;` on Windows, `:` on Unix                                    |
 
 `Get-CimInstance` is available in PowerShell 7+ on non-Windows, but CIM data is provider-dependent and often limited compared to Windows.
 
