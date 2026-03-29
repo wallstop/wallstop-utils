@@ -28,6 +28,8 @@ Current invariants to preserve:
 4. Keep cross-platform generated-index checks deterministic by using explicit UTF-8 file reads and normalizing path separators to `/` before generating or validating markdown links.
 5. For multi-OS matrix quality workflows, prefer `fail-fast: false` when preserving complete diagnostics is more valuable than early cancellation.
 6. Prefer `Invoke-Pester -Configuration` in CI over legacy `-Path`/`-CodeCoverage` parameter sets to avoid deprecation drift and warning noise.
+7. In GitHub Actions PowerShell steps, import Pester in every step that configures tests and use `New-PesterConfiguration`; avoid raw `[PesterConfiguration]::Default` type literals because step isolation can leave module types unloaded.
+8. Keep Pester CI wiring centralized through `Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1` so diagnostics, version guards, and coverage-gate behavior stay consistent across workflow steps.
 
 ## Commands
 

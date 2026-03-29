@@ -200,68 +200,33 @@ jobs:
 
       - name: Run Pester with coverage
         shell: pwsh
+        timeout-minutes: 10
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = "Stop"
 
           $repoRoot = (Get-Location).Path
+          $pesterGateScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
           $testPath = Join-Path -Path $repoRoot -ChildPath "Tests/GitHub"
           $coveragePath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
-
-          $configuration = [PesterConfiguration]::Default
-          $configuration.Run.Path = @($testPath)
-          $configuration.Run.PassThru = $true
-          $configuration.CodeCoverage.Enabled = $true
-          $configuration.CodeCoverage.Path = @($coveragePath)
-
-          $result = Invoke-Pester -Configuration $configuration -ErrorAction Stop
-          if ($null -eq $result) {
-            throw "Pester returned no result object."
+          if (-not (Test-Path -Path $pesterGateScript -PathType Leaf)) {
+            throw "E_CI_PESTER_GATE_SCRIPT_MISSING: Pester quality gate script not found at '$pesterGateScript'."
           }
 
-          Write-Host "Pester diagnostics: passed=$($result.PassedCount) failed=$($result.FailedCount)"
-          Write-Host "Pester diagnostics: hasCoverageObject=$($null -ne $result.CodeCoverage)"
-
-          if ($result.FailedCount -gt 0) {
-            throw "Pester tests failed: $($result.FailedCount)"
-          }
-
-          if ($null -eq $result.CodeCoverage) {
-            throw "CodeCoverage object is null."
-          }
-          if ($null -eq $result.CodeCoverage.CoveragePercent) {
-            throw "CodeCoverage.CoveragePercent is null."
-          }
-
-          $minimumCoveragePercent = 75
-          $coverage = [double]$result.CodeCoverage.CoveragePercent
-          Write-Host "Coverage: $coverage% (minimum required: $minimumCoveragePercent%)"
-          if ($coverage -lt $minimumCoveragePercent) {
-            throw "Coverage gate failed: $coverage% is below $minimumCoveragePercent%"
-          }
+          & $pesterGateScript -TestPath $testPath -EnableCoverage -CoveragePath $coveragePath -MinimumCoveragePercent 75 -DiagnosticsPrefix "Pester"
 
       - name: Run Utils Pester tests
         shell: pwsh
+        timeout-minutes: 10
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = "Stop"
 
           $repoRoot = (Get-Location).Path
+          $pesterGateScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
           $utilsTestPath = Join-Path -Path $repoRoot -ChildPath "Tests/Utils"
-          if (-not (Test-Path -Path $utilsTestPath -PathType Container)) {
-            throw "Utils test path not found: $utilsTestPath"
+          if (-not (Test-Path -Path $pesterGateScript -PathType Leaf)) {
+            throw "E_CI_PESTER_GATE_SCRIPT_MISSING: Pester quality gate script not found at '$pesterGateScript'."
           }
 
-          $utilsConfiguration = [PesterConfiguration]::Default
-          $utilsConfiguration.Run.Path = @($utilsTestPath)
-          $utilsConfiguration.Run.PassThru = $true
-
-          $utilsResult = Invoke-Pester -Configuration $utilsConfiguration -ErrorAction Stop
-          if ($null -eq $utilsResult) {
-            throw "Utils Pester returned no result object."
-          }
-
-          Write-Host "Utils Pester diagnostics: passed=$($utilsResult.PassedCount) failed=$($utilsResult.FailedCount)"
-          if ($utilsResult.FailedCount -gt 0) {
-            throw "Utils Pester tests failed: $($utilsResult.FailedCount)"
-          }
+          & $pesterGateScript -TestPath $utilsTestPath -DiagnosticsPrefix "Utils Pester"

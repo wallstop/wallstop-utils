@@ -18,6 +18,7 @@ BeforeAll {
     $script:qualityPowerShellScripts = @(
         "Scripts/Utils/Quality/Assert-CleanGitTree.ps1",
         "Scripts/Utils/Quality/Format-PowerShellFiles.ps1",
+        "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1",
         "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
     )
     $script:qualityConfigFiles = @(
@@ -278,6 +279,97 @@ Describe "CI scope expansion" {
     It "runs ScriptAnalyzer against all scripts" {
         $workflow = Get-Content -Path $script:workflowPath -Raw
         $workflow | Should -Match 'Invoke-ScriptAnalyzer\s+-Path\s+"Scripts"'
+    }
+
+    It "keeps robust Pester CI workflow wiring: <Name>" -TestCases @(
+        @{
+            Name    = "coverage step invokes shared gate script"
+            Pattern = 'Run Pester with coverage[\s\S]*Invoke-PesterQualityGate\.ps1'
+        }
+        @{
+            Name    = "coverage step passes coverage gate arguments"
+            Pattern = 'Run Pester with coverage[\s\S]*-EnableCoverage[\s\S]*-CoveragePath\s+\$coveragePath[\s\S]*-MinimumCoveragePercent\s+75'
+        }
+        @{
+            Name    = "coverage step uses explicit timeout"
+            Pattern = 'Run Pester with coverage[\s\S]*timeout-minutes:\s+10'
+        }
+        @{
+            Name    = "coverage step fails clearly when gate script is missing"
+            Pattern = 'Run Pester with coverage[\s\S]*if\s*\(\s*-not\s*\(Test-Path\s+-Path\s+\$pesterGateScript\s+-PathType\s+Leaf\)\s*\)[\s\S]*E_CI_PESTER_GATE_SCRIPT_MISSING'
+        }
+        @{
+            Name    = "utils step invokes shared gate script"
+            Pattern = 'Run Utils Pester tests[\s\S]*Invoke-PesterQualityGate\.ps1'
+        }
+        @{
+            Name    = "utils step passes diagnostics prefix"
+            Pattern = 'Run Utils Pester tests[\s\S]*-DiagnosticsPrefix\s+"Utils Pester"'
+        }
+        @{
+            Name    = "utils step uses explicit timeout"
+            Pattern = 'Run Utils Pester tests[\s\S]*timeout-minutes:\s+10'
+        }
+        @{
+            Name    = "utils step fails clearly when gate script is missing"
+            Pattern = 'Run Utils Pester tests[\s\S]*if\s*\(\s*-not\s*\(Test-Path\s+-Path\s+\$pesterGateScript\s+-PathType\s+Leaf\)\s*\)[\s\S]*E_CI_PESTER_GATE_SCRIPT_MISSING'
+        }
+    ) {
+        param($Name, $Pattern)
+
+        $workflow = Get-Content -Path $script:workflowPath -Raw
+        $workflow | Should -Match $Pattern -Because $Name
+    }
+
+    It "keeps shared Pester quality gate script contract: <Name>" -TestCases @(
+        @{
+            Name    = "imports Pester with minimum supported version"
+            Pattern = 'Import-Module\s+Pester\s+-MinimumVersion\s+\$minimumPesterVersion'
+        }
+        @{
+            Name    = "uses New-PesterConfiguration command-based setup"
+            Pattern = 'New-PesterConfiguration'
+        }
+        @{
+            Name    = "emits New-PesterConfiguration availability diagnostics"
+            Pattern = 'hasNewPesterConfiguration=\$\(\$null\s+-ne\s+\$newPesterConfigurationCommand\)'
+        }
+        @{
+            Name    = "fails with explicit version parse diagnostic"
+            Pattern = 'E_CI_PESTER_VERSION_PARSE_FAILED'
+        }
+        @{
+            Name    = "fails with explicit minimum version diagnostic"
+            Pattern = 'E_CI_PESTER_VERSION_TOO_OLD'
+        }
+        @{
+            Name    = "fails when coverage properties are empty"
+            Pattern = 'E_CI_PESTER_COVERAGE_PROPS_EMPTY'
+        }
+        @{
+            Name    = "fails with explicit coverage parse diagnostic"
+            Pattern = 'E_CI_PESTER_COVERAGE_PARSE_FAILED'
+        }
+        @{
+            Name    = "fails coverage gate with explicit error code"
+            Pattern = 'E_CI_PESTER_COVERAGE_GATE_FAILED'
+        }
+    ) {
+        param($Name, $Pattern)
+
+        $pesterGateScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1'
+        $pesterGateScript = Get-Content -Path $pesterGateScriptPath -Raw
+        $pesterGateScript | Should -Match $Pattern -Because $Name
+    }
+
+    It "forbids fragile Pester type literals across all GitHub workflows" {
+        $workflowFiles = @(Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath '.github/workflows') -Filter '*.yml' -File -Recurse -ErrorAction Stop)
+        $workflowFiles.Count | Should -BeGreaterThan 0 -Because 'Expected at least one GitHub workflow file in .github/workflows.'
+
+        foreach ($workflowFile in $workflowFiles) {
+            $workflow = Get-Content -Path $workflowFile.FullName -Raw
+            $workflow | Should -Not -Match '\[PesterConfiguration\]::Default' -Because "$($workflowFile.Name) must use New-PesterConfiguration to avoid module type-loading fragility."
+        }
     }
 }
 
@@ -1108,7 +1200,8 @@ Describe "Retry test determinism conventions" {
 
                         try {
                             return $describeNameElement.SafeGetValue() -eq "Invoke-GitHubRequestWithRetry"
-                        } catch {
+                        }
+                        catch {
                             return $false
                         }
                     }, $true))
@@ -1169,7 +1262,8 @@ Describe "Retry test determinism conventions" {
                                             } | Select-Object -First 1
 
                                             return $null -ne $mockScriptBlockExpression
-                                        } catch {
+                                        }
+                                        catch {
                                             return $false
                                         }
                                     }, $true)).Count -gt 0
