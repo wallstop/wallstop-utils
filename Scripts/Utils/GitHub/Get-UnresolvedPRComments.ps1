@@ -46,6 +46,10 @@ Explicit GitHub token. This has highest priority if provided.
 .PARAMETER OutputFormat
 text (default) or json.
 
+.PARAMETER OutputPath
+Optional file path to also write the rendered output. The script writes UTF-8 text,
+creates parent directories when needed, and still writes output to stdout.
+
 .PARAMETER Interactive
 Prompt for owner/repo and let the user select an open PR when PullRequestUrl is not provided.
 
@@ -59,6 +63,10 @@ If set, truncate thread comments for compact terminal readability using legacy l
 .PARAMETER Copy
 If set, copy the rendered output to clipboard in addition to writing to stdout.
 Clipboard copy failures are non-fatal and emit a warning.
+
+.PARAMETER CopyStrict
+Only valid together with -Copy. If set, clipboard copy failure becomes a terminating
+error after output is rendered.
 #>
 [CmdletBinding()]
 param(
@@ -72,6 +80,7 @@ param(
     [string]$Repo,
 
     [Parameter(Mandatory = $false)]
+    [ArgumentCompletions("github.com")]
     [string]$GitHubHost = "github.com",
 
     [Parameter(Mandatory = $false)]
@@ -84,8 +93,13 @@ param(
     [string]$Token,
 
     [Parameter(Mandatory = $false)]
+    [ArgumentCompletions("text", "json")]
     [ValidateSet("text", "json")]
     [string]$OutputFormat = "text",
+
+    [Parameter(Mandatory = $false)]
+    [Alias("OutFile")]
+    [string]$OutputPath,
 
     [Parameter(Mandatory = $false)]
     [switch]$Interactive,
@@ -98,6 +112,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [switch]$Copy,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$CopyStrict,
 
     [Parameter(Mandatory = $false)]
     [ValidateRange(1, 100)]
@@ -250,7 +267,8 @@ function Get-HeaderValues {
                 if ($Headers.TryGetValues($candidate, [ref]$values)) {
                     return @(Convert-ToStringArray -Value $values)
                 }
-            } catch {
+            }
+            catch {
                 # Continue to alternative lookup paths.
             }
         }
@@ -309,14 +327,16 @@ function Get-HeaderValueDiagnostics {
     $preview = @($Values | Select-Object -First 3 | ForEach-Object {
             if ($_.Length -gt 80) {
                 $_.Substring(0, 80) + "..."
-            } else {
+            }
+            else {
                 $_
             }
         })
 
     $previewText = if ($preview.Count -gt 0) {
         "'" + ($preview -join "', '") + "'"
-    } else {
+    }
+    else {
         "(none)"
     }
 
@@ -489,7 +509,7 @@ function Assert-GitHubOwnerRepoFormat {
 
     return [pscustomobject]@{
         Owner = $normalizedOwner
-        Repo = $normalizedRepo
+        Repo  = $normalizedRepo
     }
 }
 
@@ -516,9 +536,9 @@ function Parse-GitHubPullRequestUrl {
     $validatedOwnerRepo = Assert-GitHubOwnerRepoFormat -Owner $match.Groups["owner"].Value -Repo $match.Groups["repo"].Value -Context "PullRequestUrl"
 
     return [pscustomobject]@{
-        Host            = $hostValue
-        Owner           = $validatedOwnerRepo.Owner
-        Repo            = $validatedOwnerRepo.Repo
+        Host              = $hostValue
+        Owner             = $validatedOwnerRepo.Owner
+        Repo              = $validatedOwnerRepo.Repo
         PullRequestNumber = [int]$match.Groups["pr"].Value
     }
 }
@@ -649,9 +669,11 @@ function Get-NormalizedGitHubHostAllowlist {
     if ($rawHosts.Count -eq 0) {
         $envAllowlist = if (-not [string]::IsNullOrWhiteSpace($env:WALLSTOP_GITHUB_ALLOWED_HOSTS)) {
             $env:WALLSTOP_GITHUB_ALLOWED_HOSTS
-        } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ALLOWED_HOSTS)) {
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ALLOWED_HOSTS)) {
             $env:GITHUB_ALLOWED_HOSTS
-        } else {
+        }
+        else {
             $null
         }
 
@@ -674,7 +696,8 @@ function Get-NormalizedGitHubHostAllowlist {
     foreach ($rawHost in $rawHosts) {
         try {
             $normalizedHost = Assert-GitHubHostFormat -GitHubHost $rawHost -Context "AllowedGitHubHosts"
-        } catch {
+        }
+        catch {
             $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens @()
             throw "E_CONFIG_ERROR: Invalid host allowlist entry '$rawHost'. $safeMessage"
         }
@@ -769,7 +792,7 @@ function Get-GitHubHeaders {
     )
 
     [hashtable]$headers = @{
-        "Accept" = "application/vnd.github+json"
+        "Accept"     = "application/vnd.github+json"
         "User-Agent" = "wallstop-utils-unresolved-pr-comments"
     }
 
@@ -816,18 +839,65 @@ function Get-ClipboardCommand {
     [CmdletBinding()]
     param()
 
-    if ($null -ne (Get-Command Set-Clipboard -ErrorAction SilentlyContinue)) {
-        return "Set-Clipboard"
+    $commands = @(Get-ClipboardCommandPriority)
+    if ((Get-SafeCount -InputObject $commands) -eq 0) {
+        return $null
+    }
+
+    return $commands[0]
+}
+
+function Test-ShouldUseClipboardOsc52 {
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param()
+
+    return ($env:TERM_PROGRAM -eq "vscode") -or
+    (-not [string]::IsNullOrWhiteSpace($env:WT_SESSION)) -or
+    (-not [string]::IsNullOrWhiteSpace($env:SSH_CLIENT)) -or
+    (-not [string]::IsNullOrWhiteSpace($env:SSH_TTY))
+}
+
+function Get-ClipboardCommandPriority {
+    [OutputType([string[]])]
+    [CmdletBinding()]
+    param()
+
+    $commands = New-Object System.Collections.Generic.List[string]
+    $setClipboardCommand = Get-Command Set-Clipboard -ErrorAction SilentlyContinue
+    if ($null -ne $setClipboardCommand) {
+        $supportsOsc52 = $false
+        if ($setClipboardCommand.PSObject.Properties.Name -contains "Parameters" -and $null -ne $setClipboardCommand.Parameters) {
+            $supportsOsc52 = ($setClipboardCommand.Parameters.Keys -contains "AsOSC52")
+        }
+
+        if ($supportsOsc52 -and (Test-ShouldUseClipboardOsc52)) {
+            $commands.Add("Set-Clipboard-AsOSC52") | Out-Null
+        }
+
+        $commands.Add("Set-Clipboard") | Out-Null
     }
 
     $fallbackCommands = @("pbcopy", "xclip", "xsel", "wl-copy")
     foreach ($commandName in $fallbackCommands) {
         if ($null -ne (Get-Command $commandName -ErrorAction SilentlyContinue)) {
-            return $commandName
+            $commands.Add($commandName) | Out-Null
         }
     }
 
-    return $null
+    if ($commands.Count -eq 0) {
+        return @() # array-unwrap-safe: callers always wrap with @()
+    }
+
+    $deduplicated = New-Object System.Collections.Generic.List[string]
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($command in $commands) {
+        if ($seen.Add($command)) {
+            $deduplicated.Add($command) | Out-Null
+        }
+    }
+
+    return $deduplicated.ToArray()
 }
 
 function Copy-ToClipboard {
@@ -842,47 +912,129 @@ function Copy-ToClipboard {
         [string[]]$SensitiveTokens = @()
     )
 
-    $clipboardCommand = Get-ClipboardCommand
-    if ([string]::IsNullOrWhiteSpace($clipboardCommand)) {
+    $clipboardCommands = @(Get-ClipboardCommandPriority)
+    if ((Get-SafeCount -InputObject $clipboardCommands) -eq 0) {
         Write-Warning "W_CLIPBOARD_UNAVAILABLE: No clipboard command is available (tried Set-Clipboard, pbcopy, xclip, xsel, wl-copy)."
         return $false
     }
 
     $valueToCopy = if ($null -eq $Text) { "" } else { $Text }
+    $attemptErrors = New-Object System.Collections.Generic.List[string]
 
-    try {
-        switch ($clipboardCommand) {
-            "Set-Clipboard" {
-                Set-Clipboard -Value $valueToCopy
-                break
-            }
-            "pbcopy" {
-                $valueToCopy | & pbcopy
-                break
-            }
-            "xclip" {
-                $valueToCopy | & xclip -selection clipboard
-                break
-            }
-            "xsel" {
-                $valueToCopy | & xsel --clipboard --input
-                break
-            }
-            "wl-copy" {
-                $valueToCopy | & wl-copy
-                break
-            }
-            default {
-                Write-Warning "W_CLIPBOARD_UNAVAILABLE: Clipboard command '$clipboardCommand' is not supported by this script."
-                return $false
+    foreach ($clipboardCommand in $clipboardCommands) {
+        try {
+            switch ($clipboardCommand) {
+                "Set-Clipboard-AsOSC52" {
+                    Set-Clipboard -Value $valueToCopy -AsOSC52
+                    return $true
+                }
+                "Set-Clipboard" {
+                    Set-Clipboard -Value $valueToCopy
+                    return $true
+                }
+                "pbcopy" {
+                    $valueToCopy | & pbcopy
+                    return $true
+                }
+                "xclip" {
+                    $valueToCopy | & xclip -selection clipboard
+                    return $true
+                }
+                "xsel" {
+                    $valueToCopy | & xsel --clipboard --input
+                    return $true
+                }
+                "wl-copy" {
+                    $valueToCopy | & wl-copy
+                    return $true
+                }
+                default {
+                    $attemptErrors.Add("[$clipboardCommand] unsupported command") | Out-Null
+                    continue
+                }
             }
         }
+        catch {
+            $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+            $attemptErrors.Add("[$clipboardCommand] $safeMessage") | Out-Null
+            continue
+        }
+    }
 
-        return $true
-    } catch {
+    $attemptSummary = if ($attemptErrors.Count -gt 0) {
+        ($attemptErrors -join " | ")
+    }
+    else {
+        "(no attempt diagnostics captured)"
+    }
+
+    Write-Warning "W_CLIPBOARD_COPY_FAILED: Failed to copy output using available clipboard commands. Attempts: $attemptSummary"
+    return $false
+}
+
+function Resolve-OutputFilePath {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "E_INVALID_OUTPUT_PATH: OutputPath cannot be empty."
+    }
+
+    try {
+        $trimmedPath = $Path.Trim()
+        $resolvedPath = if ([System.IO.Path]::IsPathRooted($trimmedPath)) {
+            [System.IO.Path]::GetFullPath($trimmedPath)
+        }
+        else {
+            $combined = Join-Path -Path (Get-Location).Path -ChildPath $trimmedPath
+            [System.IO.Path]::GetFullPath($combined)
+        }
+
+        $directoryPath = [System.IO.Path]::GetDirectoryName($resolvedPath)
+        if (-not [string]::IsNullOrWhiteSpace($directoryPath) -and -not (Test-Path -Path $directoryPath -PathType Container)) {
+            [void][System.IO.Directory]::CreateDirectory($directoryPath)
+        }
+
+        return $resolvedPath
+    }
+    catch {
         $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
-        Write-Warning "W_CLIPBOARD_COPY_FAILED: Failed to copy output using '$clipboardCommand'. $safeMessage"
-        return $false
+        throw "E_INVALID_OUTPUT_PATH: Failed to resolve OutputPath '$Path'. $safeMessage"
+    }
+}
+
+function Write-RenderedOutputToFile {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [string]$Text,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    $resolvedPath = Resolve-OutputFilePath -Path $OutputPath -SensitiveTokens $SensitiveTokens
+    $content = if ($null -eq $Text) { "" } else { $Text }
+
+    try {
+        [System.IO.File]::WriteAllText($resolvedPath, $content, [System.Text.Encoding]::UTF8)
+        return $resolvedPath
+    }
+    catch {
+        $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+        throw "E_OUTPUT_WRITE_FAILED: Failed to write output to '$resolvedPath'. $safeMessage"
     }
 }
 
@@ -892,7 +1044,8 @@ function Test-CanPromptForLogin {
 
     try {
         return (-not [Console]::IsInputRedirected) -and (-not [Console]::IsOutputRedirected)
-    } catch {
+    }
+    catch {
         return $false
     }
 }
@@ -936,7 +1089,8 @@ function Get-AuthToken {
         if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tokenOutput)) {
             return $tokenOutput.Trim()
         }
-    } catch {
+    }
+    catch {
         # Continue to interactive fallback only if allowed.
     }
 
@@ -1016,7 +1170,8 @@ function Invoke-GitHubRequestWithRetry {
 
             $jsonBody = if ($null -eq $Body) { "{}" } else { $Body | ConvertTo-Json -Depth 20 }
             return Invoke-RestMethod -Method POST -Uri $Uri -Headers $Headers -ContentType "application/json" -Body $jsonBody -TimeoutSec $RequestTimeoutSeconds
-        } catch {
+        }
+        catch {
             $statusCode = Get-HttpStatusCode -Exception $_.Exception
             $responseHeaders = Get-ResponseHeaders -Exception $_.Exception
 
@@ -1029,11 +1184,13 @@ function Invoke-GitHubRequestWithRetry {
                         $retryAfterSeconds = 0
                         if ([int]::TryParse($retryAfterCandidate, [ref]$retryAfterSeconds) -and $retryAfterSeconds -gt 0) {
                             $resetValue = ([DateTimeOffset]::UtcNow.AddSeconds($retryAfterSeconds + 1).ToUnixTimeSeconds()).ToString()
-                        } else {
+                        }
+                        else {
                             $retryAfterDate = [DateTimeOffset]::MinValue
                             if ([DateTimeOffset]::TryParseExact($retryAfterCandidate, "r", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$retryAfterDate)) {
                                 $resetValue = $retryAfterDate.ToUnixTimeSeconds().ToString()
-                            } else {
+                            }
+                            else {
                                 throw "E_RATE_LIMIT: Invalid Retry-After value '$retryAfterCandidate'. $(Get-HeaderValueDiagnostics -Key 'Retry-After' -Values @($retryAfterValue))"
                             }
                         }
@@ -1283,7 +1440,8 @@ function Validate-GitHubTokenForRepoAccess {
 
                 $headerDiagnostics = if ((Get-SafeCount -InputObject $headerKeys) -gt 0) {
                     "Headers seen: $($headerKeys -join ', ')"
-                } else {
+                }
+                else {
                     "Headers seen: (none)"
                 }
 
@@ -1374,7 +1532,8 @@ function Select-PullRequestInteractively {
         $numeric = [int]$selection
         if ($numeric -ge 1 -and $numeric -le $pullCount) {
             $selectedPr = $pulls[$numeric - 1]
-        } else {
+        }
+        else {
             $selectedPr = $pulls | Where-Object { $_.number -eq $numeric } | Select-Object -First 1
         }
     }
@@ -1450,15 +1609,18 @@ function Convert-ReviewThreadToOutputRecord {
     $safePath = if ([string]::IsNullOrWhiteSpace($Thread.path)) { "<conversation>" } else { ($Thread.path -replace "\\", "/") }
     $topLevelComment = if ($Truncate.IsPresent) {
         Normalize-CommentText -Text $top.body -MaxLength 500
-    } else {
+    }
+    else {
         Normalize-CommentText -Text $top.body -DisableTruncation
     }
 
     $latestReplySummary = if ($null -eq $latestReply) {
         $null
-    } elseif ($Truncate.IsPresent) {
+    }
+    elseif ($Truncate.IsPresent) {
         Normalize-CommentText -Text $latestReply.body -MaxLength 300
-    } else {
+    }
+    else {
         Normalize-CommentText -Text $latestReply.body -DisableTruncation
     }
 
@@ -1494,7 +1656,8 @@ function Format-UnresolvedThreadsAsText {
         $lines.Add($record.topLevelComment)
         if ($null -eq $record.latestReplySummary) {
             $lines.Add("Latest reply summary: (none)")
-        } else {
+        }
+        else {
             $lines.Add(("Latest reply summary: {0}" -f $record.latestReplySummary))
         }
         $lines.Add("---")
@@ -1564,7 +1727,7 @@ function Get-UnresolvedReviewThreads {
         [string[]]$SensitiveTokens = @()
     )
 
-        $query = @'
+    $query = @'
 query GetReviewThreads(
   $owner: String!,
   $repo: String!,
@@ -1611,15 +1774,15 @@ query GetReviewThreads(
         $page++
 
         $variables = @{
-            owner = $Owner
-            repo = $Repo
+            owner    = $Owner
+            repo     = $Repo
             prNumber = $PrNumber
-            first = $PerPage
-            after = $cursor
+            first    = $PerPage
+            after    = $cursor
         }
 
         $body = @{
-            query = $query
+            query     = $query
             variables = $variables
         }
 
@@ -1630,7 +1793,8 @@ query GetReviewThreads(
             if ($response.Contains("errors")) {
                 $errors = $response["errors"]
             }
-        } elseif ($response.PSObject.Properties.Name -contains "errors") {
+        }
+        elseif ($response.PSObject.Properties.Name -contains "errors") {
             $errors = $response.errors
         }
 
@@ -1646,7 +1810,8 @@ query GetReviewThreads(
                             $message = $messageValue
                         }
                     }
-                } elseif ($firstError.PSObject.Properties.Name -contains "message") {
+                }
+                elseif ($firstError.PSObject.Properties.Name -contains "message") {
                     $messageValue = Get-FirstNonEmptyStringValue -Value $firstError.message
                     if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
                         $message = $messageValue
@@ -1715,7 +1880,8 @@ query GetReviewThreads(
             if ($hasEndCursorField) {
                 $nextCursor = $pageInfo["endCursor"]
             }
-        } else {
+        }
+        else {
             $hasHasNextPageField = $pageInfo.PSObject.Properties.Name -contains "hasNextPage"
             $hasEndCursorField = $pageInfo.PSObject.Properties.Name -contains "endCursor"
             if ($hasHasNextPageField) {
@@ -1858,6 +2024,10 @@ function Invoke-Main {
     param()
 
     $overallDeadlineUtc = [datetime]::UtcNow.AddSeconds($OverallTimeoutSeconds)
+    if ($CopyStrict.IsPresent -and -not $Copy.IsPresent) {
+        throw "E_CONFIG_ERROR: -CopyStrict requires -Copy."
+    }
+
     $initialSensitive = @()
     $isGitHubHostExplicitlyProvided = $script:TopLevelBoundParameters.ContainsKey("GitHubHost")
     $allowedGitHubHostsNormalized = Get-NormalizedGitHubHostAllowlist -AllowedGitHubHosts $AllowedGitHubHosts
@@ -1894,7 +2064,8 @@ function Invoke-Main {
         }
 
         $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
-    } catch {
+    }
+    catch {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
 
         $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
@@ -1925,10 +2096,12 @@ function Invoke-Main {
 
                 Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
                 $records = Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
-            } else {
+            }
+            else {
                 throw $message
             }
-        } else {
+        }
+        else {
             throw $message
         }
     }
@@ -1936,12 +2109,20 @@ function Invoke-Main {
     $output = $null
     if ($OutputFormat -eq "json") {
         $output = Format-UnresolvedThreadsAsJson -Records $records
-    } else {
+    }
+    else {
         $output = Format-UnresolvedThreadsAsText -Records $records
     }
 
     if ($Copy.IsPresent) {
-        [void](Copy-ToClipboard -Text $output -SensitiveTokens $sensitiveTokens)
+        $copied = Copy-ToClipboard -Text $output -SensitiveTokens $sensitiveTokens
+        if (-not $copied -and $CopyStrict.IsPresent) {
+            throw "E_CLIPBOARD_COPY_FAILED: Clipboard copy failed and -CopyStrict was specified."
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
+        [void](Write-RenderedOutputToFile -Text $output -OutputPath $OutputPath -SensitiveTokens $sensitiveTokens)
     }
 
     Write-Output $output
@@ -1951,7 +2132,8 @@ function Invoke-Main {
 if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
     try {
         Invoke-Main
-    } catch {
+    }
+    catch {
         Write-Error $_
         exit 1
     }

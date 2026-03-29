@@ -32,6 +32,6 @@ This file is generated. Do not edit generated sections manually.
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
-| [Github Pr Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, host allowlist, retries | Preserve GitHub utility safety and retry behavior |
+| [Github Pr Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, host allowlist, retries, clipboard fallback, output file, powershell completion | Preserve GitHub utility safety and UX contracts |
 
 <!-- END GENERATED SKILLS INDEX -->

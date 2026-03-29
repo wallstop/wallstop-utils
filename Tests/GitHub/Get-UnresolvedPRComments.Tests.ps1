@@ -402,9 +402,26 @@ Describe "Get-ClipboardCommand" {
     }
 }
 
+Describe "Get-ClipboardCommandPriority" {
+    It "adds OSC52 strategy before Set-Clipboard when terminal supports it" {
+        Mock Get-Command {
+            [pscustomobject]@{
+                Name = "Set-Clipboard"
+                Parameters = @{ AsOSC52 = $true }
+            }
+        } -ParameterFilter { $Name -eq "Set-Clipboard" }
+        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
+        Mock Test-ShouldUseClipboardOsc52 { $true }
+
+        $commands = @(Get-ClipboardCommandPriority)
+        $commands[0] | Should -Be "Set-Clipboard-AsOSC52"
+        $commands[1] | Should -Be "Set-Clipboard"
+    }
+}
+
 Describe "Copy-ToClipboard" {
     It "copies text using Set-Clipboard when available" {
-        Mock Get-ClipboardCommand { "Set-Clipboard" }
+        Mock Get-ClipboardCommandPriority { @("Set-Clipboard") }
         Mock Set-Clipboard { }
 
         $copied = Copy-ToClipboard -Text "copy me"
@@ -415,7 +432,7 @@ Describe "Copy-ToClipboard" {
 
     It "returns false and warns when clipboard command is unavailable" {
         $script:lastWarningMessage = $null
-        Mock Get-ClipboardCommand { $null }
+        Mock Get-ClipboardCommandPriority { @() }
         Mock Write-Warning {
             param($Message)
             $script:lastWarningMessage = $Message
@@ -430,7 +447,7 @@ Describe "Copy-ToClipboard" {
     It "redacts sensitive tokens when clipboard copy fails" {
         $secret = "ghp_" + ("a" * 36)
         $script:lastWarningMessage = $null
-        Mock Get-ClipboardCommand { "Set-Clipboard" }
+        Mock Get-ClipboardCommandPriority { @("Set-Clipboard") }
         Mock Set-Clipboard { throw "copy failure token=$secret" }
         Mock Write-Warning {
             param($Message)
@@ -443,6 +460,53 @@ Describe "Copy-ToClipboard" {
         $script:lastWarningMessage | Should -Match "W_CLIPBOARD_COPY_FAILED"
         $script:lastWarningMessage | Should -Match "\*\*\*REDACTED\*\*\*"
         $script:lastWarningMessage | Should -Not -Match [regex]::Escape($secret)
+    }
+
+    It "falls back to secondary clipboard command when primary fails" {
+        Mock Get-ClipboardCommandPriority { @("Set-Clipboard", "Set-Clipboard-AsOSC52") }
+        Mock Set-Clipboard {
+            param(
+                [string]$Value,
+                [switch]$AsOSC52
+            )
+
+            if (-not $AsOSC52.IsPresent) {
+                throw "Set-Clipboard failed"
+            }
+        }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeTrue
+        Assert-MockCalled Set-Clipboard -Times 2 -Scope It
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent }
+    }
+
+    It "uses Set-Clipboard -AsOSC52 when OSC52 strategy is selected" {
+        Mock Get-ClipboardCommandPriority { @("Set-Clipboard-AsOSC52") }
+        Mock Set-Clipboard { }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeTrue
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent -and $Value -eq "copy me" }
+    }
+}
+
+Describe "Write-RenderedOutputToFile" {
+    It "writes UTF-8 output and creates missing parent directories" {
+        $tempRoot = Join-Path -Path $TestDrive -ChildPath "nested/path"
+        $targetPath = Join-Path -Path $tempRoot -ChildPath "threads.txt"
+
+        $resolvedPath = Write-RenderedOutputToFile -Text "hello" -OutputPath $targetPath
+
+        $resolvedPath | Should -Be $targetPath
+        (Test-Path -Path $targetPath -PathType Leaf) | Should -BeTrue
+        [System.IO.File]::ReadAllText($targetPath, [System.Text.Encoding]::UTF8) | Should -Be "hello"
+    }
+
+    It "throws when OutputPath is empty" {
+        { Write-RenderedOutputToFile -Text "x" -OutputPath "   " } | Should -Throw "*E_INVALID_OUTPUT_PATH*"
     }
 }
 
@@ -1843,6 +1907,118 @@ Describe "Invoke-Main" {
         $script:lastOutput | Should -Be "still output"
         Assert-MockCalled Copy-ToClipboard -Times 1 -Scope It
         Assert-MockCalled Write-Output -Times 1 -Scope It -ParameterFilter { $InputObject -eq "still output" }
+    }
+
+    It "fails fast when CopyStrict is set without Copy" {
+        $Copy = [System.Management.Automation.SwitchParameter]::new($false)
+        $CopyStrict = [System.Management.Automation.SwitchParameter]::new($true)
+
+        { Invoke-Main } | Should -Throw "*E_CONFIG_ERROR*-CopyStrict requires -Copy*"
+    }
+
+    It "throws E_CLIPBOARD_COPY_FAILED when CopyStrict is set and copy fails" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $Truncate = [System.Management.Automation.SwitchParameter]::new($false)
+        $Copy = [System.Management.Automation.SwitchParameter]::new($true)
+        $CopyStrict = [System.Management.Automation.SwitchParameter]::new($true)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path = "src/a.ts"
+                    lineStart = 1
+                    lineEnd = 1
+                    topLevelComment = "x"
+                    latestReplySummary = $null
+                }
+            )
+        }
+        Mock Format-UnresolvedThreadsAsText { "strict output" }
+        Mock Copy-ToClipboard { $false }
+
+        { Invoke-Main } | Should -Throw "*E_CLIPBOARD_COPY_FAILED*"
+    }
+
+    It "writes output file when OutputPath is provided and still writes stdout" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "text"
+        $OutputPath = Join-Path -Path $TestDrive -ChildPath "artifacts/out.txt"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $Truncate = [System.Management.Automation.SwitchParameter]::new($false)
+        $Copy = [System.Management.Automation.SwitchParameter]::new($false)
+        $CopyStrict = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host = "github.com"
+                Owner = "org"
+                Repo = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path = "src/a.ts"
+                    lineStart = 1
+                    lineEnd = 1
+                    topLevelComment = "x"
+                    latestReplySummary = $null
+                }
+            )
+        }
+        Mock Format-UnresolvedThreadsAsText { "file output" }
+        Mock Write-RenderedOutputToFile { $OutputPath }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        Assert-MockCalled Write-RenderedOutputToFile -Times 1 -Scope It -ParameterFilter { $OutputPath -eq (Join-Path -Path $TestDrive -ChildPath "artifacts/out.txt") -and $Text -eq "file output" }
+        $script:lastOutput | Should -Be "file output"
     }
 
     It "threads Truncate through unresolved thread retrieval" {
