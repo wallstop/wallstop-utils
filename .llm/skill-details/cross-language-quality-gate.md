@@ -20,6 +20,12 @@ Preserve deterministic drift checks so automation cannot silently mutate files.
 
 When a failure pattern repeats, encode it in skills, context, and tests instead of one-off exceptions.
 
+Current invariants to preserve:
+
+1. Keep `.gitattributes` and pre-commit line-ending policy aligned. If batch/cmd files require CRLF, the LF-forcing hook must exclude those file types.
+2. Keep generated artifact ordering deterministic across operating systems by using culture-invariant sorting in generator scripts.
+3. Keep stale-artifact checks actionable by emitting first-mismatch diagnostics and content hashes when comparisons fail.
+
 ## Commands
 
 ```bash

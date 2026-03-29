@@ -13,7 +13,7 @@ repos:
         exclude: '^Config/(PowerToys/|\.config/)'
       - id: mixed-line-ending
         args: [--fix=lf]
-        exclude: '^Config/(PowerToys/|\.config/)'
+        exclude: '^(Config/(PowerToys/|\.config/).*|.*\.(bat|cmd))$'
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
         exclude: '^Config/(PowerToys/|\.config/)'

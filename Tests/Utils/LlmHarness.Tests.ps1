@@ -136,6 +136,37 @@ Describe "LLM harness automation" {
         { & $script:validatorPath -RootPath $script:repoRoot -MaxLines 300 -WarningLines 280 } | Should -Not -Throw
     }
 
+    It "keeps generated index check stable across cultures: <CultureName>" -TestCases @(
+        @{ CultureName = 'en-US' }
+        @{ CultureName = 'de-DE' }
+        @{ CultureName = 'tr-TR' }
+    ) {
+        param(
+            [string]$CultureName
+        )
+
+        $culture = $null
+        try {
+            $culture = [System.Globalization.CultureInfo]::GetCultureInfo($CultureName)
+        }
+        catch {
+            Set-ItResult -Skipped -Because "Culture '$CultureName' is unavailable on this runner"
+            return
+        }
+
+        $originalCulture = [System.Threading.Thread]::CurrentThread.CurrentCulture
+        $originalUICulture = [System.Threading.Thread]::CurrentThread.CurrentUICulture
+        try {
+            [System.Threading.Thread]::CurrentThread.CurrentCulture = $culture
+            [System.Threading.Thread]::CurrentThread.CurrentUICulture = $culture
+            { & $script:indexUpdaterPath -RootPath $script:repoRoot -Check } | Should -Not -Throw
+        }
+        finally {
+            [System.Threading.Thread]::CurrentThread.CurrentCulture = $originalCulture
+            [System.Threading.Thread]::CurrentThread.CurrentUICulture = $originalUICulture
+        }
+    }
+
     It "fails validation when a skill card anchor does not resolve to a details heading" {
         $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("llm-harness-{0}" -f ([System.Guid]::NewGuid().ToString('N')))
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)

@@ -315,6 +315,24 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Match 'exclude:\s+''\^Config/\(PowerToys/\|\\\.config/\)'''
     }
 
+    It "keeps mixed-line-ending hook aligned with Windows command-script policy" {
+        $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
+
+        $preCommitConfig | Should -Match 'id:\s+mixed-line-ending'
+        $preCommitConfig | Should -Match 'id:\s+mixed-line-ending[\s\S]*args:\s+\[--fix=lf\]'
+        $preCommitConfig | Should -Match 'id:\s+mixed-line-ending[\s\S]*exclude:\s+''[^'']*\(bat\|cmd\)[^'']*'''
+    }
+
+    It "keeps LLM skills index sorting culture-invariant" {
+        $indexUpdaterPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
+        $indexUpdater = Get-Content -Path $indexUpdaterPath -Raw
+
+        $indexUpdater | Should -Match '\$script:InvariantCulture\s*=\s*\[System\.Globalization\.CultureInfo\]::InvariantCulture'
+        $indexUpdater | Should -Match 'Sort-Object\s+-Unique\s+-Culture\s+\$script:InvariantCulture'
+        $indexUpdater | Should -Match 'Sort-Object\s+Name,\s*RelativePath\s+-Culture\s+\$script:InvariantCulture'
+        $indexUpdater | Should -Match 'Sort-Object\s+FullName\s+-Culture\s+\$script:InvariantCulture'
+    }
+
     It "excludes encrypted snapshot directories from check-json validation" {
         $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
 

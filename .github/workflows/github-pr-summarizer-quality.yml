@@ -26,6 +26,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.2
 
+      - name: Git line-ending diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "git_version=$(git --version)"
+          echo "core.autocrlf=$(git config --get core.autocrlf || echo unset)"
+          echo "core.eol=$(git config --get core.eol || echo unset)"
+          echo "core.safecrlf=$(git config --get core.safecrlf || echo unset)"
+          echo "gitattributes_rules=$(grep -nE 'text=auto|\*\.bat|\*\.cmd' .gitattributes | tr '\n' ';' || true)"
+
+          profile_line_endings() {
+            local path="$1"
+            if [[ ! -f "$path" ]]; then
+              echo "line_endings[$path]=missing"
+              return
+            fi
+
+            local crlf_count=0
+            local lf_only_count=0
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              if [[ "$line" == *$'\r' ]]; then
+                crlf_count=$((crlf_count + 1))
+              else
+                lf_only_count=$((lf_only_count + 1))
+              fi
+            done < "$path"
+
+            echo "line_endings[$path]=crlf_lines=${crlf_count},lf_only_lines=${lf_only_count}"
+          }
+
+          profile_line_endings ".llm/skills-index.md"
+          profile_line_endings "Scripts/Utils/LaunchUnity.bat"
+
       - name: Setup PowerShell modules
         shell: pwsh
         run: |
