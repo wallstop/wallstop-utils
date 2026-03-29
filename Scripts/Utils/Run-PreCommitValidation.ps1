@@ -159,13 +159,28 @@ try {
     $runGitHubTests = $All -or $githubTestFiles.Count -gt 0
     $runAnalyzer = $All -or $scriptFiles.Count -gt 0
     $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
+    $llmHarnessMatchedFilesText = if ($llmHarnessFiles.Count -gt 0) { $llmHarnessFiles -join ', ' } else { '(none)' }
+
+    Write-Verbose (
+        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runAnalyzer={4}; runLlmHarnessValidation={5}" -f
+        $All.IsPresent,
+        $stagedFiles.Count,
+        $runUtilsTests,
+        $runGitHubTests,
+        $runAnalyzer,
+        $runLlmHarnessValidation
+    )
 
     if ($runLlmHarnessValidation) {
-        Write-Host ("LLM harness staged-file diagnostics: allMode={0}; source={1}; matchedCount={2}; matchedFiles={3}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count, ($llmHarnessFiles -join ', '))
+        Write-Host ("Running LLM harness validation... allMode={0}; source={1}; matchedCount={2}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count)
+        Write-Verbose ("LLM harness staged-file diagnostics: allMode={0}; source={1}; matchedCount={2}; matchedFiles={3}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count, $llmHarnessMatchedFilesText)
+    }
+    else {
+        Write-Verbose ("Skipping LLM harness validation: allMode={0}; source={1}; matchedCount={2}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count)
     }
 
     if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
-        Write-Host "No staged files requiring utility validation; skipping validation."
+        Write-Verbose "No staged files requiring utility validation; skipping validation."
         return
     }
 
@@ -214,7 +229,6 @@ try {
             throw "E_CONFIG_ERROR: LLM harness validator is missing at '$llmValidatorPath'."
         }
 
-        Write-Host "Running LLM harness validation..."
         & $llmValidatorPath -RootPath $repoRoot
     }
 

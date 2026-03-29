@@ -132,18 +132,20 @@ Avoid `Invoke-Expression`; it is slow, unsafe, and breaks static analysis.
 
 ## Avoiding Windows-Only APIs And Commands
 
-Commands and APIs that do not exist on Linux/macOS:
+Commands and APIs that are Windows-only, or whose behavior is Windows-specific:
 
 | Windows-Only                        | Cross-Platform Alternative                               |
 | ----------------------------------- | -------------------------------------------------------- |
-| `Get-WmiObject` / `Get-CimInstance` | Parse `/proc`, `uname`, or `sw_vers` per platform        |
+| `Get-WmiObject` / `Get-CimInstance` | Windows-only WMI; use native OS tools on non-Windows     |
 | `Registry` provider (`HKLM:\`)      | Config files or environment variables                    |
 | `Start-Process -Verb RunAs`         | `sudo` on Unix (but prompt-interactive)                  |
-| `[System.Windows.Forms]`            | Not available; use CLI alternatives                      |
+| `[System.Windows.Forms]`            | Windows UI only; use CLI alternatives                    |
 | `Get-Clipboard` / `Set-Clipboard`   | Platform-specific: `pbcopy/pbpaste`, `xclip`, `clip.exe` |
 | `$env:APPDATA`, `$env:LOCALAPPDATA` | `$HOME/.config`, `$HOME/.local/share` (XDG)              |
 | `$env:TEMP`                         | `[System.IO.Path]::GetTempPath()`                        |
 | `$env:PATH` split by `;`            | Split by `;` on Windows, `:` on Unix                     |
+
+`Get-CimInstance` is available in PowerShell 7+ on non-Windows, but CIM data is provider-dependent and often limited compared to Windows.
 
 Mark Windows-only scripts clearly in file paths (e.g., `Scripts/Komorebi/`, `Scripts/WinGet/`).
 Shared utility scripts under `Scripts/Utils/` must remain cross-platform.

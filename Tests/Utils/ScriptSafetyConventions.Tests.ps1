@@ -1492,6 +1492,51 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'E_CONFIG_ERROR:\s+Invoke-Pester is not available'
     }
 
+    It "keeps Run-PreCommitValidation LLM harness telemetry low-noise" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $content = Get-Content -Path $preCommitPath -Raw
+
+        $content | Should -Match 'Write-Host\s*\("Running LLM harness validation\.\.\. allMode='
+        $content | Should -Match 'Write-Verbose\s*\(\s*"LLM harness trigger diagnostics:'
+        $content | Should -Match 'Write-Verbose\s*\(\s*"Validation trigger summary:'
+        $content | Should -Match 'Write-Verbose\s*\(\s*"LLM harness staged-file diagnostics:'
+        $content | Should -Match 'Write-Verbose\s*"No staged files requiring utility validation; skipping validation\."'
+        $content | Should -Not -Match 'Write-Host\s*\(\s*"LLM harness staged-file diagnostics:'
+    }
+
+    It "keeps Invoke-PesterQualityGate diagnostics low-noise" {
+        $pesterGatePath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
+        $content = Get-Content -Path $pesterGatePath -Raw
+
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: version='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: modulePath='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: hasNewPesterConfiguration='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: passed='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: coverageProperties='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: coveragePercent='
+        $content | Should -Not -Match 'Write-Host\s*"\$DiagnosticsPrefix diagnostics:'
+    }
+
+    It "keeps cross-platform CIM and WMI guidance precise" {
+        $crossPlatformDetailsPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details/cross-platform-powershell.md'
+        $content = (Get-Content -Path $crossPlatformDetailsPath -Raw) -replace "`r", ''
+        $windowsOnlySectionMatch = [regex]::Match(
+            $content,
+            '(?ms)^##\s+Avoiding\s+Windows-Only\s+APIs\s+And\s+Commands\s*$\n(?<section>.*?)(?=^##\s|\z)'
+        )
+        $windowsOnlySection = if ($windowsOnlySectionMatch.Success) { $windowsOnlySectionMatch.Groups['section'].Value } else { '' }
+
+        $windowsOnlySectionMatch.Success | Should -BeTrue
+        $windowsOnlySection | Should -Not -Match '(?im)^Commands and APIs that do not exist on Linux/macOS:\s*$'
+        $windowsOnlySection | Should -Match '(?i)Get-WmiObject'
+        $windowsOnlySection | Should -Match '(?i)Windows-only'
+        $windowsOnlySection | Should -Match '(?i)Get-CimInstance'
+        $windowsOnlySection | Should -Match '(?i)(provider-dependent|providers?\s+are\s+often\s+limited|often\s+limited)'
+        $windowsOnlySection | Should -Match '(?i)\[System\.Windows\.Forms\]'
+        $windowsOnlySection | Should -Match '(?i)Windows\s+UI\s+only'
+        $windowsOnlySection | Should -Not -Match '(?i)\[System\.Windows\.Forms\][^\r\n|]*Not\s+available'
+    }
+
     It "derives LLM harness trigger pattern from Wrapper Contract instead of hardcoded wrapper names" {
         $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
         $content = Get-Content -Path $preCommitPath -Raw
@@ -1522,6 +1567,12 @@ Describe "Utility configuration safety conventions" {
         $content = Get-Content -Path $validatorPath -Raw
 
         $content | Should -Match 'Dependabot/context diagnostics'
+        $content | Should -Match 'Cross-platform command availability diagnostics'
+        $content | Should -Match 'hasWindowsOnlySection'
+        $content | Should -Match 'legacyNoExistHeader'
+        $content | Should -Match 'hasGetWmiWindowsOnly'
+        $content | Should -Match 'hasGetCimProviderLanguage'
+        $content | Should -Match 'hasCimProviderCaveat'
         $content | Should -Match 'foreach\s*\(\$diagnostic\s+in\s+\$diagnostics\)\s*\{\s*Write-Verbose\s+\$diagnostic'
         $content | Should -Not -Match 'Write-Warning\s+\$warning'
         $content | Should -Match 'per\\s\+update\\s\+type'

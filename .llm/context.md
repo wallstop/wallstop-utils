@@ -24,7 +24,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 8. Prefer PEP 668-safe pre-commit bootstrap guidance (`pipx` or dedicated venv); avoid `python3 -m pip install --user pre-commit`.
 9. When a failure reveals a repeatable category, codify the invariant in skills/context/tests.
 10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
-11. Keep harness diagnostics low-noise: use `Write-Verbose` for advisory telemetry and reserve `Write-Warning` for actionable degradation only.
+11. Keep quality-harness diagnostics low-noise: in `Run-PreCommitValidation.ps1` and `Scripts/Utils/Quality/*`, use `Write-Verbose` for advisory telemetry and reserve `Write-Warning` for actionable degradation only; keep `Write-Host` for concise high-level status.
 
 ## Working Agreement For Agents
 

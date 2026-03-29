@@ -418,6 +418,36 @@ if (Test-Path -Path $contextPath -PathType Leaf) {
 
 if (Test-Path -Path $crossPlatformDetailsPath -PathType Leaf) {
     $crossPlatformContent = ([System.IO.File]::ReadAllText($crossPlatformDetailsPath, [System.Text.Encoding]::UTF8)) -replace "`r", ''
+    $windowsOnlySectionMatch = [System.Text.RegularExpressions.Regex]::Match(
+        $crossPlatformContent,
+        '(?ms)^##\s+Avoiding\s+Windows-Only\s+APIs\s+And\s+Commands\s*$\n(?<section>.*?)(?=^##\s|\z)'
+    )
+    $windowsOnlySection = if ($windowsOnlySectionMatch.Success) { $windowsOnlySectionMatch.Groups['section'].Value } else { '' }
+    $legacyNoExistHeader = $windowsOnlySection -match '(?im)^Commands and APIs that do not exist on Linux/macOS:\s*$'
+    $hasGetWmiWindowsOnly = $windowsOnlySection -match '(?i)Get-WmiObject' -and $windowsOnlySection -match '(?i)Windows-only'
+    $hasGetCimProviderLanguage = $windowsOnlySection -match '(?i)Get-CimInstance' -and $windowsOnlySection -match '(?i)(provider-dependent|providers?\s+are\s+often\s+limited|often\s+limited)'
+    $hasCimProviderCaveat = $hasGetWmiWindowsOnly -and $hasGetCimProviderLanguage
+    $diagnostics.Add((
+            "Cross-platform command availability diagnostics: hasWindowsOnlySection={0}; legacyNoExistHeader={1}; hasGetWmiWindowsOnly={2}; hasGetCimProviderLanguage={3}; hasCimProviderCaveat={4}" -f
+            $windowsOnlySectionMatch.Success,
+            $legacyNoExistHeader,
+            $hasGetWmiWindowsOnly,
+            $hasGetCimProviderLanguage,
+            $hasCimProviderCaveat
+        )) | Out-Null
+
+    if (-not $windowsOnlySectionMatch.Success) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md is missing the Avoiding Windows-Only APIs And Commands section expected by portability policy.') | Out-Null
+    }
+
+    if ($legacyNoExistHeader) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md uses overly broad availability wording. Prefer Windows-only or Windows-specific behavior wording with caveats.') | Out-Null
+    }
+
+    if (-not $hasCimProviderCaveat) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md must clarify that Get-WmiObject is Windows-only and Get-CimInstance on non-Windows is provider-dependent/limited.') | Out-Null
+    }
+
     if ($crossPlatformContent -match '(?i)default\s+HFS\+') {
         $errors.Add('.llm/skill-details/cross-platform-powershell.md uses outdated macOS default filesystem wording (default HFS+). Use APFS default wording instead.') | Out-Null
     }
