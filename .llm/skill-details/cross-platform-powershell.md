@@ -68,7 +68,7 @@ Prefer `[System.IO.File]` methods for deterministic encoding control.
 
 ## Case Sensitivity And File System Differences
 
-Linux file systems are case-sensitive; Windows and macOS (default HFS+) are not.
+Linux file systems are typically case-sensitive; Windows NTFS and default macOS APFS volumes are usually case-insensitive, though macOS can be configured as case-sensitive.
 
 ```powershell
 # Wrong: may find "Config.json" on Windows but fail on Linux
@@ -134,16 +134,16 @@ Avoid `Invoke-Expression`; it is slow, unsafe, and breaks static analysis.
 
 Commands and APIs that do not exist on Linux/macOS:
 
-| Windows-Only | Cross-Platform Alternative |
-| --- | --- |
-| `Get-WmiObject` / `Get-CimInstance` | Parse `/proc`, `uname`, or `sw_vers` per platform |
-| `Registry` provider (`HKLM:\`) | Config files or environment variables |
-| `Start-Process -Verb RunAs` | `sudo` on Unix (but prompt-interactive) |
-| `[System.Windows.Forms]` | Not available; use CLI alternatives |
-| `Get-Clipboard` / `Set-Clipboard` | Platform-specific: `pbcopy/pbpaste`, `xclip`, `clip.exe` |
-| `$env:APPDATA`, `$env:LOCALAPPDATA` | `$HOME/.config`, `$HOME/.local/share` (XDG) |
-| `$env:TEMP` | `[System.IO.Path]::GetTempPath()` |
-| `$env:PATH` split by `;` | Split by `;` on Windows, `:` on Unix |
+| Windows-Only                        | Cross-Platform Alternative                               |
+| ----------------------------------- | -------------------------------------------------------- |
+| `Get-WmiObject` / `Get-CimInstance` | Parse `/proc`, `uname`, or `sw_vers` per platform        |
+| `Registry` provider (`HKLM:\`)      | Config files or environment variables                    |
+| `Start-Process -Verb RunAs`         | `sudo` on Unix (but prompt-interactive)                  |
+| `[System.Windows.Forms]`            | Not available; use CLI alternatives                      |
+| `Get-Clipboard` / `Set-Clipboard`   | Platform-specific: `pbcopy/pbpaste`, `xclip`, `clip.exe` |
+| `$env:APPDATA`, `$env:LOCALAPPDATA` | `$HOME/.config`, `$HOME/.local/share` (XDG)              |
+| `$env:TEMP`                         | `[System.IO.Path]::GetTempPath()`                        |
+| `$env:PATH` split by `;`            | Split by `;` on Windows, `:` on Unix                     |
 
 Mark Windows-only scripts clearly in file paths (e.g., `Scripts/Komorebi/`, `Scripts/WinGet/`).
 Shared utility scripts under `Scripts/Utils/` must remain cross-platform.

@@ -174,6 +174,8 @@ $skillsIndexPath = Join-Path -Path $repoRoot -ChildPath '.llm/skills-index.md'
 $skillsDir = Join-Path -Path $repoRoot -ChildPath '.llm/skills'
 $skillDetailsDir = Join-Path -Path $repoRoot -ChildPath '.llm/skill-details'
 $updateScriptPath = Join-Path -Path $repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
+$dependabotConfigPath = Join-Path -Path $repoRoot -ChildPath '.github/dependabot.yml'
+$crossPlatformDetailsPath = Join-Path -Path $repoRoot -ChildPath '.llm/skill-details/cross-platform-powershell.md'
 
 if (-not (Test-Path -Path $contextPath -PathType Leaf)) {
     $errors.Add("Missing required context file: .llm/context.md") | Out-Null
@@ -335,6 +337,84 @@ if (Test-Path -Path $contextPath -PathType Leaf) {
     $contextContent = [System.IO.File]::ReadAllText($contextPath, [System.Text.Encoding]::UTF8)
     if ($contextContent -notmatch '\(\./skills-index\.md\)') {
         $errors.Add('.llm/context.md must link to .llm/skills-index.md.') | Out-Null
+    }
+
+    if (Test-Path -Path $dependabotConfigPath -PathType Leaf) {
+        $dependabotContent = ([System.IO.File]::ReadAllText($dependabotConfigPath, [System.Text.Encoding]::UTF8)) -replace "`r", ''
+        $normalizedContext = $contextContent -replace "`r", ''
+        $ecosystemMatches = [System.Text.RegularExpressions.Regex]::Matches(
+            $dependabotContent,
+            '(?m)^\s*-\s*package-ecosystem:\s*"?(?<name>[A-Za-z0-9-]+)"?\s*$'
+        )
+        $configuredEcosystems = @(
+            $ecosystemMatches |
+            ForEach-Object { $_.Groups['name'].Value } |
+            Sort-Object -Unique
+        )
+
+        $scheduleDiagnostics = @{
+            IntervalWeeklyCount = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count
+            DayMondayCount      = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count
+            Time0300Count       = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count
+            TimezoneUtcCount    = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count
+        }
+        $usesPerUpdateTypeGroups = (
+            $dependabotContent -match '(?m)^\s*applies-to:\s*(?:"version-updates"|version-updates)\s*$' -and
+            $dependabotContent -match '(?m)^\s*applies-to:\s*(?:"security-updates"|security-updates)\s*$'
+        )
+
+        $warnings.Add((
+                "Dependabot/context diagnostics: ecosystems={0}; schedule={1}/{2}/{3}/{4}; groupedByUpdateType={5}" -f
+                ($configuredEcosystems -join ','),
+                $scheduleDiagnostics.IntervalWeeklyCount,
+                $scheduleDiagnostics.DayMondayCount,
+                $scheduleDiagnostics.Time0300Count,
+                $scheduleDiagnostics.TimezoneUtcCount,
+                $usesPerUpdateTypeGroups
+            )) | Out-Null
+
+        foreach ($ecosystem in $configuredEcosystems) {
+            $ecosystemPattern = '(?i)(?<![A-Za-z0-9-])' + [System.Text.RegularExpressions.Regex]::Escape($ecosystem) + '(?![A-Za-z0-9-])'
+            if ($normalizedContext -notmatch $ecosystemPattern) {
+                $errors.Add(".llm/context.md must mention Dependabot ecosystem '$ecosystem' declared in .github/dependabot.yml") | Out-Null
+            }
+        }
+
+        if ($usesPerUpdateTypeGroups -and $normalizedContext -notmatch '(?i)per\s+update\s+type') {
+            $errors.Add('.llm/context.md must state that grouped Dependabot PRs are per update type when both version-updates and security-updates groups are configured.') | Out-Null
+        }
+
+        $isUniformCanonicalSchedule = (
+            $configuredEcosystems.Count -gt 0 -and
+            $scheduleDiagnostics.IntervalWeeklyCount -eq $configuredEcosystems.Count -and
+            $scheduleDiagnostics.DayMondayCount -eq $configuredEcosystems.Count -and
+            $scheduleDiagnostics.Time0300Count -eq $configuredEcosystems.Count -and
+            $scheduleDiagnostics.TimezoneUtcCount -eq $configuredEcosystems.Count
+        )
+        if ($isUniformCanonicalSchedule -and $normalizedContext -notmatch '(?i)monday\D+03:00\D+utc') {
+            $errors.Add('.llm/context.md must document the canonical Dependabot cadence (Monday 03:00 UTC) while that schedule remains configured.') | Out-Null
+        }
+    }
+}
+
+if (Test-Path -Path $crossPlatformDetailsPath -PathType Leaf) {
+    $crossPlatformContent = ([System.IO.File]::ReadAllText($crossPlatformDetailsPath, [System.Text.Encoding]::UTF8)) -replace "`r", ''
+    if ($crossPlatformContent -match '(?i)default\s+HFS\+') {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md uses outdated macOS default filesystem wording (default HFS+). Use APFS default wording instead.') | Out-Null
+    }
+
+    $caseSensitivitySectionMatch = [System.Text.RegularExpressions.Regex]::Match(
+        $crossPlatformContent,
+        '(?ms)^##\s+Case\s+Sensitivity\s+And\s+File\s+System\s+Differences\s*$\n(?<section>.*?)(?=^##\s|\z)'
+    )
+    if (-not $caseSensitivitySectionMatch.Success) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md is missing the Case Sensitivity And File System Differences section expected by portability policy.') | Out-Null
+    }
+    else {
+        $caseSensitivitySection = $caseSensitivitySectionMatch.Groups['section'].Value
+        if ($caseSensitivitySection -notmatch '(?i)\bAPFS\b') {
+            $errors.Add('.llm/skill-details/cross-platform-powershell.md must reference APFS in the Case Sensitivity And File System Differences section for modern macOS guidance.') | Out-Null
+        }
     }
 }
 

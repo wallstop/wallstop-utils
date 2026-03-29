@@ -458,6 +458,16 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Match 'stages:\s+\[pre-push\]'
     }
 
+    It "runs LLM harness validation when Dependabot contract files change" {
+        $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
+
+        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*\\\.github/dependabot\\\.yml[^'']*'''
+        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*GEMINI\\\.md[^'']*'''
+        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*CURSOR\\\.md[^'']*'''
+        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*OPENAI\\\.md[^'']*'''
+        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*CODEX\\\.md[^'']*'''
+    }
+
     It "scopes deterministic JSON formatting away from snapshot dumps" {
         $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
 
@@ -1187,7 +1197,7 @@ Describe "Dependabot update automation conventions" {
         @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count | Should -Be 3
     }
 
-    It "groups both version and security updates into one PR per ecosystem area" {
+    It "groups both version and security updates into one PR per ecosystem area per update type" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
         # Parse line-by-line rather than with a single block regex so valid YAML
@@ -1299,11 +1309,18 @@ Describe "Dependabot manifest coverage drift conventions" {
         )
 
         $violations = New-Object System.Collections.Generic.List[string]
+        $scanStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $allRepoFiles = @(
+            Get-ChildItem -Path $script:repoRoot -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch $ignoredPathPattern }
+        )
+        $scanStopwatch.Stop()
+        $scanDiagnostics = "repoFilesScanned={0}; manifestMappings={1}; scanElapsedMs={2}" -f $allRepoFiles.Count, $manifestMappings.Count, $scanStopwatch.ElapsedMilliseconds
 
         foreach ($mapping in $manifestMappings) {
             $matches = @(
-                Get-ChildItem -Path $script:repoRoot -Filter $mapping.Filter -File -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -notmatch $ignoredPathPattern }
+                $allRepoFiles |
+                Where-Object { $_.Name -like $mapping.Filter }
             )
 
             if ($matches.Count -eq 0) {
@@ -1321,11 +1338,11 @@ Describe "Dependabot manifest coverage drift conventions" {
                 ForEach-Object { [System.IO.Path]::GetRelativePath($script:repoRoot, $_.FullName) }
             )
 
-            $violations.Add(("{0} requires ecosystem '{1}' (example files: {2})" -f $mapping.Filter, $mapping.Ecosystem, ($sampleFiles -join '; '))) | Out-Null
+            $violations.Add(("{0} requires ecosystem '{1}' (matches={2}; example files: {3}; diagnostics: {4})" -f $mapping.Filter, $mapping.Ecosystem, $matches.Count, ($sampleFiles -join '; '), $scanDiagnostics)) | Out-Null
         }
 
         $violations.Count | Should -Be 0 -Because (
-            "When new dependency manifests are added, Dependabot must be extended deliberately. Violations: {0}" -f ($violations -join ' | ')
+            "When new dependency manifests are added, Dependabot must be extended deliberately. Diagnostics: {0}. Violations: {1}" -f $scanDiagnostics, ($violations -join ' | ')
         )
     }
 
@@ -1395,6 +1412,30 @@ Describe "Utility configuration safety conventions" {
 
         $content | Should -Match 'Get-CommandWithOptionalModuleImport\s+-CommandName\s+"Invoke-Pester"'
         $content | Should -Match 'E_CONFIG_ERROR:\s+Invoke-Pester is not available'
+    }
+
+    It "keeps LLM harness trigger pattern aligned to Dependabot config drift checks" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $content = Get-Content -Path $preCommitPath -Raw
+
+        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*\\\.github/dependabot\\\.yml[^'']*'''
+        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*GEMINI\\\.md[^'']*'''
+        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*CURSOR\\\.md[^'']*'''
+        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*OPENAI\\\.md[^'']*'''
+        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*CODEX\\\.md[^'']*'''
+    }
+
+    It "keeps docs-to-config consistency diagnostics in Test-LlmHarness" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Test-LlmHarness.ps1"
+        $content = Get-Content -Path $validatorPath -Raw
+
+        $content | Should -Match 'Dependabot/context diagnostics'
+        $content | Should -Match 'per\\s\+update\\s\+type'
+        $content | Should -Match 'monday\\D\+03:00\\D\+utc'
+        $content | Should -Match 'default\\s\+HFS\\\+'
+        $content | Should -Match 'Case\\s\+Sensitivity\\s\+And\\s\+File\\s\+System\\s\+Differences'
+        $content | Should -Match '\(\?<section>\.\*\?\)'
+        $content | Should -Match '\\bAPFS\\b'
     }
 
     It "avoids hardcoded user-home Import-Module paths in utility scripts" {
