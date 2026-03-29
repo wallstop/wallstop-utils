@@ -50,6 +50,18 @@ Copy output to clipboard and still print it to stdout:
 pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https://github.com/owner/repo/pull/123" -Copy
 ```
 
+Fail if clipboard copy does not succeed:
+
+```powershell
+pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https://github.com/owner/repo/pull/123" -Copy -CopyStrict
+```
+
+Write output to a file and still print it to stdout:
+
+```powershell
+pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https://github.com/owner/repo/pull/123" -OutputPath ./tmp/unresolved-comments.txt
+```
+
 ## Output Contract (Text)
 
 ```text
@@ -64,20 +76,30 @@ Latest reply summary: <text or (none)>
 
 - Default behavior is full (untruncated) comment and latest reply text.
 - `-Truncate` restores legacy compact output limits:
-	- top-level comments: 500 characters
-	- latest replies: 300 characters
+  - top-level comments: 500 characters
+  - latest replies: 300 characters
 - `-Copy` copies the exact rendered output (`text` or `json`) to clipboard and still writes the same output to stdout.
+- `-CopyStrict` turns clipboard copy failure into a terminating error when `-Copy` is used.
+- `-OutputPath` writes rendered output to a UTF-8 file (creating parent directories when needed) and still writes the same output to stdout.
 - Clipboard copy failures are non-fatal and emit a warning so normal output remains available.
 
 Clipboard command fallback order:
 
-1. `Set-Clipboard`
-2. `pbcopy`
-3. `xclip`
-4. `xsel`
-5. `wl-copy`
+1. `Set-Clipboard -AsOSC52` (when supported and terminal context is compatible)
+2. `Set-Clipboard`
+3. `pbcopy`
+4. `xclip`
+5. `xsel`
+6. `wl-copy`
 
 If no supported clipboard command exists, the script warns and continues.
+
+## PowerShell Completion
+
+In PowerShell terminals, parameter value completion includes:
+
+- `-OutputFormat`: `text`, `json`
+- `-GitHubHost`: `github.com`
 
 ## Migration Note
 
@@ -103,19 +125,19 @@ For `github.com`, the script also validates `X-OAuth-Scopes` and expects:
 ## Host Safety Rules
 
 - Non-global IP targets are rejected for safety, including loopback, RFC1918 private ranges,
-	link-local ranges, carrier-grade NAT ranges, multicast ranges, reserved/documentation ranges,
-	and IPv6 local/multicast equivalents.
+  link-local ranges, carrier-grade NAT ranges, multicast ranges, reserved/documentation ranges,
+  and IPv6 local/multicast equivalents.
 - `-PullRequestUrl` hosts are validated using the same safety rules.
 - If `-GitHubHost` is explicitly provided together with `-PullRequestUrl`, both hosts must
-	match after normalization or the script fails with `E_INVALID_URL`.
+  match after normalization or the script fails with `E_INVALID_URL`.
 
 Optional host allowlist controls:
 
 - `-AllowedGitHubHosts` accepts one or more approved hosts.
 - If `-AllowedGitHubHosts` is omitted, the script uses `WALLSTOP_GITHUB_ALLOWED_HOSTS`, then
-	`GITHUB_ALLOWED_HOSTS` (comma/semicolon/whitespace separated) when present.
+  `GITHUB_ALLOWED_HOSTS` (comma/semicolon/whitespace separated) when present.
 - When an allowlist is active, both target resolution and outbound request URIs must match
-	the allowlist.
+  the allowlist.
 
 Example:
 

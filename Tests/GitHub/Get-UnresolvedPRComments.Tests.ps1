@@ -227,7 +227,7 @@ Describe "Get-HeaderValue" {
     }
 
     It "reads values from generic dictionary headers" {
-        $headers = [System.Collections.Generic.Dictionary[string,string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $headers = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $headers["X-OAuth-Scopes"] = "repo"
 
         (Get-HeaderValue -Headers $headers -Key "X-OAuth-Scopes") | Should -Be "repo"
@@ -248,7 +248,8 @@ Describe "Get-HeaderValue" {
             $values.Count | Should -Be 2
             $values[0] | Should -Be "repo"
             $values[1] | Should -Be "read:org"
-        } finally {
+        }
+        finally {
             $response.Dispose()
         }
     }
@@ -261,7 +262,8 @@ Describe "Get-HeaderValue" {
             $values = @(Get-HeaderValues -Headers $response.Headers -Key "x-oauth-scopes")
             $values.Count | Should -Be 1
             $values[0] | Should -Be "repo"
-        } finally {
+        }
+        finally {
             $response.Dispose()
         }
     }
@@ -315,51 +317,51 @@ Describe "Redact-SensitiveText" {
 
     $cases = @(
         @{
-            Name = "redacts generic ghp token"
-            CaseInput = "Detected token: $ghpToken"
-            SensitiveTokens = @()
-            ShouldContain = "***REDACTED***"
-            ShouldNotContain = @($ghpToken)
+            Name              = "redacts generic ghp token"
+            CaseInput         = "Detected token: $ghpToken"
+            SensitiveTokens   = @()
+            ShouldContain     = "***REDACTED***"
+            ShouldNotContain  = @($ghpToken)
             ShouldBeUnchanged = $false
         },
         @{
-            Name = "redacts generic github_pat token"
-            CaseInput = "Detected token: $patToken"
-            SensitiveTokens = @()
-            ShouldContain = "***REDACTED***"
-            ShouldNotContain = @($patToken)
+            Name              = "redacts generic github_pat token"
+            CaseInput         = "Detected token: $patToken"
+            SensitiveTokens   = @()
+            ShouldContain     = "***REDACTED***"
+            ShouldNotContain  = @($patToken)
             ShouldBeUnchanged = $false
         },
         @{
-            Name = "redacts authorization bearer scheme"
-            CaseInput = "Authorization: Bearer $headerToken"
-            SensitiveTokens = @()
-            ShouldContain = "Authorization: Bearer ***REDACTED***"
-            ShouldNotContain = @($headerToken)
+            Name              = "redacts authorization bearer scheme"
+            CaseInput         = "Authorization: Bearer $headerToken"
+            SensitiveTokens   = @()
+            ShouldContain     = "Authorization: Bearer ***REDACTED***"
+            ShouldNotContain  = @($headerToken)
             ShouldBeUnchanged = $false
         },
         @{
-            Name = "redacts authorization token scheme"
-            CaseInput = "Authorization: token $headerToken"
-            SensitiveTokens = @()
-            ShouldContain = "Authorization: token ***REDACTED***"
-            ShouldNotContain = @($headerToken)
+            Name              = "redacts authorization token scheme"
+            CaseInput         = "Authorization: token $headerToken"
+            SensitiveTokens   = @()
+            ShouldContain     = "Authorization: token ***REDACTED***"
+            ShouldNotContain  = @($headerToken)
             ShouldBeUnchanged = $false
         },
         @{
-            Name = "does not redact too short ghp token"
-            CaseInput = "Detected token: ghp_abc123"
-            SensitiveTokens = @()
-            ShouldContain = "Detected token: ghp_abc123"
-            ShouldNotContain = @()
+            Name              = "does not redact too short ghp token"
+            CaseInput         = "Detected token: ghp_abc123"
+            SensitiveTokens   = @()
+            ShouldContain     = "Detected token: ghp_abc123"
+            ShouldNotContain  = @()
             ShouldBeUnchanged = $true
         },
         @{
-            Name = "does not redact regex literal documentation string"
-            CaseInput = '$redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"'
-            SensitiveTokens = @()
-            ShouldContain = 'ghp_[A-Za-z0-9]{36}'
-            ShouldNotContain = @()
+            Name              = "does not redact regex literal documentation string"
+            CaseInput         = '$redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"'
+            SensitiveTokens   = @()
+            ShouldContain     = 'ghp_[A-Za-z0-9]{36}'
+            ShouldNotContain  = @()
             ShouldBeUnchanged = $true
         }
     )
@@ -371,7 +373,8 @@ Describe "Redact-SensitiveText" {
 
         if ($ShouldBeUnchanged) {
             $redacted | Should -BeExactly $CaseInput
-        } else {
+        }
+        else {
             $redacted | Should -Not -BeExactly $CaseInput
         }
 
@@ -402,9 +405,26 @@ Describe "Get-ClipboardCommand" {
     }
 }
 
+Describe "Get-ClipboardCommandPriority" {
+    It "adds OSC52 strategy before Set-Clipboard when terminal supports it" {
+        Mock Get-Command {
+            [pscustomobject]@{
+                Name       = "Set-Clipboard"
+                Parameters = @{ AsOSC52 = $true }
+            }
+        } -ParameterFilter { $Name -eq "Set-Clipboard" }
+        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
+        Mock Test-ShouldUseClipboardOsc52 { $true }
+
+        $commands = @(Get-ClipboardCommandPriority)
+        $commands[0] | Should -Be "Set-Clipboard-AsOSC52"
+        $commands[1] | Should -Be "Set-Clipboard"
+    }
+}
+
 Describe "Copy-ToClipboard" {
     It "copies text using Set-Clipboard when available" {
-        Mock Get-ClipboardCommand { "Set-Clipboard" }
+        Mock Get-ClipboardCommandPriority { @("Set-Clipboard") }
         Mock Set-Clipboard { }
 
         $copied = Copy-ToClipboard -Text "copy me"
@@ -415,7 +435,7 @@ Describe "Copy-ToClipboard" {
 
     It "returns false and warns when clipboard command is unavailable" {
         $script:lastWarningMessage = $null
-        Mock Get-ClipboardCommand { $null }
+        Mock Get-ClipboardCommandPriority { @() }
         Mock Write-Warning {
             param($Message)
             $script:lastWarningMessage = $Message
@@ -430,7 +450,7 @@ Describe "Copy-ToClipboard" {
     It "redacts sensitive tokens when clipboard copy fails" {
         $secret = "ghp_" + ("a" * 36)
         $script:lastWarningMessage = $null
-        Mock Get-ClipboardCommand { "Set-Clipboard" }
+        Mock Get-ClipboardCommandPriority { @("Set-Clipboard") }
         Mock Set-Clipboard { throw "copy failure token=$secret" }
         Mock Write-Warning {
             param($Message)
@@ -444,17 +464,128 @@ Describe "Copy-ToClipboard" {
         $script:lastWarningMessage | Should -Match "\*\*\*REDACTED\*\*\*"
         $script:lastWarningMessage | Should -Not -Match [regex]::Escape($secret)
     }
+
+    It "falls back to Set-Clipboard when OSC52 attempt fails" {
+        $script:clipboardAttemptOrder = @()
+        Mock Get-ClipboardCommandPriority { @("Set-Clipboard-AsOSC52", "Set-Clipboard") }
+        Mock Set-Clipboard {
+            param(
+                [string]$Value,
+                [switch]$AsOSC52
+            )
+
+            if ($AsOSC52.IsPresent) {
+                $script:clipboardAttemptOrder += "Set-Clipboard-AsOSC52"
+                throw "Set-Clipboard -AsOSC52 failed"
+            }
+
+            $script:clipboardAttemptOrder += "Set-Clipboard"
+        }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeTrue
+        (($script:clipboardAttemptOrder) -join ",") | Should -Be "Set-Clipboard-AsOSC52,Set-Clipboard" -Because "clipboard fallback should preserve OSC52-first attempt order and then recover with plain Set-Clipboard"
+        Assert-MockCalled Set-Clipboard -Times 2 -Scope It
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent }
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { -not $AsOSC52.IsPresent }
+    }
+
+    It "uses Set-Clipboard -AsOSC52 when OSC52 strategy is selected" {
+        Mock Get-ClipboardCommandPriority { @("Set-Clipboard-AsOSC52") }
+        Mock Set-Clipboard { }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeTrue
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent -and $Value -eq "copy me" }
+    }
+
+    It "falls back across native clipboard tools in priority order" {
+        $script:nativeClipboardAttemptOrder = @()
+        Mock Get-ClipboardCommandPriority { @("pbcopy", "xclip", "xsel") }
+        try {
+            function pbcopy {
+                param(
+                    [Parameter(ValueFromPipeline = $true)]
+                    [AllowNull()]
+                    [string]$InputObject
+                )
+
+                process {
+                    $script:nativeClipboardAttemptOrder += "pbcopy"
+                    $global:LASTEXITCODE = 17
+                }
+            }
+
+            function xclip {
+                param(
+                    [string]$selection,
+                    [Parameter(ValueFromPipeline = $true)]
+                    [AllowNull()]
+                    [string]$InputObject
+                )
+
+                process {
+                    $script:nativeClipboardAttemptOrder += "xclip"
+                    $global:LASTEXITCODE = 42
+                }
+            }
+
+            function xsel {
+                param(
+                    [string]$clipboard,
+                    [string]$input,
+                    [Parameter(ValueFromPipeline = $true)]
+                    [AllowNull()]
+                    [string]$InputObject
+                )
+
+                process {
+                    $script:nativeClipboardAttemptOrder += "xsel"
+                    $global:LASTEXITCODE = 0
+                }
+            }
+
+            $copied = Copy-ToClipboard -Text "copy me"
+
+            $copied | Should -BeTrue
+            (($script:nativeClipboardAttemptOrder) -join ",") | Should -Be "pbcopy,xclip,xsel" -Because "native fallback should continue through failed tools and stop after the first success"
+        }
+        finally {
+            Remove-Item -Path Function:pbcopy -ErrorAction SilentlyContinue
+            Remove-Item -Path Function:xclip -ErrorAction SilentlyContinue
+            Remove-Item -Path Function:xsel -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe "Write-RenderedOutputToFile" {
+    It "writes UTF-8 output and creates missing parent directories" {
+        $tempRoot = Join-Path -Path $TestDrive -ChildPath "nested/path"
+        $targetPath = Join-Path -Path $tempRoot -ChildPath "threads.txt"
+
+        $resolvedPath = Write-RenderedOutputToFile -Text "hello" -OutputPath $targetPath
+
+        $resolvedPath | Should -Be $targetPath
+        (Test-Path -Path $targetPath -PathType Leaf) | Should -BeTrue
+        [System.IO.File]::ReadAllText($targetPath, [System.Text.Encoding]::UTF8) | Should -Be "hello"
+    }
+
+    It "throws when OutputPath is empty" {
+        { Write-RenderedOutputToFile -Text "x" -OutputPath "   " } | Should -Throw "*E_INVALID_OUTPUT_PATH*"
+    }
 }
 
 Describe "Convert-ReviewThreadToOutputRecord" {
     It "returns null for resolved threads" {
         $thread = [pscustomobject]@{
-            id = "T_x"
+            id         = "T_x"
             isResolved = $true
-            path = "src/file.ps1"
-            startLine = 10
-            line = 11
-            comments = [pscustomobject]@{
+            path       = "src/file.ps1"
+            startLine  = 10
+            line       = 11
+            comments   = [pscustomobject]@{
                 nodes = @([pscustomobject]@{ body = "hello" })
             }
         }
@@ -465,12 +596,12 @@ Describe "Convert-ReviewThreadToOutputRecord" {
 
     It "maps unresolved thread fields" {
         $thread = [pscustomobject]@{
-            id = "THREAD_1"
+            id         = "THREAD_1"
             isResolved = $false
-            path = "src/main.ts"
-            startLine = 10
-            line = 12
-            comments = [pscustomobject]@{
+            path       = "src/main.ts"
+            startLine  = 10
+            line       = 12
+            comments   = [pscustomobject]@{
                 nodes = @(
                     [pscustomobject]@{ body = "Top level comment" },
                     [pscustomobject]@{ body = "Reply summary" }
@@ -489,12 +620,12 @@ Describe "Convert-ReviewThreadToOutputRecord" {
 
     It "throws when comments nodes is not array-wrapped" {
         $thread = [pscustomobject]@{
-            id = "THREAD_SINGLE"
+            id         = "THREAD_SINGLE"
             isResolved = $false
-            path = "src/single.ts"
-            startLine = 21
-            line = 21
-            comments = [pscustomobject]@{
+            path       = "src/single.ts"
+            startLine  = 21
+            line       = 21
+            comments   = [pscustomobject]@{
                 nodes = [pscustomobject]@{ body = "Single comment only" }
             }
         }
@@ -508,12 +639,12 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $topBody = "x" * 600
         $replyBody = "y" * 400
         $thread = [pscustomobject]@{
-            id = "THREAD_LONG"
+            id         = "THREAD_LONG"
             isResolved = $false
-            path = "src/long.ts"
-            startLine = 5
-            line = 9
-            comments = [pscustomobject]@{
+            path       = "src/long.ts"
+            startLine  = 5
+            line       = 9
+            comments   = [pscustomobject]@{
                 nodes = @(
                     [pscustomobject]@{ body = $topBody },
                     [pscustomobject]@{ body = $replyBody }
@@ -532,12 +663,12 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $topBody = "x" * 600
         $replyBody = "y" * 400
         $thread = [pscustomobject]@{
-            id = "THREAD_TRUNCATE"
+            id         = "THREAD_TRUNCATE"
             isResolved = $false
-            path = "src/long.ts"
-            startLine = 5
-            line = 9
-            comments = [pscustomobject]@{
+            path       = "src/long.ts"
+            startLine  = 5
+            line       = 9
+            comments   = [pscustomobject]@{
                 nodes = @(
                     [pscustomobject]@{ body = $topBody },
                     [pscustomobject]@{ body = $replyBody }
@@ -557,28 +688,28 @@ Describe "Format-UnresolvedThreadsAsText" {
     It "renders exact delimiter contract" {
         $records = @(
             [pscustomobject]@{
-                path = "src/a.ts"
-                lineStart = 8
-                lineEnd = 8
-                topLevelComment = "Comment A"
+                path               = "src/a.ts"
+                lineStart          = 8
+                lineEnd            = 8
+                topLevelComment    = "Comment A"
                 latestReplySummary = $null
-                threadId = "1"
-                prNumber = 1
-                owner = "o"
-                repo = "r"
-                url = "https://github.com/o/r/pull/1"
+                threadId           = "1"
+                prNumber           = 1
+                owner              = "o"
+                repo               = "r"
+                url                = "https://github.com/o/r/pull/1"
             },
             [pscustomobject]@{
-                path = "src/b.ts"
-                lineStart = 12
-                lineEnd = 20
-                topLevelComment = "Comment B"
+                path               = "src/b.ts"
+                lineStart          = 12
+                lineEnd            = 20
+                topLevelComment    = "Comment B"
                 latestReplySummary = "Reply B"
-                threadId = "2"
-                prNumber = 1
-                owner = "o"
-                repo = "r"
-                url = "https://github.com/o/r/pull/1"
+                threadId           = "2"
+                prNumber           = 1
+                owner              = "o"
+                repo               = "r"
+                url                = "https://github.com/o/r/pull/1"
             }
         )
 
@@ -1149,9 +1280,9 @@ Describe "Get-UnresolvedReviewThreads" {
                             pullRequest = @{
                                 reviewThreads = @{
                                     pageInfo = @{ hasNextPage = $true; endCursor = "CURSOR_1" }
-                                    nodes = @(
+                                    nodes    = @(
                                         @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @(@{ body = "A" }, @{ body = "A reply" }) } },
-                                        @{ id = "T2"; isResolved = $true;  path = "src/b.ts"; startLine = 2; line = 2; comments = @{ nodes = @(@{ body = "B" }) } }
+                                        @{ id = "T2"; isResolved = $true; path = "src/b.ts"; startLine = 2; line = 2; comments = @{ nodes = @(@{ body = "B" }) } }
                                     )
                                 }
                             }
@@ -1166,7 +1297,7 @@ Describe "Get-UnresolvedReviewThreads" {
                         pullRequest = @{
                             reviewThreads = @{
                                 pageInfo = @{ hasNextPage = $false; endCursor = $null }
-                                nodes = @(
+                                nodes    = @(
                                     @{ id = "T3"; isResolved = $false; path = "src/c.ts"; startLine = 3; line = 4; comments = @{ nodes = @(@{ body = "C" }) } }
                                 )
                             }
@@ -1193,7 +1324,8 @@ Describe "Get-UnresolvedReviewThreads" {
         $thrown = $null
         try {
             [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -SensitiveTokens @($secret))
-        } catch {
+        }
+        catch {
             $thrown = $_.Exception.Message
         }
 
@@ -1209,7 +1341,7 @@ Describe "Get-UnresolvedReviewThreads" {
                         pullRequest = @{
                             reviewThreads = @{
                                 pageInfo = @{ hasNextPage = $false; endCursor = $null }
-                                nodes = @{ id = "T1" }
+                                nodes    = @{ id = "T1" }
                             }
                         }
                     }
@@ -1230,7 +1362,7 @@ Describe "Get-UnresolvedReviewThreads" {
                         pullRequest = @{
                             reviewThreads = @{
                                 pageInfo = @{ hasNextPage = $false; endCursor = $null }
-                                nodes = @(
+                                nodes    = @(
                                     @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @{ body = "not-array" } } }
                                 )
                             }
@@ -1253,7 +1385,7 @@ Describe "Get-UnresolvedReviewThreads" {
                         pullRequest = @{
                             reviewThreads = @{
                                 pageInfo = @{ endCursor = $null }
-                                nodes = @()
+                                nodes    = @()
                             }
                         }
                     }
@@ -1274,7 +1406,7 @@ Describe "Get-UnresolvedReviewThreads" {
                         pullRequest = @{
                             reviewThreads = @{
                                 pageInfo = @{ hasNextPage = $true; endCursor = 42 }
-                                nodes = @()
+                                nodes    = @()
                             }
                         }
                     }
@@ -1298,7 +1430,7 @@ Describe "Get-UnresolvedReviewThreads" {
                         pullRequest = @{
                             reviewThreads = @{
                                 pageInfo = @{ hasNextPage = $false; endCursor = $null }
-                                nodes = @(
+                                nodes    = @(
                                     @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @(@{ body = $topBody }, @{ body = $replyBody }) } }
                                 )
                             }
@@ -1325,7 +1457,7 @@ Describe "Get-UnresolvedReviewThreads" {
                         pullRequest = @{
                             reviewThreads = @{
                                 pageInfo = @{ hasNextPage = $false; endCursor = $null }
-                                nodes = @(
+                                nodes    = @(
                                     @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @(@{ body = $topBody }, @{ body = $replyBody }) } }
                                 )
                             }
@@ -1434,9 +1566,9 @@ Describe "Invoke-Main" {
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{
-                Host = "github.com"
-                Owner = "org"
-                Repo = "repo"
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
                 PullRequestNumber = 5
             }
         }
@@ -1448,10 +1580,10 @@ Describe "Invoke-Main" {
         Mock Get-UnresolvedReviewThreads {
             @(
                 [pscustomobject]@{
-                    path = "src/main.ts"
-                    lineStart = 1
-                    lineEnd = 1
-                    topLevelComment = "hello"
+                    path               = "src/main.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "hello"
                     latestReplySummary = $null
                 }
             )
@@ -1487,9 +1619,9 @@ Describe "Invoke-Main" {
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{
-                Host = "github.com"
-                Owner = "org"
-                Repo = "repo"
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
                 PullRequestNumber = 5
             }
         }
@@ -1519,10 +1651,10 @@ Describe "Invoke-Main" {
 
             return @(
                 [pscustomobject]@{
-                    path = "src/recovered.ts"
-                    lineStart = 1
-                    lineEnd = 1
-                    topLevelComment = "Recovered"
+                    path               = "src/recovered.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "Recovered"
                     latestReplySummary = $null
                 }
             )
@@ -1566,9 +1698,9 @@ Describe "Invoke-Main" {
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{
-                Host = "github.com"
-                Owner = "org"
-                Repo = "repo"
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
                 PullRequestNumber = 5
             }
         }
@@ -1598,10 +1730,10 @@ Describe "Invoke-Main" {
 
             return @(
                 [pscustomobject]@{
-                    path = "src/recovered.ts"
-                    lineStart = 1
-                    lineEnd = 1
-                    topLevelComment = "Recovered"
+                    path               = "src/recovered.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "Recovered"
                     latestReplySummary = $null
                 }
             )
@@ -1640,9 +1772,9 @@ Describe "Invoke-Main" {
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{
-                Host = "github.com"
-                Owner = "org"
-                Repo = "repo"
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
                 PullRequestNumber = 5
             }
         }
@@ -1673,10 +1805,10 @@ Describe "Invoke-Main" {
         Mock Get-UnresolvedReviewThreads {
             @(
                 [pscustomobject]@{
-                    path = "src/recovered.ts"
-                    lineStart = 1
-                    lineEnd = 1
-                    topLevelComment = "Recovered"
+                    path               = "src/recovered.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "Recovered"
                     latestReplySummary = $null
                 }
             )
@@ -1715,9 +1847,9 @@ Describe "Invoke-Main" {
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{
-                Host = "github.com"
-                Owner = "org"
-                Repo = "repo"
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
                 PullRequestNumber = 5
             }
         }
@@ -1753,9 +1885,9 @@ Describe "Invoke-Main" {
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{
-                Host = "github.com"
-                Owner = "org"
-                Repo = "repo"
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
                 PullRequestNumber = 5
             }
         }
@@ -1767,10 +1899,10 @@ Describe "Invoke-Main" {
         Mock Get-UnresolvedReviewThreads {
             @(
                 [pscustomobject]@{
-                    path = "src/a.ts"
-                    lineStart = 1
-                    lineEnd = 1
-                    topLevelComment = "x"
+                    path               = "src/a.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "x"
                     latestReplySummary = $null
                 }
             )
@@ -1808,9 +1940,9 @@ Describe "Invoke-Main" {
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{
-                Host = "github.com"
-                Owner = "org"
-                Repo = "repo"
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
                 PullRequestNumber = 5
             }
         }
@@ -1822,10 +1954,10 @@ Describe "Invoke-Main" {
         Mock Get-UnresolvedReviewThreads {
             @(
                 [pscustomobject]@{
-                    path = "src/a.ts"
-                    lineStart = 1
-                    lineEnd = 1
-                    topLevelComment = "x"
+                    path               = "src/a.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "x"
                     latestReplySummary = $null
                 }
             )
@@ -1845,6 +1977,162 @@ Describe "Invoke-Main" {
         Assert-MockCalled Write-Output -Times 1 -Scope It -ParameterFilter { $InputObject -eq "still output" }
     }
 
+    It "writes no-unresolved message when review thread retrieval returns zero objects" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $Truncate = [System.Management.Automation.SwitchParameter]::new($false)
+        $Copy = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads { @() }
+
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:lastOutput | Should -Be "No unresolved review threads found."
+    }
+
+    It "fails fast when CopyStrict is set without Copy" {
+        $Copy = [System.Management.Automation.SwitchParameter]::new($false)
+        $CopyStrict = [System.Management.Automation.SwitchParameter]::new($true)
+
+        { Invoke-Main } | Should -Throw "*E_CONFIG_ERROR*-CopyStrict requires -Copy*"
+    }
+
+    It "throws E_CLIPBOARD_COPY_FAILED when CopyStrict is set and copy fails" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $Truncate = [System.Management.Automation.SwitchParameter]::new($false)
+        $Copy = [System.Management.Automation.SwitchParameter]::new($true)
+        $CopyStrict = [System.Management.Automation.SwitchParameter]::new($true)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path               = "src/a.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "x"
+                    latestReplySummary = $null
+                }
+            )
+        }
+        Mock Format-UnresolvedThreadsAsText { "strict output" }
+        Mock Copy-ToClipboard { $false }
+
+        { Invoke-Main } | Should -Throw "*E_CLIPBOARD_COPY_FAILED*"
+    }
+
+    It "writes output file when OutputPath is provided and still writes stdout" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $PullRequestNumber = 0
+        $Token = "explicit-token"
+        $OutputFormat = "text"
+        $OutputPath = Join-Path -Path $TestDrive -ChildPath "artifacts/out.txt"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $Truncate = [System.Management.Automation.SwitchParameter]::new($false)
+        $Copy = [System.Management.Automation.SwitchParameter]::new($false)
+        $CopyStrict = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{ "OutputPath" = $OutputPath }
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+        Mock Get-AuthToken { "auth-token" }
+        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Assert-IsHashtableLike { }
+        Mock Validate-GitHubTokenForRepoAccess { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path               = "src/a.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "x"
+                    latestReplySummary = $null
+                }
+            )
+        }
+        Mock Format-UnresolvedThreadsAsText { "file output" }
+        Mock Write-RenderedOutputToFile { $OutputPath }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        Assert-MockCalled Write-RenderedOutputToFile -Times 1 -Scope It -ParameterFilter { $OutputPath -eq (Join-Path -Path $TestDrive -ChildPath "artifacts/out.txt") -and $Text -eq "file output" }
+        $script:lastOutput | Should -Be "file output"
+    }
+
     It "threads Truncate through unresolved thread retrieval" {
         $PullRequestUrl = "https://github.com/org/repo/pull/5"
         $Owner = $null
@@ -1861,12 +2149,13 @@ Describe "Invoke-Main" {
         $MaxPages = 100
         $RequestTimeoutSeconds = 60
         $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
 
         Mock Resolve-PullRequestTarget {
             [pscustomobject]@{
-                Host = "github.com"
-                Owner = "org"
-                Repo = "repo"
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
                 PullRequestNumber = 5
             }
         }
@@ -1878,10 +2167,10 @@ Describe "Invoke-Main" {
         Mock Get-UnresolvedReviewThreads {
             @(
                 [pscustomobject]@{
-                    path = "src/a.ts"
-                    lineStart = 1
-                    lineEnd = 1
-                    topLevelComment = "x"
+                    path               = "src/a.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "x"
                     latestReplySummary = $null
                 }
             )
@@ -1898,18 +2187,18 @@ Describe "Invoke-Main" {
 Describe "Strict-mode collection shape safety" {
     It "normalizes analyzer-like output for <CaseLabel>" -ForEach @(
         @{
-            CaseLabel = "null output"
-            InputValue = $null
+            CaseLabel     = "null output"
+            InputValue    = $null
             ExpectedCount = 0
         },
         @{
-            CaseLabel = "single object output"
-            InputValue = [pscustomobject]@{ RuleName = "RuleA" }
+            CaseLabel     = "single object output"
+            InputValue    = [pscustomobject]@{ RuleName = "RuleA" }
             ExpectedCount = 1
         },
         @{
-            CaseLabel = "multiple object output"
-            InputValue = @(
+            CaseLabel     = "multiple object output"
+            InputValue    = @(
                 [pscustomobject]@{ RuleName = "RuleA" },
                 [pscustomobject]@{ RuleName = "RuleB" }
             )

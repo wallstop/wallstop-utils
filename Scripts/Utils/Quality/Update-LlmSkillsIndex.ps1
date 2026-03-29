@@ -30,6 +30,29 @@ function ConvertTo-SkillTitle {
         [string]$FileName
     )
 
+    $knownCasing = @{
+        "github"      = "GitHub"
+        "powershell"  = "PowerShell"
+        "autohotkey"  = "AutoHotkey"
+        "applescript" = "AppleScript"
+        "macos"       = "macOS"
+        "ci"          = "CI"
+        "cd"          = "CD"
+        "llm"         = "LLM"
+        "pr"          = "PR"
+        "api"         = "API"
+        "url"         = "URL"
+        "uri"         = "URI"
+        "json"        = "JSON"
+        "yaml"        = "YAML"
+        "xml"         = "XML"
+        "html"        = "HTML"
+        "css"         = "CSS"
+        "osc52"       = "OSC52"
+        "utf8"        = "UTF-8"
+        "ahk"         = "AHK"
+    }
+
     $tokens = @($FileName -split '[-_]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($tokens.Count -eq 0) {
         return $FileName
@@ -38,7 +61,13 @@ function ConvertTo-SkillTitle {
     $textInfo = [System.Globalization.CultureInfo]::InvariantCulture.TextInfo
     $parts = @()
     foreach ($token in $tokens) {
-        $parts += $textInfo.ToTitleCase($token.ToLowerInvariant())
+        $lower = $token.ToLowerInvariant()
+        if ($knownCasing.ContainsKey($lower)) {
+            $parts += $knownCasing[$lower]
+        }
+        else {
+            $parts += $textInfo.ToTitleCase($lower)
+        }
     }
 
     return ($parts -join ' ')
