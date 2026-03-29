@@ -10,6 +10,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$llmWrapperHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/LlmWrapperContractHelpers.ps1"
+if (-not (Test-Path -Path $llmWrapperHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: LLM wrapper helper file not found at '$llmWrapperHelpersPath'."
+}
+
+. $llmWrapperHelpersPath
+
 function Add-ModulePathCandidate {
     param(
         [Parameter(Mandatory = $true)]
@@ -79,6 +86,33 @@ function Get-CommandWithOptionalModuleImport {
     return (Get-Command -Name $CommandName -ErrorAction SilentlyContinue)
 }
 
+function New-LlmHarnessPattern {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$WrapperFiles
+    )
+
+    $patternSegments = New-Object 'System.Collections.Generic.List[string]'
+    [void]$patternSegments.Add('\.llm/.+\.md')
+
+    $normalizedWrappers = @(
+        $WrapperFiles |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { $_ -replace '[\\/]+', '/' } |
+        Sort-Object -Unique
+    )
+
+    foreach ($wrapperFile in $normalizedWrappers) {
+        [void]$patternSegments.Add([regex]::Escape($wrapperFile))
+    }
+
+    [void]$patternSegments.Add('\.github/dependabot\.yml')
+    [void]$patternSegments.Add('Scripts/Utils/Quality/(Update-LlmSkillsIndex|Test-LlmHarness)\.ps1')
+    [void]$patternSegments.Add('Tests/Utils/LlmHarness\.Tests\.ps1')
+
+    return ('^({0})$' -f ($patternSegments -join '|'))
+}
+
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
 Push-Location -Path $repoRoot
 
@@ -98,7 +132,23 @@ try {
     $utilsTestPattern = '^(Scripts/Utils|Tests/Utils)/.+\.ps1$'
     $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
     $scriptPattern = '^Scripts/Utils/.+\.ps1$'
-    $llmHarnessPattern = '^(\.llm/.+\.md|AGENTS\.md|\.github/copilot-instructions\.md|CLAUDE\.md|GEMINI\.md|CURSOR\.md|OPENAI\.md|CODEX\.md|\.github/dependabot\.yml|Scripts/Utils/Quality/(Update-LlmSkillsIndex|Test-LlmHarness)\.ps1|Tests/Utils/LlmHarness\.Tests\.ps1)$'
+
+    $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
+    $llmHarnessPatternSource = 'wrapper-contract'
+    $llmHarnessWrapperFiles = @()
+    if (Test-Path -Path $contextPath -PathType Leaf) {
+        $llmHarnessWrapperFiles = @(Get-WrapperContractEntries -ContextFilePath $contextPath)
+        if ($llmHarnessWrapperFiles.Count -eq 0) {
+            throw 'E_CONFIG_ERROR: Wrapper Contract section in .llm/context.md lists no wrapper files; cannot derive LLM harness trigger pattern.'
+        }
+    }
+    else {
+        $llmHarnessPatternSource = 'fallback-default-wrapper-set'
+        $llmHarnessWrapperFiles = @('AGENTS.md', '.github/copilot-instructions.md', 'CLAUDE.md')
+    }
+
+    $llmHarnessPattern = New-LlmHarnessPattern -WrapperFiles $llmHarnessWrapperFiles
+    Write-Verbose ("LLM harness trigger diagnostics: source={0}; wrapperCount={1}; wrappers={2}; pattern={3}" -f $llmHarnessPatternSource, $llmHarnessWrapperFiles.Count, ($llmHarnessWrapperFiles -join ','), $llmHarnessPattern)
 
     $utilsTestFiles = @($stagedFiles | Where-Object { $_ -match $utilsTestPattern })
     $githubTestFiles = @($stagedFiles | Where-Object { $_ -match $githubTestPattern })
@@ -109,6 +159,10 @@ try {
     $runGitHubTests = $All -or $githubTestFiles.Count -gt 0
     $runAnalyzer = $All -or $scriptFiles.Count -gt 0
     $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
+
+    if ($runLlmHarnessValidation) {
+        Write-Host ("LLM harness staged-file diagnostics: allMode={0}; source={1}; matchedCount={2}; matchedFiles={3}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count, ($llmHarnessFiles -join ', '))
+    }
 
     if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
         Write-Host "No staged files requiring utility validation; skipping validation."

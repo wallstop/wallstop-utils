@@ -15,6 +15,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$llmWrapperHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/LlmWrapperContractHelpers.ps1"
+if (-not (Test-Path -Path $llmWrapperHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: LLM wrapper helper file not found at '$llmWrapperHelpersPath'."
+}
+
+. $llmWrapperHelpersPath
+
 function Get-RepositoryRoot {
     param(
         [Parameter(Mandatory = $false)]
@@ -96,33 +103,6 @@ function Get-MarkdownHeadingAnchors {
     }
 
     return , $anchors
-}
-
-function Get-WrapperContractEntries {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$ContextFilePath
-    )
-
-    $entries = @()
-    $inSection = $false
-
-    foreach ($line in [System.IO.File]::ReadLines($ContextFilePath, [System.Text.Encoding]::UTF8)) {
-        if ($line -match '^\s{0,3}##\s+Wrapper Contract\s*$') {
-            $inSection = $true
-            continue
-        }
-
-        if ($inSection -and $line -match '^\s{0,3}##\s') {
-            break
-        }
-
-        if ($inSection -and $line -match '^\s*-\s+`([^`]+)`') {
-            $entries += $Matches[1]
-        }
-    }
-
-    return $entries
 }
 
 function Test-IsPathWithinDirectory {
@@ -216,6 +196,12 @@ if (Test-Path -Path $contextPath -PathType Leaf) {
         $errors.Add("Wrapper Contract section in .llm/context.md lists no wrapper files.") | Out-Null
     }
 }
+
+$diagnostics.Add((
+        "Wrapper contract diagnostics: wrapperCount={0}; wrappers={1}" -f
+        $requiredWrappers.Count,
+        ($requiredWrappers -join ',')
+    )) | Out-Null
 
 foreach ($wrapper in $requiredWrappers) {
     $wrapperPath = Join-Path -Path $repoRoot -ChildPath $wrapper

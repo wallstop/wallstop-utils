@@ -13,6 +13,7 @@ BeforeAll {
     $script:workflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/github-pr-summarizer-quality.yml"
     $script:crossLanguageWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/script-quality.yml"
     $script:dependabotConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".github/dependabot.yml"
+    $script:llmContextPath = Join-Path -Path $script:repoRoot -ChildPath ".llm/context.md"
     $script:preCommitConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".pre-commit-config.yaml"
     $script:preCommitHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-commit"
     $script:prePushHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-push"
@@ -35,6 +36,17 @@ BeforeAll {
         "Scripts/PaperWM/PaperWMRestore.sh",
         "Scripts/Utils/increment-version.sh",
         "Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh"
+    )
+
+    $wrapperHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/LlmWrapperContractHelpers.ps1"
+    if (-not (Test-Path -Path $wrapperHelperPath -PathType Leaf)) {
+        throw "E_CONFIG_ERROR: LLM wrapper helper file not found at '$wrapperHelperPath'."
+    }
+
+    . $wrapperHelperPath
+
+    $script:wrapperContractFiles = @(
+        Get-WrapperContractEntries -ContextFilePath $script:llmContextPath -DefaultFallback @()
     )
 }
 
@@ -458,14 +470,11 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Match 'stages:\s+\[pre-push\]'
     }
 
-    It "runs LLM harness validation when Dependabot contract files change" {
+    It "routes LLM harness validation through the precommit orchestrator" {
         $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
-
-        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*\\\.github/dependabot\\\.yml[^'']*'''
-        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*GEMINI\\\.md[^'']*'''
-        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*CURSOR\\\.md[^'']*'''
-        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*OPENAI\\\.md[^'']*'''
-        $preCommitConfig | Should -Match 'id:\s+llm-harness-validation[\s\S]*files:\s+''[^'']*CODEX\\\.md[^'']*'''
+        $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
+        $preCommitConfig | Should -Match 'entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Run-PreCommitValidation\.ps1'
+        $preCommitConfig | Should -Not -Match 'id:\s+llm-harness-validation' -Because 'LLM harness checks should run once via the orchestrator to avoid duplicate execution'
     }
 
     It "scopes deterministic JSON formatting away from snapshot dumps" {
@@ -1483,15 +1492,29 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'E_CONFIG_ERROR:\s+Invoke-Pester is not available'
     }
 
-    It "keeps LLM harness trigger pattern aligned to Dependabot config drift checks" {
+    It "derives LLM harness trigger pattern from Wrapper Contract instead of hardcoded wrapper names" {
         $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
         $content = Get-Content -Path $preCommitPath -Raw
 
-        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*\\\.github/dependabot\\\.yml[^'']*'''
-        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*GEMINI\\\.md[^'']*'''
-        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*CURSOR\\\.md[^'']*'''
-        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*OPENAI\\\.md[^'']*'''
-        $content | Should -Match '\$llmHarnessPattern\s*=\s*''[^'']*CODEX\\\.md[^'']*'''
+        $content | Should -Match 'LlmWrapperContractHelpers\.ps1'
+        $content | Should -Not -Match 'function\s+Get-WrapperContractEntries\s*\{'
+        $content | Should -Match 'function\s+New-LlmHarnessPattern\s*\{'
+        $content | Should -Match '(?m)^\s*\$contextPath\s*=\s*Join-Path\s+-Path\s+\$repoRoot\s+-ChildPath\s+''\.llm/context\.md'''
+        $content | Should -Match '\$llmHarnessWrapperFiles\s*=\s*@\(Get-WrapperContractEntries\s+-ContextFilePath\s+\$contextPath\)'
+        $content | Should -Match 'LLM harness trigger diagnostics:'
+
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Test-LlmHarness.ps1"
+        $validatorContent = Get-Content -Path $validatorPath -Raw
+        $validatorContent | Should -Match 'LlmWrapperContractHelpers\.ps1'
+        $validatorContent | Should -Not -Match 'function\s+Get-WrapperContractEntries\s*\{'
+
+        foreach ($wrapperFile in $script:wrapperContractFiles) {
+            $content | Should -Match ([regex]::Escape($wrapperFile)) -Because "Fallback wrapper set should stay aligned with Wrapper Contract entries"
+        }
+
+        foreach ($phantomWrapper in @('GEMINI.md', 'CURSOR.md', 'OPENAI.md', 'CODEX.md')) {
+            $content | Should -Not -Match ([regex]::Escape($phantomWrapper)) -Because "$phantomWrapper should never be hardcoded into LLM harness trigger logic"
+        }
     }
 
     It "keeps docs-to-config consistency diagnostics in Test-LlmHarness" {
