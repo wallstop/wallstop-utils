@@ -23,6 +23,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 7. After major changes, run full validation before ending a session.
 8. Prefer PEP 668-safe pre-commit bootstrap guidance (`pipx` or dedicated venv); avoid `python3 -m pip install --user pre-commit`.
 9. When a failure reveals a repeatable category, codify the invariant in skills/context/tests.
+10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (one PR per ecosystem area), with policy tests that block regressions.
 
 ## Working Agreement For Agents
 
@@ -117,6 +118,53 @@ double quotes, and other special characters. Prefer `System.Diagnostics.Process`
 - Use `return , @()` (comma operator) when callers access `.Count` directly on the result.
 - If callers always wrap with `@()`, the bare `return @()` is safe — add `# array-unwrap-safe`.
 - A convention test in `ScriptSafetyConventions.Tests.ps1` enforces this in `Scripts/`.
+
+## Cross-Platform PowerShell Portability
+
+Scripts under `Scripts/Utils/` must run on Windows, macOS, and Linux with PowerShell 7+.
+
+1. Use `Join-Path` and `[System.IO.Path]` for path construction; never hardcode `\` or `/`.
+2. Use `$IsWindows`, `$IsMacOS`, `$IsLinux` for OS branching; avoid `$env:OS` checks.
+3. Write files with explicit UTF-8 no-BOM encoding via `[System.IO.File]::WriteAllText()`.
+4. Normalize line endings (`-replace "\r", ''`) before regex matching or string comparison.
+5. Normalize path separators to `/` in generated output for deterministic cross-OS comparison.
+6. Use `[System.IO.Path]::GetTempPath()` instead of `$env:TEMP` for portable temp directories.
+7. Use exact file name casing; Linux file systems are case-sensitive.
+8. Split `$env:PATH` with `;` on Windows and `:` on Unix; never assume one separator.
+9. Keep Windows-only scripts in platform-specific directories (e.g., `Scripts/Komorebi/`).
+
+## Cross-Platform Shell Tooling (Bash grep awk sed)
+
+For shell automation under `Scripts/`, keep commands portable, deterministic, and safe for AI-assisted edits.
+
+1. Start Bash scripts with strict mode:
+  ```bash
+  #!/usr/bin/env bash
+  set -euo pipefail
+  ```
+  - Note: this baseline is Bash-specific. `pipefail` is not available in POSIX `sh`.
+  - Use this for Bash-targeted scripts in `Scripts/`. For strict POSIX `sh`, omit `pipefail` and handle pipeline errors explicitly.
+2. Quote variable expansions (`"$var"`) and prefer `printf` over `echo` for portable output formatting.
+3. Keep data on stdout and diagnostics on stderr (`>&2`) so pipelines remain predictable.
+4. Use null-delimited file flows for path safety: `find ... -print0 | xargs -0 ...` or `while IFS= read -r -d ''`.
+5. Prefer modern grep forms: use `grep -E` and `grep -F`; do not introduce deprecated `egrep` or `fgrep`.
+6. Account for GNU vs BSD differences:
+  - Avoid non-portable in-place edits like bare `sed -i` across mixed environments.
+  - Prefer temp-file rewrite patterns when scripts must run on both Linux and macOS.
+7. For large ASCII-heavy text processing, consider `LC_ALL=C` with grep/awk/sed/sort for deterministic collation and possible speedups.
+8. Keep performance claims contextual. Optimize only after measuring; avoid premature rewrites that reduce readability.
+9. For agentic and unattended execution:
+  - Add dry-run support for mutating scripts.
+  - Make operations idempotent (safe to run repeatedly).
+  - Bound long-running external calls with an explicit timeout strategy appropriate to the host.
+10. Preflight-check external dependencies with `command -v` and fail fast with actionable errors.
+11. Validate shell changes with syntax + lint + tests where available (`bash -n`, `shellcheck`, `bats`).
+12. Prefer script files over large inline one-liners when logic is non-trivial; keep behavior reviewable and testable.
+
+See:
+
+- Skill card: [`.llm/skills/shell-tooling-portability-and-agentic-safety.md`](./skills/shell-tooling-portability-and-agentic-safety.md)
+- Expanded guide: [`.llm/skill-details/shell-tooling-portability-and-agentic-safety.md`](./skill-details/shell-tooling-portability-and-agentic-safety.md)
 
 ## Contribution Rules
 

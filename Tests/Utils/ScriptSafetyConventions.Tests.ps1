@@ -12,6 +12,7 @@ BeforeAll {
     )
     $script:workflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/github-pr-summarizer-quality.yml"
     $script:crossLanguageWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/script-quality.yml"
+    $script:dependabotConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".github/dependabot.yml"
     $script:preCommitConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".pre-commit-config.yaml"
     $script:preCommitHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-commit"
     $script:prePushHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-push"
@@ -1145,6 +1146,206 @@ Describe "Workflow security conventions" {
 
         $workflow | Should -Match 'Generated artifact tracking checks'
         $workflow | Should -Match 'git ls-files coverage.xml out.txt'
+    }
+}
+
+Describe "Dependabot update automation conventions" {
+    It "defines Dependabot configuration in .github/dependabot.yml" {
+        Test-Path -Path $script:dependabotConfigPath -PathType Leaf | Should -BeTrue -Because (
+            "Repository dependency automation policy requires a Dependabot configuration file"
+        )
+    }
+
+    It "pins Dependabot schema to version 2 with updates blocks" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        $content | Should -Match '(?m)^version:\s*2\s*$'
+        $content | Should -Match '(?m)^updates:\s*$'
+    }
+
+    It "keeps exactly the required ecosystems for current tooling areas" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        $ecosystemMatches = [System.Text.RegularExpressions.Regex]::Matches(
+            $content,
+            '(?m)^\s*-\s*package-ecosystem:\s*"?(?<name>[A-Za-z0-9-]+)"?\s*$'
+        )
+        $ecosystems = @($ecosystemMatches | ForEach-Object { $_.Groups['name'].Value })
+
+        $ecosystems.Count | Should -Be 3
+        @($ecosystems | Sort-Object -Unique) | Should -Be @('devcontainers', 'github-actions', 'pre-commit') -Because (
+            "Dependabot coverage must remain aligned to the agreed tooling areas"
+        )
+    }
+
+    It "uses Monday 03:00 UTC weekly schedule for each configured ecosystem" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count | Should -Be 3
+    }
+
+    It "groups both version and security updates into one PR per ecosystem area" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        # Parse line-by-line rather than with a single block regex so valid YAML
+        # whitespace/reordering changes do not make this policy test brittle.
+        $ecosystemBlocks = @{}
+        $currentEcosystem = $null
+        $currentLines = New-Object System.Collections.Generic.List[string]
+        $contentLines = @($content -split "`n")
+
+        foreach ($line in $contentLines) {
+            $match = [System.Text.RegularExpressions.Regex]::Match(
+                $line,
+                '^\s*-\s*package-ecosystem:\s*"?(?<name>[A-Za-z0-9-]+)"?\s*$'
+            )
+
+            if ($match.Success) {
+                if (-not [string]::IsNullOrWhiteSpace($currentEcosystem)) {
+                    $ecosystemBlocks[$currentEcosystem] = ($currentLines -join "`n")
+                }
+
+                $currentEcosystem = $match.Groups['name'].Value
+                $currentLines = New-Object System.Collections.Generic.List[string]
+                continue
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($currentEcosystem)) {
+                $currentLines.Add($line) | Out-Null
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($currentEcosystem)) {
+            $ecosystemBlocks[$currentEcosystem] = ($currentLines -join "`n")
+        }
+
+        foreach ($ecosystem in @('github-actions', 'pre-commit', 'devcontainers')) {
+            $ecosystemBlocks.ContainsKey($ecosystem) | Should -BeTrue -Because "Missing ecosystem block for '$ecosystem'"
+            $body = $ecosystemBlocks[$ecosystem]
+
+            $body | Should -Match ('(?m)^\s*' + [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-all") + ':\s*$')
+            $body | Should -Match ('(?m)^\s*' + [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-security") + ':\s*$')
+
+            $allGroupPattern = '(?ms)^\s*' +
+            [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-all") +
+            ':\s*(?<block>.*?)(?=^\s*' +
+            [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-security") +
+            ':\s*|\z)'
+            $allGroupMatch = [System.Text.RegularExpressions.Regex]::Match($body, $allGroupPattern)
+            $allGroupMatch.Success | Should -BeTrue -Because "Version-updates group block must be parseable for '$ecosystem'"
+            $allGroupBody = $allGroupMatch.Groups['block'].Value
+
+            # Accept quoted and unquoted YAML scalar styles for forward compatibility.
+            $allGroupBody | Should -Match '(?m)^\s*applies-to:\s*(?:"version-updates"|version-updates)\s*$'
+            $allGroupBody | Should -Match '(?m)^\s*patterns:\s*$'
+            $allGroupBody | Should -Match '(?m)^\s*-\s*"\*"\s*$'
+
+            $securityGroupPattern = '(?ms)^\s*' +
+            [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-security") +
+            ':\s*(?<block>.*)$'
+            $securityGroupMatch = [System.Text.RegularExpressions.Regex]::Match($body, $securityGroupPattern)
+            $securityGroupMatch.Success | Should -BeTrue -Because "Security-updates group block must be parseable for '$ecosystem'"
+            $securityGroupBody = $securityGroupMatch.Groups['block'].Value
+
+            $securityGroupBody | Should -Match '(?m)^\s*applies-to:\s*(?:"security-updates"|security-updates)\s*$'
+            $securityGroupBody | Should -Match '(?m)^\s*patterns:\s*$'
+            $securityGroupBody | Should -Match '(?m)^\s*-\s*"\*"\s*$'
+        }
+    }
+
+    It "targets repository root directory for all configured ecosystems" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*directory:\s*(?:"/"|/)\s*$')).Count | Should -Be 3
+    }
+
+    It "caps open version-update PR volume per ecosystem and keeps default branch behavior" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*open-pull-requests-limit:\s*10\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*separator:\s*"?/"?\s*$')).Count | Should -Be 3
+        # Policy assumption: updates target the repository default branch.
+        # If multi-branch release flows are introduced, this policy test should be updated.
+        $content | Should -Not -Match '(?m)^\s*target-branch:\s*'
+    }
+}
+
+Describe "Dependabot manifest coverage drift conventions" {
+    It "requires explicit ecosystem coverage when common dependency manifests are introduced" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+        $ignoredPathPattern = '(?:^|[\\/])(\.git|\.venv|\.cache|\.tox|\.pytest_cache|\.egg-info|\.bundle|\.dart_tool|\.flutter-plugins|node_modules|dist|build|venv|vendor|target|__pycache__)(?:[\\/]|$)'
+
+        $manifestMappings = @(
+            @{ Filter = 'package.json'; Ecosystem = 'npm' },
+            @{ Filter = 'requirements*.txt'; Ecosystem = 'pip' },
+            @{ Filter = 'pyproject.toml'; Ecosystem = 'pip' },
+            @{ Filter = 'Pipfile'; Ecosystem = 'pip' },
+            @{ Filter = 'poetry.lock'; Ecosystem = 'pip' },
+            @{ Filter = 'Dockerfile'; Ecosystem = 'docker' },
+            @{ Filter = 'docker-compose*.yml'; Ecosystem = 'docker-compose' },
+            @{ Filter = 'docker-compose*.yaml'; Ecosystem = 'docker-compose' },
+            @{ Filter = 'compose.yml'; Ecosystem = 'docker-compose' },
+            @{ Filter = 'compose.yaml'; Ecosystem = 'docker-compose' },
+            @{ Filter = 'go.mod'; Ecosystem = 'gomod' },
+            @{ Filter = 'Cargo.toml'; Ecosystem = 'cargo' },
+            @{ Filter = 'Gemfile'; Ecosystem = 'bundler' },
+            @{ Filter = 'pom.xml'; Ecosystem = 'maven' },
+            @{ Filter = 'build.gradle'; Ecosystem = 'gradle' },
+            @{ Filter = 'build.gradle.kts'; Ecosystem = 'gradle' },
+            @{ Filter = '*.csproj'; Ecosystem = 'nuget' }
+        )
+
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($mapping in $manifestMappings) {
+            $matches = @(
+                Get-ChildItem -Path $script:repoRoot -Filter $mapping.Filter -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -notmatch $ignoredPathPattern }
+            )
+
+            if ($matches.Count -eq 0) {
+                continue
+            }
+
+            $ecosystemPattern = '(?m)^\s*-\s*package-ecosystem:\s*"?' + [System.Text.RegularExpressions.Regex]::Escape($mapping.Ecosystem) + '"?\s*$'
+            if ($content -match $ecosystemPattern) {
+                continue
+            }
+
+            $sampleFiles = @(
+                $matches |
+                Select-Object -First 3 |
+                ForEach-Object { [System.IO.Path]::GetRelativePath($script:repoRoot, $_.FullName) }
+            )
+
+            $violations.Add(("{0} requires ecosystem '{1}' (example files: {2})" -f $mapping.Filter, $mapping.Ecosystem, ($sampleFiles -join '; '))) | Out-Null
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "When new dependency manifests are added, Dependabot must be extended deliberately. Violations: {0}" -f ($violations -join ' | ')
+        )
+    }
+
+    It "keeps configured ecosystems anchored to real manifests in this repository" {
+        $githubWorkflowsPath = Join-Path -Path $script:repoRoot -ChildPath '.github/workflows'
+        $githubWorkflowFiles = @(
+            Get-ChildItem -Path $githubWorkflowsPath -Filter '*.yml' -File -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $githubWorkflowsPath -Filter '*.yaml' -File -ErrorAction SilentlyContinue
+        )
+        $githubWorkflowFiles.Count | Should -BeGreaterThan 0 -Because (
+            "Dependabot ecosystem 'github-actions' requires workflow manifest files under .github/workflows"
+        )
+
+        Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath '.pre-commit-config.yaml') -PathType Leaf | Should -BeTrue -Because (
+            "Dependabot ecosystem 'pre-commit' requires .pre-commit-config.yaml"
+        )
+
+        Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/devcontainer.json') -PathType Leaf | Should -BeTrue -Because (
+            "Dependabot ecosystem 'devcontainers' requires .devcontainer/devcontainer.json"
+        )
     }
 }
 

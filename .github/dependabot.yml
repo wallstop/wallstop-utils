@@ -1,0 +1,62 @@
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    pull-request-branch-name:
+      separator: "/"
+    groups:
+      github-actions-all:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+      github-actions-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    pull-request-branch-name:
+      separator: "/"
+    groups:
+      pre-commit-all:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+      pre-commit-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    pull-request-branch-name:
+      separator: "/"
+    groups:
+      devcontainers-all:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+      devcontainers-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
