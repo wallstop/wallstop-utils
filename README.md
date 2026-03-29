@@ -177,6 +177,8 @@ These utilities do not modify backup/restore behavior.
 Current utility:
 
 - `Get-UnresolvedPRComments.ps1`: read unresolved PR review threads from GitHub and render plain-text or JSON output.
+  - Supports clipboard export with `-Copy` and strict failure mode via `-CopyStrict`.
+  - Supports writing output to UTF-8 files with `-OutputPath` while still emitting stdout.
 
 ## Script Quality Platform
 

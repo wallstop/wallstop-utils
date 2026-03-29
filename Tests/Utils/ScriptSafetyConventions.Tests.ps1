@@ -260,6 +260,27 @@ Describe "Scope safety conventions" {
         $testsContent | Should -Match 'allowed GitHub host list'
     }
 
+    It "keeps clipboard strict-mode and output-file contracts for unresolved PR comments" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match '\[switch\]\$CopyStrict'
+        $content | Should -Match '\[Alias\("OutFile"\)\]\s*\r?\n\s*\[string\]\$OutputPath'
+        $content | Should -Match 'if\s*\(\$CopyStrict\.IsPresent\s*-and\s*-not\s*\$Copy\.IsPresent\)\s*\{\s*throw\s+"E_CONFIG_ERROR: -CopyStrict requires -Copy\."'
+        $content | Should -Match 'if\s*\(\$Copy\.IsPresent\)\s*\{[\s\S]*E_CLIPBOARD_COPY_FAILED'
+        $content | Should -Match 'function\s+Write-RenderedOutputToFile'
+        $content | Should -Match 'Write-RenderedOutputToFile\s+-Text\s+\$output\s+-OutputPath\s+\$OutputPath'
+        $content | Should -Match '\[System\.IO\.File\]::WriteAllText\(\$resolvedPath,\s*\$content,\s*\[System\.Text\.Encoding\]::UTF8\)'
+    }
+
+    It "keeps PowerShell argument-completion metadata for unresolved PR comments" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match '\[ArgumentCompletions\("github\.com"\)\]'
+        $content | Should -Match '\[ArgumentCompletions\("text",\s*"json"\)\]'
+    }
+
     It "keeps Increment-Version direct-run invocation guard" {
         $incrementPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Increment-Version.ps1"
         $incrementContent = Get-Content -Path $incrementPath -Raw
