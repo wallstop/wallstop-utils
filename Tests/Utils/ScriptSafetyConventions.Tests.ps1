@@ -12,6 +12,8 @@ BeforeAll {
     )
     $script:workflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/github-pr-summarizer-quality.yml"
     $script:crossLanguageWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/script-quality.yml"
+    $script:dependabotConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".github/dependabot.yml"
+    $script:llmContextPath = Join-Path -Path $script:repoRoot -ChildPath ".llm/context.md"
     $script:preCommitConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".pre-commit-config.yaml"
     $script:preCommitHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-commit"
     $script:prePushHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-push"
@@ -34,6 +36,17 @@ BeforeAll {
         "Scripts/PaperWM/PaperWMRestore.sh",
         "Scripts/Utils/increment-version.sh",
         "Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh"
+    )
+
+    $wrapperHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/LlmWrapperContractHelpers.ps1"
+    if (-not (Test-Path -Path $wrapperHelperPath -PathType Leaf)) {
+        throw "E_CONFIG_ERROR: LLM wrapper helper file not found at '$wrapperHelperPath'."
+    }
+
+    . $wrapperHelperPath
+
+    $script:wrapperContractFiles = @(
+        Get-WrapperContractEntries -ContextFilePath $script:llmContextPath -DefaultFallback @()
     )
 }
 
@@ -455,6 +468,13 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
         $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation'
         $preCommitConfig | Should -Match 'stages:\s+\[pre-push\]'
+    }
+
+    It "routes LLM harness validation through the precommit orchestrator" {
+        $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
+        $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
+        $preCommitConfig | Should -Match 'entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Run-PreCommitValidation\.ps1'
+        $preCommitConfig | Should -Not -Match 'id:\s+llm-harness-validation' -Because 'LLM harness checks should run once via the orchestrator to avoid duplicate execution'
     }
 
     It "scopes deterministic JSON formatting away from snapshot dumps" {
@@ -1148,6 +1168,282 @@ Describe "Workflow security conventions" {
     }
 }
 
+Describe "Dependabot update automation conventions" {
+    It "defines Dependabot configuration in .github/dependabot.yml" {
+        Test-Path -Path $script:dependabotConfigPath -PathType Leaf | Should -BeTrue -Because (
+            "Repository dependency automation policy requires a Dependabot configuration file"
+        )
+    }
+
+    It "pins Dependabot schema to version 2 with updates blocks" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        $content | Should -Match '(?m)^version:\s*2\s*$'
+        $content | Should -Match '(?m)^updates:\s*$'
+    }
+
+    It "keeps exactly the required ecosystems for current tooling areas" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        $ecosystemMatches = [System.Text.RegularExpressions.Regex]::Matches(
+            $content,
+            '(?m)^\s*-\s*package-ecosystem:\s*"?(?<name>[A-Za-z0-9-]+)"?\s*$'
+        )
+        $ecosystems = @($ecosystemMatches | ForEach-Object { $_.Groups['name'].Value })
+
+        $ecosystems.Count | Should -Be 3
+        @($ecosystems | Sort-Object -Unique) | Should -Be @('devcontainers', 'github-actions', 'pre-commit') -Because (
+            "Dependabot coverage must remain aligned to the agreed tooling areas"
+        )
+    }
+
+    It "uses Monday 03:00 UTC weekly schedule for each configured ecosystem" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count | Should -Be 3
+    }
+
+    It "groups both version and security updates into one PR per ecosystem area per update type" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        # Parse line-by-line rather than with a single block regex so valid YAML
+        # whitespace/reordering changes do not make this policy test brittle.
+        $ecosystemBlocks = @{}
+        $currentEcosystem = $null
+        $currentLines = New-Object System.Collections.Generic.List[string]
+        $contentLines = @($content -split "`n")
+
+        foreach ($line in $contentLines) {
+            $match = [System.Text.RegularExpressions.Regex]::Match(
+                $line,
+                '^\s*-\s*package-ecosystem:\s*"?(?<name>[A-Za-z0-9-]+)"?\s*$'
+            )
+
+            if ($match.Success) {
+                if (-not [string]::IsNullOrWhiteSpace($currentEcosystem)) {
+                    $ecosystemBlocks[$currentEcosystem] = ($currentLines -join "`n")
+                }
+
+                $currentEcosystem = $match.Groups['name'].Value
+                $currentLines = New-Object System.Collections.Generic.List[string]
+                continue
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($currentEcosystem)) {
+                $currentLines.Add($line) | Out-Null
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($currentEcosystem)) {
+            $ecosystemBlocks[$currentEcosystem] = ($currentLines -join "`n")
+        }
+
+        foreach ($ecosystem in @('github-actions', 'pre-commit', 'devcontainers')) {
+            $ecosystemBlocks.ContainsKey($ecosystem) | Should -BeTrue -Because "Missing ecosystem block for '$ecosystem'"
+            $body = $ecosystemBlocks[$ecosystem]
+
+            $body | Should -Match ('(?m)^\s*' + [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-all") + ':\s*$')
+            $body | Should -Match ('(?m)^\s*' + [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-security") + ':\s*$')
+
+            $allGroupPattern = '(?ms)^\s*' +
+            [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-all") +
+            ':\s*(?<block>.*?)(?=^\s*' +
+            [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-security") +
+            ':\s*|\z)'
+            $allGroupMatch = [System.Text.RegularExpressions.Regex]::Match($body, $allGroupPattern)
+            $allGroupMatch.Success | Should -BeTrue -Because "Version-updates group block must be parseable for '$ecosystem'"
+            $allGroupBody = $allGroupMatch.Groups['block'].Value
+
+            # Accept quoted and unquoted YAML scalar styles for forward compatibility.
+            $allGroupBody | Should -Match '(?m)^\s*applies-to:\s*(?:"version-updates"|version-updates)\s*$'
+            $allGroupBody | Should -Match '(?m)^\s*patterns:\s*$'
+            $allGroupBody | Should -Match '(?m)^\s*-\s*"\*"\s*$'
+
+            $securityGroupPattern = '(?ms)^\s*' +
+            [System.Text.RegularExpressions.Regex]::Escape("$ecosystem-security") +
+            ':\s*(?<block>.*)$'
+            $securityGroupMatch = [System.Text.RegularExpressions.Regex]::Match($body, $securityGroupPattern)
+            $securityGroupMatch.Success | Should -BeTrue -Because "Security-updates group block must be parseable for '$ecosystem'"
+            $securityGroupBody = $securityGroupMatch.Groups['block'].Value
+
+            $securityGroupBody | Should -Match '(?m)^\s*applies-to:\s*(?:"security-updates"|security-updates)\s*$'
+            $securityGroupBody | Should -Match '(?m)^\s*patterns:\s*$'
+            $securityGroupBody | Should -Match '(?m)^\s*-\s*"\*"\s*$'
+        }
+    }
+
+    It "targets repository root directory for all configured ecosystems" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*directory:\s*(?:"/"|/)\s*$')).Count | Should -Be 3
+    }
+
+    It "caps open version-update PR volume per ecosystem and keeps default branch behavior" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*open-pull-requests-limit:\s*10\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*separator:\s*"?/"?\s*$')).Count | Should -Be 3
+        # Policy assumption: updates target the repository default branch.
+        # If multi-branch release flows are introduced, this policy test should be updated.
+        $content | Should -Not -Match '(?m)^\s*target-branch:\s*'
+    }
+}
+
+Describe "Dependabot manifest coverage drift conventions" {
+    It "requires explicit ecosystem coverage when common dependency manifests are introduced" {
+        $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
+        $ignoredDirectoryNames = @('.git', '.venv', '.cache', '.tox', '.pytest_cache', '.egg-info', '.bundle', '.dart_tool', '.flutter-plugins', 'node_modules', 'dist', 'build', 'venv', 'vendor', 'target', '__pycache__')
+        $ignoredPathAlternation = (
+            $ignoredDirectoryNames |
+            ForEach-Object { [System.Text.RegularExpressions.Regex]::Escape($_) }
+        ) -join '|'
+        $ignoredPathPattern = "(?:^|[\\/])($ignoredPathAlternation)(?:[\\/]|$)"
+
+        $manifestMappings = @(
+            @{ Filter = 'package.json'; Ecosystem = 'npm' },
+            @{ Filter = 'requirements*.txt'; Ecosystem = 'pip' },
+            @{ Filter = 'pyproject.toml'; Ecosystem = 'pip' },
+            @{ Filter = 'Pipfile'; Ecosystem = 'pip' },
+            @{ Filter = 'poetry.lock'; Ecosystem = 'pip' },
+            @{ Filter = 'Dockerfile'; Ecosystem = 'docker' },
+            @{ Filter = 'docker-compose*.yml'; Ecosystem = 'docker-compose' },
+            @{ Filter = 'docker-compose*.yaml'; Ecosystem = 'docker-compose' },
+            @{ Filter = 'compose.yml'; Ecosystem = 'docker-compose' },
+            @{ Filter = 'compose.yaml'; Ecosystem = 'docker-compose' },
+            @{ Filter = 'go.mod'; Ecosystem = 'gomod' },
+            @{ Filter = 'Cargo.toml'; Ecosystem = 'cargo' },
+            @{ Filter = 'Gemfile'; Ecosystem = 'bundler' },
+            @{ Filter = 'pom.xml'; Ecosystem = 'maven' },
+            @{ Filter = 'build.gradle'; Ecosystem = 'gradle' },
+            @{ Filter = 'build.gradle.kts'; Ecosystem = 'gradle' },
+            @{ Filter = '*.csproj'; Ecosystem = 'nuget' }
+        )
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        $scanStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $scanMode = 'git-ls-files'
+        $fallbackReason = ''
+
+        try {
+            $relativePaths = @(
+                git -C $script:repoRoot ls-files --cached --others --exclude-standard 2>$null |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique
+            )
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "git ls-files exited with code $LASTEXITCODE"
+            }
+
+            $allRepoFiles = @(
+                $relativePaths |
+                Where-Object { $_ -notmatch $ignoredPathPattern } |
+                ForEach-Object {
+                    $absolutePath = Join-Path -Path $script:repoRoot -ChildPath $_
+                    if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
+                        Get-Item -LiteralPath $absolutePath -ErrorAction SilentlyContinue
+                    }
+                } |
+                Where-Object { $null -ne $_ }
+            )
+        }
+        catch {
+            # Fallback keeps this guardrail operational even outside a git worktree while pruning ignored directories up-front.
+            $scanMode = 'fallback-pruned-recursion'
+            $fallbackReason = $_.Exception.Message
+            $pendingDirectories = New-Object 'System.Collections.Generic.Queue[string]'
+            $pendingDirectories.Enqueue($script:repoRoot)
+            $collectedFiles = New-Object 'System.Collections.Generic.List[System.IO.FileInfo]'
+
+            while ($pendingDirectories.Count -gt 0) {
+                $currentDirectory = $pendingDirectories.Dequeue()
+                $entries = @(Get-ChildItem -Path $currentDirectory -Force -ErrorAction SilentlyContinue)
+
+                foreach ($entry in $entries) {
+                    if ($entry.PSIsContainer) {
+                        if ($ignoredDirectoryNames -contains $entry.Name) {
+                            continue
+                        }
+
+                        if (($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                            continue
+                        }
+
+                        $pendingDirectories.Enqueue($entry.FullName)
+                        continue
+                    }
+
+                    if ($entry -is [System.IO.FileInfo]) {
+                        $collectedFiles.Add($entry) | Out-Null
+                    }
+                }
+            }
+
+            $allRepoFiles = @(
+                $collectedFiles |
+                Sort-Object FullName
+            )
+        }
+
+        $scanStopwatch.Stop()
+        $scanDiagnostics = "scanMode={0}; repoFilesScanned={1}; manifestMappings={2}; scanElapsedMs={3}" -f $scanMode, $allRepoFiles.Count, $manifestMappings.Count, $scanStopwatch.ElapsedMilliseconds
+        if (-not [string]::IsNullOrWhiteSpace($fallbackReason)) {
+            $scanDiagnostics = "$scanDiagnostics; fallbackReason=$fallbackReason"
+        }
+
+        foreach ($mapping in $manifestMappings) {
+            $foundFiles = @(
+                $allRepoFiles |
+                Where-Object { $_.Name -like $mapping.Filter }
+            )
+
+            if ($foundFiles.Count -eq 0) {
+                continue
+            }
+
+            $ecosystemPattern = '(?m)^\s*-\s*package-ecosystem:\s*"?' + [System.Text.RegularExpressions.Regex]::Escape($mapping.Ecosystem) + '"?\s*$'
+            if ($content -match $ecosystemPattern) {
+                continue
+            }
+
+            $sampleFiles = @(
+                $foundFiles |
+                Select-Object -First 3 |
+                ForEach-Object { [System.IO.Path]::GetRelativePath($script:repoRoot, $_.FullName) }
+            )
+
+            $violations.Add(("{0} requires ecosystem '{1}' (matches={2}; example files: {3}; diagnostics: {4})" -f $mapping.Filter, $mapping.Ecosystem, $foundFiles.Count, ($sampleFiles -join '; '), $scanDiagnostics)) | Out-Null
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "When new dependency manifests are added, Dependabot must be extended deliberately. Diagnostics: {0}. Violations: {1}" -f $scanDiagnostics, ($violations -join ' | ')
+        )
+    }
+
+    It "keeps configured ecosystems anchored to real manifests in this repository" {
+        $githubWorkflowsPath = Join-Path -Path $script:repoRoot -ChildPath '.github/workflows'
+        $githubWorkflowFiles = @(
+            Get-ChildItem -Path $githubWorkflowsPath -Filter '*.yml' -File -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $githubWorkflowsPath -Filter '*.yaml' -File -ErrorAction SilentlyContinue
+        )
+        $githubWorkflowFiles.Count | Should -BeGreaterThan 0 -Because (
+            "Dependabot ecosystem 'github-actions' requires workflow manifest files under .github/workflows"
+        )
+
+        Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath '.pre-commit-config.yaml') -PathType Leaf | Should -BeTrue -Because (
+            "Dependabot ecosystem 'pre-commit' requires .pre-commit-config.yaml"
+        )
+
+        Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/devcontainer.json') -PathType Leaf | Should -BeTrue -Because (
+            "Dependabot ecosystem 'devcontainers' requires .devcontainer/devcontainer.json"
+        )
+    }
+}
+
 Describe "JSON parsing conventions" {
     It "keeps strict ConvertFrom-JsonSingleObject edge-case coverage" {
         $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/Utils/StrictModeHelpers.Tests.ps1"
@@ -1194,6 +1490,113 @@ Describe "Utility configuration safety conventions" {
 
         $content | Should -Match 'Get-CommandWithOptionalModuleImport\s+-CommandName\s+"Invoke-Pester"'
         $content | Should -Match 'E_CONFIG_ERROR:\s+Invoke-Pester is not available'
+    }
+
+    It "keeps Run-PreCommitValidation LLM harness telemetry low-noise" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $content = Get-Content -Path $preCommitPath -Raw
+
+        $content | Should -Match 'Write-Host\s*\("Running LLM harness validation\.\.\. allMode='
+        $content | Should -Match 'Write-Verbose\s*\(\s*"LLM harness trigger diagnostics:'
+        $content | Should -Match 'Write-Verbose\s*\(\s*"Validation trigger summary:'
+        $content | Should -Match 'Write-Verbose\s*\(\s*"LLM harness staged-file diagnostics:'
+        $content | Should -Match 'Write-Verbose\s*"No staged files requiring utility validation; skipping validation\."'
+        $content | Should -Not -Match 'Write-Host\s*\(\s*"LLM harness staged-file diagnostics:'
+    }
+
+    It "keeps Invoke-PesterQualityGate diagnostics low-noise" {
+        $pesterGatePath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
+        $content = Get-Content -Path $pesterGatePath -Raw
+
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: version='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: modulePath='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: hasNewPesterConfiguration='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: passed='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: coverageProperties='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: coveragePercent='
+        $content | Should -Not -Match 'Write-Host\s*"\$DiagnosticsPrefix diagnostics:'
+    }
+
+    It "keeps cross-platform CIM and WMI guidance precise" {
+        $crossPlatformDetailsPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details/cross-platform-powershell.md'
+        $content = (Get-Content -Path $crossPlatformDetailsPath -Raw) -replace "`r", ''
+        $windowsOnlySectionMatch = [regex]::Match(
+            $content,
+            '(?ms)^##\s+Avoiding\s+Windows-Only\s+APIs\s+And\s+Commands\s*$\n(?<section>.*?)(?=^##\s|\z)'
+        )
+        $windowsOnlySection = if ($windowsOnlySectionMatch.Success) { $windowsOnlySectionMatch.Groups['section'].Value } else { '' }
+
+        $windowsOnlySectionMatch.Success | Should -BeTrue
+        $windowsOnlySection | Should -Not -Match '(?im)^Commands and APIs that do not exist on Linux/macOS:\s*$'
+        $windowsOnlySection | Should -Match '(?i)Get-WmiObject'
+        $windowsOnlySection | Should -Match '(?i)Windows-only'
+        $windowsOnlySection | Should -Match '(?i)Get-CimInstance'
+        $windowsOnlySection | Should -Match '(?i)(provider-dependent|providers?\s+are\s+often\s+limited|often\s+limited)'
+        $windowsOnlySection | Should -Not -Match '(?im)^\|\s*`Get-WmiObject`\s*/\s*`Get-CimInstance`\s*\|'
+        $windowsOnlySection | Should -Match '(?im)^\|\s*`Get-WmiObject`[^|]*Windows-only'
+        $windowsOnlySection | Should -Match '(?im)^\|\s*`Get-CimInstance`[^|]*(provider-dependent|limited)'
+        $windowsOnlySection | Should -Match '(?i)\[System\.Windows\.Forms\]'
+        $windowsOnlySection | Should -Match '(?i)Windows\s+UI\s+only'
+        $windowsOnlySection | Should -Not -Match '(?i)\[System\.Windows\.Forms\][^\r\n|]*Not\s+available'
+    }
+
+    It "derives LLM harness trigger pattern from Wrapper Contract instead of hardcoded wrapper names" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $content = Get-Content -Path $preCommitPath -Raw
+
+        $content | Should -Match 'LlmWrapperContractHelpers\.ps1'
+        $content | Should -Not -Match 'function\s+Get-WrapperContractEntries\s*\{'
+        $content | Should -Match 'function\s+New-LlmHarnessPattern\s*\{'
+        $content | Should -Match '(?m)^\s*\$contextPath\s*=\s*Join-Path\s+-Path\s+\$repoRoot\s+-ChildPath\s+''\.llm/context\.md'''
+        $content | Should -Match '\$llmHarnessWrapperFiles\s*=\s*@\(Get-WrapperContractEntries\s+-ContextFilePath\s+\$contextPath\)'
+        $content | Should -Match 'LLM harness trigger diagnostics:'
+
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Test-LlmHarness.ps1"
+        $validatorContent = Get-Content -Path $validatorPath -Raw
+        $validatorContent | Should -Match 'LlmWrapperContractHelpers\.ps1'
+        $validatorContent | Should -Not -Match 'function\s+Get-WrapperContractEntries\s*\{'
+
+        foreach ($wrapperFile in $script:wrapperContractFiles) {
+            $content | Should -Match ([regex]::Escape($wrapperFile)) -Because "Fallback wrapper set should stay aligned with Wrapper Contract entries"
+        }
+
+        foreach ($phantomWrapper in @('GEMINI.md', 'CURSOR.md', 'OPENAI.md', 'CODEX.md')) {
+            $content | Should -Not -Match ([regex]::Escape($phantomWrapper)) -Because "$phantomWrapper should never be hardcoded into LLM harness trigger logic"
+        }
+    }
+
+    It "derives LLM harness fixture wrapper entries via shared helper in tests" {
+        $llmHarnessTestsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/Utils/LlmHarness.Tests.ps1"
+        $content = Get-Content -Path $llmHarnessTestsPath -Raw
+
+        $content | Should -Match 'LlmWrapperContractHelpers\.ps1'
+        $content | Should -Match '\$script:wrapperFiles\s*=\s*@\(Get-WrapperContractEntries\s+-ContextFilePath\s+\$script:contextPath\s+-DefaultFallback\s+@\(\)\)'
+        $content | Should -Not -Match '\[System\.IO\.File\]::ReadLines\(\$script:contextPath,\s*\[System\.Text\.Encoding\]::UTF8\)'
+        $content | Should -Match 'wrapperCount='
+    }
+
+    It "keeps docs-to-config consistency diagnostics in Test-LlmHarness" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Test-LlmHarness.ps1"
+        $content = Get-Content -Path $validatorPath -Raw
+
+        $content | Should -Match 'Dependabot/context diagnostics'
+        $content | Should -Match 'Cross-platform command availability diagnostics'
+        $content | Should -Match 'hasWindowsOnlySection'
+        $content | Should -Match 'legacyNoExistHeader'
+        $content | Should -Match 'hasGetWmiWindowsOnly'
+        $content | Should -Match 'hasGetCimProviderLanguage'
+        $content | Should -Match 'hasCimProviderCaveat'
+        $content | Should -Match 'hasCombinedWmiCimTableRow'
+        $content | Should -Match 'must not combine Get-WmiObject and Get-CimInstance'
+        $content | Should -Match 'foreach\s*\(\$diagnostic\s+in\s+\$diagnostics\)\s*\{\s*Write-Verbose\s+\$diagnostic'
+        $content | Should -Not -Match 'Write-Warning\s+\$warning'
+        $content | Should -Match 'per\\s\+update\\s\+type'
+        $content | Should -Match 'monday\\D\+03:00\\D\+utc'
+        $content | Should -Match 'default\\s\+HFS\\\+'
+        $content | Should -Match 'Case\\s\+Sensitivity\\s\+And\\s\+File\\s\+System\\s\+Differences'
+        $content | Should -Match '\(\?<section>\.\*\?\)'
+        $content | Should -Match '\\bAPFS\\b'
+        $content | Should -Match 'Windows,\s*macOS,\s*and\s+Linux'
     }
 
     It "avoids hardcoded user-home Import-Module paths in utility scripts" {

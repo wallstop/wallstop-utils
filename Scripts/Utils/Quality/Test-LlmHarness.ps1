@@ -15,6 +15,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$llmWrapperHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/LlmWrapperContractHelpers.ps1"
+if (-not (Test-Path -Path $llmWrapperHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: LLM wrapper helper file not found at '$llmWrapperHelpersPath'."
+}
+
+. $llmWrapperHelpersPath
+
 function Get-RepositoryRoot {
     param(
         [Parameter(Mandatory = $false)]
@@ -98,33 +105,6 @@ function Get-MarkdownHeadingAnchors {
     return , $anchors
 }
 
-function Get-WrapperContractEntries {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$ContextFilePath
-    )
-
-    $entries = @()
-    $inSection = $false
-
-    foreach ($line in [System.IO.File]::ReadLines($ContextFilePath, [System.Text.Encoding]::UTF8)) {
-        if ($line -match '^\s{0,3}##\s+Wrapper Contract\s*$') {
-            $inSection = $true
-            continue
-        }
-
-        if ($inSection -and $line -match '^\s{0,3}##\s') {
-            break
-        }
-
-        if ($inSection -and $line -match '^\s*-\s+`([^`]+)`') {
-            $entries += $Matches[1]
-        }
-    }
-
-    return $entries
-}
-
 function Test-IsPathWithinDirectory {
     param(
         [Parameter(Mandatory = $true)]
@@ -165,15 +145,33 @@ function ConvertTo-PortablePath {
     return ($PathValue -replace '[\\/]+', '/')
 }
 
+function Test-UsesCanonicalTriOsPhrase {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text
+    )
+
+    $hasWindows = $Text -match '(?i)\bwindows\b'
+    $hasMacOs = $Text -match '(?i)\bmacos\b'
+    $hasLinux = $Text -match '(?i)\blinux\b'
+    if (-not ($hasWindows -and $hasMacOs -and $hasLinux)) {
+        return $true
+    }
+
+    return $Text -match '(?i)\bwindows,\s*macos,\s*and\s+linux\b'
+}
+
 $repoRoot = Get-RepositoryRoot -CandidateRoot $RootPath
 $errors = New-Object System.Collections.Generic.List[string]
-$warnings = New-Object System.Collections.Generic.List[string]
+$diagnostics = New-Object System.Collections.Generic.List[string]
 
 $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
 $skillsIndexPath = Join-Path -Path $repoRoot -ChildPath '.llm/skills-index.md'
 $skillsDir = Join-Path -Path $repoRoot -ChildPath '.llm/skills'
 $skillDetailsDir = Join-Path -Path $repoRoot -ChildPath '.llm/skill-details'
 $updateScriptPath = Join-Path -Path $repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
+$dependabotConfigPath = Join-Path -Path $repoRoot -ChildPath '.github/dependabot.yml'
+$crossPlatformDetailsPath = Join-Path -Path $repoRoot -ChildPath '.llm/skill-details/cross-platform-powershell.md'
 
 if (-not (Test-Path -Path $contextPath -PathType Leaf)) {
     $errors.Add("Missing required context file: .llm/context.md") | Out-Null
@@ -199,6 +197,12 @@ if (Test-Path -Path $contextPath -PathType Leaf) {
     }
 }
 
+$diagnostics.Add((
+        "Wrapper contract diagnostics: wrapperCount={0}; wrappers={1}" -f
+        $requiredWrappers.Count,
+        ($requiredWrappers -join ',')
+    )) | Out-Null
+
 foreach ($wrapper in $requiredWrappers) {
     $wrapperPath = Join-Path -Path $repoRoot -ChildPath $wrapper
     if (-not (Test-Path -Path $wrapperPath -PathType Leaf)) {
@@ -214,10 +218,19 @@ foreach ($wrapper in $requiredWrappers) {
 
 $llmMarkdownFiles = @()
 if (Test-Path -Path (Join-Path -Path $repoRoot -ChildPath '.llm') -PathType Container) {
+    $llmScanStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $llmMarkdownFiles = @(
         Get-ChildItem -Path (Join-Path -Path $repoRoot -ChildPath '.llm') -Filter '*.md' -File -Recurse -ErrorAction Stop |
         Sort-Object FullName
     )
+    $llmScanStopwatch.Stop()
+    $diagnostics.Add((
+            "LLM markdown scan diagnostics: files={0}; elapsedMs={1}; maxLines={2}; warningLines={3}" -f
+            $llmMarkdownFiles.Count,
+            $llmScanStopwatch.ElapsedMilliseconds,
+            $MaxLines,
+            $WarningLines
+        )) | Out-Null
 }
 
 if ($llmMarkdownFiles.Count -eq 0) {
@@ -234,7 +247,7 @@ foreach ($file in $llmMarkdownFiles) {
     }
 
     if ($lineCount -gt $WarningLines) {
-        $warnings.Add("$relativePath is near the line limit ($lineCount lines)") | Out-Null
+        $diagnostics.Add("$relativePath is near the line limit ($lineCount lines)") | Out-Null
     }
 }
 
@@ -250,8 +263,10 @@ if ($skillFiles.Count -lt 1) {
     $errors.Add("At least one skill card is required in .llm/skills (found $($skillFiles.Count)).") | Out-Null
 }
 elseif ($skillFiles.Count -lt 8 -or $skillFiles.Count -gt 10) {
-    $warnings.Add("Skill count is outside the recommended range of 8-10 (found $($skillFiles.Count)).") | Out-Null
+    $diagnostics.Add("Skill count is outside the recommended range of 8-10 (found $($skillFiles.Count)).") | Out-Null
 }
+
+$diagnostics.Add("Skill metadata diagnostics: skillFiles=$($skillFiles.Count)") | Out-Null
 
 $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
 $anchorLinkPattern = '\[[^\]]+\]\(\.\./skill-details/(?<detailsPath>(?:[^/#)\s]+/)*[^/#)\s]+\.md)#(?<anchor>[^)\s]+)\)'
@@ -264,6 +279,11 @@ foreach ($skillFile in $skillFiles) {
     if (-not $match.Success) {
         $errors.Add("$relativePath is missing trigger metadata comment.") | Out-Null
         continue
+    }
+
+    $triggerDescription = $match.Groups['description'].Value.Trim()
+    if (-not (Test-UsesCanonicalTriOsPhrase -Text $triggerDescription)) {
+        $errors.Add("$relativePath trigger description must use the canonical phrase 'Windows, macOS, and Linux' when listing all three operating systems.") | Out-Null
     }
 
     $skillLineCount = [System.IO.File]::ReadAllLines($skillFile.FullName, [System.Text.Encoding]::UTF8).Length
@@ -336,6 +356,121 @@ if (Test-Path -Path $contextPath -PathType Leaf) {
     if ($contextContent -notmatch '\(\./skills-index\.md\)') {
         $errors.Add('.llm/context.md must link to .llm/skills-index.md.') | Out-Null
     }
+
+    if (Test-Path -Path $dependabotConfigPath -PathType Leaf) {
+        $dependabotContent = ([System.IO.File]::ReadAllText($dependabotConfigPath, [System.Text.Encoding]::UTF8)) -replace "`r", ''
+        $normalizedContext = $contextContent -replace "`r", ''
+        $ecosystemMatches = [System.Text.RegularExpressions.Regex]::Matches(
+            $dependabotContent,
+            '(?m)^\s*-\s*package-ecosystem:\s*"?(?<name>[A-Za-z0-9-]+)"?\s*$'
+        )
+        $configuredEcosystems = @(
+            $ecosystemMatches |
+            ForEach-Object { $_.Groups['name'].Value } |
+            Sort-Object -Unique
+        )
+
+        $scheduleDiagnostics = @{
+            IntervalWeeklyCount = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count
+            DayMondayCount      = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count
+            Time0300Count       = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count
+            TimezoneUtcCount    = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count
+        }
+        $usesPerUpdateTypeGroups = (
+            $dependabotContent -match '(?m)^\s*applies-to:\s*(?:"version-updates"|version-updates)\s*$' -and
+            $dependabotContent -match '(?m)^\s*applies-to:\s*(?:"security-updates"|security-updates)\s*$'
+        )
+
+        $dependabotDiagnostic = (
+            "Dependabot/context diagnostics: ecosystems={0}; schedule={1}/{2}/{3}/{4}; groupedByUpdateType={5}" -f
+            ($configuredEcosystems -join ','),
+            $scheduleDiagnostics.IntervalWeeklyCount,
+            $scheduleDiagnostics.DayMondayCount,
+            $scheduleDiagnostics.Time0300Count,
+            $scheduleDiagnostics.TimezoneUtcCount,
+            $usesPerUpdateTypeGroups
+        )
+        $diagnostics.Add($dependabotDiagnostic) | Out-Null
+
+        foreach ($ecosystem in $configuredEcosystems) {
+            $ecosystemPattern = '(?i)(?<![A-Za-z0-9-])' + [System.Text.RegularExpressions.Regex]::Escape($ecosystem) + '(?![A-Za-z0-9-])'
+            if ($normalizedContext -notmatch $ecosystemPattern) {
+                $errors.Add(".llm/context.md must mention Dependabot ecosystem '$ecosystem' declared in .github/dependabot.yml") | Out-Null
+            }
+        }
+
+        if ($usesPerUpdateTypeGroups -and $normalizedContext -notmatch '(?i)per\s+update\s+type') {
+            $errors.Add('.llm/context.md must state that grouped Dependabot PRs are per update type when both version-updates and security-updates groups are configured.') | Out-Null
+        }
+
+        $isUniformCanonicalSchedule = (
+            $configuredEcosystems.Count -gt 0 -and
+            $scheduleDiagnostics.IntervalWeeklyCount -eq $configuredEcosystems.Count -and
+            $scheduleDiagnostics.DayMondayCount -eq $configuredEcosystems.Count -and
+            $scheduleDiagnostics.Time0300Count -eq $configuredEcosystems.Count -and
+            $scheduleDiagnostics.TimezoneUtcCount -eq $configuredEcosystems.Count
+        )
+        if ($isUniformCanonicalSchedule -and $normalizedContext -notmatch '(?i)monday\D+03:00\D+utc') {
+            $errors.Add('.llm/context.md must document the canonical Dependabot cadence (Monday 03:00 UTC) while that schedule remains configured.') | Out-Null
+        }
+    }
+}
+
+if (Test-Path -Path $crossPlatformDetailsPath -PathType Leaf) {
+    $crossPlatformContent = ([System.IO.File]::ReadAllText($crossPlatformDetailsPath, [System.Text.Encoding]::UTF8)) -replace "`r", ''
+    $windowsOnlySectionMatch = [System.Text.RegularExpressions.Regex]::Match(
+        $crossPlatformContent,
+        '(?ms)^##\s+Avoiding\s+Windows-Only\s+APIs\s+And\s+Commands\s*$\n(?<section>.*?)(?=^##\s|\z)'
+    )
+    $windowsOnlySection = if ($windowsOnlySectionMatch.Success) { $windowsOnlySectionMatch.Groups['section'].Value } else { '' }
+    $legacyNoExistHeader = $windowsOnlySection -match '(?im)^Commands and APIs that do not exist on Linux/macOS:\s*$'
+    $hasGetWmiWindowsOnly = $windowsOnlySection -match '(?im)^\|\s*`Get-WmiObject`[^|\r\n]*Windows-only[^|\r\n]*\|'
+    $hasGetCimProviderLanguage = $windowsOnlySection -match '(?im)^\|\s*`Get-CimInstance`[^|\r\n]*(provider-dependent|limited)[^|\r\n]*\|[^|\r\n]*(provider-dependent|providers?/data\s+are\s+often\s+limited|providers?\s+are\s+often\s+limited|provider[^|\r\n]*(limited|availability|support))'
+    $hasCimProviderCaveat = $hasGetWmiWindowsOnly -and $hasGetCimProviderLanguage
+    $hasCombinedWmiCimTableRow = $windowsOnlySection -match '(?im)^\|\s*`Get-WmiObject`\s*/\s*`Get-CimInstance`\s*\|'
+    $diagnostics.Add((
+            "Cross-platform command availability diagnostics: hasWindowsOnlySection={0}; legacyNoExistHeader={1}; hasGetWmiWindowsOnly={2}; hasGetCimProviderLanguage={3}; hasCimProviderCaveat={4}; hasCombinedWmiCimTableRow={5}" -f
+            $windowsOnlySectionMatch.Success,
+            $legacyNoExistHeader,
+            $hasGetWmiWindowsOnly,
+            $hasGetCimProviderLanguage,
+            $hasCimProviderCaveat,
+            $hasCombinedWmiCimTableRow
+        )) | Out-Null
+
+    if (-not $windowsOnlySectionMatch.Success) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md is missing the Avoiding Windows-Only APIs And Commands section expected by portability policy.') | Out-Null
+    }
+
+    if ($legacyNoExistHeader) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md uses overly broad availability wording. Prefer Windows-only or Windows-specific behavior wording with caveats.') | Out-Null
+    }
+
+    if (-not $hasCimProviderCaveat) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md must clarify that Get-WmiObject is Windows-only and Get-CimInstance on non-Windows is provider-dependent/limited.') | Out-Null
+    }
+
+    if ($hasCombinedWmiCimTableRow) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md must not combine Get-WmiObject and Get-CimInstance in the same Windows-only table row; document separate guidance to avoid availability ambiguity.') | Out-Null
+    }
+
+    if ($crossPlatformContent -match '(?i)default\s+HFS\+') {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md uses outdated macOS default filesystem wording (default HFS+). Use APFS default wording instead.') | Out-Null
+    }
+
+    $caseSensitivitySectionMatch = [System.Text.RegularExpressions.Regex]::Match(
+        $crossPlatformContent,
+        '(?ms)^##\s+Case\s+Sensitivity\s+And\s+File\s+System\s+Differences\s*$\n(?<section>.*?)(?=^##\s|\z)'
+    )
+    if (-not $caseSensitivitySectionMatch.Success) {
+        $errors.Add('.llm/skill-details/cross-platform-powershell.md is missing the Case Sensitivity And File System Differences section expected by portability policy.') | Out-Null
+    }
+    else {
+        $caseSensitivitySection = $caseSensitivitySectionMatch.Groups['section'].Value
+        if ($caseSensitivitySection -notmatch '(?i)\bAPFS\b') {
+            $errors.Add('.llm/skill-details/cross-platform-powershell.md must reference APFS in the Case Sensitivity And File System Differences section for modern macOS guidance.') | Out-Null
+        }
+    }
 }
 
 if (Test-Path -Path $skillsIndexPath -PathType Leaf) {
@@ -360,8 +495,8 @@ else {
     }
 }
 
-foreach ($warning in $warnings) {
-    Write-Warning $warning
+foreach ($diagnostic in $diagnostics) {
+    Write-Verbose $diagnostic
 }
 
 if ($errors.Count -gt 0) {

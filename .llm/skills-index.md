@@ -17,13 +17,16 @@ This file is generated. Do not edit generated sections manually.
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
+| [Dependency Update Automation](./skills/dependency-update-automation.md) | [Expanded Guide](./skill-details/dependency-update-automation.md) | dependabot, dependency updates, github-actions, pre-commit, devcontainers, grouped updates, security updates | Maintain weekly grouped dependency automation across tooling ecosystems |
 | [Precommit Hooks And Fallbacks](./skills/precommit-hooks-and-fallbacks.md) | [Expanded Guide](./skill-details/precommit-hooks-and-fallbacks.md) | pre-commit, git hooks, fallback, pre-push | Maintain pre-commit-first hooks with legacy fallback |
 | [Shell Governance Remediation](./skills/shell-governance-remediation.md) | [Expanded Guide](./skill-details/shell-governance-remediation.md) | shellcheck, suppression, remediation, lint policy | Apply strict shell governance and remediation contract |
+| [Shell Tooling Portability And Agentic Safety](./skills/shell-tooling-portability-and-agentic-safety.md) | [Expanded Guide](./skill-details/shell-tooling-portability-and-agentic-safety.md) | bash, grep, awk, sed, shell portability, gnu vs bsd, shell performance, dry-run, idempotence, shellcheck, bats | Apply reliable and portable shell tooling patterns for agentic workflows |
 
 ## Platform
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
+| [Cross Platform PowerShell](./skills/cross-platform-powershell.md) | [Expanded Guide](./skill-details/cross-platform-powershell.md) | cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity | Write portable PowerShell that runs on Windows, macOS, and Linux |
 | [Devcontainer Bootstrap](./skills/devcontainer-bootstrap.md) | [Expanded Guide](./skill-details/devcontainer-bootstrap.md) | devcontainer, bootstrap, toolchain, setup parity | Use devcontainer bootstrap for consistent quality tooling |
 | [macOS AppleScript Validation](./skills/macos-applescript-validation.md) | [Expanded Guide](./skill-details/macos-applescript-validation.md) | macos, applescript, osacompile, migration fallback | Keep macOS AppleScript validation migration-safe |
 | [Windows Language Validation](./skills/windows-language-validation.md) | [Expanded Guide](./skill-details/windows-language-validation.md) | windows, autohotkey, batch, fast lane, runtime budget | Preserve Windows PR lane validation contracts |

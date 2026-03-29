@@ -23,6 +23,8 @@ All front-end wrapper files must point here and should not duplicate policy text
 7. After major changes, run full validation before ending a session.
 8. Prefer PEP 668-safe pre-commit bootstrap guidance (`pipx` or dedicated venv); avoid `python3 -m pip install --user pre-commit`.
 9. When a failure reveals a repeatable category, codify the invariant in skills/context/tests.
+10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
+11. Keep quality-harness diagnostics low-noise: in `Run-PreCommitValidation.ps1` and `Scripts/Utils/Quality/*`, use `Write-Verbose` for advisory telemetry and reserve `Write-Warning` for actionable degradation only; keep `Write-Host` for concise high-level status.
 
 ## Working Agreement For Agents
 
@@ -74,6 +76,13 @@ The following wrapper files are thin pointers and must remain non-authoritative:
 - `.github/copilot-instructions.md`
 - `CLAUDE.md`
 
+LLM harness staged-file wrapper triggers are routed through `Run-PreCommitValidation.ps1`
+and must be derived from this list at runtime. Do not hardcode wrapper filenames in
+static hook regex patterns.
+All Wrapper Contract parsing must go through
+`Scripts/Utils/Common/LlmWrapperContractHelpers.ps1` (`Get-WrapperContractEntries`).
+Do not duplicate inline parser logic in scripts or tests.
+
 ## Cross-Platform Line Ending Safety
 
 Repository enforces LF via `.gitattributes` (`* text=auto eol=lf`).
@@ -117,6 +126,42 @@ double quotes, and other special characters. Prefer `System.Diagnostics.Process`
 - Use `return , @()` (comma operator) when callers access `.Count` directly on the result.
 - If callers always wrap with `@()`, the bare `return @()` is safe — add `# array-unwrap-safe`.
 - A convention test in `ScriptSafetyConventions.Tests.ps1` enforces this in `Scripts/`.
+
+## Cross-Platform PowerShell Portability
+
+Scripts under `Scripts/Utils/` must run on Windows, macOS, and Linux with PowerShell 7+.
+
+1. Use `Join-Path` and `[System.IO.Path]` for path construction; never hardcode `\` or `/`.
+2. Use `$IsWindows`, `$IsMacOS`, `$IsLinux` for OS branching; avoid `$env:OS` checks.
+3. Write files with explicit UTF-8 no-BOM encoding via `[System.IO.File]::WriteAllText()`.
+4. Normalize line endings (`-replace "\r", ''`) before regex matching or string comparison.
+5. Normalize path separators to `/` in generated output for deterministic cross-OS comparison.
+6. Use `[System.IO.Path]::GetTempPath()` instead of `$env:TEMP` for portable temp directories.
+7. Use exact file name casing; Linux file systems are case-sensitive.
+8. Split `$env:PATH` with `;` on Windows and `:` on Unix; never assume one separator.
+9. Keep Windows-only scripts in platform-specific directories (e.g., `Scripts/Komorebi/`).
+
+## Cross-Platform Shell Tooling (Bash grep awk sed)
+
+For shell automation under `Scripts/`, keep commands portable, deterministic, and safe for AI-assisted edits.
+
+1. Start Bash scripts with strict mode (`#!/usr/bin/env bash` and `set -euo pipefail`); this baseline is Bash-specific, so strict POSIX `sh` scripts should omit `pipefail` and handle pipeline failures explicitly.
+2. Quote variable expansions (`"$var"`) and prefer `printf` over `echo` for portable output formatting.
+3. Keep data on stdout and diagnostics on stderr (`>&2`) so pipelines remain predictable.
+4. Use null-delimited file flows for path safety: `find ... -print0 | xargs -0 ...` or `while IFS= read -r -d ''`.
+5. Prefer modern grep forms: use `grep -E` and `grep -F`; do not introduce deprecated `egrep` or `fgrep`.
+6. Account for GNU vs BSD differences by avoiding non-portable in-place edits like bare `sed -i`, and prefer temp-file rewrite patterns when scripts must run on both Linux and macOS.
+7. For large ASCII-heavy text processing, consider `LC_ALL=C` with grep/awk/sed/sort for deterministic collation and possible speedups.
+8. Keep performance claims contextual. Optimize only after measuring; avoid premature rewrites that reduce readability.
+9. For agentic and unattended execution, add dry-run support for mutating scripts, make operations idempotent, and bound long-running external calls with an explicit timeout strategy appropriate to the host.
+10. Preflight-check external dependencies with `command -v` and fail fast with actionable errors.
+11. Validate shell changes with syntax + lint + tests where available (`bash -n`, `shellcheck`, `bats`).
+12. Prefer script files over large inline one-liners when logic is non-trivial; keep behavior reviewable and testable.
+
+See:
+
+- Skill card: [`.llm/skills/shell-tooling-portability-and-agentic-safety.md`](./skills/shell-tooling-portability-and-agentic-safety.md)
+- Expanded guide: [`.llm/skill-details/shell-tooling-portability-and-agentic-safety.md`](./skill-details/shell-tooling-portability-and-agentic-safety.md)
 
 ## Contribution Rules
 

@@ -9,6 +9,13 @@ BeforeAll {
     $script:skillDetailsDir = Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details'
     $script:validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Test-LlmHarness.ps1'
     $script:indexUpdaterPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
+    $wrapperHelperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/LlmWrapperContractHelpers.ps1'
+
+    if (-not (Test-Path -Path $wrapperHelperPath -PathType Leaf)) {
+        throw "E_CONFIG_ERROR: LLM wrapper helper file not found at '$wrapperHelperPath'."
+    }
+
+    . $wrapperHelperPath
 
     # Helper: remove temp directories reliably on Windows where file handles may linger.
     $script:RemoveTempRoot = {
@@ -26,21 +33,13 @@ BeforeAll {
         }
     }
 
-    # Derive wrapper list from context.md (single source of truth) instead of hardcoding.
-    $script:wrapperFiles = @()
-    $inSection = $false
-    foreach ($line in [System.IO.File]::ReadLines($script:contextPath, [System.Text.Encoding]::UTF8)) {
-        if ($line -match '^\s{0,3}##\s+Wrapper Contract\s*$') {
-            $inSection = $true
-            continue
-        }
-        if ($inSection -and $line -match '^\s{0,3}##\s') {
-            break
-        }
-        if ($inSection -and $line -match '^\s*-\s+`([^`]+)`') {
-            $script:wrapperFiles += $Matches[1]
-        }
-    }
+    # Derive wrapper list from context.md via shared helper to keep parser behavior aligned.
+    $script:wrapperFiles = @(Get-WrapperContractEntries -ContextFilePath $script:contextPath -DefaultFallback @())
+    $script:wrapperContractDiagnostics = (
+        "Wrapper contract diagnostics (test fixture): wrapperCount={0}; wrappers={1}" -f
+        $script:wrapperFiles.Count,
+        ($script:wrapperFiles -join ',')
+    )
 
     # Helper: generate fixture context.md content with Wrapper Contract section.
     $script:fixtureContextContent = "# Context`n`nSee [Skills Index](./skills-index.md).`n`n## Wrapper Contract`n`nThe following wrapper files are thin pointers and must remain non-authoritative:`n`n"
@@ -51,6 +50,43 @@ BeforeAll {
 }
 
 Describe "LLM harness structure" {
+    It "derives wrapper files through the shared parser helper" {
+        $script:wrapperFiles.Count | Should -BeGreaterOrEqual 1 -Because $script:wrapperContractDiagnostics
+    }
+
+    It "normalizes and orders Wrapper Contract entries deterministically" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("llm-wrapper-{0}" -f ([System.Guid]::NewGuid().ToString('N')))
+        $tempContextPath = Join-Path -Path $tempRoot -ChildPath 'context.md'
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+        try {
+            New-Item -Path $tempRoot -ItemType Directory -Force | Out-Null
+
+            $tempContextContent = @'
+# Context
+
+## Wrapper Contract
+
+- `claude.md`
+- `AGENTS.md`
+- `.github\\copilot-instructions.md`
+- `agents.md`
+
+## End
+'@
+            [System.IO.File]::WriteAllText($tempContextPath, $tempContextContent, $utf8NoBom)
+
+            $entries = @(Get-WrapperContractEntries -ContextFilePath $tempContextPath -DefaultFallback @())
+            $entries.Count | Should -Be 3
+            $entries[0] | Should -Be '.github/copilot-instructions.md'
+            $entries[1] | Should -Be 'AGENTS.md'
+            $entries[2] | Should -Be 'claude.md'
+        }
+        finally {
+            & $script:RemoveTempRoot $tempRoot
+        }
+    }
+
     It "keeps authoritative context that points to dedicated skills index" {
         Test-Path -Path $script:contextPath -PathType Leaf | Should -BeTrue
         Test-Path -Path $script:skillsIndexPath -PathType Leaf | Should -BeTrue
@@ -136,6 +172,72 @@ Describe "LLM harness automation" {
         { & $script:validatorPath -RootPath $script:repoRoot -MaxLines 300 -WarningLines 280 } | Should -Not -Throw
     }
 
+    It "keeps validator warning-free during healthy runs" {
+        $warningMessages = @()
+
+        {
+            & $script:validatorPath -RootPath $script:repoRoot -MaxLines 300 -WarningLines 280 -WarningVariable +warningMessages
+        } | Should -Not -Throw
+
+        $warningMessages.Count | Should -Be 0 -Because "Advisory diagnostics should be emitted with -Verbose, not as warnings on healthy runs"
+    }
+
+    It "fails validation when trigger descriptions list tri-OS support without canonical punctuation" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("llm-harness-{0}" -f ([System.Guid]::NewGuid().ToString('N')))
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+        try {
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skills') -ItemType Directory -Force | Out-Null
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details') -ItemType Directory -Force | Out-Null
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality') -ItemType Directory -Force | Out-Null
+
+            foreach ($wrapper in $script:wrapperFiles) {
+                $wrapperPath = Join-Path -Path $tempRoot -ChildPath $wrapper
+                $wrapperDir = Split-Path -Path $wrapperPath -Parent
+                New-Item -Path $wrapperDir -ItemType Directory -Force | Out-Null
+                [System.IO.File]::WriteAllText($wrapperPath, "# Wrapper`n`nSee .llm/context.md.`n", $utf8NoBom)
+            }
+
+            [System.IO.File]::WriteAllText(
+                (Join-Path -Path $tempRoot -ChildPath '.llm/context.md'),
+                $script:fixtureContextContent,
+                $utf8NoBom
+            )
+            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), '# Skills Index`n', $utf8NoBom)
+
+            $skillCardContent = @"
+<!-- trigger: punctuation policy, deterministic validation | Write portable PowerShell that runs on Windows macOS and Linux | Platform | skill-details/example-detail.md -->
+# Example Skill
+
+- Expanded guide: [Example Detail](../skill-details/example-detail.md)
+"@
+            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill.md'), $skillCardContent, $utf8NoBom)
+            [System.IO.File]::WriteAllText(
+                (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/example-detail.md'),
+                "# Example Detail`n`n## Existing Heading`n",
+                $utf8NoBom
+            )
+
+            $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
+            Copy-Item -Path $script:indexUpdaterPath -Destination $tempUpdaterPath -Force
+            & $tempUpdaterPath -RootPath $tempRoot
+
+            $validationFailure = $null
+            try {
+                & $script:validatorPath -RootPath $tempRoot
+            }
+            catch {
+                $validationFailure = $_
+            }
+
+            $validationFailure | Should -Not -BeNullOrEmpty
+            $validationFailure.Exception.Message | Should -Match '(?i)canonical phrase ''Windows, macOS, and Linux'''
+        }
+        finally {
+            & $script:RemoveTempRoot $tempRoot
+        }
+    }
+
     It "keeps generated index check stable across cultures: <CultureName>" -TestCases @(
         @{ CultureName = 'en-US' }
         @{ CultureName = 'de-DE' }
@@ -189,7 +291,7 @@ Describe "LLM harness automation" {
                 $wrapperPath = Join-Path -Path $tempRoot -ChildPath $wrapper
                 $wrapperDir = Split-Path -Path $wrapperPath -Parent
                 New-Item -Path $wrapperDir -ItemType Directory -Force | Out-Null
-                [System.IO.File]::WriteAllText($wrapperPath, '# Wrapper`n`nSee .llm/context.md.`n', $utf8NoBom)
+                [System.IO.File]::WriteAllText($wrapperPath, "# Wrapper`n`nSee .llm/context.md.`n", $utf8NoBom)
             }
 
             [System.IO.File]::WriteAllText(
@@ -241,7 +343,7 @@ Describe "LLM harness automation" {
                 $wrapperPath = Join-Path -Path $tempRoot -ChildPath $wrapper
                 $wrapperDir = Split-Path -Path $wrapperPath -Parent
                 New-Item -Path $wrapperDir -ItemType Directory -Force | Out-Null
-                [System.IO.File]::WriteAllText($wrapperPath, '# Wrapper`n`nSee .llm/context.md.`n', $utf8NoBom)
+                [System.IO.File]::WriteAllText($wrapperPath, "# Wrapper`n`nSee .llm/context.md.`n", $utf8NoBom)
             }
 
             [System.IO.File]::WriteAllText(
@@ -301,7 +403,7 @@ Describe "LLM harness automation" {
                 $wrapperPath = Join-Path -Path $tempRoot -ChildPath $wrapper
                 $wrapperDir = Split-Path -Path $wrapperPath -Parent
                 New-Item -Path $wrapperDir -ItemType Directory -Force | Out-Null
-                [System.IO.File]::WriteAllText($wrapperPath, '# Wrapper`n`nSee .llm/context.md.`n', $utf8NoBom)
+                [System.IO.File]::WriteAllText($wrapperPath, "# Wrapper`n`nSee .llm/context.md.`n", $utf8NoBom)
             }
 
             [System.IO.File]::WriteAllText(
@@ -352,7 +454,7 @@ Describe "LLM harness automation" {
                 $wrapperPath = Join-Path -Path $tempRoot -ChildPath $wrapper
                 $wrapperDir = Split-Path -Path $wrapperPath -Parent
                 New-Item -Path $wrapperDir -ItemType Directory -Force | Out-Null
-                [System.IO.File]::WriteAllText($wrapperPath, '# Wrapper`n`nSee .llm/context.md.`n', $utf8NoBom)
+                [System.IO.File]::WriteAllText($wrapperPath, "# Wrapper`n`nSee .llm/context.md.`n", $utf8NoBom)
             }
 
             [System.IO.File]::WriteAllText(
@@ -403,7 +505,7 @@ Describe "LLM harness automation" {
                 $wrapperPath = Join-Path -Path $tempRoot -ChildPath $wrapper
                 $wrapperDir = Split-Path -Path $wrapperPath -Parent
                 New-Item -Path $wrapperDir -ItemType Directory -Force | Out-Null
-                [System.IO.File]::WriteAllText($wrapperPath, '# Wrapper`n`nSee .llm/context.md.`n', $utf8NoBom)
+                [System.IO.File]::WriteAllText($wrapperPath, "# Wrapper`n`nSee .llm/context.md.`n", $utf8NoBom)
             }
 
             [System.IO.File]::WriteAllText(

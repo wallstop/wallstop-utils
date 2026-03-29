@@ -56,9 +56,9 @@ if ($pesterVersion -lt $minimumPesterVersion) {
 }
 
 $newPesterConfigurationCommand = Get-Command -Name "New-PesterConfiguration" -ErrorAction SilentlyContinue
-Write-Host "$DiagnosticsPrefix diagnostics: version=$pesterVersion"
-Write-Host "$DiagnosticsPrefix diagnostics: modulePath=$($pesterModule.Path)"
-Write-Host "$DiagnosticsPrefix diagnostics: hasNewPesterConfiguration=$($null -ne $newPesterConfigurationCommand)"
+Write-Verbose "$DiagnosticsPrefix diagnostics: version=$pesterVersion"
+Write-Verbose "$DiagnosticsPrefix diagnostics: modulePath=$($pesterModule.Path)"
+Write-Verbose "$DiagnosticsPrefix diagnostics: hasNewPesterConfiguration=$($null -ne $newPesterConfigurationCommand)"
 
 if ($null -eq $newPesterConfigurationCommand) {
     throw "E_CI_PESTER_CONFIG_COMMAND_MISSING: New-PesterConfiguration is unavailable in this runner session."
@@ -82,7 +82,7 @@ if ($null -eq $result) {
     throw "E_CI_PESTER_RESULT_MISSING: Invoke-Pester returned no result object."
 }
 
-Write-Host "$DiagnosticsPrefix diagnostics: passed=$($result.PassedCount) failed=$($result.FailedCount)"
+Write-Verbose "$DiagnosticsPrefix diagnostics: passed=$($result.PassedCount) failed=$($result.FailedCount)"
 if ($result.FailedCount -gt 0) {
     throw "E_CI_PESTER_TESTS_FAILED: Pester failed with $($result.FailedCount) failed test(s)."
 }
@@ -96,7 +96,7 @@ if ($null -eq $result.CodeCoverage) {
 }
 
 $coverageProperties = @($result.CodeCoverage.PSObject.Properties | ForEach-Object { $_.Name })
-Write-Host "$DiagnosticsPrefix diagnostics: coverageProperties=$($coverageProperties -join ', ')"
+Write-Verbose "$DiagnosticsPrefix diagnostics: coverageProperties=$($coverageProperties -join ', ')"
 if ($coverageProperties.Count -eq 0) {
     throw "E_CI_PESTER_COVERAGE_PROPS_EMPTY: CodeCoverage object exposed no properties."
 }
@@ -120,7 +120,7 @@ if (-not $parseSucceeded) {
     throw "E_CI_PESTER_COVERAGE_PARSE_FAILED: CodeCoverage.CoveragePercent value '$coveragePercentRaw' is not a valid number."
 }
 
-Write-Host "$DiagnosticsPrefix diagnostics: coveragePercent=$coverage minimum=$MinimumCoveragePercent"
+Write-Verbose "$DiagnosticsPrefix diagnostics: coveragePercent=$coverage minimum=$MinimumCoveragePercent"
 if ($coverage -lt [double]$MinimumCoveragePercent) {
     throw "E_CI_PESTER_COVERAGE_GATE_FAILED: Coverage gate failed because $coverage% is below $MinimumCoveragePercent%."
 }
