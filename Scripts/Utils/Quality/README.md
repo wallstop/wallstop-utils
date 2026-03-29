@@ -8,6 +8,9 @@ This folder contains quality helper scripts used by local hooks and CI:
 Batch smoke checks intentionally remain heuristic, but they now apply uniformly to both single-line and multi-line `.bat` files.
 - `Invoke-MacOSLanguageChecks.sh`: macOS AppleScript validation with a source-first migration path and `.scpt` fallback.
 - `Assert-CleanGitTree.ps1`: fails when formatting or checks mutate files in CI.
+- `Invoke-FullValidation.ps1`: session-close full validation wrapper (pre-commit stage all-files, pre-push stage all-files, clean-tree assertion, optional PR CI watch).
+- `Update-LlmSkillsIndex.ps1`: deterministically regenerates `.llm/skills-index.md` from `.llm/skills` metadata comments.
+- `Test-LlmHarness.ps1`: validates wrapper pointers, line limits (300), trigger metadata coverage, lightweight skill cards, expanded-guide links, and index freshness (`-Check`).
 
 These scripts are intentionally strict in CI and best-effort where platform tooling is optional.
 
@@ -40,6 +43,27 @@ Shell suppression governance:
 
 AI remediation workflow:
 
-- Follow `LLM-REMEDIATION-CONTRACT.md` when applying shell fixes.
+- Follow `.llm/skill-details/shell-governance/llm-remediation-contract.md` when applying shell fixes.
 - Required order: reproduce -> minimal fix -> formatter -> lint -> tests.
 - Never bypass shell hooks with broad skips to land unresolved debt.
+
+Major-change session-close workflow:
+
+```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -WatchCi
+```
+
+LLM harness workflow:
+
+- Keep `.llm/context.md` as the authoritative source for all vendor wrappers.
+- Keep `.llm/skills-index.md` as the dedicated generated index artifact.
+- Keep `.llm/skills/*.md` lightweight and point to expanded guides in `.llm/skill-details`.
+- Keep every `.llm/*.md` file at or below 300 lines.
+- After changing `.llm/skills/*.md`, regenerate and verify index state:
+
+```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1 -Check
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Test-LlmHarness.ps1
+```

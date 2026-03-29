@@ -396,6 +396,15 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Match 'schedule:\s*\r?\n\s+-\s+cron:'
     }
 
+    It "keeps AutoHotkey CI runtime cache outside repository tree" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+
+        $workflow | Should -Match 'path:\s+\$\{\{\s*runner\.temp\s*\}\}/autohotkey-portable-\$\{\{\s*env\.AHK_RUNTIME_VERSION\s*\}\}'
+        $workflow | Should -Match 'Join-Path\s+-Path\s+\$env:RUNNER_TEMP\s+-ChildPath\s+"autohotkey-portable-\$version"'
+        $workflow | Should -Not -Match 'path:\s+\.tools/autohotkey'
+        $workflow | Should -Not -Match 'Join-Path\s+-Path\s+\$PWD\s+-ChildPath\s+"\.tools/autohotkey"'
+    }
+
     It "keeps Node24-ready pinned action versions in quality workflows" {
         $crossLanguageWorkflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
         $powerShellWorkflow = Get-Content -Path $script:workflowPath -Raw
@@ -451,6 +460,15 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecksTests | Should -Match '#NoEnv directive'
         # Policy test for all repo AHK scripts requiring v2 must be present
         $windowsChecksTests | Should -Match '#Requires AutoHotkey v2'
+    }
+
+    It "keeps cross-platform Invoke-AutoHotkeyCommand tests deterministic" {
+        $windowsChecksTestsPath = Join-Path -Path $script:repoRoot -ChildPath 'Tests/Utils/Invoke-WindowsLanguageChecks.Tests.ps1'
+        $windowsChecksTests = Get-Content -Path $windowsChecksTestsPath -Raw
+
+        $windowsChecksTests | Should -Match 'captures exit code and output deterministically'
+        $windowsChecksTests | Should -Match 'LinuxExecutable\s*='
+        $windowsChecksTests | Should -Match 'WindowsExecutable\s*='
     }
 
     It "uses Start-Process output redirection in Invoke-AutoHotkeyCommand and avoids LASTEXITCODE dependency" {
@@ -560,6 +578,11 @@ Describe "Quality script executable guardrails" {
 }
 
 Describe "Quality config file conventions" {
+    It "keeps .tools ignored as an ephemeral cache safety net" {
+        $gitignore = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.gitignore') -Raw
+        $gitignore | Should -Match '(?m)^\.tools/$'
+    }
+
     It "keeps quality config files ending with a trailing newline" {
         foreach ($relativePath in $script:qualityConfigFiles) {
             $fullPath = Join-Path -Path $script:repoRoot -ChildPath $relativePath
@@ -667,13 +690,14 @@ Describe "Shell quality conventions" {
     It "keeps shell governance and LLM remediation guidance documented" {
         $mainReadme = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'README.md') -Raw
         $qualityReadme = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/README.md') -Raw
-        $contractPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/LLM-REMEDIATION-CONTRACT.md'
+        $contractPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details/shell-governance/llm-remediation-contract.md'
         $contractContent = Get-Content -Path $contractPath -Raw
 
         $mainReadme | Should -Match 'Shell suppression governance'
-        $mainReadme | Should -Match 'LLM-REMEDIATION-CONTRACT\.md'
+        $mainReadme | Should -Match '\.llm/skill-details/shell-governance/llm-remediation-contract\.md'
         $qualityReadme | Should -Match 'Shell suppression governance'
         $qualityReadme | Should -Match 'AI remediation workflow'
+        $qualityReadme | Should -Match '\.llm/skill-details/shell-governance/llm-remediation-contract\.md'
         $contractContent | Should -Match 'Fix first'
         $contractContent | Should -Match 'Final verification checklist'
     }

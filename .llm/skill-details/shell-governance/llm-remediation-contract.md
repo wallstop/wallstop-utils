@@ -29,6 +29,28 @@ This contract defines how AI-generated shell changes must be produced and valida
 6. Re-run hooks: verify `pre-commit` hooks pass.
 7. Re-check CI runtime assumptions: verify Windows PR-lane timing and scope contracts are still true.
 
+## Major-change session-close loop
+
+For significant sessions, run the full workflow gate before stopping:
+
+```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -WatchCi
+```
+
+If any gate fails, remediation is current-session priority. Do not start unrelated work before returning to green.
+
+## Knowledge codification policy
+
+When a failure reveals a repeatable category, codify the invariant broadly:
+
+1. Update or add guidance in `.llm/skills/*.md` and `.llm/skill-details/*.md`.
+2. Update `.llm/context.md` when the rule is repository-wide.
+3. Add or update regression tests to enforce the category.
+4. Regenerate and validate the skills index/harness.
+
+Avoid fragile one-off mandates tied to a single file path unless runtime constraints require them.
+
 ## Suppression template
 
 If suppression is unavoidable, use this pattern:

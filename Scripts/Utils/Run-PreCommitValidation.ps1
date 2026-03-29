@@ -28,7 +28,8 @@ function Add-ModulePathCandidate {
 
     $env:PSModulePath = if ([string]::IsNullOrWhiteSpace($env:PSModulePath)) {
         $Path
-    } else {
+    }
+    else {
         "$Path$separator$env:PSModulePath"
     }
 }
@@ -70,7 +71,8 @@ function Get-CommandWithOptionalModuleImport {
 
     try {
         Import-Module -Name $ModuleName -MinimumVersion $MinimumVersion -ErrorAction Stop | Out-Null
-    } catch {
+    }
+    catch {
         return $null
     }
 
@@ -96,16 +98,19 @@ try {
     $utilsTestPattern = '^(Scripts/Utils|Tests/Utils)/.+\.ps1$'
     $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
     $scriptPattern = '^Scripts/Utils/.+\.ps1$'
+    $llmHarnessPattern = '^(\.llm/.+\.md|AGENTS\.md|\.github/copilot-instructions\.md|CLAUDE\.md|GEMINI\.md|CURSOR\.md|OPENAI\.md|CODEX\.md|Scripts/Utils/Quality/(Update-LlmSkillsIndex|Test-LlmHarness)\.ps1|Tests/Utils/LlmHarness\.Tests\.ps1)$'
 
     $utilsTestFiles = @($stagedFiles | Where-Object { $_ -match $utilsTestPattern })
     $githubTestFiles = @($stagedFiles | Where-Object { $_ -match $githubTestPattern })
     $scriptFiles = @($stagedFiles | Where-Object { $_ -match $scriptPattern })
+    $llmHarnessFiles = @($stagedFiles | Where-Object { $_ -match $llmHarnessPattern })
 
     $runUtilsTests = $All -or $utilsTestFiles.Count -gt 0
     $runGitHubTests = $All -or $githubTestFiles.Count -gt 0
     $runAnalyzer = $All -or $scriptFiles.Count -gt 0
+    $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
 
-    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runAnalyzer) {
+    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
         Write-Host "No staged files requiring utility validation; skipping validation."
         return
     }
@@ -149,7 +154,18 @@ try {
         }
     }
 
+    if ($runLlmHarnessValidation) {
+        $llmValidatorPath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Test-LlmHarness.ps1"
+        if (-not (Test-Path -Path $llmValidatorPath -PathType Leaf)) {
+            throw "E_CONFIG_ERROR: LLM harness validator is missing at '$llmValidatorPath'."
+        }
+
+        Write-Host "Running LLM harness validation..."
+        & $llmValidatorPath -RootPath $repoRoot
+    }
+
     Write-Host "Pre-commit validation passed."
-} finally {
+}
+finally {
     Pop-Location
 }

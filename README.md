@@ -138,6 +138,32 @@ Scripts/          # Backup and restore scripts
 ./Scripts/Mac/restore_brew.sh
 ```
 
+## VS Code Dev Container
+
+This repository includes a ready-to-use VS Code development container at `.devcontainer/devcontainer.json`.
+
+What it provides:
+
+- Ubuntu 24.04 base container
+- PowerShell, Python, Node.js (LTS), and GitHub CLI
+- Pre-commit bootstrap and hook installation on first create
+- PowerShell quality module bootstrap (`Pester`, `PSScriptAnalyzer`)
+- Curated extension pack for script-heavy workflows plus polished themes/icons
+
+Open it in VS Code:
+
+```text
+Dev Containers: Reopen in Container
+```
+
+After the container is created, quality commands are ready to run:
+
+```bash
+pre-commit run
+pre-commit run --all-files
+pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1
+```
+
 ## GitHub Utilities
 
 The repository also includes standalone GitHub-focused helper scripts under [Scripts/Utils/GitHub](Scripts/Utils/GitHub).
@@ -157,7 +183,7 @@ Local hooks are wrapper scripts in `.githooks/` that execute `pre-commit` when a
 Default local behavior is:
 
 - `pre-commit` hook: staged-file checks and auto-fixes where applicable (including deterministic PowerShell formatting and `shellcheck`/`shfmt` for changed shell targets)
-- `pre-push` hook: full-repo validation (`--all-files`) for the pre-push stage plus legacy PowerShell fallback when `pre-commit` is unavailable
+- `pre-push` hook: runs `Scripts/Utils/Quality/Invoke-FullValidation.ps1` when `pwsh` is available (full pre-commit + pre-push + harness + drift checks), with legacy fallback when `pre-commit` is unavailable
 
 Enable hooks:
 
@@ -181,6 +207,23 @@ pre-commit run
 pre-commit run --all-files
 ```
 
+### Major change session-close workflow
+
+For major changes, use the single full-validation entrypoint and follow the canonical workflow:
+
+```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1
+```
+
+Then watch CI checks for the active PR:
+
+```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -WatchCi
+```
+
+If any gate fails, fix within the same session and rerun until all checks pass.
+See [.llm/validation-workflow.md](.llm/validation-workflow.md) for the full remediation and codification loop.
+
 ### PowerShell utility gate (retained)
 
 The existing utility validation gate remains and is integrated into pre-commit:
@@ -201,6 +244,7 @@ One-off usage:
 ```powershell
 pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1
 pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1 -All
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1
 ```
 
 ### CI quality gate (full repository)
@@ -229,7 +273,22 @@ Shell suppression governance:
 
 LLM remediation contract:
 
-- See `Scripts/Utils/Quality/LLM-REMEDIATION-CONTRACT.md` for the required fix workflow, suppression template, and verification checklist for AI-generated shell changes.
+- See `.llm/skill-details/shell-governance/llm-remediation-contract.md` for the required fix workflow, suppression template, and verification checklist for AI-generated shell changes.
+
+LLM harness architecture:
+
+- `.llm/context.md` is the authoritative repository AI context file.
+- `.llm/skills-index.md` is a dedicated generated index artifact.
+- `.llm/skills/*.md` are lightweight skill cards with trigger metadata.
+- `.llm/skill-details/*.md` contain expanded guidance linked from lightweight skill cards.
+
+LLM harness commands:
+
+```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1 -Check
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Test-LlmHarness.ps1
+```
 
 Local debt cleanup commands:
 

@@ -18,14 +18,14 @@ repos:
         args: [--markdown-linebreak-ext=md]
         exclude: '^Config/(PowerToys/|\.config/)'
       - id: pretty-format-json
-        args: [--autofix, --no-sort-keys, --indent, '2']
+        args: [--autofix, --no-sort-keys, --indent, "2"]
         files: '^(Config/Komorebi/(komorebi|komorebi\.bar)\.json|Config/WindowsTerminal/settings\.json|Config/scoopfile\.json)$'
 
   - repo: https://github.com/scop/pre-commit-shfmt
     rev: v3.13.0-1
     hooks:
       - id: shfmt
-        args: [-w, -i, '2', -ci, -sr]
+        args: [-w, -i, "2", -ci, -sr]
         files: '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$'
         stages: [pre-commit]
 
@@ -79,3 +79,17 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-push]
+      - id: llm-skills-index-check
+        name: llm-skills-index-check
+        entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1 -Check
+        language: system
+        files: '^\.llm/(skills-index\.md|skills/.*\.md)$'
+        pass_filenames: false
+        stages: [pre-commit, pre-push]
+      - id: llm-harness-validation
+        name: llm-harness-validation
+        entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Test-LlmHarness.ps1
+        language: system
+        files: '^(\.llm/.*\.md|AGENTS\.md|\.github/copilot-instructions\.md|CLAUDE\.md|GEMINI\.md|CURSOR\.md|OPENAI\.md|CODEX\.md|Scripts/Utils/Quality/(Update-LlmSkillsIndex|Test-LlmHarness)\.ps1|Tests/Utils/LlmHarness\.Tests\.ps1)$'
+        pass_filenames: false
+        stages: [pre-commit, pre-push]
