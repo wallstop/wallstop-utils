@@ -53,6 +53,20 @@ function ConvertTo-MarkdownTableValue {
     return (($Value -replace '\|', '\\|').Trim())
 }
 
+function ConvertTo-PortablePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return ''
+    }
+
+    # Normalize all separators to POSIX-style so generated markdown is deterministic across OSes.
+    return ($PathValue -replace '[\\/]+', '/')
+}
+
 function Normalize-ComparisonContent {
     param(
         [Parameter(Mandatory = $true)]
@@ -123,7 +137,7 @@ function ConvertTo-DiagnosticPreview {
         [int]$MaxLength = 140
     )
 
-    $preview = $Value.Replace("`t", '\t')
+    $preview = $Value.Replace("`t", '\t').Replace("`r", '\r').Replace("`n", '\n')
     if ($preview.Length -le $MaxLength) {
         return $preview
     }
@@ -140,7 +154,7 @@ function Get-SkillMetadata {
         [string]$Root
     )
 
-    $content = Get-Content -Path $SkillPath -Raw -ErrorAction Stop
+    $content = Get-Content -Path $SkillPath -Raw -Encoding UTF8 -ErrorAction Stop
     $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
     $match = [System.Text.RegularExpressions.Regex]::Match(
         $content,
@@ -155,7 +169,7 @@ function Get-SkillMetadata {
 
     $category = $match.Groups['category'].Value.Trim()
 
-    $relativePath = [System.IO.Path]::GetRelativePath($Root, $SkillPath).Replace('\\', '/')
+    $relativePath = ConvertTo-PortablePath -PathValue ([System.IO.Path]::GetRelativePath($Root, $SkillPath))
     $skillLinkPath = $relativePath
     if ($skillLinkPath.StartsWith('.llm/', [System.StringComparison]::OrdinalIgnoreCase)) {
         $skillLinkPath = $skillLinkPath.Substring(5)
@@ -165,6 +179,7 @@ function Get-SkillMetadata {
     if ([string]::IsNullOrWhiteSpace($detailsPath)) {
         $detailsPath = $skillLinkPath
     }
+    $detailsPath = ConvertTo-PortablePath -PathValue $detailsPath
     if ($detailsPath.StartsWith('.llm/', [System.StringComparison]::OrdinalIgnoreCase)) {
         $detailsPath = $detailsPath.Substring(5)
     }
@@ -268,7 +283,7 @@ foreach ($skillFile in $skillFiles) {
 
 $generatedLines = New-GeneratedIndexLines -Skills $skillEntries
 $newIndexContent = (($generatedLines -join "`n") + "`n")
-$currentIndexContent = Get-Content -Path $indexPath -Raw -ErrorAction Stop
+$currentIndexContent = Get-Content -Path $indexPath -Raw -Encoding UTF8 -ErrorAction Stop
 
 # Normalize line endings for cross-platform comparison (Windows checkout may add CR).
 $normalizedNew = Normalize-ComparisonContent -Content $newIndexContent
@@ -280,6 +295,14 @@ if ($Check) {
         $generatedHash = Get-StringSha256 -Value $normalizedNew
         $currentHash = Get-StringSha256 -Value $normalizedCurrent
         Write-Warning "W_LLM_INDEX_STALE_DIAGNOSTICS: normalized hashes differ (generated=$generatedHash current=$currentHash)."
+
+        $generatedBackslashLinkCount = [regex]::Matches($normalizedNew, '\]\(\./[^)\r\n]*\\[^)\r\n]*\)').Count
+        $currentBackslashLinkCount = [regex]::Matches($normalizedCurrent, '\]\(\./[^)\r\n]*\\[^)\r\n]*\)').Count
+        Write-Warning "W_LLM_INDEX_LINK_SEPARATOR_DIAGNOSTICS: generatedBackslashLinks=$generatedBackslashLinkCount currentBackslashLinks=$currentBackslashLinkCount"
+
+        $generatedHasBom = ($normalizedNew.Length -gt 0) -and ([int][char]$normalizedNew[0] -eq 0xFEFF)
+        $currentHasBom = ($normalizedCurrent.Length -gt 0) -and ([int][char]$normalizedCurrent[0] -eq 0xFEFF)
+        Write-Warning "W_LLM_INDEX_BOM_DIAGNOSTICS: generatedHasUtf8Bom=$generatedHasBom currentHasUtf8Bom=$currentHasBom"
 
         $mismatchSummary = ''
         $mismatch = Find-FirstDifferentLine -Expected $normalizedNew -Actual $normalizedCurrent

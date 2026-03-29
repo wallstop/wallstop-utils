@@ -71,7 +71,7 @@ function Get-MarkdownHeadingAnchors {
     $anchorCounts = New-Object 'System.Collections.Generic.Dictionary[string, int]' ([System.StringComparer]::Ordinal)
     $inFencedCodeBlock = $false
 
-    foreach ($line in [System.IO.File]::ReadLines($MarkdownPath)) {
+    foreach ($line in [System.IO.File]::ReadLines($MarkdownPath, [System.Text.Encoding]::UTF8)) {
         if ($line -match '^\s*(```|~~~)') {
             $inFencedCodeBlock = -not $inFencedCodeBlock
             continue
@@ -107,7 +107,7 @@ function Get-WrapperContractEntries {
     $entries = @()
     $inSection = $false
 
-    foreach ($line in [System.IO.File]::ReadLines($ContextFilePath)) {
+    foreach ($line in [System.IO.File]::ReadLines($ContextFilePath, [System.Text.Encoding]::UTF8)) {
         if ($line -match '^\s{0,3}##\s+Wrapper Contract\s*$') {
             $inSection = $true
             continue
@@ -152,6 +152,19 @@ function Test-IsPathWithinDirectory {
     )
 }
 
+function ConvertTo-PortablePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return ''
+    }
+
+    return ($PathValue -replace '[\\/]+', '/')
+}
+
 $repoRoot = Get-RepositoryRoot -CandidateRoot $RootPath
 $errors = New-Object System.Collections.Generic.List[string]
 $warnings = New-Object System.Collections.Generic.List[string]
@@ -193,7 +206,7 @@ foreach ($wrapper in $requiredWrappers) {
         continue
     }
 
-    $wrapperContent = Get-Content -Path $wrapperPath -Raw -ErrorAction Stop
+    $wrapperContent = Get-Content -Path $wrapperPath -Raw -Encoding UTF8 -ErrorAction Stop
     if ($wrapperContent -notmatch '(?i)\.llm/context\.md') {
         $errors.Add("Wrapper file '$wrapper' does not point to .llm/context.md") | Out-Null
     }
@@ -212,7 +225,7 @@ if ($llmMarkdownFiles.Count -eq 0) {
 }
 
 foreach ($file in $llmMarkdownFiles) {
-    $lineCount = [System.IO.File]::ReadAllLines($file.FullName).Length
+    $lineCount = [System.IO.File]::ReadAllLines($file.FullName, [System.Text.Encoding]::UTF8).Length
     $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $file.FullName)
 
     if ($lineCount -gt $MaxLines) {
@@ -244,7 +257,7 @@ $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[
 $anchorLinkPattern = '\[[^\]]+\]\(\.\./skill-details/(?<detailsPath>(?:[^/#)\s]+/)*[^/#)\s]+\.md)#(?<anchor>[^)\s]+)\)'
 $detailsAnchorsByPath = @{}
 foreach ($skillFile in $skillFiles) {
-    $skillContent = Get-Content -Path $skillFile.FullName -Raw -ErrorAction Stop
+    $skillContent = Get-Content -Path $skillFile.FullName -Raw -Encoding UTF8 -ErrorAction Stop
     $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $skillFile.FullName)
 
     $match = [regex]::Match($skillContent, $triggerPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
@@ -253,7 +266,7 @@ foreach ($skillFile in $skillFiles) {
         continue
     }
 
-    $skillLineCount = [System.IO.File]::ReadAllLines($skillFile.FullName).Length
+    $skillLineCount = [System.IO.File]::ReadAllLines($skillFile.FullName, [System.Text.Encoding]::UTF8).Length
     if ($skillLineCount -gt 80) {
         $errors.Add("$relativePath should remain lightweight (<= 80 lines, found $skillLineCount).") | Out-Null
     }
@@ -268,7 +281,7 @@ foreach ($skillFile in $skillFiles) {
         continue
     }
 
-    $normalizedDetails = $detailsPathValue.Replace('\\', '/')
+    $normalizedDetails = ConvertTo-PortablePath -PathValue $detailsPathValue
     if ($normalizedDetails.StartsWith('.llm/', [System.StringComparison]::OrdinalIgnoreCase)) {
         $normalizedDetails = $normalizedDetails.Substring(5)
     }
@@ -281,7 +294,7 @@ foreach ($skillFile in $skillFiles) {
     $anchorMatches = [regex]::Matches($skillContent, $anchorLinkPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     foreach ($anchorMatch in $anchorMatches) {
         $detailsPath = [System.Uri]::UnescapeDataString($anchorMatch.Groups['detailsPath'].Value.Trim())
-        $detailsPath = $detailsPath.Replace('\\', '/')
+        $detailsPath = ConvertTo-PortablePath -PathValue $detailsPath
         $detailsRelativePath = "../skill-details/$detailsPath"
         $detailsAnchor = [System.Uri]::UnescapeDataString($anchorMatch.Groups['anchor'].Value.Trim())
 
@@ -319,14 +332,14 @@ foreach ($skillFile in $skillFiles) {
 }
 
 if (Test-Path -Path $contextPath -PathType Leaf) {
-    $contextContent = Get-Content -Path $contextPath -Raw -ErrorAction Stop
+    $contextContent = Get-Content -Path $contextPath -Raw -Encoding UTF8 -ErrorAction Stop
     if ($contextContent -notmatch '\(\./skills-index\.md\)') {
         $errors.Add('.llm/context.md must link to .llm/skills-index.md.') | Out-Null
     }
 }
 
 if (Test-Path -Path $skillsIndexPath -PathType Leaf) {
-    $indexContent = Get-Content -Path $skillsIndexPath -Raw -ErrorAction Stop
+    $indexContent = Get-Content -Path $skillsIndexPath -Raw -Encoding UTF8 -ErrorAction Stop
     $beginCount = [regex]::Matches($indexContent, '<!-- BEGIN GENERATED SKILLS INDEX -->').Count
     $endCount = [regex]::Matches($indexContent, '<!-- END GENERATED SKILLS INDEX -->').Count
 

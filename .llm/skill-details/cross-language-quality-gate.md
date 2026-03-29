@@ -25,6 +25,7 @@ Current invariants to preserve:
 1. Keep `.gitattributes` and pre-commit line-ending policy aligned. If batch/cmd files require CRLF, the LF-forcing hook must exclude those file types.
 2. Keep generated artifact ordering deterministic across operating systems by using culture-invariant sorting in generator scripts.
 3. Keep stale-artifact checks actionable by emitting first-mismatch diagnostics and content hashes when comparisons fail.
+4. Keep cross-platform generated-index checks deterministic by using explicit UTF-8 file reads and normalizing path separators to `/` before generating or validating markdown links.
 
 ## Commands
 

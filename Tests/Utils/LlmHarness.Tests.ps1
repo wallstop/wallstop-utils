@@ -29,7 +29,7 @@ BeforeAll {
     # Derive wrapper list from context.md (single source of truth) instead of hardcoding.
     $script:wrapperFiles = @()
     $inSection = $false
-    foreach ($line in [System.IO.File]::ReadLines($script:contextPath)) {
+    foreach ($line in [System.IO.File]::ReadLines($script:contextPath, [System.Text.Encoding]::UTF8)) {
         if ($line -match '^\s{0,3}##\s+Wrapper Contract\s*$') {
             $inSection = $true
             continue
@@ -55,10 +55,10 @@ Describe "LLM harness structure" {
         Test-Path -Path $script:contextPath -PathType Leaf | Should -BeTrue
         Test-Path -Path $script:skillsIndexPath -PathType Leaf | Should -BeTrue
 
-        $content = Get-Content -Path $script:contextPath -Raw
+        $content = Get-Content -Path $script:contextPath -Raw -Encoding UTF8
         $content | Should -Match '\(\./skills-index\.md\)'
 
-        $indexContent = Get-Content -Path $script:skillsIndexPath -Raw
+        $indexContent = Get-Content -Path $script:skillsIndexPath -Raw -Encoding UTF8
         ([regex]::Matches($indexContent, '<!-- BEGIN GENERATED SKILLS INDEX -->')).Count | Should -Be 1
         ([regex]::Matches($indexContent, '<!-- END GENERATED SKILLS INDEX -->')).Count | Should -Be 1
     }
@@ -69,7 +69,7 @@ Describe "LLM harness structure" {
             $wrapperPath = Join-Path -Path $script:repoRoot -ChildPath $wrapper
             Test-Path -Path $wrapperPath -PathType Leaf | Should -BeTrue -Because "$wrapper must exist"
 
-            $content = Get-Content -Path $wrapperPath -Raw
+            $content = Get-Content -Path $wrapperPath -Raw -Encoding UTF8
             $content | Should -Match '(?i)\.llm/context\.md' -Because "$wrapper must point to .llm/context.md"
         }
     }
@@ -89,7 +89,7 @@ Describe "LLM harness structure" {
 
         $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
         foreach ($skillFile in $skillFiles) {
-            $content = Get-Content -Path $skillFile.FullName -Raw
+            $content = Get-Content -Path $skillFile.FullName -Raw -Encoding UTF8
             $match = [regex]::Match($content, $triggerPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
             $match.Success | Should -BeTrue -Because "$($skillFile.Name) must include trigger metadata"
             $content | Should -Match '\(\.\./skill-details/.+?\.md\)' -Because "$($skillFile.Name) must link to expanded guide"
@@ -97,7 +97,7 @@ Describe "LLM harness structure" {
             $lineCount = [System.IO.File]::ReadAllLines($skillFile.FullName).Length
             $lineCount | Should -BeLessOrEqual 80 -Because "$($skillFile.Name) must remain lightweight"
 
-            $detailsPath = $match.Groups['details'].Value.Trim().Replace('\\', '/')
+            $detailsPath = ($match.Groups['details'].Value.Trim() -replace '[\\/]+', '/')
             if ($detailsPath.StartsWith('.llm/', [System.StringComparison]::OrdinalIgnoreCase)) {
                 $detailsPath = $detailsPath.Substring(5)
             }
@@ -114,7 +114,7 @@ Describe "LLM harness structure" {
 
     It "keeps generated index markdown structure deterministic" {
         # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
-        $indexContent = (Get-Content -Path $script:skillsIndexPath -Raw) -replace "`r", ''
+        $indexContent = (Get-Content -Path $script:skillsIndexPath -Raw -Encoding UTF8) -replace "`r", ''
 
         $indexContent | Should -Match '(?m)^# Skills Index$'
         $indexContent | Should -Match '(?m)^##\s+Core$'
@@ -164,6 +164,67 @@ Describe "LLM harness automation" {
         finally {
             [System.Threading.Thread]::CurrentThread.CurrentCulture = $originalCulture
             [System.Threading.Thread]::CurrentThread.CurrentUICulture = $originalUICulture
+        }
+    }
+
+    It "normalizes generated index links for details metadata variant: <DetailsPathValue>" -TestCases @(
+        @{ DetailsPathValue = 'skill-details/example-detail.md' }
+        @{ DetailsPathValue = '.llm/skill-details/example-detail.md' }
+        @{ DetailsPathValue = 'skill-details\example-detail.md' }
+        @{ DetailsPathValue = '.llm\skill-details\example-detail.md' }
+    ) {
+        param(
+            [string]$DetailsPathValue
+        )
+
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("llm-harness-{0}" -f ([System.Guid]::NewGuid().ToString('N')))
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+        try {
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skills') -ItemType Directory -Force | Out-Null
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details') -ItemType Directory -Force | Out-Null
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality') -ItemType Directory -Force | Out-Null
+
+            foreach ($wrapper in $script:wrapperFiles) {
+                $wrapperPath = Join-Path -Path $tempRoot -ChildPath $wrapper
+                $wrapperDir = Split-Path -Path $wrapperPath -Parent
+                New-Item -Path $wrapperDir -ItemType Directory -Force | Out-Null
+                [System.IO.File]::WriteAllText($wrapperPath, '# Wrapper`n`nSee .llm/context.md.`n', $utf8NoBom)
+            }
+
+            [System.IO.File]::WriteAllText(
+                (Join-Path -Path $tempRoot -ChildPath '.llm/context.md'),
+                $script:fixtureContextContent,
+                $utf8NoBom
+            )
+            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), '# Skills Index`n', $utf8NoBom)
+
+            $skillCardContent = @"
+<!-- trigger: path normalization, deterministic validation | Normalize details paths and generated links | Core | $DetailsPathValue -->
+# Example Skill
+
+- Expanded guide: [Example Detail](../skill-details/example-detail.md)
+"@
+            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill.md'), $skillCardContent, $utf8NoBom)
+            [System.IO.File]::WriteAllText(
+                (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/example-detail.md'),
+                "# Example Detail`n`n## Existing Heading`n",
+                $utf8NoBom
+            )
+
+            $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
+            Copy-Item -Path $script:indexUpdaterPath -Destination $tempUpdaterPath -Force
+            & $tempUpdaterPath -RootPath $tempRoot
+
+            $generatedIndex = (Get-Content -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md') -Raw -Encoding UTF8) -replace "`r", ''
+            $generatedIndex | Should -Match '(?m)^\| \[Example Skill\]\(\./skills/example-skill\.md\) \| \[Expanded Guide\]\(\./skill-details/example-detail\.md\) \|'
+            $generatedIndex | Should -Not -Match '\\' -Because 'generated markdown links should always use POSIX path separators'
+
+            { & $tempUpdaterPath -RootPath $tempRoot -Check } | Should -Not -Throw
+            { & $script:validatorPath -RootPath $tempRoot } | Should -Not -Throw
+        }
+        finally {
+            & $script:RemoveTempRoot $tempRoot
         }
     }
 
