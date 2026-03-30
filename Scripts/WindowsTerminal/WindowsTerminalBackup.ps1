@@ -8,20 +8,20 @@ $backupFolder = "$baseDirectory\Config\WindowsTerminal"
 Push-Location -Path $baseDirectory
 
 try {
-  if (-not (Test-Path -Path $backupFolder)) {
-    New-Item -Path $backupFolder -ItemType Directory | Out-Null
-  }
+    if (-not (Test-Path -Path $backupFolder)) {
+        New-Item -Path $backupFolder -ItemType Directory | Out-Null
+    }
 
-  if (Test-Path -Path $sourcePath -PathType Leaf) {
-    $backupFile = "$backupFolder\settings.json"
-    Copy-Item -Path $sourcePath -Destination $backupFile
-    Write-Host "Windows Terminal settings exported successfully." -ForegroundColor Green
-  }
-  else {
-    Write-Error "E_WT_BACKUP_SOURCE_MISSING: Windows Terminal settings file not found at '$sourcePath'."
-    exit 1
-  }
+    if (Test-Path -Path $sourcePath -PathType Leaf) {
+        $backupFile = "$backupFolder\settings.json"
+        Copy-Item -Path $sourcePath -Destination $backupFile
+        Write-Host "Windows Terminal settings exported successfully." -ForegroundColor Green
+    }
+    else {
+        Write-Error "E_WT_BACKUP_SOURCE_MISSING: Windows Terminal settings file not found at '$sourcePath'."
+        exit 1
+    }
 }
 finally {
-  Pop-Location
+    Pop-Location
 }

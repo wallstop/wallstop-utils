@@ -20,14 +20,14 @@ function Convert-OutputToStringArray {
 
     return @(
         $Output |
-        ForEach-Object {
-            if ($null -eq $_) {
-                ""
+            ForEach-Object {
+                if ($null -eq $_) {
+                    ""
+                }
+                else {
+                    [string]$_
+                }
             }
-            else {
-                [string]$_
-            }
-        }
     )
 }
 
@@ -588,12 +588,12 @@ function Test-BatchScriptsStaticSmoke {
     if ($RequestedTargetFilePaths.Count -gt 0) {
         $batchFiles = @(
             $RequestedTargetFilePaths |
-            Where-Object { [System.IO.Path]::GetExtension($_).ToLowerInvariant() -eq ".bat" } |
-            ForEach-Object {
-                if (Test-Path -Path $_ -PathType Leaf) {
-                    Get-Item -LiteralPath $_ -ErrorAction Stop
+                Where-Object { [System.IO.Path]::GetExtension($_).ToLowerInvariant() -eq ".bat" } |
+                ForEach-Object {
+                    if (Test-Path -Path $_ -PathType Leaf) {
+                        Get-Item -LiteralPath $_ -ErrorAction Stop
+                    }
                 }
-            }
         )
     }
     else {

@@ -113,11 +113,11 @@ Describe "LLM harness structure" {
     It "keeps lightweight skill cards with trigger metadata and expanded guides" {
         $skillFiles = @(
             Get-ChildItem -Path $script:skillsDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
-            Sort-Object FullName
+                Sort-Object FullName
         )
         $skillDetailFiles = @(
             Get-ChildItem -Path $script:skillDetailsDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
-            Sort-Object FullName
+                Sort-Object FullName
         )
 
         $skillFiles.Count | Should -BeGreaterOrEqual 1

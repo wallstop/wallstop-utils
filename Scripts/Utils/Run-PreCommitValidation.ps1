@@ -97,9 +97,9 @@ function New-LlmHarnessPattern {
 
     $normalizedWrappers = @(
         $WrapperFiles |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        ForEach-Object { $_ -replace '[\\/]+', '/' } |
-        Sort-Object -Unique
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_ -replace '[\\/]+', '/' } |
+            Sort-Object -Unique
     )
 
     foreach ($wrapperFile in $normalizedWrappers) {
