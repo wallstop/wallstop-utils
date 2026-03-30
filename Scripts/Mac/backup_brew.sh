@@ -33,13 +33,15 @@ mkdir -p "$BACKUP_DIR"
 # Define backup file name
 BACKUP_FILE="brewfile_backup"
 
-# Navigate to backup directory
-cd "$BACKUP_DIR"
-
 echo "Backing up Homebrew setup..."
 
-# Dump the current Homebrew configuration to Brewfile
-brew bundle dump --file="$BACKUP_FILE" --force
+# Run backup in a subshell so directory changes stay local.
+(
+  cd "$BACKUP_DIR"
+
+  # Dump the current Homebrew configuration to Brewfile
+  brew bundle dump --file="$BACKUP_FILE" --force
+)
 
 echo "Backup successful!"
 echo "Backup file created at: $BACKUP_DIR/$BACKUP_FILE"

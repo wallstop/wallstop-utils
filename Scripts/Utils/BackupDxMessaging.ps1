@@ -32,19 +32,20 @@ $maxBackups = 7
 
 # --- Pre-flight Checks ---
 # Ensure destination directory exists
-if (!(Test-Path $backupDir)) {
+if (-not (Test-Path -Path $backupDir -PathType Container)) {
   Write-Host "Destination directory does not exist, attempting to create: $backupDir"
   try {
     New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
     Write-Host "Destination directory created successfully."
-  } catch {
+  }
+  catch {
     Write-Error "Failed to create destination directory: $backupDir. Error: $($_.Exception.Message)"
     exit 1
   }
 }
 
 # Ensure source directory exists
-if (!(Test-Path $sourcePath)) {
+if (-not (Test-Path -Path $sourcePath -PathType Container)) {
   Write-Error "Source directory does not exist: $sourcePath"
   exit 1
 }
@@ -75,7 +76,7 @@ try {
   )
   # Add directory exclusions
   foreach ($dir in $excludedDirs) {
-    $robocopyArgs += '/XD',$dir
+    $robocopyArgs += '/XD', $dir
   }
   # Add file exclusions (if you defined $excludedFiles)
   # foreach ($file in $excludedFiles) {
@@ -96,7 +97,8 @@ try {
     Write-Error "Robocopy failed during staging copy with exit code $($process.ExitCode). Backup aborted. Check logs or run manually for details."
     # Consider leaving the $tempStagePath for diagnosis, or clean it up in finally
     exit 1 # Exit the script
-  } else {
+  }
+  else {
     Write-Host "Robocopy completed staging copy successfully (Exit Code: $($process.ExitCode))."
   }
 
@@ -123,7 +125,8 @@ try {
   if ($processMove.ExitCode -ge 8) {
     Write-Error "Robocopy failed during ZIP file move with exit code $($processMove.ExitCode). The ZIP might still be in '$env:TEMP'."
     exit 1 # Exit the script
-  } else {
+  }
+  else {
     Write-Host "ZIP file moved successfully to network share."
   }
 
@@ -139,7 +142,8 @@ try {
       Write-Host "Removing old backup: $($file.FullName)"
       Remove-Item -Path $file.FullName -Force
     }
-  } else {
+  }
+  else {
     Write-Host "No old backups need removal (Limit: $maxBackups, Found: $backupTotal)."
   }
 
@@ -151,20 +155,33 @@ try {
   Write-Host "Total backups now in directory: $backupCount"
   Write-Host "----------------------------------------"
 
-} catch {
+}
+catch {
   # Catch any unexpected errors during the process
-  Write-Error "An unexpected error occurred: $($_.Exception.Message)"
+  Write-Error "E_DXMSG_BACKUP_UNEXPECTED: An unexpected error occurred: $($_.Exception.Message)"
   # Stack trace can be helpful for debugging: $_.ScriptStackTrace
-} finally {
+  exit 1
+}
+finally {
   # 6. Cleanup: Always remove the temporary staging directory
   if (Test-Path $tempStagePath) {
     Write-Host "Cleaning up temporary staging directory '$tempStagePath'..."
-    Remove-Item -Path $tempStagePath -Recurse -Force
+    try {
+      Remove-Item -Path $tempStagePath -Recurse -Force -ErrorAction Stop
+    }
+    catch {
+      Write-Warning "W_DXMSG_BACKUP_TEMP_STAGE_CLEANUP_FAILED: Failed to remove temporary staging directory '$tempStagePath': $($_.Exception.Message)"
+    }
   }
   # Optional: Clean up the zip file from TEMP if it still exists (e.g., if move failed but script didn't exit)
   if (Test-Path $zipFilePath) {
     Write-Warning "Temporary zip file '$zipFilePath' still exists in $env:TEMP. Removing it."
-    Remove-Item -Path $zipFilePath -Force
+    try {
+      Remove-Item -Path $zipFilePath -Force -ErrorAction Stop
+    }
+    catch {
+      Write-Warning "W_DXMSG_BACKUP_TEMP_ZIP_CLEANUP_FAILED: Failed to remove temporary zip file '$zipFilePath': $($_.Exception.Message)"
+    }
   }
   Write-Host "Cleanup complete."
 }

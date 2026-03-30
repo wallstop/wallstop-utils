@@ -14,6 +14,8 @@ echo "[devcontainer] Bootstrapping tooling..."
 _log() { echo "[devcontainer] $*"; }
 _warn() { echo "[devcontainer] WARNING: $*" >&2; }
 
+_apt_index_updated=0
+
 # ---------------------------------------------------------------------------
 # PATH persistence
 # Adds ~/.local/bin to the current session and writes it into ~/.bashrc and
@@ -38,6 +40,68 @@ ensure_local_bin_on_path() {
 }
 
 # ---------------------------------------------------------------------------
+# ripgrep installation (via apt-get, skip if already present)
+# ---------------------------------------------------------------------------
+
+_install_ripgrep() {
+  if command -v rg > /dev/null 2>&1; then
+    _log "ripgrep is already available; skipping install."
+    return 0
+  fi
+
+  if ! command -v apt-get > /dev/null 2>&1; then
+    _warn "apt-get not available; cannot install ripgrep."
+    return 1
+  fi
+
+  if ! _can_use_sudo_non_interactive; then
+    _warn "sudo is unavailable or requires a password; cannot install ripgrep."
+    return 1
+  fi
+
+  if ! _ensure_apt_index_updated; then
+    return 1
+  fi
+
+  _log "Installing ripgrep via apt-get..."
+  local install_output
+  if ! install_output="$(sudo apt-get install -y --no-install-recommends ripgrep 2>&1)"; then
+    _warn "apt-get install ripgrep failed: ${install_output}"
+    return 1
+  fi
+
+  if ! command -v rg > /dev/null 2>&1; then
+    _warn "ripgrep not found after installation."
+    return 1
+  fi
+
+  return 0
+}
+
+_can_use_sudo_non_interactive() {
+  if ! command -v sudo > /dev/null 2>&1; then
+    return 1
+  fi
+  sudo -n true > /dev/null 2>&1
+}
+
+_ensure_apt_index_updated() {
+  if (( ${_apt_index_updated:-0} )); then
+    return 0
+  fi
+
+  _log "Refreshing apt package index..."
+  local update_output
+  if ! update_output="$(sudo apt-get update -qq 2>&1)"; then
+    _warn "apt-get update failed: ${update_output}"
+    return 1
+  fi
+
+  _apt_index_updated=1
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # pre-commit install strategies (ordered by preference)
 # ---------------------------------------------------------------------------
 
@@ -55,11 +119,28 @@ _install_via_apt_pipx() {
   if ! command -v apt-get > /dev/null 2>&1; then
     return 1
   fi
+
+  if ! _can_use_sudo_non_interactive; then
+    _warn "Strategy 2 skipped: sudo is unavailable or requires a password."
+    return 1
+  fi
+
+  if ! _ensure_apt_index_updated; then
+    _warn "Strategy 2 skipped: apt package index refresh failed."
+    return 1
+  fi
+
   _log "Strategy 2: installing pipx via apt-get..."
-  sudo apt-get update -qq
-  sudo apt-get install -y --no-install-recommends pipx
+  local install_output
+  if ! install_output="$(sudo apt-get install -y --no-install-recommends pipx 2>&1)"; then
+    _warn "Strategy 2 failed to install pipx: ${install_output}"
+    return 1
+  fi
   pipx ensurepath || true
-  pipx install pre-commit --force
+  if ! pipx install pre-commit --force; then
+    _warn "Strategy 2 failed to install pre-commit via pipx."
+    return 1
+  fi
 }
 
 # Strategy 3: create a dedicated venv and symlink the binary into ~/.local/bin.
@@ -71,7 +152,16 @@ _install_via_venv() {
   if ! python3 -c 'import venv' 2> /dev/null; then
     _log "venv module not found; attempting to install python3-venv via apt-get..."
     if command -v apt-get > /dev/null 2>&1; then
-      sudo apt-get install -y --no-install-recommends python3-venv 2> /dev/null || true
+      if ! _can_use_sudo_non_interactive; then
+        _warn "Strategy 3 skipped apt fallback: sudo is unavailable or requires a password."
+      elif ! _ensure_apt_index_updated; then
+        _warn "Strategy 3 skipped apt fallback: apt package index refresh failed."
+      else
+        local install_output
+        if ! install_output="$(sudo apt-get install -y --no-install-recommends python3-venv 2>&1)"; then
+          _warn "Strategy 3 could not install python3-venv: ${install_output}"
+        fi
+      fi
     fi
     if ! python3 -c 'import venv' 2> /dev/null; then
       _warn "python3-venv is not available; cannot use venv strategy."
@@ -119,14 +209,20 @@ _install_precommit() {
 # Install pre-commit (skip if already present)
 # ---------------------------------------------------------------------------
 
-ensure_local_bin_on_path
+ensure_local_bin_on_path || _warn "PATH setup failed; continuing without profile updates."
+
+# ---------------------------------------------------------------------------
+# Install ripgrep (skip if already present)
+# ---------------------------------------------------------------------------
+
+_install_ripgrep || _warn "ripgrep installation failed (non-blocking)."
 
 if command -v pre-commit > /dev/null 2>&1; then
   _log "pre-commit is already available; skipping install."
 else
   _install_precommit || true
   # Refresh PATH in case a new install landed in ~/.local/bin.
-  ensure_local_bin_on_path
+  ensure_local_bin_on_path || _warn "PATH refresh failed; continuing without profile updates."
 fi
 
 # ---------------------------------------------------------------------------

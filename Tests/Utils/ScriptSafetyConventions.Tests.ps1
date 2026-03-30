@@ -991,7 +991,68 @@ Describe "Shell quality conventions" {
     }
 }
 
+Describe "Directory restoration safety conventions" {
+    It "requires try/finally restoration for Push-Location in PowerShell scripts" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Scripts'
+        $powerShellScripts = @(Get-ChildItem -Path $scriptsRoot -Filter '*.ps1' -File -Recurse -ErrorAction Stop)
+
+        foreach ($scriptFile in $powerShellScripts) {
+            # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+            $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+            if ($content -notmatch '(?m)^\s*Push-Location\b') {
+                continue
+            }
+
+            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+            $content | Should -Match 'Push-Location[\s\S]*?try\s*\{[\s\S]*?finally\s*\{[\s\S]*?Pop-Location' -Because (
+                "{0} uses Push-Location and must restore caller location in a finally block." -f $relativePath
+            )
+        }
+    }
+
+    It "avoids bare backup-dir cd in Mac brew scripts" {
+        foreach ($relativePath in @('Scripts/Mac/backup_brew.sh', 'Scripts/Mac/restore_brew.sh')) {
+            # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+            $content = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath $relativePath) -Raw) -replace "`r", ''
+            $lines = $content -split "`n"
+            $violations = New-Object System.Collections.Generic.List[string]
+
+            for ($index = 0; $index -lt $lines.Count; $index++) {
+                if ($lines[$index] -notmatch '^\s*cd\s+"\$BACKUP_DIR"\s*$') {
+                    continue
+                }
+
+                $previousIndex = $index - 1
+                while ($previousIndex -ge 0 -and [string]::IsNullOrWhiteSpace($lines[$previousIndex])) {
+                    $previousIndex--
+                }
+
+                if ($previousIndex -lt 0 -or $lines[$previousIndex] -notmatch '^\s*\(\s*$') {
+                    $violations.Add(("{0}:{1}" -f $relativePath, ($index + 1))) | Out-Null
+                }
+            }
+
+            $violations.Count | Should -Be 0 -Because (
+                '{0} must only use cd "$BACKUP_DIR" immediately inside a subshell. Violations: {1}' -f $relativePath, ($violations -join ', ')
+            )
+            $content | Should -Match '(?s)\(\s*\n\s*cd\s+"\$BACKUP_DIR"' -Because (
+                "{0} should scope BACKUP_DIR cd to a subshell to keep location changes local." -f $relativePath
+            )
+        }
+    }
+}
+
 Describe "Restore script safety conventions" {
+    It "enforces strict mode and isolated child execution in Restore orchestrator" {
+        $restoreScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Restore.ps1') -Raw) -replace "`r", ''
+
+        $restoreScript | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
+        $restoreScript | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
+        $restoreScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
+        $restoreScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
+        $restoreScript | Should -Match 'E_RESTORE_PARTIAL_FAILURE'
+    }
+
     It "uses defined destination variables in PowerToys restore messages" {
         $powerToysRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/PowerToys/PowerToysRestore.ps1') -Raw) -replace "`r", ''
 
@@ -1029,6 +1090,101 @@ Describe "Restore script safety conventions" {
 
         $configRestore | Should -Match 'Get-ChildItem\s+-Path\s+\$backupDir\s+-Force\s+-ErrorAction\s+Stop'
         $configRestore | Should -Match 'E_CONFIG_RESTORE_EMPTY_BACKUP'
+        $configRestore | Should -Match 'E_CONFIG_RESTORE_BACKUP_MISSING'
+        $configRestore | Should -Match 'E_CONFIG_RESTORE_COPY_FAILED'
+    }
+
+    It "validates Scoop restore source and import exit codes" {
+        $scoopRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Scoop/ScoopRestore.ps1') -Raw) -replace "`r", ''
+
+        $scoopRestore | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
+        $scoopRestore | Should -Match 'E_SCOOP_RESTORE_SOURCE_MISSING'
+        $scoopRestore | Should -Match 'E_SCOOP_RESTORE_IMPORT_FAILED'
+        $scoopRestore | Should -Match 'scoop\s+import\s+\$scoopFilePath'
+    }
+}
+
+Describe "Backup script safety conventions" {
+    It "tracks per-step results and emits best-effort summary in Backup orchestrator" {
+        $backupScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        $backupScript | Should -Match '\$stepResults\s*=\s*New-Object\s+System\.Collections\.Generic\.List\[object\]'
+        $backupScript | Should -Match 'Proceeding with git operations \(best-effort mode\)'
+        $backupScript | Should -Match 'partial success:'
+        $backupScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
+        $backupScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
+        $backupScript | Should -Match 'git\s+pull\s+--ff-only\s+origin\s+main'
+    }
+
+    It "validates Config backup source before destructive clear" {
+        $configBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Config/ConfigBackup.ps1') -Raw) -replace "`r", ''
+
+        $configBackup | Should -Match 'E_CONFIG_BACKUP_SOURCE_MISSING'
+        $configBackup | Should -Match 'Get-ChildItem\s+-Path\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
+        $configBackup | Should -Match 'Test-Path\s+-Path\s+\$configFolder[\s\S]*Remove-Item\s+-Path\s+\(Join-Path\s+-Path\s+\$backupFolder\s+-ChildPath\s+''\*''\)'
+        $configBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
+    }
+
+    It "fails when Windows Terminal backup source is missing" {
+        $windowsTerminalBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WindowsTerminal/WindowsTerminalBackup.ps1') -Raw) -replace "`r", ''
+
+        $windowsTerminalBackup | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Leaf'
+        $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING'
+        $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING[\s\S]*exit\s+1'
+    }
+
+    It "fails when no PowerShell profiles are available to back up" {
+        $powershellBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Powershell/PowershellBackup.ps1') -Raw) -replace "`r", ''
+
+        $powershellBackup | Should -Match '\$profilesBackedUp\s*=\s*0'
+        $powershellBackup | Should -Match 'if\s*\(\s*\$profilesBackedUp\s*-eq\s*0\s*\)'
+        $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_NO_PROFILES_FOUND'
+    }
+
+    It "uses UTF-8 no-BOM writes for Scoop backup output" {
+        $scoopBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Scoop/ScoopBackup.ps1') -Raw) -replace "`r", ''
+
+        $scoopBackup | Should -Not -Match 'Out-File\s+-FilePath\s+"scoopfile\.json"\s+-Encoding\s+utf8'
+        $scoopBackup | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\$false\)'
+        $scoopBackup | Should -Match '\[System\.IO\.File\]::WriteAllText'
+        $scoopBackup | Should -Match 'E_SCOOP_BACKUP_EXPORT_FAILED'
+    }
+
+    It "checks robocopy exit semantics in PowerToys backup" {
+        $powerToysBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/PowerToys/PowerToysBackup.ps1') -Raw) -replace "`r", ''
+
+        $powerToysBackup | Should -Match 'Robocopy\.exe'
+        $powerToysBackup | Should -Match 'robocopyExitCode\s*-ge\s*8'
+        $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_ROBOCOPY_FAILED'
+        $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_SOURCE_MISSING'
+        $powerToysBackup | Should -Match 'Get-ChildItem\s+-Path\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
+        $powerToysBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
+    }
+
+    It "validates Komorebi backup sources before copy operations" {
+        $komorebiBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiBackup.ps1') -Raw) -replace "`r", ''
+
+        $komorebiBackup | Should -Match '\$missingSources\s*=\s*@\('
+        $komorebiBackup | Should -Match 'E_KOMOREBI_BACKUP_SOURCE_MISSING'
+        $komorebiBackup | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiConfig,\s*\$komorebiBarConfig,\s*\$applicationYaml\)\)'
+    }
+
+    It "documents backup safety contract in LLM context" {
+        $llmContext = (Get-Content -Path $script:llmContextPath -Raw) -replace "`r", ''
+
+        $llmContext | Should -Match '## Backup/Restore Safety Contract'
+        $llmContext | Should -Match 'Source Validation'
+        $llmContext | Should -Match 'Robocopy Exit Codes'
+        $llmContext | Should -Match 'Best-Effort Orchestrators'
+    }
+
+    It "keeps utility backup jobs fail-fast with explicit unexpected-error signaling" {
+        $dxMessagingBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/BackupDxMessaging.ps1') -Raw) -replace "`r", ''
+
+        $dxMessagingBackup | Should -Match 'E_DXMSG_BACKUP_UNEXPECTED'
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Container'
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$backupDir\s+-PathType\s+Container'
+        $dxMessagingBackup | Should -Match 'catch\s*\{[\s\S]*E_DXMSG_BACKUP_UNEXPECTED[\s\S]*exit\s+1'
     }
 }
 

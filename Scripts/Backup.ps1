@@ -1,23 +1,152 @@
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
 $baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-Push-Location "$baseDirectory/Scripts/"
+$scriptsDirectory = Join-Path -Path $baseDirectory -ChildPath "Scripts"
+$pwshCommand = (Get-Command -Name "pwsh" -ErrorAction Stop).Source
+
+function Get-LastExitCodeOrDefault {
+    $lecValue = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -ne $lecValue) {
+        return [int]$lecValue
+    }
+
+    return 0
+}
+
+function Invoke-BackupStep {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RelativeScriptPath
+    )
+
+    $scriptPath = Join-Path -Path $scriptsDirectory -ChildPath $RelativeScriptPath
+    if (-not (Test-Path -Path $scriptPath -PathType Leaf)) {
+        throw "E_BACKUP_STEP_SCRIPT_MISSING: Backup step '$Name' script not found at '$scriptPath'."
+    }
+
+    Write-Host ("Starting: {0}" -f $Name) -ForegroundColor Cyan
+    & $pwshCommand -NoLogo -NoProfile -File $scriptPath
+
+    $exitCode = Get-LastExitCodeOrDefault
+    if ($exitCode -ne 0) {
+        throw ("E_BACKUP_STEP_FAILED({0}): script '{1}' exited with code {2}." -f $Name, $RelativeScriptPath, $exitCode)
+    }
+
+    Write-Host ("Completed: {0}" -f $Name) -ForegroundColor Green
+}
+
+$stepResults = New-Object System.Collections.Generic.List[object]
+$steps = @(
+    @{ Name = "ConfigBackup"; RelativeScriptPath = "Config/ConfigBackup.ps1" },
+    @{ Name = "FormatPowershellScripts"; RelativeScriptPath = "Utils/FormatPowershellScripts.ps1" },
+    @{ Name = "WindowsTerminalBackup"; RelativeScriptPath = "WindowsTerminal/WindowsTerminalBackup.ps1" },
+    @{ Name = "PowershellBackup"; RelativeScriptPath = "Powershell/PowershellBackup.ps1" },
+    @{ Name = "StopKomorebi"; RelativeScriptPath = "Komorebi/StopKomorebi.ps1" },
+    @{ Name = "ScoopUpdate"; RelativeScriptPath = "Scoop/ScoopUpdate.ps1" },
+    @{ Name = "ScoopBackup"; RelativeScriptPath = "Scoop/ScoopBackup.ps1" },
+    @{ Name = "KomorebiBackup"; RelativeScriptPath = "Komorebi/KomorebiBackup.ps1" },
+    @{ Name = "PowerToysBackup"; RelativeScriptPath = "PowerToys/PowerToysBackup.ps1" },
+    @{ Name = "WinGetUpdate"; RelativeScriptPath = "WinGet/WinGetUpdate.ps1" },
+    @{ Name = "RestartKomorebi"; RelativeScriptPath = "Komorebi/RestartKomorebi.ps1" }
+)
+
+Push-Location -Path $scriptsDirectory
 try {
-  ./Config/ConfigBackup.ps1
-  ./Utils/FormatPowershellScripts.ps1
-  ./WindowsTerminal/WindowsTerminalBackup.ps1
-  ./Powershell/PowershellBackup.ps1
-  ./Komorebi/StopKomorebi.ps1
-  ./Scoop/ScoopUpdate.ps1
-  ./Scoop/ScoopBackup.ps1
-  ./Komorebi/KomorebiBackup.ps1
-  ./PowerToys/PowerToysBackup.ps1
-  ./WinGet/WinGetUpdate.ps1
-  ./Komorebi/RestartKomorebi.ps1
-  $date = Get-Date
-  $dateString = "{0:yyyy/MM/dd hh:mm:ss}" -f $date
-  git add --all
-  git commit -m "Backup for $dateString"
-  git pull origin main
-  git push origin main
-} finally {
-  Pop-Location
+    foreach ($step in $steps) {
+        try {
+            Invoke-BackupStep -Name $step.Name -RelativeScriptPath $step.RelativeScriptPath
+            [void]$stepResults.Add([pscustomobject]@{
+                    Name    = $step.Name
+                    Success = $true
+                    Error   = ""
+                })
+        }
+        catch {
+            $errorMessage = $_.Exception.Message
+            Write-Warning ("{0}: {1}" -f $step.Name, $errorMessage)
+            [void]$stepResults.Add([pscustomobject]@{
+                    Name    = $step.Name
+                    Success = $false
+                    Error   = $errorMessage
+                })
+        }
+    }
+
+    $failedSteps = @($stepResults | Where-Object { -not $_.Success })
+    $failedCount = $failedSteps.Count
+    $totalCount = $stepResults.Count
+    $succeededCount = $totalCount - $failedCount
+    $hasBackupStepFailures = $failedCount -gt 0
+    $hasGitFailure = $false
+
+    Write-Host ""
+    Write-Host "========== BACKUP SUMMARY ==========" -ForegroundColor Cyan
+    Write-Host ("Total steps: {0}, Successful: {1}, Failed: {2}" -f $totalCount, $succeededCount, $failedCount)
+
+    if ($failedCount -gt 0) {
+        Write-Host "Failed steps:" -ForegroundColor Yellow
+        foreach ($failedStep in $failedSteps) {
+            Write-Host ("  - {0}: {1}" -f $failedStep.Name, $failedStep.Error) -ForegroundColor Yellow
+        }
+
+        Write-Warning ("E_BACKUP_PARTIAL_FAILURE: One or more backup steps failed ({0}/{1} succeeded)." -f $succeededCount, $totalCount)
+    }
+
+    Write-Host ""
+    Write-Host "Proceeding with git operations (best-effort mode)." -ForegroundColor Cyan
+
+    $date = Get-Date
+    $dateString = "{0:yyyy/MM/dd hh:mm:ss}" -f $date
+    git add --all
+    $gitAddExitCode = Get-LastExitCodeOrDefault
+    if ($gitAddExitCode -ne 0) {
+        throw ("E_BACKUP_GIT_ADD_FAILED: git add --all exited with code {0}." -f $gitAddExitCode)
+    }
+
+    $stagedFiles = @(& git diff --cached --name-only 2>&1)
+    $stagedFilesExitCode = Get-LastExitCodeOrDefault
+    if ($stagedFilesExitCode -ne 0) {
+        throw ("E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only exited with code {0}." -f $stagedFilesExitCode)
+    }
+
+    if ($stagedFiles.Count -gt 0) {
+        $commitMessage = "Backup for $dateString (partial success: $succeededCount/$totalCount)"
+        git commit -m $commitMessage
+        $commitExitCode = Get-LastExitCodeOrDefault
+        if ($commitExitCode -ne 0) {
+            Write-Warning ("E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0}." -f $commitExitCode)
+            $hasGitFailure = $true
+        }
+    }
+    else {
+        Write-Host "No file changes detected. Skipping git commit." -ForegroundColor DarkYellow
+    }
+
+    git pull --ff-only origin main
+    $gitPullExitCode = Get-LastExitCodeOrDefault
+    if ($gitPullExitCode -ne 0) {
+        Write-Warning ("E_BACKUP_GIT_PULL_FAILED: git pull --ff-only origin main exited with code {0}." -f $gitPullExitCode)
+        Write-Warning "Skipping git push because git pull --ff-only failed."
+        $hasGitFailure = $true
+    }
+
+    if (-not $hasGitFailure) {
+        git push origin main
+        $gitPushExitCode = Get-LastExitCodeOrDefault
+        if ($gitPushExitCode -ne 0) {
+            Write-Warning ("E_BACKUP_GIT_PUSH_FAILED: git push origin main exited with code {0}." -f $gitPushExitCode)
+            $hasGitFailure = $true
+        }
+    }
+
+    if ($hasBackupStepFailures -or $hasGitFailure) {
+        exit 1
+    }
+}
+finally {
+    Pop-Location
 }

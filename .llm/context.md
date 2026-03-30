@@ -133,13 +133,17 @@ Scripts under `Scripts/Utils/` must run on Windows, macOS, and Linux with PowerS
 
 1. Use `Join-Path` and `[System.IO.Path]` for path construction; never hardcode `\` or `/`.
 2. Use `$IsWindows`, `$IsMacOS`, `$IsLinux` for OS branching; avoid `$env:OS` checks.
-3. Write files with explicit UTF-8 no-BOM encoding via `[System.IO.File]::WriteAllText()`.
+3. Write files with explicit UTF-8 no-BOM encoding via `[System.IO.File]::WriteAllText(..., [System.Text.UTF8Encoding]::new($false))`.
 4. Normalize line endings (`-replace "\r", ''`) before regex matching or string comparison.
 5. Normalize path separators to `/` in generated output for deterministic cross-OS comparison.
 6. Use `[System.IO.Path]::GetTempPath()` instead of `$env:TEMP` for portable temp directories.
 7. Use exact file name casing; Linux file systems are case-sensitive.
 8. Split `$env:PATH` with `;` on Windows and `:` on Unix; never assume one separator.
 9. Keep Windows-only scripts in platform-specific directories (e.g., `Scripts/Komorebi/`).
+10. Use `-LiteralPath` for user-supplied or config-sourced paths; reserve `-Path` for intentional wildcard expansion.
+11. Use `Test-Path` (`-PathType` where relevant) for existence/type checks. Use `Resolve-Path` to canonicalize existing paths before comparison or persistence.
+12. For `Get-ChildItem`, prefer `-Filter` on FileSystem for provider-side filtering; use `-Depth` as an optional bound for deep traversals, not as a universal requirement.
+13. For nested location workflows, use named stacks with `Push-Location -StackName` and restore via `Pop-Location` in `finally` blocks.
 
 ## Cross-Platform Shell Tooling (Bash grep awk sed)
 
@@ -162,6 +166,20 @@ See:
 
 - Skill card: [`.llm/skills/shell-tooling-portability-and-agentic-safety.md`](./skills/shell-tooling-portability-and-agentic-safety.md)
 - Expanded guide: [`.llm/skill-details/shell-tooling-portability-and-agentic-safety.md`](./skill-details/shell-tooling-portability-and-agentic-safety.md)
+
+## Backup/Restore Safety Contract
+
+Backup and restore scripts under `Scripts/` must prioritize data safety and deterministic behavior.
+
+1. Source Validation: validate all required source files/directories before any destructive mutation (clear/remove/overwrite) of destination paths.
+2. Destructive operations: clear destination content only after source preflight succeeds; avoid partially destructive flows when prerequisites are missing.
+3. Error signaling: emit explicit stable error codes (for example `E_*`) for actionable failure triage in CI and local runs.
+4. Encoding: when writing machine-readable artifacts (for example JSON), use explicit UTF-8 no-BOM via `[System.Text.UTF8Encoding]::new($false)` and `[System.IO.File]::WriteAllText(...)`.
+5. Robocopy Exit Codes: handle robocopy return semantics explicitly; treat exit codes `>= 8` as failures and `0..7` as success/warning classes with diagnostics.
+6. Best-Effort Orchestrators: orchestrator scripts may continue after step failures, but must record per-step outcomes, print a failure summary, and make partial success explicit before commit/push operations.
+7. Process isolation: invoke child scripts in isolated processes when those scripts may call `exit`, and classify non-zero exits as failed steps.
+8. Location safety: pair path changes with `try/finally` to guarantee location restoration even on failure. Use `Push-Location -StackName` for nested workflows.
+9. Path safety: use `-LiteralPath` for user/config-driven paths and `Test-Path -PathType` for existence/type checks before mutation.
 
 ## Contribution Rules
 
