@@ -60,6 +60,9 @@ if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
 
 . $strictModeHelpersPath
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
 function Increment-Version {
     [CmdletBinding(SupportsShouldProcess = $true)]
     [OutputType([void])]

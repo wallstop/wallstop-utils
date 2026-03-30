@@ -38,6 +38,9 @@ if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
 
 . $strictModeHelpersPath
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
 # Function to Convert HTML to Markdown
 function Convert-HtmlToMarkdown {
     param(

@@ -37,6 +37,7 @@ ensure_local_bin_on_path() {
         "${profile_snippet}" >> "${rc_file}"
     fi
   done
+  return 0
 }
 
 # ---------------------------------------------------------------------------

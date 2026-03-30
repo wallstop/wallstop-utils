@@ -60,6 +60,19 @@ Describe "Shared helper migration" {
         }
     }
 
+    It "declares Set-StrictMode -Version Latest and ErrorActionPreference Stop in each migrated script" {
+        foreach ($scriptPath in $script:migratedScripts) {
+            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $scriptPath
+            $content = (Get-Content -Path $fullPath -Raw) -replace "`r", ''
+            $content | Should -Match 'Set-StrictMode\s+-Version\s+Latest' -Because (
+                "$scriptPath is a migrated utility script and must declare strict mode at script entry."
+            )
+            $content | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"' -Because (
+                "$scriptPath is a migrated utility script and must set ErrorActionPreference to Stop at script entry."
+            )
+        }
+    }
+
     It "avoids Measure-Object count pattern in migrated scripts" {
         foreach ($scriptPath in $script:migratedScripts) {
             $fullPath = Join-Path -Path $script:repoRoot -ChildPath $scriptPath
@@ -1022,17 +1035,23 @@ Describe "Directory restoration safety conventions" {
 
         foreach ($scriptFile in $allScripts) {
             $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
-            $content = Get-Content -Path $scriptFile.FullName -Raw
-            if ($content -notmatch '(?m)^\s*Push-Location\b') {
+            $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+            $lines = $content -split '\n'
+            $pushLocationLines = @($lines | Where-Object { $_ -match 'Push-Location\b' })
+            if ($pushLocationLines.Count -eq 0) {
                 continue
             }
-            # Push-Location must not use -Path (wildcard-unsafe)
-            $content | Should -Not -Match 'Push-Location\s+-Path\b' -Because (
-                "$relativePath uses Push-Location and must use -LiteralPath to prevent wildcard expansion in paths."
-            )
-            # Push-Location must not use positional parameter (must explicitly specify -LiteralPath)
-            $content | Should -Not -Match 'Push-Location\s+([''"]|\$)' -Because (
-                "$relativePath uses Push-Location with positional path parameter (no -LiteralPath); use -LiteralPath explicitly to prevent wildcard expansion."
+
+            # Every Push-Location line must explicitly specify -LiteralPath
+            $violations = New-Object System.Collections.Generic.List[string]
+            foreach ($line in $pushLocationLines) {
+                if ($line -notmatch '-LiteralPath\b') {
+                    [void]$violations.Add($line.Trim())
+                }
+            }
+
+            $violations.Count | Should -Be 0 -Because (
+                "$relativePath has Push-Location call(s) without -LiteralPath (catches -Path, positional, and named-param reordering). Violations: {0}" -f ($violations -join '; ')
             )
         }
     }

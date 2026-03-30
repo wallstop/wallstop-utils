@@ -1,3 +1,6 @@
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
 # --- Configuration ---
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
 if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
