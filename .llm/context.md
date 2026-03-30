@@ -190,6 +190,8 @@ Backup and restore scripts under `Scripts/` must prioritize data safety and dete
 10. Orchestrator step roots: derive backup/restore step roots from canonical `$PSScriptRoot` (for example `Resolve-Path -LiteralPath $PSScriptRoot`) and do not append an extra `Scripts` segment.
 11. Backup/restore utility scripts: always declare `Set-StrictMode -Version Latest` at script entry to prevent silent failures from uninitialized variables and typoed references.
 12. Nested utility scripts under `Scripts/*/`: when targeting repository-level assets such as `Config/`, resolve repository root explicitly (two parent traversals from `$PSScriptRoot`) before composing destination/source paths.
+13. Git sequencing safety in backup orchestrators: once any git step fails (for example `git commit`), subsequent remote-mutating steps (`git pull --ff-only`, `git push`) must be explicitly skipped with stable diagnostics to avoid operating on a dirty or inconsistent local state.
+14. Backup git preflight: validate `git rev-parse --is-inside-work-tree` before git mutation (`add`/`commit`/`pull`/`push`) and fail with an explicit `E_*` code when not in a repository.
 
 ## Contribution Rules
 

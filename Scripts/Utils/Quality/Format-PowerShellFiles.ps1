@@ -15,7 +15,7 @@ function Get-LeadingTabIndentedLineNumbers {
         [string]$Content
     )
 
-    $lines = @($Content -split "`r?`n", -1)
+    $lines = @($Content -split '\r?\n')
     $lineNumbers = New-Object System.Collections.Generic.List[int]
     for ($index = 0; $index -lt $lines.Count; $index++) {
         if ($lines[$index] -match '^(?: )*\t+') {
@@ -23,7 +23,29 @@ function Get-LeadingTabIndentedLineNumbers {
         }
     }
 
-    return @($lineNumbers)
+    # Unary comma keeps empty results as an empty int[] instead of `$null.
+    return , $lineNumbers.ToArray()
+}
+
+function Get-LineNumberPreview {
+    param(
+        [Parameter(Mandatory = $false)]
+        [int[]]$LineNumbers = @(),
+
+        [Parameter(Mandatory = $false)]
+        [int]$MaxCount = 20
+    )
+
+    if ($null -eq $LineNumbers -or $LineNumbers.Count -eq 0) {
+        return "(none)"
+    }
+
+    $preview = @($LineNumbers | Select-Object -First $MaxCount)
+    if ($LineNumbers.Count -gt $MaxCount) {
+        return ("{0} (showing first {1} of {2})" -f ((@($preview) -join ', ')), $preview.Count, $LineNumbers.Count)
+    }
+
+    return (@($preview) -join ', ')
 }
 
 function Add-ModulePathCandidate {
@@ -135,26 +157,28 @@ foreach ($inputPath in @($Paths)) {
     $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $candidatePath)
 
     $rawContent = [System.IO.File]::ReadAllText($candidatePath)
-    $leadingTabLinesBefore = @(Get-LeadingTabIndentedLineNumbers -Content $rawContent)
+    [int[]]$leadingTabLinesBefore = Get-LeadingTabIndentedLineNumbers -Content $rawContent
     $formattedContent = Invoke-Formatter -ScriptDefinition $rawContent -Settings $settingsPath
 
     if ([string]::IsNullOrEmpty($formattedContent)) {
         throw "E_FORMATTER_OUTPUT_INVALID: Formatter returned null/empty output for '$relativePath'. Check formatter settings and PSScriptAnalyzer availability."
     }
 
-    $leadingTabLinesAfter = @(Get-LeadingTabIndentedLineNumbers -Content $formattedContent)
+    [int[]]$leadingTabLinesAfter = Get-LeadingTabIndentedLineNumbers -Content $formattedContent
 
-    if ($leadingTabLinesBefore.Count -gt 0) {
-        Write-Verbose (
-            "Formatter tab-normalization diagnostics: file={0}; leadingTabLinesBefore={1}; leadingTabLinesAfter={2}" -f
-            $relativePath,
-            $leadingTabLinesBefore.Count,
-            $leadingTabLinesAfter.Count
-        )
-    }
+    $leadingBeforePreview = Get-LineNumberPreview -LineNumbers $leadingTabLinesBefore
+    $leadingAfterPreview = Get-LineNumberPreview -LineNumbers $leadingTabLinesAfter
+    Write-Verbose (
+        "Formatter tab-normalization diagnostics: file={0}; leadingTabLinesBeforeCount={1}; leadingTabLinesAfterCount={2}; leadingTabLinesBefore={3}; leadingTabLinesAfter={4}" -f
+        $relativePath,
+        $leadingTabLinesBefore.Count,
+        $leadingTabLinesAfter.Count,
+        $leadingBeforePreview,
+        $leadingAfterPreview
+    )
 
     if ($leadingTabLinesAfter.Count -gt 0) {
-        $linePreview = ($leadingTabLinesAfter | Select-Object -First 20) -join ', '
+        $linePreview = $leadingAfterPreview
         throw (
             "E_FORMATTER_TAB_INDENTATION_REMAINING: Formatter output for '{0}' still contains leading tab indentation at line(s): {1}. Ensure {2} keeps PSUseConsistentIndentation with Kind='space'." -f
             $relativePath,

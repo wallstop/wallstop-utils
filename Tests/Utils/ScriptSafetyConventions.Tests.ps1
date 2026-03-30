@@ -1147,7 +1147,19 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'partial success:'
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
         $backupScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
-        $backupScript | Should -Match 'git\s+pull\s+--ff-only\s+origin\s+main'
+        $backupScript | Should -Match 'git\s+rev-parse\s+--is-inside-work-tree'
+        $backupScript | Should -Match 'E_BACKUP_GIT_NOT_REPOSITORY'
+        $backupScript | Should -Match 'E_BACKUP_GIT_ADD_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_DIFF_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED'
+        $backupScript | Should -Match 'Backup git preflight diagnostics:'
+        $backupScript | Should -Match 'Backup git staging diagnostics:'
+        $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main'
+        $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+push\s+origin\s+main'
+        $backupScript | Should -Match 'W_BACKUP_GIT_PULL_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE'
     }
 
     It "requires strict mode in utility backup and restore scripts" {
@@ -1764,9 +1776,13 @@ Describe "Utility configuration safety conventions" {
 
         $formatterContent | Should -Match '\.psscriptanalyzer\.format\.psd1'
         $formatterContent | Should -Match 'Get-LeadingTabIndentedLineNumbers'
+        $formatterContent | Should -Match 'return\s*,\s*\$lineNumbers\.ToArray\(\)'
+        $formatterContent | Should -Match "-split '\\r\?\\n'"
+        $formatterContent | Should -Not -Match "-split '\\r\?\\n',\s*-1"
         $formatterContent | Should -Match 'E_FORMATTER_OUTPUT_INVALID'
         $formatterContent | Should -Match 'E_FORMATTER_TAB_INDENTATION_REMAINING'
         $formatterContent | Should -Match 'Formatter tab-normalization diagnostics:'
+        $formatterContent | Should -Match 'Get-LineNumberPreview'
 
         $formatSettingsPath = Join-Path -Path $script:repoRoot -ChildPath '.psscriptanalyzer.format.psd1'
         $formatSettings = Get-Content -Path $formatSettingsPath -Raw

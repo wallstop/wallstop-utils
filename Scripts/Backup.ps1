@@ -132,6 +132,25 @@ try {
     Write-Host ""
     Write-Host "Proceeding with git operations (best-effort mode)." -ForegroundColor Cyan
 
+    $insideWorkTreeOutput = @(& git rev-parse --is-inside-work-tree 2>$null)
+    $insideWorkTreeExitCode = Get-LastExitCodeOrDefault
+    $insideWorkTree = if ($insideWorkTreeOutput.Count -gt 0) { ([string]$insideWorkTreeOutput[0]).Trim() } else { "" }
+    Write-Verbose (
+        "Backup git preflight diagnostics: insideWorkTreeExitCode={0}; insideWorkTree='{1}'; hasBackupStepFailures={2}" -f
+        $insideWorkTreeExitCode,
+        $insideWorkTree,
+        $hasBackupStepFailures
+    )
+
+    if ($insideWorkTreeExitCode -ne 0 -or $insideWorkTree -ne "true") {
+        throw (
+            "E_BACKUP_GIT_NOT_REPOSITORY: expected a git work tree at '{0}' but rev-parse returned exitCode={1} value='{2}'." -f
+            $scriptsDirectory,
+            $insideWorkTreeExitCode,
+            $insideWorkTree
+        )
+    }
+
     $date = Get-Date
     $dateString = "{0:yyyy/MM/dd hh:mm:ss}" -f $date
     git add --all
@@ -146,6 +165,13 @@ try {
         throw ("E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only exited with code {0}." -f $stagedFilesExitCode)
     }
 
+    Write-Verbose (
+        "Backup git staging diagnostics: stagedFilesCount={0}; hasGitFailure={1}; hasBackupStepFailures={2}" -f
+        $stagedFiles.Count,
+        $hasGitFailure,
+        $hasBackupStepFailures
+    )
+
     if ($stagedFiles.Count -gt 0) {
         $commitMessage = "Backup for $dateString (partial success: $succeededCount/$totalCount)"
         git commit -m $commitMessage
@@ -159,12 +185,16 @@ try {
         Write-Host "No file changes detected. Skipping git commit." -ForegroundColor DarkYellow
     }
 
-    git pull --ff-only origin main
-    $gitPullExitCode = Get-LastExitCodeOrDefault
-    if ($gitPullExitCode -ne 0) {
-        Write-Warning ("E_BACKUP_GIT_PULL_FAILED: git pull --ff-only origin main exited with code {0}." -f $gitPullExitCode)
-        Write-Warning "Skipping git push because git pull --ff-only failed."
-        $hasGitFailure = $true
+    if (-not $hasGitFailure) {
+        git pull --ff-only origin main
+        $gitPullExitCode = Get-LastExitCodeOrDefault
+        if ($gitPullExitCode -ne 0) {
+            Write-Warning ("E_BACKUP_GIT_PULL_FAILED: git pull --ff-only origin main exited with code {0}." -f $gitPullExitCode)
+            $hasGitFailure = $true
+        }
+    }
+    else {
+        Write-Warning "W_BACKUP_GIT_PULL_SKIPPED_PRIOR_GIT_FAILURE: Skipping git pull --ff-only origin main because a previous git operation failed."
     }
 
     if (-not $hasGitFailure) {
@@ -174,6 +204,9 @@ try {
             Write-Warning ("E_BACKUP_GIT_PUSH_FAILED: git push origin main exited with code {0}." -f $gitPushExitCode)
             $hasGitFailure = $true
         }
+    }
+    else {
+        Write-Warning "W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE: Skipping git push origin main because a previous git operation failed."
     }
 
     if ($hasBackupStepFailures -or $hasGitFailure) {

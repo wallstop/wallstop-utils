@@ -27,6 +27,20 @@ Describe "Format-PowerShellFiles idempotence" {
         Remove-Item -Path Function:Invoke-Formatter -ErrorAction SilentlyContinue
     }
 
+    It "returns stable int[] line-number results from Get-LeadingTabIndentedLineNumbers" {
+        . $script:formatterScriptPath
+
+        [int[]]$noMatches = Get-LeadingTabIndentedLineNumbers -Content "Write-Host 'hello'`n"
+        $noMatches.GetType().FullName | Should -Be "System.Int32[]"
+        $noMatches.Count | Should -Be 0
+
+        [int[]]$matches = Get-LeadingTabIndentedLineNumbers -Content "Write-Host 'a'`n`tWrite-Host 'b'`n  `tWrite-Host 'c'`n"
+        $matches.GetType().FullName | Should -Be "System.Int32[]"
+        $matches.Count | Should -Be 2
+        $matches[0] | Should -Be 2
+        $matches[1] | Should -Be 3
+    }
+
     It "formats content once and is a no-op on a second run" {
         $samplePath = Join-Path -Path $TestDrive -ChildPath "sample.ps1"
         [System.IO.File]::WriteAllText($samplePath, "Write-Host 'hello'   `n", $script:utf8NoBom)
