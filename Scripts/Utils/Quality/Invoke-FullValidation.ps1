@@ -49,7 +49,7 @@ function Get-StatusSnapshot {
 }
 
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
-Push-Location -Path $repoRoot
+Push-Location -LiteralPath $repoRoot
 
 try {
     $statusBeforeValidation = Get-StatusSnapshot

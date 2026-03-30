@@ -6,6 +6,11 @@ if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
 
 . $strictModeHelpersPath
 
+if (-not $IsWindows) {
+    Write-Error "E_DXMSG_BACKUP_WINDOWS_ONLY: This script requires Windows (Robocopy). Current OS is not Windows."
+    exit 1
+}
+
 $sourcePath = "D:\Code\Packages"
 $backupDir = "Z:\Backup\Code\Packages"
 # Define directories/files to exclude relative to the source path
@@ -25,9 +30,9 @@ $excludedDirs = @(
 
 $date = Get-Date -Format "yyyy-MM-dd"
 $zipFileName = "$date.zip"
-$zipFilePath = Join-Path $env:TEMP $zipFileName # Final Zip location before move
+$zipFilePath = Join-Path ([System.IO.Path]::GetTempPath()) $zipFileName # Final Zip location before move
 # Temporary location to stage files before zipping
-$tempStagePath = Join-Path $env:TEMP "TempBackupStage_$(Get-Date -Format 'yyyyMMddHHmmssffff')" # Unique temp dir name
+$tempStagePath = Join-Path ([System.IO.Path]::GetTempPath()) "TempBackupStage_$(Get-Date -Format 'yyyyMMddHHmmssffff')" # Unique temp dir name
 $maxBackups = 7
 
 # --- Pre-flight Checks ---
@@ -86,6 +91,7 @@ try {
     # Execute Robocopy
     Write-Host "Running Robocopy..."
     $process = Start-Process Robocopy.exe -ArgumentList $robocopyArgs -Wait -NoNewWindow -Passthru
+    [void]$process.WaitForExit(30000)
 
     # Check Robocopy Exit Code (See Robocopy documentation for meanings)
     # 0 = No errors, no files copied
@@ -111,7 +117,7 @@ try {
     # 4. Move ZIP Archive to Network Location using Robocopy
     Write-Host "Moving ZIP file to '$backupDir'..."
     $robocopyMoveArgs = @(
-        $env:TEMP,# Source Directory (where the zip file is)
+        ([System.IO.Path]::GetTempPath()),# Source Directory (where the zip file is)
         $backupDir,# Destination Directory
         $zipFileName,# File to move
         '/MOV',# Move file (Copy then Delete source)
@@ -122,8 +128,9 @@ try {
         '/NJS' # No Job Summary
     )
     $processMove = Start-Process Robocopy.exe -ArgumentList $robocopyMoveArgs -Wait -NoNewWindow -Passthru
+    [void]$processMove.WaitForExit(30000)
     if ($processMove.ExitCode -ge 8) {
-        Write-Error "Robocopy failed during ZIP file move with exit code $($processMove.ExitCode). The ZIP might still be in '$env:TEMP'."
+        Write-Error "Robocopy failed during ZIP file move with exit code $($processMove.ExitCode). The ZIP might still be in '$([System.IO.Path]::GetTempPath())'."
         exit 1 # Exit the script
     }
     else {
@@ -175,7 +182,7 @@ finally {
     }
     # Optional: Clean up the zip file from TEMP if it still exists (e.g., if move failed but script didn't exit)
     if (Test-Path $zipFilePath) {
-        Write-Warning "Temporary zip file '$zipFilePath' still exists in $env:TEMP. Removing it."
+        Write-Warning "Temporary zip file '$zipFilePath' still exists in $([System.IO.Path]::GetTempPath()). Removing it."
         try {
             Remove-Item -Path $zipFilePath -Force -ErrorAction Stop
         }

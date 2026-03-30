@@ -11,7 +11,7 @@ if (-not (Test-Path -Path $scoopFilePath -PathType Leaf)) {
     exit 1
 }
 
-Push-Location -Path $configDirectory
+Push-Location -LiteralPath $configDirectory
 try {
     $outputLines = @(& scoop import $scoopFilePath 2>&1)
     $scoopExitCodeVariable = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue

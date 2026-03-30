@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 
 $rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $rootDirectory -ChildPath "..") -ErrorAction Stop).Path
-Push-Location -Path $rootDirectory
+Push-Location -LiteralPath $rootDirectory
 try {
     $applicationYaml = "$env:USERPROFILE\applications.yaml"
     $komorebiConfig = "$env:USERPROFILE\komorebi.json"

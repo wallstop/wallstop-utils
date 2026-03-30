@@ -87,7 +87,7 @@ $steps = @(
 Write-Verbose ("Backup path diagnostics: scriptsDirectory='{0}'" -f $scriptsDirectory)
 Assert-BackupStepScriptsExist -Steps $steps
 
-Push-Location -Path $scriptsDirectory
+Push-Location -LiteralPath $scriptsDirectory
 try {
     foreach ($step in $steps) {
         try {
@@ -152,7 +152,7 @@ try {
     }
 
     $date = Get-Date
-    $dateString = "{0:yyyy/MM/dd hh:mm:ss}" -f $date
+    $dateString = "{0:yyyy/MM/dd HH:mm:ss zzz}" -f $date
     git add --all
     $gitAddExitCode = Get-LastExitCodeOrDefault
     if ($gitAddExitCode -ne 0) {

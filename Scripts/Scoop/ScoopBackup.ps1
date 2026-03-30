@@ -5,7 +5,7 @@ $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -Chil
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 $configDirectory = Join-Path -Path $baseDirectory -ChildPath "Config"
 
-Push-Location -Path $configDirectory
+Push-Location -LiteralPath $configDirectory
 try {
     $outputLines = @(& scoop export --no-colour 2>&1)
     $scoopExitCodeVariable = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue

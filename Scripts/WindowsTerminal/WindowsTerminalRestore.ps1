@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
-Push-Location -Path $baseDirectory
+Push-Location -LiteralPath $baseDirectory
 
 try {
     $windowsTerminalConfigPath = "$HOME\scoop\apps\windows-terminal\current\settings"
@@ -23,7 +23,7 @@ try {
 
     # Make a backup of the current settings before overwriting
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $backupFolder = "$env:USERPROFILE\Documents\WT_Settings_Backup"
+    $backupFolder = Join-Path -Path $HOME -ChildPath "Documents\WT_Settings_Backup"
     if (-not (Test-Path -Path $backupFolder -PathType Container)) {
         New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
     }

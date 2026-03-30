@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 $baseDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
 $scriptsDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 $rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $scriptsDirectory -ChildPath "..") -ErrorAction Stop).Path
-Push-Location -Path $baseDirectory
+Push-Location -LiteralPath $baseDirectory
 try {
     $sourcePath = "$env:LOCALAPPDATA\Microsoft\PowerToys"
     if (-not (Test-Path -Path $sourcePath -PathType Container)) {

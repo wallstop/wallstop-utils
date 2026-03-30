@@ -4,9 +4,9 @@ $ErrorActionPreference = "Stop"
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 
-Push-Location -Path $baseDirectory
+Push-Location -LiteralPath $baseDirectory
 try {
-    $configFolder = Join-Path -Path $env:USERPROFILE -ChildPath ".config"
+    $configFolder = Join-Path -Path $HOME -ChildPath ".config"
     if (-not (Test-Path -Path $configFolder -PathType Container)) {
         Write-Error "E_CONFIG_BACKUP_SOURCE_MISSING: Source .config folder not found at '$configFolder'."
         exit 1

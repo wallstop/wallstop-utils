@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 $backupFolder = "$baseDirectory\Config\Powershell"
-Push-Location -Path $baseDirectory
+Push-Location -LiteralPath $baseDirectory
 
 try {
     if (-not (Test-Path -Path $backupFolder)) {

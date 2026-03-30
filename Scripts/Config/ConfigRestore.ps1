@@ -4,9 +4,9 @@ $ErrorActionPreference = "Stop"
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 
-Push-Location -Path $baseDirectory
+Push-Location -LiteralPath $baseDirectory
 try {
-    $configDir = Join-Path -Path $env:USERPROFILE -ChildPath ".config"
+    $configDir = Join-Path -Path $HOME -ChildPath ".config"
     $backupDir = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Config") -ChildPath ".config"
 
     if (-not (Test-Path -Path $backupDir -PathType Container)) {

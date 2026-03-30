@@ -1012,6 +1012,23 @@ Describe "Directory restoration safety conventions" {
         }
     }
 
+    It "uses -LiteralPath with Push-Location in PowerShell backup and restore scripts" {
+        $backupRestoreScripts = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts") -Filter "*.ps1" -Recurse -ErrorAction Stop |
+            Where-Object { $_.FullName -notmatch '[/\\]Utils[/\\]' })
+
+        foreach ($scriptFile in $backupRestoreScripts) {
+            $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
+            $content = Get-Content -Path $scriptFile.FullName -Raw
+            if ($content -notmatch '(?m)^\s*Push-Location\b') {
+                continue
+            }
+            # All Push-Location calls in backup/restore scripts must use -LiteralPath
+            $content | Should -Not -Match 'Push-Location\s+-Path\b' -Because (
+                "$relativePath uses Push-Location and must use -LiteralPath to prevent wildcard expansion in paths."
+            )
+        }
+    }
+
     It "avoids bare backup-dir cd in Mac brew scripts" {
         foreach ($relativePath in @('Scripts/Mac/backup_brew.sh', 'Scripts/Mac/restore_brew.sh')) {
             # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
@@ -1268,6 +1285,58 @@ Describe "Backup script safety conventions" {
         $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Container'
         $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$backupDir\s+-PathType\s+Container'
         $dxMessagingBackup | Should -Match 'catch\s*\{[\s\S]*E_DXMSG_BACKUP_UNEXPECTED[\s\S]*exit\s+1'
+    }
+
+    It "uses portable home directory resolution (not env:USERPROFILE) in cross-platform scripts" {
+        $crossPlatformScripts = @(
+            "Scripts/Config/ConfigBackup.ps1",
+            "Scripts/Config/ConfigRestore.ps1"
+        ) | ForEach-Object { Join-Path -Path $script:repoRoot -ChildPath $_ }
+
+        foreach ($scriptPath in $crossPlatformScripts) {
+            $relativePath = $scriptPath.Replace($script:repoRoot, '').TrimStart('/\')
+            $content = Get-Content -Path $scriptPath -Raw
+            $content | Should -Not -Match '\$env:USERPROFILE' -Because (
+                "$relativePath is a cross-platform script and must use `$HOME instead of `$env:USERPROFILE."
+            )
+        }
+    }
+
+    It "uses portable temp path resolution ([System.IO.Path]::GetTempPath()) not env:TEMP in Scripts/Utils/ scripts" {
+        $scriptFiles = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils") -Filter "*.ps1" -Recurse -ErrorAction Stop)
+
+        foreach ($scriptFile in $scriptFiles) {
+            $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
+            $content = Get-Content -Path $scriptFile.FullName -Raw
+            $content | Should -Not -Match '\$env:TEMP\b' -Because (
+                "$relativePath is under Scripts/Utils/ (cross-platform) and must use [System.IO.Path]::GetTempPath() instead of `$env:TEMP."
+            )
+        }
+    }
+
+    It "uses 24-hour time format (HH) not 12-hour (hh) in backup git commit message timestamp" {
+        $backupScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Backup.ps1") -Raw
+        $backupScript | Should -Match 'HH:mm:ss' -Because (
+            "Backup.ps1 commit message timestamp must use 24-hour format (HH) for unambiguous diagnostics."
+        )
+        $backupScript | Should -Not -Match '"\{0:yyyy/MM/dd hh:mm:ss\}"' -Because (
+            "Backup.ps1 commit message must not use ambiguous 12-hour format (hh) without AM/PM."
+        )
+    }
+
+    It "calls WaitForExit after Start-Process -Wait -PassThru to avoid exit code race condition" {
+        $scriptFiles = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts") -Filter "*.ps1" -Recurse -ErrorAction Stop)
+
+        foreach ($scriptFile in $scriptFiles) {
+            $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
+            $content = Get-Content -Path $scriptFile.FullName -Raw
+            if ($content -notmatch '(?i)Start-Process.*-Wait.*-PassThru|(?i)Start-Process.*-PassThru.*-Wait') {
+                continue
+            }
+            $content | Should -Match '\.WaitForExit\(' -Because (
+                "$relativePath uses Start-Process -Wait -PassThru and must call .WaitForExit() to avoid the exit code race condition."
+            )
+        }
     }
 }
 

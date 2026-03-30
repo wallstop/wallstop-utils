@@ -82,7 +82,7 @@ $steps = @(
 Write-Verbose ("Restore path diagnostics: scriptsDirectory='{0}'" -f $scriptsDirectory)
 Assert-RestoreStepScriptsExist -Steps $steps
 
-Push-Location -Path $scriptsDirectory
+Push-Location -LiteralPath $scriptsDirectory
 try {
     foreach ($step in $steps) {
         try {

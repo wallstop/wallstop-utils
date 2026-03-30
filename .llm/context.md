@@ -151,6 +151,7 @@ Scripts under `Scripts/Utils/` must run on Windows, macOS, and Linux with PowerS
 14. For deterministic sorting with `Sort-Object -Culture`, pass a culture name string (for example `[System.Globalization.CultureInfo]::InvariantCulture.Name`) instead of a `CultureInfo` object.
 15. Follow `.editorconfig` indentation for PowerShell files (`*.ps1`, `*.psm1`, `*.psd1`): spaces only (no leading tab indentation).
 16. Keep PowerShell formatter settings in `.psscriptanalyzer.format.psd1` with `PSUseConsistentIndentation` (`Kind='space'`, `IndentationSize=4`) and fail fast when formatter output still contains leading tabs.
+17. Use `$HOME` for the user home directory instead of `$env:USERPROFILE`; `$env:USERPROFILE` is Windows-only and may be empty on macOS and Linux.
 
 ## Cross-Platform Shell Tooling (Bash grep awk sed)
 
