@@ -1,9 +1,14 @@
-$baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-$baseDirectory = "$baseDirectory\.."
-Push-Location "$baseDirectory"
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
+Push-Location -Path $baseDirectory
 
 try {
-    $settingsPath = "$baseDirectory/Config/Powershell/Microsoft.Powershell_profile.ps1"
+    $settingsPath = Join-Path -Path $baseDirectory -ChildPath 'Config'
+    $settingsPath = Join-Path -Path $settingsPath -ChildPath 'Powershell'
+    $settingsPath = Join-Path -Path $settingsPath -ChildPath 'Microsoft.Powershell_profile.ps1'
     if (-not (Test-Path -Path $settingsPath)) {
         Write-Host "Powershell settings backup not found at $settingsPath"
         exit 1

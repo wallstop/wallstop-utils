@@ -2,8 +2,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $sourcePath = "$HOME\scoop\apps\windows-terminal\current\settings\settings.json"
-$baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-$baseDirectory = "$baseDirectory\.."
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 $backupFolder = "$baseDirectory\Config\WindowsTerminal"
 Push-Location -Path $baseDirectory
 

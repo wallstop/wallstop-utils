@@ -184,6 +184,9 @@ Backup and restore scripts under `Scripts/` must prioritize data safety and dete
 7. Process isolation: invoke child scripts in isolated processes when those scripts may call `exit`, and classify non-zero exits as failed steps.
 8. Location safety: pair path changes with `try/finally` to guarantee location restoration even on failure. Use `Push-Location -StackName` for nested workflows.
 9. Path safety: use `-LiteralPath` for user/config-driven paths and `Test-Path -PathType` for existence/type checks before mutation.
+10. Orchestrator step roots: derive backup/restore step roots from canonical `$PSScriptRoot` (for example `Resolve-Path -LiteralPath $PSScriptRoot`) and do not append an extra `Scripts` segment.
+11. Backup/restore utility scripts: always declare `Set-StrictMode -Version Latest` at script entry to prevent silent failures from uninitialized variables and typoed references.
+12. Nested utility scripts under `Scripts/*/`: when targeting repository-level assets such as `Config/`, resolve repository root explicitly (two parent traversals from `$PSScriptRoot`) before composing destination/source paths.
 
 ## Contribution Rules
 

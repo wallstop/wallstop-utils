@@ -1,6 +1,9 @@
-$rootDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-$rootDirectory = "$rootDirectory\.."
-Push-Location $rootDirectory
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
+$rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $rootDirectory -ChildPath "..") -ErrorAction Stop).Path
+Push-Location -Path $rootDirectory
 try {
     $applicationYaml = "$env:USERPROFILE\applications.yaml"
     $komorebiConfig = "$env:USERPROFILE\komorebi.json"
@@ -12,7 +15,7 @@ try {
 
     $missingSources = @()
     foreach ($sourcePath in @($komorebiSourceConfig, $komorebiSourceBarConfig, $komorebiSourceApplications)) {
-        if (-not (Test-Path -Path $sourcePath)) {
+        if (-not (Test-Path -Path $sourcePath -PathType Leaf)) {
             $missingSources += $sourcePath
         }
     }

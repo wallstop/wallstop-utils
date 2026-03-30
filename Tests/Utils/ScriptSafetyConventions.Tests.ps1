@@ -1053,18 +1053,35 @@ Describe "Restore script safety conventions" {
         $restoreScript | Should -Match 'E_RESTORE_PARTIAL_FAILURE'
     }
 
+    It "anchors restore step script resolution to PSScriptRoot with pre-flight diagnostics" {
+        $restoreScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Restore.ps1') -Raw) -replace "`r", ''
+
+        $restoreScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
+        $restoreScript | Should -Not -Match 'Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Scripts"'
+        $restoreScript | Should -Match 'Assert-RestoreStepScriptsExist\s+-Steps\s+\$steps'
+        $restoreScript | Should -Match 'E_RESTORE_PRE_FLIGHT_STEP_SCRIPT_MISSING'
+        $restoreScript | Should -Match 'E_RESTORE_PRE_FLIGHT_FAILED'
+    }
+
     It "uses defined destination variables in PowerToys restore messages" {
         $powerToysRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/PowerToys/PowerToysRestore.ps1') -Raw) -replace "`r", ''
 
         $powerToysRestore | Should -Match '\$targetPath'
         $powerToysRestore | Should -Not -Match '\$targetFolder'
+        $powerToysRestore | Should -Match 'Robocopy\.exe'
+        $powerToysRestore | Should -Match 'robocopyExitCode\s*-ge\s*8'
+        $powerToysRestore | Should -Match 'E_POWERTOYS_RESTORE_ROBOCOPY_FAILED'
+        $powerToysRestore | Should -Match 'E_POWERTOYS_RESTORE_SOURCE_MISSING'
+        $powerToysRestore | Should -Match 'E_POWERTOYS_RESTORE_TARGET_MISSING'
     }
 
     It "backs up live Windows Terminal settings and guards missing live files" {
         $windowsTerminalRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WindowsTerminal/WindowsTerminalRestore.ps1') -Raw) -replace "`r", ''
 
         $windowsTerminalRestore | Should -Not -Match 'Copy-Item\s+-Path\s+\$settingsPath\s+-Destination\s+\$currentBackupFile'
-        $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsTerminalSettings\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
+        $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsTerminalSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
+        $windowsTerminalRestore | Should -Match 'Test-Path\s+-Path\s+\$settingsPath\s+-PathType\s+Leaf'
+        $windowsTerminalRestore | Should -Match 'E_WT_RESTORE_SOURCE_MISSING'
         $windowsTerminalRestore | Should -Match 'E_WT_RESTORE_NO_LIVE_SETTINGS'
     }
 
@@ -1083,6 +1100,7 @@ Describe "Restore script safety conventions" {
         $komorebiRestore | Should -Match '\$missingSources\s*=\s*@\('
         $komorebiRestore | Should -Match 'E_KOMOREBI_RESTORE_SOURCE_MISSING'
         $komorebiRestore | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiSourceConfig,\s*\$komorebiSourceBarConfig,\s*\$komorebiSourceApplications\)\)'
+        $komorebiRestore | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Leaf'
     }
 
     It "fails fast when Config restore backup directory is empty" {
@@ -1114,6 +1132,43 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
         $backupScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
         $backupScript | Should -Match 'git\s+pull\s+--ff-only\s+origin\s+main'
+    }
+
+    It "requires strict mode in utility backup and restore scripts" {
+        $targetDirectories = @('Config', 'Komorebi', 'PowerToys', 'Powershell', 'Scoop', 'WindowsTerminal')
+
+        foreach ($targetDirectory in $targetDirectories) {
+            $directoryPath = Join-Path -Path $script:repoRoot -ChildPath (Join-Path -Path 'Scripts' -ChildPath $targetDirectory)
+            $candidateScripts = @(Get-ChildItem -Path $directoryPath -Filter '*.ps1' -File -ErrorAction Stop)
+            $backupRestoreScripts = @($candidateScripts | Where-Object { $_.Name -match '(Backup|Restore)\.ps1$' })
+
+            foreach ($scriptFile in $backupRestoreScripts) {
+                $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+                $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                $content | Should -Match 'Set-StrictMode\s+-Version\s+Latest' -Because (
+                    '{0} is part of backup/restore flow and must declare strict mode.' -f $relativePath
+                )
+            }
+        }
+    }
+
+    It "anchors backup step script resolution to PSScriptRoot with pre-flight diagnostics" {
+        $backupScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        $backupScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
+        $backupScript | Should -Not -Match 'Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Scripts"'
+        $backupScript | Should -Match 'Assert-BackupStepScriptsExist\s+-Steps\s+\$steps'
+        $backupScript | Should -Match 'E_BACKUP_PRE_FLIGHT_STEP_SCRIPT_MISSING'
+        $backupScript | Should -Match 'E_BACKUP_PRE_FLIGHT_FAILED'
+    }
+
+    It "keeps Update orchestrator rooted at script directory without nested Scripts suffix" {
+        $updateScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Update.ps1') -Raw) -replace "`r", ''
+
+        $updateScript | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
+        $updateScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
+        $updateScript | Should -Match 'Push-Location\s+-LiteralPath\s+\$scriptsDirectory'
+        $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
     }
 
     It "validates Config backup source before destructive clear" {
@@ -1185,6 +1240,53 @@ Describe "Backup script safety conventions" {
         $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Container'
         $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$backupDir\s+-PathType\s+Container'
         $dxMessagingBackup | Should -Match 'catch\s*\{[\s\S]*E_DXMSG_BACKUP_UNEXPECTED[\s\S]*exit\s+1'
+    }
+}
+
+Describe "Path derivation safety conventions" {
+    It "avoids string-concatenated parent directory derivation in Scripts PowerShell files" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Scripts'
+        $powerShellScripts = @(Get-ChildItem -Path $scriptsRoot -Filter '*.ps1' -File -Recurse -ErrorAction Stop)
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        foreach ($scriptFile in $powerShellScripts) {
+            $lines = @(Get-Content -Path $scriptFile.FullName)
+            for ($index = 0; $index -lt $lines.Count; $index++) {
+                if ($lines[$index] -match '\$[A-Za-z0-9_]+\s*=\s*"\$[A-Za-z0-9_]+[\\/]\.\.') {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $violations.Add("${relativePath}:$($index + 1)") | Out-Null
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Parent-directory derivation must use Resolve-Path/Join-Path instead of string '..' concatenation. Violations: {0}" -f ($violations -join ', ')
+        )
+    }
+
+    It "derives repository root with two parent traversals in nested backup/restore utility scripts" {
+        $nestedUtilityScripts = @(
+            'Scripts/Config/ConfigBackup.ps1',
+            'Scripts/Config/ConfigRestore.ps1',
+            'Scripts/Scoop/ScoopBackup.ps1',
+            'Scripts/Scoop/ScoopRestore.ps1',
+            'Scripts/Komorebi/KomorebiBackup.ps1',
+            'Scripts/Komorebi/KomorebiRestore.ps1',
+            'Scripts/Powershell/PowershellBackup.ps1',
+            'Scripts/Powershell/PowershellRestore.ps1',
+            'Scripts/WindowsTerminal/WindowsTerminalBackup.ps1',
+            'Scripts/WindowsTerminal/WindowsTerminalRestore.ps1',
+            'Scripts/PowerToys/PowerToysBackup.ps1',
+            'Scripts/PowerToys/PowerToysRestore.ps1'
+        )
+
+        foreach ($relativePath in $nestedUtilityScripts) {
+            $content = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath $relativePath) -Raw) -replace "`r", ''
+            $parentTraversalMatches = [regex]::Matches($content, 'Join-Path\s+-Path\s+\$[A-Za-z0-9_]+\s+-ChildPath\s+["'']\.\.["'']')
+            $parentTraversalMatches.Count | Should -BeGreaterOrEqual 2 -Because (
+                '{0} must traverse two parents from nested Scripts subdirectories to reach repository root before targeting Config paths.' -f $relativePath
+            )
+        }
     }
 }
 

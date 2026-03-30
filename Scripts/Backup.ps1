@@ -1,8 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-$scriptsDirectory = Join-Path -Path $baseDirectory -ChildPath "Scripts"
+$scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
 $pwshCommand = (Get-Command -Name "pwsh" -ErrorAction Stop).Source
 
 function Get-LastExitCodeOrDefault {
@@ -24,7 +23,7 @@ function Invoke-BackupStep {
     )
 
     $scriptPath = Join-Path -Path $scriptsDirectory -ChildPath $RelativeScriptPath
-    if (-not (Test-Path -Path $scriptPath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
         throw "E_BACKUP_STEP_SCRIPT_MISSING: Backup step '$Name' script not found at '$scriptPath'."
     }
 
@@ -33,10 +32,41 @@ function Invoke-BackupStep {
 
     $exitCode = Get-LastExitCodeOrDefault
     if ($exitCode -ne 0) {
-        throw ("E_BACKUP_STEP_FAILED({0}): script '{1}' exited with code {2}." -f $Name, $RelativeScriptPath, $exitCode)
+        throw ("E_BACKUP_STEP_FAILED({0}): script '{1}' at '{2}' exited with code {3}." -f $Name, $RelativeScriptPath, $scriptPath, $exitCode)
     }
 
     Write-Host ("Completed: {0}" -f $Name) -ForegroundColor Green
+}
+
+function Assert-BackupStepScriptsExist {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Steps
+    )
+
+    $missingSteps = New-Object System.Collections.Generic.List[object]
+    foreach ($step in $Steps) {
+        $scriptPath = Join-Path -Path $scriptsDirectory -ChildPath $step.RelativeScriptPath
+        if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+            [void]$missingSteps.Add([pscustomobject]@{
+                    Name               = $step.Name
+                    RelativeScriptPath = $step.RelativeScriptPath
+                    ScriptPath         = $scriptPath
+                })
+        }
+    }
+
+    if ($missingSteps.Count -eq 0) {
+        return
+    }
+
+    Write-Warning ("E_BACKUP_PRE_FLIGHT_STEP_SCRIPT_MISSING: Found {0} missing backup step script(s)." -f $missingSteps.Count)
+    Write-Warning ("Backup step root path diagnostics: scriptsDirectory='{0}'" -f $scriptsDirectory)
+    foreach ($missingStep in $missingSteps) {
+        Write-Warning ("Missing step '{0}' ({1}) expected at '{2}'." -f $missingStep.Name, $missingStep.RelativeScriptPath, $missingStep.ScriptPath)
+    }
+
+    throw "E_BACKUP_PRE_FLIGHT_FAILED: Backup step script validation failed."
 }
 
 $stepResults = New-Object System.Collections.Generic.List[object]
@@ -53,6 +83,9 @@ $steps = @(
     @{ Name = "WinGetUpdate"; RelativeScriptPath = "WinGet/WinGetUpdate.ps1" },
     @{ Name = "RestartKomorebi"; RelativeScriptPath = "Komorebi/RestartKomorebi.ps1" }
 )
+
+Write-Verbose ("Backup path diagnostics: scriptsDirectory='{0}'" -f $scriptsDirectory)
+Assert-BackupStepScriptsExist -Steps $steps
 
 Push-Location -Path $scriptsDirectory
 try {

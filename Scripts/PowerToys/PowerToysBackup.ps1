@@ -1,7 +1,9 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
+$baseDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
+$scriptsDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
+$rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $scriptsDirectory -ChildPath "..") -ErrorAction Stop).Path
 Push-Location -Path $baseDirectory
 try {
   $sourcePath = "$env:LOCALAPPDATA\Microsoft\PowerToys"
@@ -10,7 +12,8 @@ try {
     exit 1
   }
 
-  $backupFolder = "$baseDirectory\..\Config\PowerToys"
+  $backupFolder = Join-Path -Path $rootDirectory -ChildPath "Config"
+  $backupFolder = Join-Path -Path $backupFolder -ChildPath "PowerToys"
   if (-not (Test-Path -Path $backupFolder -PathType Container)) {
     New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
   }
