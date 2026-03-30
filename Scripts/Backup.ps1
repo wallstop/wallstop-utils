@@ -69,27 +69,84 @@ function Assert-BackupStepScriptsExist {
     throw "E_BACKUP_PRE_FLIGHT_FAILED: Backup step script validation failed."
 }
 
+function Get-CurrentPlatformName {
+    if ($IsWindows) {
+        return "Windows"
+    }
+
+    if ($IsMacOS) {
+        return "macOS"
+    }
+
+    if ($IsLinux) {
+        return "Linux"
+    }
+
+    return "Unknown"
+}
+
+function Get-ApplicableBackupSteps {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Steps,
+
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentPlatformName
+    )
+
+    $applicableSteps = New-Object System.Collections.Generic.List[object]
+    foreach ($step in $Steps) {
+        $supportedPlatforms = @($step.SupportedPlatforms)
+        if ($supportedPlatforms.Count -eq 0) {
+            throw (
+                "E_BACKUP_STEP_METADATA_INVALID({0}): Step '{1}' must define SupportedPlatforms metadata." -f
+                $step.Name,
+                $step.Name
+            )
+        }
+
+        if ($supportedPlatforms -contains "All" -or $supportedPlatforms -contains $CurrentPlatformName) {
+            [void]$applicableSteps.Add($step)
+            continue
+        }
+
+        Write-Warning (
+            "W_BACKUP_STEP_SKIPPED_PLATFORM: Skipping step '{0}' ({1}) on platform '{2}'. SupportedPlatforms={3}." -f
+            $step.Name,
+            $step.RelativeScriptPath,
+            $CurrentPlatformName,
+            ($supportedPlatforms -join ', ')
+        )
+    }
+
+    return , $applicableSteps.ToArray()
+}
+
 $stepResults = New-Object System.Collections.Generic.List[object]
 $steps = @(
-    @{ Name = "ConfigBackup"; RelativeScriptPath = "Config/ConfigBackup.ps1" },
-    @{ Name = "FormatPowershellScripts"; RelativeScriptPath = "Utils/FormatPowershellScripts.ps1" },
-    @{ Name = "WindowsTerminalBackup"; RelativeScriptPath = "WindowsTerminal/WindowsTerminalBackup.ps1" },
-    @{ Name = "PowershellBackup"; RelativeScriptPath = "Powershell/PowershellBackup.ps1" },
-    @{ Name = "StopKomorebi"; RelativeScriptPath = "Komorebi/StopKomorebi.ps1" },
-    @{ Name = "ScoopUpdate"; RelativeScriptPath = "Scoop/ScoopUpdate.ps1" },
-    @{ Name = "ScoopBackup"; RelativeScriptPath = "Scoop/ScoopBackup.ps1" },
-    @{ Name = "KomorebiBackup"; RelativeScriptPath = "Komorebi/KomorebiBackup.ps1" },
-    @{ Name = "PowerToysBackup"; RelativeScriptPath = "PowerToys/PowerToysBackup.ps1" },
-    @{ Name = "WinGetUpdate"; RelativeScriptPath = "WinGet/WinGetUpdate.ps1" },
-    @{ Name = "RestartKomorebi"; RelativeScriptPath = "Komorebi/RestartKomorebi.ps1" }
+    @{ Name = "ConfigBackup"; RelativeScriptPath = "Config/ConfigBackup.ps1"; SupportedPlatforms = @("All") },
+    @{ Name = "FormatPowershellScripts"; RelativeScriptPath = "Utils/FormatPowershellScripts.ps1"; SupportedPlatforms = @("All") },
+    @{ Name = "WindowsTerminalBackup"; RelativeScriptPath = "WindowsTerminal/WindowsTerminalBackup.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "PowershellBackup"; RelativeScriptPath = "Powershell/PowershellBackup.ps1"; SupportedPlatforms = @("All") },
+    @{ Name = "StopKomorebi"; RelativeScriptPath = "Komorebi/StopKomorebi.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "ScoopUpdate"; RelativeScriptPath = "Scoop/ScoopUpdate.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "ScoopBackup"; RelativeScriptPath = "Scoop/ScoopBackup.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "KomorebiBackup"; RelativeScriptPath = "Komorebi/KomorebiBackup.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "PowerToysBackup"; RelativeScriptPath = "PowerToys/PowerToysBackup.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "WinGetUpdate"; RelativeScriptPath = "WinGet/WinGetUpdate.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "RestartKomorebi"; RelativeScriptPath = "Komorebi/RestartKomorebi.ps1"; SupportedPlatforms = @("Windows") }
 )
 
+$currentPlatformName = Get-CurrentPlatformName
+$applicableSteps = @(Get-ApplicableBackupSteps -Steps $steps -CurrentPlatformName $currentPlatformName)
+
 Write-Verbose ("Backup path diagnostics: scriptsDirectory='{0}'" -f $scriptsDirectory)
-Assert-BackupStepScriptsExist -Steps $steps
+Write-Verbose ("Backup platform diagnostics: currentPlatform='{0}', totalSteps={1}, applicableSteps={2}" -f $currentPlatformName, $steps.Count, $applicableSteps.Count)
+Assert-BackupStepScriptsExist -Steps $applicableSteps
 
 Push-Location -LiteralPath $scriptsDirectory
 try {
-    foreach ($step in $steps) {
+    foreach ($step in $applicableSteps) {
         try {
             Invoke-BackupStep -Name $step.Name -RelativeScriptPath $step.RelativeScriptPath
             [void]$stepResults.Add([pscustomobject]@{
@@ -118,6 +175,7 @@ try {
 
     Write-Host ""
     Write-Host "========== BACKUP SUMMARY ==========" -ForegroundColor Cyan
+    Write-Host ("Planned steps: {0}, Applicable on {1}: {2}, Skipped by platform: {3}" -f $steps.Count, $currentPlatformName, $applicableSteps.Count, ($steps.Count - $applicableSteps.Count))
     Write-Host ("Total steps: {0}, Successful: {1}, Failed: {2}" -f $totalCount, $succeededCount, $failedCount)
 
     if ($failedCount -gt 0) {

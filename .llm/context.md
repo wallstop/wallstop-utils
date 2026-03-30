@@ -25,6 +25,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 9. When a failure reveals a repeatable category, codify the invariant in skills/context/tests.
 10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
 11. Keep quality-harness diagnostics low-noise: in `Run-PreCommitValidation.ps1` and `Scripts/Utils/Quality/*`, use `Write-Verbose` for advisory telemetry and reserve `Write-Warning` for actionable degradation only; keep `Write-Host` for concise high-level status.
+12. Treat CI logs containing `files were modified by this hook` as autofix-required formatting drift (not a tool crash); emit explicit `E_CI_PRECOMMIT_AUTOFIX_REQUIRED` diagnostics and list modified files.
 
 ## Working Agreement For Agents
 
@@ -193,6 +194,7 @@ Backup and restore scripts under `Scripts/` must prioritize data safety and dete
 12. Nested utility scripts under `Scripts/*/`: when targeting repository-level assets such as `Config/`, resolve repository root explicitly (two parent traversals from `$PSScriptRoot`) before composing destination/source paths.
 13. Git sequencing safety in backup orchestrators: once any git step fails (for example `git commit`), subsequent remote-mutating steps (`git pull --ff-only`, `git push`) must be explicitly skipped with stable diagnostics to avoid operating on a dirty or inconsistent local state.
 14. Backup git preflight: validate `git rev-parse --is-inside-work-tree` before git mutation (`add`/`commit`/`pull`/`push`) and fail with an explicit `E_*` code when not in a repository.
+15. Cross-platform orchestrators (`Backup.ps1`, `Restore.ps1`, `Update.ps1`) must annotate steps with `SupportedPlatforms` metadata, execute only platform-applicable steps, and emit stable `W_*_STEP_SKIPPED_PLATFORM` diagnostics for skipped Windows-only steps.
 
 ## Contribution Rules
 

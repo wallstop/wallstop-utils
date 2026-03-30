@@ -584,6 +584,11 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Match 'runs-on:\s+macos-latest'
 
         $workflow | Should -Match 'SKIP=shellcheck,shfmt pre-commit run --all-files'
+        $workflow | Should -Match 'E_CI_PRECOMMIT_AUTOFIX_REQUIRED'
+        $workflow | Should -Match 'E_CI_PRECOMMIT_HOOK_FAILURE'
+        $workflow | Should -Match 'files were modified by this hook'
+        $workflow | Should -Match 'Auto-formatted files'
+        $workflow | Should -Not -Match 'hook id:[\s\S]*\{\s*print\s+\$NF\s*\}'
         $workflow | Should -Match 'Run shell hooks on changed files'
         $workflow | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
         $workflow | Should -Match 'Invoke-MacOSLanguageChecks\.sh'
@@ -1080,9 +1085,21 @@ Describe "Restore script safety conventions" {
 
         $restoreScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
         $restoreScript | Should -Not -Match 'Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Scripts"'
-        $restoreScript | Should -Match 'Assert-RestoreStepScriptsExist\s+-Steps\s+\$steps'
+        $restoreScript | Should -Match 'Assert-RestoreStepScriptsExist\s+-Steps\s+\$applicableSteps'
         $restoreScript | Should -Match 'E_RESTORE_PRE_FLIGHT_STEP_SCRIPT_MISSING'
         $restoreScript | Should -Match 'E_RESTORE_PRE_FLIGHT_FAILED'
+    }
+
+    It "uses platform-aware restore step metadata and skip diagnostics" {
+        $restoreScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Restore.ps1') -Raw) -replace "`r", ''
+
+        $restoreScript | Should -Match 'function\s+Get-ApplicableRestoreSteps'
+        $restoreScript | Should -Match 'SupportedPlatforms\s*=\s*@\("All"\)'
+        $restoreScript | Should -Match 'SupportedPlatforms\s*=\s*@\("Windows"\)'
+        $restoreScript | Should -Match 'W_RESTORE_STEP_SKIPPED_PLATFORM'
+        $restoreScript | Should -Match 'Restore platform diagnostics:'
+        $restoreScript | Should -Match 'Assert-RestoreStepScriptsExist\s+-Steps\s+\$applicableSteps'
+        $restoreScript | Should -Match 'foreach\s*\(\$step\s+in\s+\$applicableSteps\)'
     }
 
     It "uses defined destination variables in PowerToys restore messages" {
@@ -1182,6 +1199,18 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE'
     }
 
+    It "uses platform-aware backup step metadata and skip diagnostics" {
+        $backupScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        $backupScript | Should -Match 'function\s+Get-ApplicableBackupSteps'
+        $backupScript | Should -Match 'SupportedPlatforms\s*=\s*@\("All"\)'
+        $backupScript | Should -Match 'SupportedPlatforms\s*=\s*@\("Windows"\)'
+        $backupScript | Should -Match 'W_BACKUP_STEP_SKIPPED_PLATFORM'
+        $backupScript | Should -Match 'Backup platform diagnostics:'
+        $backupScript | Should -Match 'Assert-BackupStepScriptsExist\s+-Steps\s+\$applicableSteps'
+        $backupScript | Should -Match 'foreach\s*\(\$step\s+in\s+\$applicableSteps\)'
+    }
+
     It "requires strict mode in utility backup and restore scripts" {
         $targetDirectories = @('Config', 'Komorebi', 'PowerToys', 'Powershell', 'Scoop', 'WindowsTerminal')
 
@@ -1205,7 +1234,7 @@ Describe "Backup script safety conventions" {
 
         $backupScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
         $backupScript | Should -Not -Match 'Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Scripts"'
-        $backupScript | Should -Match 'Assert-BackupStepScriptsExist\s+-Steps\s+\$steps'
+        $backupScript | Should -Match 'Assert-BackupStepScriptsExist\s+-Steps\s+\$applicableSteps'
         $backupScript | Should -Match 'E_BACKUP_PRE_FLIGHT_STEP_SCRIPT_MISSING'
         $backupScript | Should -Match 'E_BACKUP_PRE_FLIGHT_FAILED'
     }
@@ -1216,6 +1245,11 @@ Describe "Backup script safety conventions" {
         $updateScript | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
         $updateScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
         $updateScript | Should -Match 'Push-Location\s+-LiteralPath\s+\$scriptsDirectory'
+        $updateScript | Should -Match 'function\s+Get-ApplicableUpdateSteps'
+        $updateScript | Should -Match 'SupportedPlatforms\s*=\s*@\("All"\)'
+        $updateScript | Should -Match 'SupportedPlatforms\s*=\s*@\("Windows"\)'
+        $updateScript | Should -Match 'W_UPDATE_STEP_SKIPPED_PLATFORM'
+        $updateScript | Should -Match 'Update platform diagnostics:'
         $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
     }
 
@@ -1223,8 +1257,9 @@ Describe "Backup script safety conventions" {
         $configBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Config/ConfigBackup.ps1') -Raw) -replace "`r", ''
 
         $configBackup | Should -Match 'E_CONFIG_BACKUP_SOURCE_MISSING'
-        $configBackup | Should -Match 'Get-ChildItem\s+-Path\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
-        $configBackup | Should -Match 'Test-Path\s+-Path\s+\$configFolder[\s\S]*Remove-Item\s+-Path\s+\(Join-Path\s+-Path\s+\$backupFolder\s+-ChildPath\s+''\*''\)'
+        $configBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
+        $configBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$configFolder[\s\S]*Remove-Item\s+-Path\s+\(Join-Path\s+-Path\s+\$backupFolder\s+-ChildPath\s+''\*''\)'
+        $configBackup | Should -Match 'Backup successful! \.config folder saved to \$backupFolder'
         $configBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
     }
 
@@ -1236,9 +1271,18 @@ Describe "Backup script safety conventions" {
         $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING[\s\S]*exit\s+1'
     }
 
-    It "fails when no PowerShell profiles are available to back up" {
+    It "uses profile-driven path-safe backup and fails when no PowerShell profiles are available" {
         $powershellBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Powershell/PowershellBackup.ps1') -Raw) -replace "`r", ''
 
+        $powershellBackup | Should -Match 'Join-Path\s+-Path\s+\(Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Config"\)\s+-ChildPath\s+"Powershell"'
+        $powershellBackup | Should -Match '\$PROFILE\.CurrentUserCurrentHost'
+        $powershellBackup | Should -Match '\$PROFILE\.CurrentUserAllHosts'
+        $powershellBackup | Should -Match 'HashSet\[string\]\(\[System\.StringComparer\]::OrdinalIgnoreCase\)'
+        $powershellBackup | Should -Match 'W_POWERSHELL_BACKUP_PROFILE_MISSING\('
+        $powershellBackup | Should -Match 'PowerShell backup profile discovery diagnostics:'
+        $powershellBackup | Should -Not -Match '\$backupFolder\s*=\s*"\$baseDirectory\\Config\\Powershell"'
+        $powershellBackup | Should -Not -Match '\$HOME\\Documents\\PowerShell'
+        $powershellBackup | Should -Not -Match '\$HOME\\Documents\\WindowsPowerShell'
         $powershellBackup | Should -Match '\$profilesBackedUp\s*=\s*0'
         $powershellBackup | Should -Match 'if\s*\(\s*\$profilesBackedUp\s*-eq\s*0\s*\)'
         $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_NO_PROFILES_FOUND'
@@ -1290,31 +1334,47 @@ Describe "Backup script safety conventions" {
         $dxMessagingBackup | Should -Match 'catch\s*\{[\s\S]*E_DXMSG_BACKUP_UNEXPECTED[\s\S]*exit\s+1'
     }
 
-    It "uses portable home directory resolution (not env:USERPROFILE) in cross-platform scripts" {
-        # Scan all scripts excluding Windows-only app directories (Komorebi, WindowsTerminal, WinGet, PowerToys)
-        $windowsOnlyPattern = '[/\\](Komorebi|WindowsTerminal|WinGet|PowerToys)[/\\]'
-        $crossPlatformScripts = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts") -Filter "*.ps1" -Recurse -ErrorAction Stop |
-            Where-Object { $_.FullName -notmatch $windowsOnlyPattern })
-
-        foreach ($scriptFile in $crossPlatformScripts) {
-            $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
-            $content = Get-Content -Path $scriptFile.FullName -Raw
-            $content | Should -Not -Match '\$env:USERPROFILE' -Because (
-                "$relativePath is a cross-platform script and must use `$HOME instead of `$env:USERPROFILE (which is Windows-only)."
-            )
+    It "enforces portable environment-variable usage in script scopes: <Name>" -TestCases @(
+        @{
+            Name             = "cross-platform scripts avoid env:USERPROFILE"
+            RootRelativePath = "Scripts"
+            ExcludePattern   = '[/\\](Komorebi|WindowsTerminal|WinGet|PowerToys)([/\\]|$)'
+            ForbiddenPattern = '\$env:USERPROFILE\b'
         }
-    }
+        @{
+            Name             = "Scripts/Utils scripts avoid env:TEMP"
+            RootRelativePath = "Scripts/Utils"
+            ExcludePattern   = ""
+            ForbiddenPattern = '\$env:TEMP\b'
+        }
+    ) {
+        param($Name, $RootRelativePath, $ExcludePattern, $ForbiddenPattern)
 
-    It "uses portable temp path resolution ([System.IO.Path]::GetTempPath()) not env:TEMP in Scripts/Utils/ scripts" {
-        $scriptFiles = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils") -Filter "*.ps1" -Recurse -ErrorAction Stop)
+        $scriptRoot = Join-Path -Path $script:repoRoot -ChildPath $RootRelativePath
+        $scriptFiles = @(
+            Get-ChildItem -LiteralPath $scriptRoot -Filter "*.ps1" -Recurse -ErrorAction Stop |
+                Where-Object {
+                    [string]::IsNullOrWhiteSpace($ExcludePattern) -or $_.FullName -notmatch $ExcludePattern
+                }
+        )
 
+        $scriptFiles.Count | Should -BeGreaterThan 0 -Because (
+            "Expected at least one script under {0} for policy case '{1}'." -f $RootRelativePath, $Name
+        )
+
+        $violations = New-Object System.Collections.Generic.List[string]
         foreach ($scriptFile in $scriptFiles) {
-            $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
-            $content = Get-Content -Path $scriptFile.FullName -Raw
-            $content | Should -Not -Match '\$env:TEMP\b' -Because (
-                "$relativePath is under Scripts/Utils/ (cross-platform) and must use [System.IO.Path]::GetTempPath() instead of `$env:TEMP."
-            )
+            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+            $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+
+            if ($content -match $ForbiddenPattern) {
+                $violations.Add($relativePath) | Out-Null
+            }
         }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Policy case '{0}' forbids '{1}' under '{2}'. Offending files: {3}" -f $Name, $ForbiddenPattern, $RootRelativePath, ($violations -join ', ')
+        )
     }
 
     It "uses 24-hour time format (HH) not 12-hour (hh) in backup git commit message timestamp" {

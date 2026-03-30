@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
-$backupFolder = "$baseDirectory\Config\Powershell"
+$backupFolder = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Config") -ChildPath "Powershell"
 Push-Location -LiteralPath $baseDirectory
 
 try {
@@ -13,34 +13,63 @@ try {
 
     $profilesBackedUp = 0
 
-    $sourcePath = $HOME
-    $sourcePath = "$sourcePath\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
-    if (Test-Path -Path $sourcePath -PathType Leaf) {
-        $backupFile = Split-Path $sourcePath -Leaf
-        $backupFile = "$backupFolder\$backupFile"
-        Copy-Item -Path $sourcePath -Destination $backupFile
-        $profilesBackedUp++
-        Write-Host "Windows PowerShell settings exported successfully." -ForegroundColor Green
-    }
-    else {
-        Write-Warning "W_POWERSHELL_BACKUP_PROFILE_MISSING: Windows PowerShell settings file not found at '$sourcePath'."
+    $candidateProfiles = New-Object System.Collections.Generic.List[object]
+    [void]$candidateProfiles.Add([pscustomobject]@{
+            Name = "CurrentUserCurrentHost"
+            Path = $PROFILE.CurrentUserCurrentHost
+        })
+    [void]$candidateProfiles.Add([pscustomobject]@{
+            Name = "CurrentUserAllHosts"
+            Path = $PROFILE.CurrentUserAllHosts
+        })
+
+    if ($IsWindows) {
+        $documentsPath = Join-Path -Path $HOME -ChildPath "Documents"
+        [void]$candidateProfiles.Add([pscustomobject]@{
+                Name = "WindowsPowerShellFallback"
+                Path = Join-Path -Path (Join-Path -Path $documentsPath -ChildPath "WindowsPowerShell") -ChildPath "Microsoft.PowerShell_profile.ps1"
+            })
     }
 
-    $powershell7SourcePath = $HOME
-    $powershell7SourcePath = "$powershell7SourcePath\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
-    if (Test-Path -Path $powershell7SourcePath -PathType Leaf) {
-        $backupFile = Split-Path $powershell7SourcePath -Leaf
-        $backupFile = "$backupFolder\$backupFile"
-        Copy-Item -Path $powershell7SourcePath -Destination $backupFile
-        $profilesBackedUp++
-        Write-Host "PowerShell 7 settings exported successfully." -ForegroundColor Green
+    $seenProfilePaths = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    $normalizedCandidates = New-Object System.Collections.Generic.List[object]
+    foreach ($candidate in $candidateProfiles) {
+        if ([string]::IsNullOrWhiteSpace($candidate.Path)) {
+            continue
+        }
+
+        $trimmedPath = $candidate.Path.Trim()
+        if (-not $seenProfilePaths.Add($trimmedPath)) {
+            continue
+        }
+
+        [void]$normalizedCandidates.Add([pscustomobject]@{
+                Name = $candidate.Name
+                Path = $trimmedPath
+            })
     }
-    else {
-        Write-Warning "W_POWERSHELL7_BACKUP_PROFILE_MISSING: PowerShell 7 settings file not found at '$powershell7SourcePath'."
+
+    Write-Verbose (
+        "PowerShell backup profile discovery diagnostics: candidateCount={0}; backupFolder='{1}'" -f
+        $normalizedCandidates.Count,
+        $backupFolder
+    )
+
+    foreach ($candidate in $normalizedCandidates) {
+        if (Test-Path -Path $candidate.Path -PathType Leaf) {
+            $destinationFileName = "{0}_{1}" -f $candidate.Name, [System.IO.Path]::GetFileName($candidate.Path)
+            $backupFile = Join-Path -Path $backupFolder -ChildPath $destinationFileName
+            Copy-Item -Path $candidate.Path -Destination $backupFile -Force
+            $profilesBackedUp++
+            Write-Host ("PowerShell profile '{0}' exported successfully from '{1}' to '{2}'." -f $candidate.Name, $candidate.Path, $backupFile) -ForegroundColor Green
+            continue
+        }
+
+        Write-Warning ("W_POWERSHELL_BACKUP_PROFILE_MISSING({0}): PowerShell profile not found at '{1}'." -f $candidate.Name, $candidate.Path)
     }
 
     if ($profilesBackedUp -eq 0) {
-        Write-Error "E_POWERSHELL_BACKUP_NO_PROFILES_FOUND: No PowerShell profile files were found to back up."
+        Write-Error "E_POWERSHELL_BACKUP_NO_PROFILES_FOUND: No PowerShell profile files were found to back up from discovered CurrentUser profile paths."
         exit 1
     }
 }

@@ -69,22 +69,79 @@ function Assert-RestoreStepScriptsExist {
     throw "E_RESTORE_PRE_FLIGHT_FAILED: Restore step script validation failed."
 }
 
+function Get-CurrentPlatformName {
+    if ($IsWindows) {
+        return "Windows"
+    }
+
+    if ($IsMacOS) {
+        return "macOS"
+    }
+
+    if ($IsLinux) {
+        return "Linux"
+    }
+
+    return "Unknown"
+}
+
+function Get-ApplicableRestoreSteps {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Steps,
+
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentPlatformName
+    )
+
+    $applicableSteps = New-Object System.Collections.Generic.List[object]
+    foreach ($step in $Steps) {
+        $supportedPlatforms = @($step.SupportedPlatforms)
+        if ($supportedPlatforms.Count -eq 0) {
+            throw (
+                "E_RESTORE_STEP_METADATA_INVALID({0}): Step '{1}' must define SupportedPlatforms metadata." -f
+                $step.Name,
+                $step.Name
+            )
+        }
+
+        if ($supportedPlatforms -contains "All" -or $supportedPlatforms -contains $CurrentPlatformName) {
+            [void]$applicableSteps.Add($step)
+            continue
+        }
+
+        Write-Warning (
+            "W_RESTORE_STEP_SKIPPED_PLATFORM: Skipping step '{0}' ({1}) on platform '{2}'. SupportedPlatforms={3}." -f
+            $step.Name,
+            $step.RelativeScriptPath,
+            $CurrentPlatformName,
+            ($supportedPlatforms -join ', ')
+        )
+    }
+
+    return , $applicableSteps.ToArray()
+}
+
 $stepResults = New-Object System.Collections.Generic.List[object]
 $steps = @(
-    @{ Name = "ScoopRestore"; RelativeScriptPath = "Scoop/ScoopRestore.ps1" },
-    @{ Name = "PowershellRestore"; RelativeScriptPath = "Powershell/PowershellRestore.ps1" },
-    @{ Name = "PowerToysRestore"; RelativeScriptPath = "PowerToys/PowerToysRestore.ps1" },
-    @{ Name = "ConfigRestore"; RelativeScriptPath = "Config/ConfigRestore.ps1" },
-    @{ Name = "KomorebiRestore"; RelativeScriptPath = "Komorebi/KomorebiRestore.ps1" },
-    @{ Name = "WindowsTerminalRestore"; RelativeScriptPath = "WindowsTerminal/WindowsTerminalRestore.ps1" }
+    @{ Name = "ScoopRestore"; RelativeScriptPath = "Scoop/ScoopRestore.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "PowershellRestore"; RelativeScriptPath = "Powershell/PowershellRestore.ps1"; SupportedPlatforms = @("All") },
+    @{ Name = "PowerToysRestore"; RelativeScriptPath = "PowerToys/PowerToysRestore.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "ConfigRestore"; RelativeScriptPath = "Config/ConfigRestore.ps1"; SupportedPlatforms = @("All") },
+    @{ Name = "KomorebiRestore"; RelativeScriptPath = "Komorebi/KomorebiRestore.ps1"; SupportedPlatforms = @("Windows") },
+    @{ Name = "WindowsTerminalRestore"; RelativeScriptPath = "WindowsTerminal/WindowsTerminalRestore.ps1"; SupportedPlatforms = @("Windows") }
 )
 
+$currentPlatformName = Get-CurrentPlatformName
+$applicableSteps = @(Get-ApplicableRestoreSteps -Steps $steps -CurrentPlatformName $currentPlatformName)
+
 Write-Verbose ("Restore path diagnostics: scriptsDirectory='{0}'" -f $scriptsDirectory)
-Assert-RestoreStepScriptsExist -Steps $steps
+Write-Verbose ("Restore platform diagnostics: currentPlatform='{0}', totalSteps={1}, applicableSteps={2}" -f $currentPlatformName, $steps.Count, $applicableSteps.Count)
+Assert-RestoreStepScriptsExist -Steps $applicableSteps
 
 Push-Location -LiteralPath $scriptsDirectory
 try {
-    foreach ($step in $steps) {
+    foreach ($step in $applicableSteps) {
         try {
             Invoke-RestoreStep -Name $step.Name -RelativeScriptPath $step.RelativeScriptPath
             [void]$stepResults.Add([pscustomobject]@{
@@ -111,6 +168,7 @@ try {
 
     Write-Host ""
     Write-Host "========== RESTORE SUMMARY ==========" -ForegroundColor Cyan
+    Write-Host ("Planned steps: {0}, Applicable on {1}: {2}, Skipped by platform: {3}" -f $steps.Count, $currentPlatformName, $applicableSteps.Count, ($steps.Count - $applicableSteps.Count))
     Write-Host ("Total steps: {0}, Successful: {1}, Failed: {2}" -f $totalCount, $succeededCount, $failedCount)
 
     if ($failedCount -gt 0) {
@@ -119,7 +177,7 @@ try {
             Write-Host ("  - {0}: {1}" -f $failedStep.Name, $failedStep.Error) -ForegroundColor Yellow
         }
 
-        Write-Error ("E_RESTORE_PARTIAL_FAILURE: One or more restore steps failed ({0}/{1} succeeded)." -f $succeededCount, $totalCount)
+        Write-Warning ("E_RESTORE_PARTIAL_FAILURE: One or more restore steps failed ({0}/{1} succeeded)." -f $succeededCount, $totalCount)
         exit 1
     }
 
