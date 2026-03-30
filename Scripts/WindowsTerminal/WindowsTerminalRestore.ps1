@@ -23,7 +23,8 @@ try {
 
     # Make a backup of the current settings before overwriting
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $backupFolder = Join-Path -Path $HOME -ChildPath "Documents\WT_Settings_Backup"
+    $backupFolder = Join-Path -Path $HOME -ChildPath "Documents"
+    $backupFolder = Join-Path -Path $backupFolder -ChildPath "WT_Settings_Backup"
     if (-not (Test-Path -Path $backupFolder -PathType Container)) {
         New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
     }

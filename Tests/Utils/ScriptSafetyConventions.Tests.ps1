@@ -1012,19 +1012,22 @@ Describe "Directory restoration safety conventions" {
         }
     }
 
-    It "uses -LiteralPath with Push-Location in PowerShell backup and restore scripts" {
-        $backupRestoreScripts = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts") -Filter "*.ps1" -Recurse -ErrorAction Stop |
-            Where-Object { $_.FullName -notmatch '[/\\]Utils[/\\]' })
+    It "uses -LiteralPath with Push-Location in all PowerShell scripts under Scripts/" {
+        $allScripts = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts") -Filter "*.ps1" -Recurse -ErrorAction Stop)
 
-        foreach ($scriptFile in $backupRestoreScripts) {
+        foreach ($scriptFile in $allScripts) {
             $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
             $content = Get-Content -Path $scriptFile.FullName -Raw
             if ($content -notmatch '(?m)^\s*Push-Location\b') {
                 continue
             }
-            # All Push-Location calls in backup/restore scripts must use -LiteralPath
+            # Push-Location must not use -Path (wildcard-unsafe)
             $content | Should -Not -Match 'Push-Location\s+-Path\b' -Because (
                 "$relativePath uses Push-Location and must use -LiteralPath to prevent wildcard expansion in paths."
+            )
+            # Push-Location must not use positional parameter (must explicitly specify -LiteralPath)
+            $content | Should -Not -Match 'Push-Location\s+([''"]|\$)' -Because (
+                "$relativePath uses Push-Location with positional path parameter (no -LiteralPath); use -LiteralPath explicitly to prevent wildcard expansion."
             )
         }
     }
@@ -1288,16 +1291,16 @@ Describe "Backup script safety conventions" {
     }
 
     It "uses portable home directory resolution (not env:USERPROFILE) in cross-platform scripts" {
-        $crossPlatformScripts = @(
-            "Scripts/Config/ConfigBackup.ps1",
-            "Scripts/Config/ConfigRestore.ps1"
-        ) | ForEach-Object { Join-Path -Path $script:repoRoot -ChildPath $_ }
+        # Scan all scripts excluding Windows-only app directories (Komorebi, WindowsTerminal, WinGet, PowerToys)
+        $windowsOnlyPattern = '[/\\](Komorebi|WindowsTerminal|WinGet|PowerToys)[/\\]'
+        $crossPlatformScripts = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts") -Filter "*.ps1" -Recurse -ErrorAction Stop |
+            Where-Object { $_.FullName -notmatch $windowsOnlyPattern })
 
-        foreach ($scriptPath in $crossPlatformScripts) {
-            $relativePath = $scriptPath.Replace($script:repoRoot, '').TrimStart('/\')
-            $content = Get-Content -Path $scriptPath -Raw
+        foreach ($scriptFile in $crossPlatformScripts) {
+            $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
+            $content = Get-Content -Path $scriptFile.FullName -Raw
             $content | Should -Not -Match '\$env:USERPROFILE' -Because (
-                "$relativePath is a cross-platform script and must use `$HOME instead of `$env:USERPROFILE."
+                "$relativePath is a cross-platform script and must use `$HOME instead of `$env:USERPROFILE (which is Windows-only)."
             )
         }
     }

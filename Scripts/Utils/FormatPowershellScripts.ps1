@@ -48,7 +48,7 @@ function Invoke-Main {
     Import-Module -Name $modulePath -ErrorAction Stop
 
     $rootDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition
-    Push-Location $rootDirectory
+    Push-Location -LiteralPath $rootDirectory
 
     try {
         # Get all .ps1/.psm1 files recursively in the directory.
