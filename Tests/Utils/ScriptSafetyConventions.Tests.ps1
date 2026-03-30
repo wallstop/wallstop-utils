@@ -26,6 +26,7 @@ BeforeAll {
     $script:qualityConfigFiles = @(
         ".pre-commit-config.yaml",
         ".editorconfig",
+        ".psscriptanalyzer.format.psd1",
         ".shellcheckrc",
         ".stylua.toml"
     )
@@ -497,10 +498,11 @@ Describe "Cross-language quality platform conventions" {
         $indexUpdaterPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
         $indexUpdater = Get-Content -Path $indexUpdaterPath -Raw
 
-        $indexUpdater | Should -Match '\$script:InvariantCulture\s*=\s*\[System\.Globalization\.CultureInfo\]::InvariantCulture'
-        $indexUpdater | Should -Match 'Sort-Object\s+-Unique\s+-Culture\s+\$script:InvariantCulture'
-        $indexUpdater | Should -Match 'Sort-Object\s+Name,\s*RelativePath\s+-Culture\s+\$script:InvariantCulture'
-        $indexUpdater | Should -Match 'Sort-Object\s+FullName\s+-Culture\s+\$script:InvariantCulture'
+        $indexUpdater | Should -Match '\$script:InvariantCultureName\s*=\s*\[System\.Globalization\.CultureInfo\]::InvariantCulture\.Name'
+        $indexUpdater | Should -Match 'Sort-Object\s+-Unique\s+-Culture\s+\$script:InvariantCultureName'
+        $indexUpdater | Should -Match 'Sort-Object\s+Name,\s*RelativePath\s+-Culture\s+\$script:InvariantCultureName'
+        $indexUpdater | Should -Match 'Sort-Object\s+FullName\s+-Culture\s+\$script:InvariantCultureName'
+        $indexUpdater | Should -Not -Match 'Sort-Object\s+[^\r\n]*-Culture\s+\(\[System\.Globalization\.CultureInfo\]::InvariantCulture\)'
     }
 
     It "excludes encrypted snapshot directories from check-json validation" {
@@ -1068,6 +1070,8 @@ Describe "Restore script safety conventions" {
 
         $powerToysRestore | Should -Match '\$targetPath'
         $powerToysRestore | Should -Not -Match '\$targetFolder'
+        $powerToysRestore | Should -Match 'Test-Path\s+-Path\s+\$copyFrom\s+-PathType\s+Container'
+        $powerToysRestore | Should -Match 'Test-Path\s+-Path\s+\$targetPath\s+-PathType\s+Container'
         $powerToysRestore | Should -Match 'Robocopy\.exe'
         $powerToysRestore | Should -Match 'robocopyExitCode\s*-ge\s*8'
         $powerToysRestore | Should -Match 'E_POWERTOYS_RESTORE_ROBOCOPY_FAILED'
@@ -1088,10 +1092,22 @@ Describe "Restore script safety conventions" {
     It "guards PowerShell profile backups on first-time machines" {
         $powershellRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Powershell/PowershellRestore.ps1') -Raw) -replace "`r", ''
 
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$powershellSettings\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$powershellSettings\s+-Destination\s+\$powershellBackupFile'
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsPowershellSettings\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsPowershellSettings\s+-Destination\s+\$windowsPowershellBackupFile'
-        $powershellRestore | Should -Match 'E_PS_RESTORE_NO_POWERSHELL_PROFILE'
-        $powershellRestore | Should -Match 'E_PS_RESTORE_NO_WINDOWS_POWERSHELL_PROFILE'
+        $powershellRestore | Should -Match 'Test-Path\s+-Path\s+\$settingsPath\s+-PathType\s+Leaf'
+        $powershellRestore | Should -Match 'Write-Error\s+"E_POWERSHELL_RESTORE_SOURCE_MISSING:'
+        $powershellRestore | Should -Not -Match 'Write-Host\s+"Powershell settings backup not found at'
+        $powershellRestore | Should -Match '(?-i)Microsoft\.PowerShell_profile\.ps1'
+        $powershellRestore | Should -Not -Match '(?-i)Microsoft\.Powershell_profile\.ps1'
+        $powershellRestore | Should -Match 'Join-Path\s+-Path\s+\$HOME\s+-ChildPath\s+''Documents'''
+        $powershellRestore | Should -Match 'Join-Path\s+-Path\s+\$documentsPath\s+-ChildPath\s+''PowerShell'''
+        $powershellRestore | Should -Match 'Join-Path\s+-Path\s+\$documentsPath\s+-ChildPath\s+''WindowsPowerShell'''
+        $powershellRestore | Should -Not -Match '\$HOME\\Documents\\PowerShell'
+        $powershellRestore | Should -Not -Match '\$HOME\\Documents\\Powershell'
+        $powershellRestore | Should -Match 'Test-Path\s+-Path\s+\$powershellConfigPath\s+-PathType\s+Container'
+        $powershellRestore | Should -Match 'Test-Path\s+-Path\s+\$windowsPowershellConfigPath\s+-PathType\s+Container'
+        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$powershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$powershellSettings\s+-Destination\s+\$powershellBackupFile'
+        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsPowershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsPowershellSettings\s+-Destination\s+\$windowsPowershellBackupFile'
+        $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_POWERSHELL_PROFILE'
+        $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_WINDOWS_POWERSHELL_PROFILE'
     }
 
     It "validates required Komorebi source files before restore copy" {
@@ -1556,7 +1572,7 @@ Describe "Dependabot manifest coverage drift conventions" {
         $ignoredDirectoryNames = @('.git', '.venv', '.cache', '.tox', '.pytest_cache', '.egg-info', '.bundle', '.dart_tool', '.flutter-plugins', 'node_modules', 'dist', 'build', 'venv', 'vendor', 'target', '__pycache__')
         $ignoredPathAlternation = (
             $ignoredDirectoryNames |
-            ForEach-Object { [System.Text.RegularExpressions.Regex]::Escape($_) }
+                ForEach-Object { [System.Text.RegularExpressions.Regex]::Escape($_) }
         ) -join '|'
         $ignoredPathPattern = "(?:^|[\\/])($ignoredPathAlternation)(?:[\\/]|$)"
 
@@ -1588,9 +1604,9 @@ Describe "Dependabot manifest coverage drift conventions" {
         try {
             $relativePaths = @(
                 git -C $script:repoRoot ls-files --cached --others --exclude-standard 2>$null |
-                ForEach-Object { $_.Trim() } |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                Sort-Object -Unique
+                    ForEach-Object { $_.Trim() } |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    Sort-Object -Unique
             )
 
             if ($LASTEXITCODE -ne 0) {
@@ -1599,14 +1615,14 @@ Describe "Dependabot manifest coverage drift conventions" {
 
             $allRepoFiles = @(
                 $relativePaths |
-                Where-Object { $_ -notmatch $ignoredPathPattern } |
-                ForEach-Object {
-                    $absolutePath = Join-Path -Path $script:repoRoot -ChildPath $_
-                    if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
-                        Get-Item -LiteralPath $absolutePath -ErrorAction SilentlyContinue
-                    }
-                } |
-                Where-Object { $null -ne $_ }
+                    Where-Object { $_ -notmatch $ignoredPathPattern } |
+                    ForEach-Object {
+                        $absolutePath = Join-Path -Path $script:repoRoot -ChildPath $_
+                        if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
+                            Get-Item -LiteralPath $absolutePath -ErrorAction SilentlyContinue
+                        }
+                    } |
+                    Where-Object { $null -ne $_ }
             )
         }
         catch {
@@ -1643,7 +1659,7 @@ Describe "Dependabot manifest coverage drift conventions" {
 
             $allRepoFiles = @(
                 $collectedFiles |
-                Sort-Object FullName
+                    Sort-Object FullName
             )
         }
 
@@ -1656,7 +1672,7 @@ Describe "Dependabot manifest coverage drift conventions" {
         foreach ($mapping in $manifestMappings) {
             $foundFiles = @(
                 $allRepoFiles |
-                Where-Object { $_.Name -like $mapping.Filter }
+                    Where-Object { $_.Name -like $mapping.Filter }
             )
 
             if ($foundFiles.Count -eq 0) {
@@ -1670,8 +1686,8 @@ Describe "Dependabot manifest coverage drift conventions" {
 
             $sampleFiles = @(
                 $foundFiles |
-                Select-Object -First 3 |
-                ForEach-Object { [System.IO.Path]::GetRelativePath($script:repoRoot, $_.FullName) }
+                    Select-Object -First 3 |
+                    ForEach-Object { [System.IO.Path]::GetRelativePath($script:repoRoot, $_.FullName) }
             )
 
             $violations.Add(("{0} requires ecosystem '{1}' (matches={2}; example files: {3}; diagnostics: {4})" -f $mapping.Filter, $mapping.Ecosystem, $foundFiles.Count, ($sampleFiles -join '; '), $scanDiagnostics)) | Out-Null
@@ -1742,6 +1758,23 @@ Describe "JSON parsing conventions" {
 }
 
 Describe "Utility configuration safety conventions" {
+    It "keeps formatter settings and tab-normalization fail-fast diagnostics in Format-PowerShellFiles" {
+        $formatterPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Format-PowerShellFiles.ps1"
+        $formatterContent = Get-Content -Path $formatterPath -Raw
+
+        $formatterContent | Should -Match '\.psscriptanalyzer\.format\.psd1'
+        $formatterContent | Should -Match 'Get-LeadingTabIndentedLineNumbers'
+        $formatterContent | Should -Match 'E_FORMATTER_OUTPUT_INVALID'
+        $formatterContent | Should -Match 'E_FORMATTER_TAB_INDENTATION_REMAINING'
+        $formatterContent | Should -Match 'Formatter tab-normalization diagnostics:'
+
+        $formatSettingsPath = Join-Path -Path $script:repoRoot -ChildPath '.psscriptanalyzer.format.psd1'
+        $formatSettings = Get-Content -Path $formatSettingsPath -Raw
+        $formatSettings | Should -Match 'PSUseConsistentIndentation'
+        $formatSettings | Should -Match 'Kind\s*=\s*''space'''
+        $formatSettings | Should -Match 'IndentationSize\s*=\s*4'
+    }
+
     It "guards Invoke-Pester usage in Run-PreCommitValidation" {
         $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
         $content = Get-Content -Path $preCommitPath -Raw
@@ -1975,6 +2008,41 @@ Describe "PowerShell formatting conventions" {
             "Standalone comma lines inside param blocks reduce readability and are easy to miss in review. Violations: {0}" -f ($violations -join ", ")
         )
     }
+
+    It "enforces space indentation in PowerShell files" {
+        $searchRoots = @(
+            (Join-Path -Path $script:repoRoot -ChildPath "Scripts"),
+            (Join-Path -Path $script:repoRoot -ChildPath "Tests")
+        )
+
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($root in $searchRoots) {
+            if (-not (Test-Path -Path $root -PathType Container)) {
+                continue
+            }
+
+            $files = @(
+                Get-ChildItem -Path $root -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+                Get-ChildItem -Path $root -Filter "*.psm1" -File -Recurse -ErrorAction Stop
+                Get-ChildItem -Path $root -Filter "*.psd1" -File -Recurse -ErrorAction Stop
+            )
+
+            foreach ($file in $files) {
+                $lines = @(Get-Content -Path $file.FullName)
+                for ($index = 0; $index -lt $lines.Count; $index++) {
+                    if ($lines[$index] -match '^(?: )*\t+') {
+                        $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                        $violations.Add("${relativePath}:$($index + 1)") | Out-Null
+                    }
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "PowerShell files must use space indentation per .editorconfig. Violations: {0}" -f ($violations -join ', ')
+        )
+    }
 }
 
 Describe "Retry test determinism conventions" {
@@ -2187,6 +2255,9 @@ Describe "PowerShell return safety conventions" {
         $fullValidationPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-FullValidation.ps1"
         $fullValidation = Get-Content -Path $fullValidationPath -Raw
         $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Sort-Object' -Because "Get-StatusSnapshot should keep deterministic sorting for stable drift comparisons."
+        $fullValidation | Should -Match '\$invariantCultureName\s*=\s*\[System\.Globalization\.CultureInfo\]::InvariantCulture\.Name' -Because "Sort-Object -Culture should use an explicit culture name string to avoid binder ambiguity."
+        $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Sort-Object\s+-Culture\s+\$invariantCultureName' -Because "Get-StatusSnapshot should use an explicit invariant culture name string for deterministic sorting."
+        $fullValidation | Should -Not -Match 'Sort-Object\s+-Culture\s+\(\[System\.Globalization\.CultureInfo\]::InvariantCulture\)' -Because "Sort-Object -Culture must not pass CultureInfo objects directly."
         $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?return\s*,\s*(?:@\(|\$\w+)' -Because "Get-StatusSnapshot must preserve empty git-status snapshots as arrays."
         $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusBeforeValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_BEFORE_NULL' -Because "workspace drift comparison must guard null before-snapshot values with an explicit E_ code."
         $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusAfterValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_AFTER_NULL' -Because "workspace drift comparison must guard null after-snapshot values with an explicit E_ code."

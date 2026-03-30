@@ -41,7 +41,10 @@ function Get-StatusSnapshot {
         throw "E_VALIDATION_GIT_STATUS_FAILED: unable to read git status snapshot (exitCode=$statusExit)."
     }
 
-    $sortedStatusLines = @($statusLines | Sort-Object -Culture ([System.Globalization.CultureInfo]::InvariantCulture))
+    $invariantCultureName = [System.Globalization.CultureInfo]::InvariantCulture.Name
+    $sortedStatusLines = @($statusLines | Sort-Object -Culture $invariantCultureName)
+    $cultureDiagnostic = if ([string]::IsNullOrEmpty($invariantCultureName)) { '<InvariantCulture>' } else { $invariantCultureName }
+    Write-Verbose "Status snapshot diagnostics: entries=$($statusLines.Count) sortCulture=$cultureDiagnostic"
     return , $sortedStatusLines
 }
 

@@ -148,6 +148,9 @@ Scripts under `Scripts/Utils/` must run on Windows, macOS, and Linux with PowerS
 11. Use `Test-Path` (`-PathType` where relevant) for existence/type checks. Use `Resolve-Path` to canonicalize existing paths before comparison or persistence.
 12. For `Get-ChildItem`, prefer `-Filter` on FileSystem for provider-side filtering; use `-Depth` as an optional bound for deep traversals, not as a universal requirement.
 13. For nested location workflows, use named stacks with `Push-Location -StackName` and restore via `Pop-Location` in `finally` blocks.
+14. For deterministic sorting with `Sort-Object -Culture`, pass a culture name string (for example `[System.Globalization.CultureInfo]::InvariantCulture.Name`) instead of a `CultureInfo` object.
+15. Follow `.editorconfig` indentation for PowerShell files (`*.ps1`, `*.psm1`, `*.psd1`): spaces only (no leading tab indentation).
+16. Keep PowerShell formatter settings in `.psscriptanalyzer.format.psd1` with `PSUseConsistentIndentation` (`Kind='space'`, `IndentationSize=4`) and fail fast when formatter output still contains leading tabs.
 
 ## Cross-Platform Shell Tooling (Bash grep awk sed)
 
