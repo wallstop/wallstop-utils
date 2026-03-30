@@ -8,7 +8,7 @@ $backupFolder = "$baseDirectory\Config\WindowsTerminal"
 Push-Location -LiteralPath $baseDirectory
 
 try {
-    if (-not (Test-Path -Path $backupFolder)) {
+    if (-not (Test-Path -Path $backupFolder -PathType Container)) {
         New-Item -Path $backupFolder -ItemType Directory | Out-Null
     }
 

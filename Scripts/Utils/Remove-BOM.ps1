@@ -132,7 +132,7 @@ function Get-GitIgnorePatterns {
 
     # Read .gitignore if it exists
     $gitIgnorePath = Join-Path -Path $repoRoot -ChildPath ".gitignore"
-    if (Test-Path -Path $gitIgnorePath) {
+    if (Test-Path -Path $gitIgnorePath -PathType Leaf) {
         $gitignoreContent = Get-Content -Path $gitIgnorePath |
             Where-Object {
                 # Filter out comments and empty lines

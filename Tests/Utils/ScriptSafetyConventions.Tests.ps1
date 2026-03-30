@@ -602,6 +602,9 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Match 'files were modified by this hook'
         $workflow | Should -Match 'Auto-formatted files'
         $workflow | Should -Not -Match 'hook id:[\s\S]*\{\s*print\s+\$NF\s*\}'
+        # failed_hook_ids must use awk block-tracking (exit code) not a plain sed to avoid capturing passing hooks
+        $workflow | Should -Not -Match 'failed_hook_ids.*sed\s+-n\s+''s.*hook\s+id'
+        $workflow | Should -Match 'failed_hook_ids[\s\S]*exit code[\s\S]*[1-9]'
         $workflow | Should -Match 'Run shell hooks on changed files'
         $workflow | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
         $workflow | Should -Match 'Invoke-MacOSLanguageChecks\.sh'
@@ -1288,6 +1291,7 @@ Describe "Backup script safety conventions" {
         $windowsTerminalBackup | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Leaf'
         $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING'
         $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING[\s\S]*exit\s+1'
+        $windowsTerminalBackup | Should -Match 'Test-Path\s+-Path\s+\$backupFolder\s+-PathType\s+Container'
     }
 
     It "uses profile-driven path-safe backup and fails when no PowerShell profiles are available" {
@@ -1305,6 +1309,7 @@ Describe "Backup script safety conventions" {
         $powershellBackup | Should -Match '\$profilesBackedUp\s*=\s*0'
         $powershellBackup | Should -Match 'if\s*\(\s*\$profilesBackedUp\s*-eq\s*0\s*\)'
         $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_NO_PROFILES_FOUND'
+        $powershellBackup | Should -Match 'Test-Path\s+-Path\s+\$backupFolder\s+-PathType\s+Container'
     }
 
     It "uses UTF-8 no-BOM writes for Scoop backup output" {

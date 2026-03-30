@@ -86,7 +86,23 @@ jobs:
           )"
 
           failed_hook_ids="$(
-            sed -n 's/^[[:space:]]*- hook id:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$clean_precommit_log" | sort -u | tr '\n' ',' | sed 's/,$//'
+            awk '
+              /^[[:space:]]*- hook id:[[:space:]]*/ {
+                current = $0
+                sub(/^[[:space:]]*- hook id:[[:space:]]*/, "", current)
+                sub(/[[:space:]].*$/, "", current)
+                next
+              }
+              /^[[:space:]]*- exit code:[[:space:]]*[1-9]/ {
+                if (current != "") {
+                  print current
+                  current = ""
+                }
+              }
+              /^[^[:space:]-]/ {
+                current = ""
+              }
+            ' "$clean_precommit_log" | sort -u | tr '\n' ',' | sed 's/,$//'
           )"
 
           if [[ -n "$autofix_hook_ids" ]]; then
