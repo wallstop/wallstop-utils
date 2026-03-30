@@ -123,6 +123,10 @@ double quotes, and other special characters. Prefer `System.Diagnostics.Process`
 
 `return @()` inside a function silently returns `$null` instead of an empty array.
 
+`return @(<pipeline>)` has the same risk when the pipeline emits no values.
+Use a comma-wrapped return (`return , @(<expression>)`) whenever callers depend on
+array semantics in empty-result paths.
+
 - Use `return , @()` (comma operator) when callers access `.Count` directly on the result.
 - If callers always wrap with `@()`, the bare `return @()` is safe — add `# array-unwrap-safe`.
 - A convention test in `ScriptSafetyConventions.Tests.ps1` enforces this in `Scripts/`.

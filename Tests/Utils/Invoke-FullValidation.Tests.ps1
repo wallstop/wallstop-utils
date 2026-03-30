@@ -11,6 +11,32 @@ BeforeAll {
 }
 
 Describe "Invoke-FullValidation workflow contract" {
+    $requiredValidationCommands = @(
+        @{ Name = "pre-commit stage all files"; Pattern = 'pre-commit\s+run\s+--hook-stage\s+pre-commit\s+--all-files' }
+        @{ Name = "pre-push stage all files"; Pattern = 'pre-commit\s+run\s+--hook-stage\s+pre-push\s+--all-files' }
+    )
+
+    $requiredFailureCodes = @(
+        "E_VALIDATION_PRECOMMIT_FAILED"
+        "E_VALIDATION_PREPUSH_FAILED"
+        "E_VALIDATION_CI_FAILED"
+        "E_VALIDATION_PR_MISSING"
+        "E_VALIDATION_PREREQ_MISSING"
+        "E_VALIDATION_STATUS_BEFORE_NULL"
+        "E_VALIDATION_STATUS_AFTER_NULL"
+    )
+
+    $workspaceDriftSafetyMarkers = @(
+        @{ Name = "snapshot helper"; Pattern = 'Get-StatusSnapshot' }
+        @{ Name = "snapshot sorting"; Pattern = 'function\s+Get-StatusSnapshot\b[\s\S]*?Sort-Object' }
+        @{ Name = "comma-wrapped snapshot return"; Pattern = 'function\s+Get-StatusSnapshot\b[\s\S]*?return\s*,\s*(?:@\(|\$\w+)' }
+        @{ Name = "before snapshot null guard"; Pattern = 'if\s*\(\s*\$null\s*-eq\s*\$statusBeforeValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_BEFORE_NULL' }
+        @{ Name = "after snapshot null guard"; Pattern = 'if\s*\(\s*\$null\s*-eq\s*\$statusAfterValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_AFTER_NULL' }
+        @{ Name = "verbose snapshot diagnostics"; Pattern = 'Write-Verbose\s+".*before=\$beforeCount.*after=\$afterCount' }
+        @{ Name = "tree drift failure code"; Pattern = 'E_VALIDATION_TREE_DRIFT' }
+        @{ Name = "compare object assertion"; Pattern = 'Compare-Object[\s\S]*\$statusBeforeValidation[\s\S]*\$statusAfterValidation' }
+    )
+
     It "exists and parses without PowerShell syntax errors" {
         $tokens = $null
         $parseErrors = $null
@@ -20,9 +46,8 @@ Describe "Invoke-FullValidation workflow contract" {
         @($parseErrors).Count | Should -Be 0
     }
 
-    It "runs both pre-commit and pre-push stages across all files" {
-        $script:validationScript | Should -Match 'pre-commit\s+run\s+--hook-stage\s+pre-commit\s+--all-files'
-        $script:validationScript | Should -Match 'pre-commit\s+run\s+--hook-stage\s+pre-push\s+--all-files'
+    It "runs required validation command: <Name>" -ForEach $requiredValidationCommands {
+        $script:validationScript | Should -Match $Pattern
     }
 
     It "runs explicit LLM index and harness checks" {
@@ -31,10 +56,8 @@ Describe "Invoke-FullValidation workflow contract" {
         $script:validationScript | Should -Match 'Test-LlmHarness\.ps1'
     }
 
-    It "checks workspace drift using before and after git status snapshots" {
-        $script:validationScript | Should -Match 'Get-StatusSnapshot'
-        $script:validationScript | Should -Match 'Compare-Object\s+-ReferenceObject\s+\$statusBeforeValidation\s+-DifferenceObject\s+\$statusAfterValidation'
-        $script:validationScript | Should -Match 'E_VALIDATION_TREE_DRIFT'
+    It "enforces workspace drift safeguard: <Name>" -ForEach $workspaceDriftSafetyMarkers {
+        $script:validationScript | Should -Match $Pattern
     }
 
     It "supports CI watch mode and checks GitHub PR status" {
@@ -43,12 +66,9 @@ Describe "Invoke-FullValidation workflow contract" {
         $script:validationScript | Should -Match 'gh\s+pr\s+checks\s+\$prNumber\s+--watch'
     }
 
-    It "defines explicit failure code families for deterministic triage" {
-        $script:validationScript | Should -Match 'E_VALIDATION_PRECOMMIT_FAILED'
-        $script:validationScript | Should -Match 'E_VALIDATION_PREPUSH_FAILED'
-        $script:validationScript | Should -Match 'E_VALIDATION_CI_FAILED'
-        $script:validationScript | Should -Match 'E_VALIDATION_PR_MISSING'
-        $script:validationScript | Should -Match 'E_VALIDATION_PREREQ_MISSING'
+    It "defines failure code for deterministic triage: <_>" -ForEach $requiredFailureCodes {
+        $escapedCode = [Regex]::Escape($PSItem)
+        $script:validationScript | Should -Match $escapedCode
     }
 }
 

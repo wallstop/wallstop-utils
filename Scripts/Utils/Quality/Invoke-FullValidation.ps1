@@ -41,7 +41,8 @@ function Get-StatusSnapshot {
         throw "E_VALIDATION_GIT_STATUS_FAILED: unable to read git status snapshot (exitCode=$statusExit)."
     }
 
-    return @($statusLines | Sort-Object)
+    $sortedStatusLines = @($statusLines | Sort-Object -Culture ([System.Globalization.CultureInfo]::InvariantCulture))
+    return , $sortedStatusLines
 }
 
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
@@ -80,6 +81,15 @@ try {
 
     Write-Host "[validation] workspace drift assertion"
     $statusAfterValidation = Get-StatusSnapshot
+    $beforeCount = if ($null -eq $statusBeforeValidation) { "<null>" } else { [string](@($statusBeforeValidation).Count) }
+    $afterCount = if ($null -eq $statusAfterValidation) { "<null>" } else { [string](@($statusAfterValidation).Count) }
+    Write-Verbose "Workspace drift snapshots: before=$beforeCount after=$afterCount"
+    if ($null -eq $statusBeforeValidation) {
+        throw "E_VALIDATION_STATUS_BEFORE_NULL: status snapshot before validation is null."
+    }
+    if ($null -eq $statusAfterValidation) {
+        throw "E_VALIDATION_STATUS_AFTER_NULL: status snapshot after validation is null."
+    }
     $statusDiff = Compare-Object -ReferenceObject $statusBeforeValidation -DifferenceObject $statusAfterValidation
     if ($null -ne $statusDiff) {
         $statusPreview = ($statusDiff | Select-Object -First 20 | ForEach-Object { "  $($_.SideIndicator) $($_.InputObject)" }) -join [Environment]::NewLine

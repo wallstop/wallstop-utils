@@ -2081,5 +2081,12 @@ Describe "PowerShell return safety conventions" {
         $violations.Count | Should -Be 0 -Because (
             "'return @()' silently returns `$null` instead of an empty array. Use 'return , @()' (comma operator) to preserve the array wrapper, or add '# array-unwrap-safe' if callers always wrap with @(). Violations: {0}" -f ($violations -join ', ')
         )
+
+        $fullValidationPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-FullValidation.ps1"
+        $fullValidation = Get-Content -Path $fullValidationPath -Raw
+        $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Sort-Object' -Because "Get-StatusSnapshot should keep deterministic sorting for stable drift comparisons."
+        $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?return\s*,\s*(?:@\(|\$\w+)' -Because "Get-StatusSnapshot must preserve empty git-status snapshots as arrays."
+        $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusBeforeValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_BEFORE_NULL' -Because "workspace drift comparison must guard null before-snapshot values with an explicit E_ code."
+        $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusAfterValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_AFTER_NULL' -Because "workspace drift comparison must guard null after-snapshot values with an explicit E_ code."
     }
 }
