@@ -134,45 +134,106 @@ function Resolve-CanonicalFileSystemPath {
         [string]$path
     )
 
-    $resolvedPath = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
-    $absolutePath = [System.IO.Path]::GetFullPath($resolvedPath)
-    $rootPath = [System.IO.Path]::GetPathRoot($absolutePath)
-
-    if ([string]::IsNullOrWhiteSpace($rootPath)) {
-        return $absolutePath
-    }
-
-    $relativePath = $absolutePath.Substring($rootPath.Length).TrimStart('\', '/')
-    if ([string]::IsNullOrWhiteSpace($relativePath)) {
-        return [System.IO.Path]::GetFullPath($rootPath)
-    }
-
-    $pathSegments = @($relativePath -split '[\\/]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $currentPath = [System.IO.Path]::GetFullPath($rootPath)
-
-    foreach ($segment in $pathSegments) {
-        $nextPath = Join-Path -Path $currentPath -ChildPath $segment
-        $nextItem = Get-Item -LiteralPath $nextPath -ErrorAction Stop
+    try {
+        $resolvedPath = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
+        $resolvedItem = Get-Item -LiteralPath $resolvedPath -ErrorAction Stop
 
         $resolvedLinkTarget = $null
-        if ($nextItem.PSObject.Methods.Name -contains "ResolveLinkTarget") {
+        if ($resolvedItem.PSObject.Methods.Name -contains "ResolveLinkTarget") {
             try {
-                $resolvedLinkTarget = $nextItem.ResolveLinkTarget($true)
+                $resolvedLinkTarget = $resolvedItem.ResolveLinkTarget($true)
             }
             catch {
                 $resolvedLinkTarget = $null
             }
         }
 
-        if ($null -ne $resolvedLinkTarget) {
-            $currentPath = [System.IO.Path]::GetFullPath($resolvedLinkTarget.FullName)
+        $canonicalCandidate = if ($null -ne $resolvedLinkTarget) {
+            $resolvedLinkTarget.FullName
         }
         else {
-            $currentPath = [System.IO.Path]::GetFullPath($nextItem.FullName)
+            $resolvedItem.FullName
         }
+
+        return [System.IO.Path]::GetFullPath($canonicalCandidate)
+    }
+    catch {
+        throw "E_REMOVE_BOM_CANONICAL_PATH_RESOLUTION_FAILED: Failed to canonicalize '$path' - $($_.Exception.Message)"
+    }
+}
+
+function Get-FallbackSafetyAssessment {
+    param(
+        [string]$resolvedScanRoot,
+        [System.StringComparison]$comparison
+    )
+
+    $gitMetadataBoundary = $null
+    $boundaryProbe = $resolvedScanRoot
+    while ($true) {
+        $gitMetadataPath = Join-Path -Path $boundaryProbe -ChildPath ".git"
+        if (Test-Path -LiteralPath $gitMetadataPath) {
+            $gitMetadataBoundary = $boundaryProbe
+            break
+        }
+
+        $parentProbe = Split-Path -Path $boundaryProbe -Parent
+        if ([string]::IsNullOrWhiteSpace($parentProbe) -or $parentProbe.Equals($boundaryProbe, $comparison)) {
+            break
+        }
+
+        $boundaryProbe = $parentProbe
     }
 
-    return [System.IO.Path]::GetFullPath($currentPath)
+    $isRepositoryScopedFallback = -not [string]::IsNullOrWhiteSpace($gitMetadataBoundary)
+    $fallbackScope = if ($isRepositoryScopedFallback) {
+        "repository-ancestors"
+    }
+    else {
+        "scan-root-only"
+    }
+
+    $gitIgnorePaths = @()
+    $gitIgnoreProbe = $resolvedScanRoot
+    $checkedAncestors = 0
+    while ($true) {
+        $checkedAncestors++
+        $gitIgnorePath = Join-Path -Path $gitIgnoreProbe -ChildPath ".gitignore"
+        if (Test-Path -LiteralPath $gitIgnorePath -PathType Leaf) {
+            $gitIgnorePaths += $gitIgnorePath
+        }
+
+        if (-not $isRepositoryScopedFallback) {
+            # Keep non-repository fallback behavior scoped to the requested root only.
+            break
+        }
+
+        if ($gitIgnoreProbe.Equals($gitMetadataBoundary, $comparison)) {
+            break
+        }
+
+        $parentProbe = Split-Path -Path $gitIgnoreProbe -Parent
+        if ([string]::IsNullOrWhiteSpace($parentProbe) -or $parentProbe.Equals($gitIgnoreProbe, $comparison)) {
+            break
+        }
+
+        $gitIgnoreProbe = $parentProbe
+    }
+
+    $boundaryDiagnosticsValue = if ($isRepositoryScopedFallback) {
+        $gitMetadataBoundary
+    }
+    else {
+        "none"
+    }
+
+    return [PSCustomObject]@{
+        GitMetadataBoundary = $gitMetadataBoundary
+        GitIgnorePaths      = @($gitIgnorePaths)
+        FallbackScope       = $fallbackScope
+        CheckedAncestors    = $checkedAncestors
+        Diagnostics         = "fallbackScope=$fallbackScope checkedAncestors=$checkedAncestors gitBoundary=$boundaryDiagnosticsValue"
+    }
 }
 
 function Resolve-ScannableFileDiscovery {
@@ -271,19 +332,29 @@ function Resolve-ScannableFileDiscovery {
         $gitDiscoveryFailureReason = "git command not found on PATH"
     }
 
-    $gitIgnorePath = Join-Path -Path $resolvedScanRoot -ChildPath ".gitignore"
-    if (Test-Path -LiteralPath $gitIgnorePath -PathType Leaf) {
-        throw "E_REMOVE_BOM_GIT_DISCOVERY_REQUIRED: .gitignore found at '$gitIgnorePath', but git-native file discovery is unavailable ($gitDiscoveryFailureReason). Refusing unsafe fallback because ignore-rule semantics cannot be guaranteed."
+    $comparison = if ($IsWindows) {
+        [System.StringComparison]::OrdinalIgnoreCase
+    }
+    else {
+        [System.StringComparison]::Ordinal
+    }
+
+    $fallbackSafetyAssessment = Get-FallbackSafetyAssessment -resolvedScanRoot $resolvedScanRoot -comparison $comparison
+    $gitIgnorePaths = @($fallbackSafetyAssessment.GitIgnorePaths)
+
+    if ($gitIgnorePaths.Count -gt 0) {
+        $gitIgnoreList = $gitIgnorePaths -join "', '"
+        throw "E_REMOVE_BOM_GIT_DISCOVERY_REQUIRED: .gitignore found at '$gitIgnoreList', but git-native file discovery is unavailable ($gitDiscoveryFailureReason). Refusing unsafe fallback because ignore-rule semantics cannot be guaranteed. Diagnostics: $($fallbackSafetyAssessment.Diagnostics)"
     }
 
     if (-not [string]::IsNullOrWhiteSpace($gitDiscoveryFailureReason)) {
-        Write-Warning "W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK: $gitDiscoveryFailureReason. Falling back to filesystem traversal (no .gitignore found under scan root)."
+        Write-Warning "W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK: $gitDiscoveryFailureReason. Falling back to filesystem traversal after fallback-safety checks. Diagnostics: $($fallbackSafetyAssessment.Diagnostics)"
     }
 
     $defaultExclusionPatterns = Get-DefaultExclusionPatterns
     return [PSCustomObject]@{
         Mode                     = "filesystem-fallback"
-        Diagnostics              = "fallbackPatterns=$($defaultExclusionPatterns.Count) streaming=true"
+        Diagnostics              = "scanRootInput=$scanRootInput resolvedScanRoot=$resolvedScanRoot fallbackPatterns=$($defaultExclusionPatterns.Count) $($fallbackSafetyAssessment.Diagnostics) streaming=true"
         ResolvedScanRoot         = $resolvedScanRoot
         DefaultExclusionPatterns = @($defaultExclusionPatterns)
     }
@@ -303,13 +374,9 @@ function Get-ScannableFileStream {
                 }
 
                 $candidatePath = Join-Path -Path $scanPlan.GitRoot -ChildPath $trimmedRelativePath
-                if (-not (Test-IsPathUnderRoot -path $candidatePath -root $scanPlan.ResolvedScanRoot)) {
-                    return
-                }
-
                 try {
                     $candidateItem = Get-Item -LiteralPath $candidatePath -ErrorAction Stop
-                    if ($candidateItem -is [System.IO.FileInfo]) {
+                    if ($candidateItem -is [System.IO.FileInfo] -and (Test-IsPathUnderRoot -path $candidateItem.FullName -root $scanPlan.ResolvedScanRoot)) {
                         Write-Output $candidateItem
                     }
                 }

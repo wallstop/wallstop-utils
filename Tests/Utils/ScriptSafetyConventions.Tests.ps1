@@ -1154,6 +1154,7 @@ Describe "File stream safety conventions" {
         $content | Should -Match 'function\s+Resolve-ScannableFileDiscovery'
         $content | Should -Match 'function\s+Get-ScannableFileStream'
         $content | Should -Match 'function\s+Get-ScannableFiles'
+        $content | Should -Match 'Test-IsPathUnderRoot\s+-path\s+\$candidateItem\.FullName\s+-root\s+\$scanPlan\.ResolvedScanRoot' -Because 'Git-stream scope filtering should use materialized file paths to avoid alias-vs-canonical mismatches.'
         $content | Should -Not -Match '\$scanFiles\s*=\s*@\(\$scanPlan\.Files\)'
         $content | Should -Match 'Get-ScannableFileStream\s+-scanPlan\s+\$scanPlan\s*\|'
         $content | Should -Match 'listedPaths=deferred'
@@ -1197,6 +1198,16 @@ Describe "File stream safety conventions" {
         $content | Should -Match 'scanRootInput=\$scanRootInput' -Because 'Discovery diagnostics must include the caller-provided scan root for alias-vs-canonical troubleshooting'
     }
 
+    It "keeps Remove-BOM canonical path resolution robust and diagnosable" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'E_REMOVE_BOM_CANONICAL_PATH_RESOLUTION_FAILED' -Because 'Canonicalization failures must emit a stable diagnostic for root-cause triage.'
+        $content | Should -Match 'Get-Item\s+-LiteralPath\s+\$resolvedPath\s+-ErrorAction\s+Stop' -Because 'Canonicalization should materialize the resolved path directly.'
+        $content | Should -Not -Match '\$pathSegments\s*=' -Because 'Segment-by-segment canonicalization is fragile across runner path aliases and should not be reintroduced.'
+        $content | Should -Not -Match 'foreach\s*\(\$segment\s+in\s+\$pathSegments\)' -Because 'Canonicalization should avoid intermediate segment traversal.'
+    }
+
     It "keeps explicit prefix-read diagnostics in Remove-BOM" {
         $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
         $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
@@ -1210,8 +1221,13 @@ Describe "File stream safety conventions" {
         $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
         $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
 
+        $content | Should -Match 'function\s+Get-FallbackSafetyAssessment' -Because 'Fallback safety checks should be centralized to avoid duplicated and drifting ancestor-walk logic.'
+        $content | Should -Match 'Get-FallbackSafetyAssessment\s+-resolvedScanRoot\s+\$resolvedScanRoot\s+-comparison\s+\$comparison' -Because 'Resolve-ScannableFileDiscovery should consume the centralized fallback safety assessment.'
         $content | Should -Match 'W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK'
         $content | Should -Match 'E_REMOVE_BOM_GIT_DISCOVERY_REQUIRED'
+        $content | Should -Match 'fallbackScope=' -Because 'Fallback diagnostics should expose scope mode (scan-root-only vs repository-ancestors).'
+        $content | Should -Match 'checkedAncestors=' -Because 'Fallback diagnostics should report how many ancestor levels were safety-checked.'
+        $content | Should -Match 'gitBoundary=' -Because 'Fallback diagnostics should include detected repository boundary identity when available.'
         $content | Should -Match 'filesystem-fallback'
         $content | Should -Match 'if\s*\(\$MyInvocation\.InvocationName\s*-ne\s*"\."\)\s*\{\s*Invoke-Main'
     }

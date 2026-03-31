@@ -42,6 +42,100 @@ Describe "Remove-BOM file discovery" {
         }
     }
 
+    It "canonicalizes existing paths without segment traversal (<Scenario>)" -TestCases @(
+        @{ Scenario = "uses item FullName when no link target is available"; UseResolveLinkTarget = $false },
+        @{ Scenario = "uses ResolveLinkTarget for terminal symlink paths"; UseResolveLinkTarget = $true }
+    ) {
+        param(
+            [string]$Scenario,
+            [bool]$UseResolveLinkTarget
+        )
+
+        $resolvedPath = if ($IsWindows) {
+            "C:\\runner\\_work\\_temp\\canonical-test-root"
+        }
+        else {
+            "/private/var/folders/canonical-test-root"
+        }
+
+        $missingIntermediate = if ($IsWindows) {
+            "C:\\runner"
+        }
+        else {
+            "/var"
+        }
+
+        $resolvedItemPath = if ($UseResolveLinkTarget) {
+            if ($IsWindows) {
+                "C:\\runner\\alias\\canonical-test-root"
+            }
+            else {
+                "/var/folders/canonical-test-root"
+            }
+        }
+        else {
+            $resolvedPath
+        }
+
+        $linkTargetPath = if ($IsWindows) {
+            "C:\\runner\\target\\canonical-test-root"
+        }
+        else {
+            "/private/var/folders/canonical-test-root"
+        }
+
+        $expectedCanonicalPath = if ($UseResolveLinkTarget) {
+            [System.IO.Path]::GetFullPath($linkTargetPath)
+        }
+        else {
+            [System.IO.Path]::GetFullPath($resolvedItemPath)
+        }
+
+        Mock -CommandName Resolve-Path -MockWith {
+            [PSCustomObject]@{ Path = $resolvedPath }
+        }
+
+        Mock -CommandName Get-Item -ParameterFilter {
+            $LiteralPath -eq $missingIntermediate
+        } -MockWith {
+            throw "Could not find item $LiteralPath."
+        }
+
+        Mock -CommandName Get-Item -ParameterFilter {
+            $LiteralPath -eq $resolvedPath
+        } -MockWith {
+            $mockItem = [PSCustomObject]@{
+                FullName       = $resolvedItemPath
+                LinkTargetPath = $linkTargetPath
+            }
+
+            if ($UseResolveLinkTarget) {
+                Add-Member -InputObject $mockItem -MemberType ScriptMethod -Name ResolveLinkTarget -Value {
+                    param([bool]$returnFinalTarget)
+                    return [PSCustomObject]@{ FullName = $this.LinkTargetPath }
+                }
+            }
+
+            return $mockItem
+        }
+
+        $actualCanonicalPath = Resolve-CanonicalFileSystemPath -path "ignored-by-mocks"
+
+        $actualCanonicalPath | Should -Be $expectedCanonicalPath -Because "Scenario '$Scenario' should canonicalize without traversing intermediate path segments."
+        Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $resolvedPath } -Times 1 -Exactly
+        Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $missingIntermediate } -Times 0 -Exactly
+    }
+
+    It "emits stable diagnostics when canonical path resolution fails" {
+        Mock -CommandName Resolve-Path -MockWith {
+            throw "simulated canonicalization failure"
+        }
+
+        {
+            Resolve-CanonicalFileSystemPath -path "missing-path"
+        } | Should -Throw "E_REMOVE_BOM_CANONICAL_PATH_RESOLUTION_FAILED*"
+    }
+
     It "uses git-native semantics to exclude dot-prefixed ignored directories" {
         if ($null -eq $script:gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable on this runner"
@@ -369,16 +463,95 @@ Describe "Remove-BOM file discovery" {
         $relativeFiles | Should -Contain "src/b.txt"
     }
 
-    It "fails safely when .gitignore exists but git discovery is unavailable" {
-        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath ".gitignore"), ".venv/`n")
+    It "fails safely when .gitignore exists but git discovery is unavailable (<Scenario>)" -TestCases @(
+        @{
+            Scenario            = "scan root"
+            ScanRootRelative    = "."
+            GitIgnoreRelative   = ".gitignore"
+            CreateGitRepoMarker = $false
+        },
+        @{
+            Scenario            = "ancestor within repository boundary"
+            ScanRootRelative    = "src"
+            GitIgnoreRelative   = ".gitignore"
+            CreateGitRepoMarker = $true
+        }
+    ) {
+        param(
+            [string]$Scenario,
+            [string]$ScanRootRelative,
+            [string]$GitIgnoreRelative,
+            [bool]$CreateGitRepoMarker
+        )
+
+        if ($CreateGitRepoMarker) {
+            [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath ".git")) | Out-Null
+        }
+
+        if ($ScanRootRelative -ne ".") {
+            [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath $ScanRootRelative)) | Out-Null
+        }
+
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath $GitIgnoreRelative), ".venv/`n")
         [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath ".venv")) | Out-Null
         [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath ".venv/ignored.txt"), "ignored")
+
+        $scanRoot = if ($ScanRootRelative -eq ".") {
+            $script:testRoot
+        }
+        else {
+            Join-Path -Path $script:testRoot -ChildPath $ScanRootRelative
+        }
 
         Mock -CommandName Get-Command -MockWith { $null }
 
         {
-            Get-ScannableFiles -scanRoot $script:testRoot
-        } | Should -Throw "E_REMOVE_BOM_GIT_DISCOVERY_REQUIRED*"
+            Get-ScannableFiles -scanRoot $scanRoot
+        } | Should -Throw "E_REMOVE_BOM_GIT_DISCOVERY_REQUIRED*" -Because "Scenario '$Scenario' must refuse fallback when repository ignore semantics would be unsafe."
+
+        try {
+            Get-ScannableFiles -scanRoot $scanRoot | Out-Null
+            throw "E_TEST_EXPECTED_FAILURE: Scenario '$Scenario' should have thrown E_REMOVE_BOM_GIT_DISCOVERY_REQUIRED."
+        }
+        catch {
+            $_.Exception.Message | Should -Match 'fallbackScope=' -Because "Scenario '$Scenario' should include fallback scope diagnostics in failure paths."
+            $_.Exception.Message | Should -Match 'checkedAncestors=' -Because "Scenario '$Scenario' should include ancestor-check diagnostics in failure paths."
+        }
+    }
+
+    It "keeps non-repository fallback scoped to the requested scan root" {
+        [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "parent/child")) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "parent/.gitignore"), "*.tmp`n")
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "parent/child/keep.txt"), "keep")
+
+        $scanRoot = Join-Path -Path $script:testRoot -ChildPath "parent/child"
+
+        Mock -CommandName Get-Command -MockWith { $null }
+
+        $scanPlan = Get-ScannableFiles -scanRoot $scanRoot
+
+        $scanPlan.Mode | Should -Be "filesystem-fallback"
+        $scanPlan.Diagnostics | Should -Match 'fallbackScope=scan-root-only'
+        $scanPlan.Diagnostics | Should -Match 'checkedAncestors=1'
+        $scanPlan.Files.Count | Should -Be 1
+        $scanPlan.Files[0].Name | Should -Be "keep.txt"
+    }
+
+    It "reports repository ancestor fallback diagnostics when .git boundary is detected" {
+        [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath ".git")) | Out-Null
+        [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "src/leaf")) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "src/leaf/keep.txt"), "keep")
+
+        $scanRoot = Join-Path -Path $script:testRoot -ChildPath "src/leaf"
+
+        Mock -CommandName Get-Command -MockWith { $null }
+
+        $scanPlan = Get-ScannableFiles -scanRoot $scanRoot
+
+        $scanPlan.Mode | Should -Be "filesystem-fallback"
+        $scanPlan.Diagnostics | Should -Match 'fallbackScope=repository-ancestors'
+        $scanPlan.Diagnostics | Should -Match 'checkedAncestors=3'
+        $scanPlan.Diagnostics | Should -Match 'gitBoundary='
     }
 }
 
