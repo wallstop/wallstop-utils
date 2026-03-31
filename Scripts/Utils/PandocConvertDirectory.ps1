@@ -24,7 +24,7 @@
 
 param(
     [Parameter(Mandatory = $true,HelpMessage = "Path to the input directory containing HTML files.")]
-    [ValidateScript({ Test-Path $_ -PathType 'Container' })]
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType 'Container' })]
     [string]$InputDir,
 
     [Parameter(Mandatory = $true,HelpMessage = "Path to the output directory for Markdown files.")]
@@ -32,7 +32,7 @@ param(
 )
 
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
-if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
@@ -65,7 +65,7 @@ if (-not (Get-Command pandoc -ErrorAction SilentlyContinue)) {
 }
 
 # Create Output Directory if it doesn't exist
-if (-not (Test-Path -Path $OutputDir -PathType Container)) {
+if (-not (Test-Path -LiteralPath $OutputDir -PathType Container)) {
     try {
         New-Item -Path $OutputDir -ItemType Directory -Force | Out-Null
         Write-Host "Created output directory: $OutputDir" -ForegroundColor Cyan
@@ -78,7 +78,7 @@ if (-not (Test-Path -Path $OutputDir -PathType Container)) {
 
 # Get all .html files recursively from InputDir
 try {
-    $htmlFiles = @(Get-ChildItem -Path $InputDir -Recurse -Include *.html,*.htm)
+    $htmlFiles = @(Get-ChildItem -LiteralPath $InputDir -Recurse -File -Include *.html,*.htm)
 }
 catch {
     Write-Error "Error accessing files in input directory: $InputDir. Error: $_"
@@ -104,7 +104,7 @@ foreach ($file in $htmlFiles) {
 
     # Ensure the destination directory exists
     $destinationDir = Split-Path -Path $destinationFile -Parent
-    if (-not (Test-Path -Path $destinationDir -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $destinationDir -PathType Container)) {
         try {
             New-Item -Path $destinationDir -ItemType Directory -Force | Out-Null
             Write-Host "Created directory: $destinationDir" -ForegroundColor Cyan

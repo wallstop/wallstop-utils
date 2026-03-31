@@ -1156,6 +1156,9 @@ Describe "File stream safety conventions" {
         $content | Should -Match 'function\s+Get-ScannableFiles'
         $content | Should -Not -Match '\$scanFiles\s*=\s*@\(\$scanPlan\.Files\)'
         $content | Should -Match 'Get-ScannableFileStream\s+-scanPlan\s+\$scanPlan\s*\|'
+        $content | Should -Match 'listedPaths=deferred'
+        $content | Should -Not -Match 'listedPaths=\$\(\$listedPathCount\)'
+        $content | Should -Not -Match 'Get-GitCommandDetails\s+-gitExecutable\s+\$gitCommand\.Source\s+-workingDirectory\s+\$gitRoot\s+-arguments\s+\$gitListArguments\s*\r?\n\s*if\s*\(\$gitListResult\.ExitCode\s*-eq\s*0\)'
         $content | Should -Not -Match 'function\s+Get-GitIgnorePatterns'
         $content | Should -Not -Match 'function\s+Test-PathAgainstGitIgnore'
     }
@@ -1208,8 +1211,11 @@ Describe "Restore script safety conventions" {
         $restoreScript | Should -Match 'SupportedPlatforms\s*=\s*@\("All"\)'
         $restoreScript | Should -Match 'SupportedPlatforms\s*=\s*@\("Windows"\)'
         $restoreScript | Should -Match 'W_RESTORE_STEP_SKIPPED_PLATFORM'
+        $restoreScript | Should -Match 'E_RESTORE_STEP_SELECTION_INVALID'
         $restoreScript | Should -Match 'Restore platform diagnostics:'
+        $restoreScript | Should -Match 'Assert-ApplicableRestoreStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
         $restoreScript | Should -Match 'Assert-RestoreStepScriptsExist\s+-Steps\s+\$applicableSteps'
+        $restoreScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
         $restoreScript | Should -Match 'foreach\s*\(\$step\s+in\s+\$applicableSteps\)'
     }
 
@@ -1218,8 +1224,8 @@ Describe "Restore script safety conventions" {
 
         $powerToysRestore | Should -Match '\$targetPath'
         $powerToysRestore | Should -Not -Match '\$targetFolder'
-        $powerToysRestore | Should -Match 'Test-Path\s+-Path\s+\$copyFrom\s+-PathType\s+Container'
-        $powerToysRestore | Should -Match 'Test-Path\s+-Path\s+\$targetPath\s+-PathType\s+Container'
+        $powerToysRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$copyFrom\s+-PathType\s+Container'
+        $powerToysRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$targetPath\s+-PathType\s+Container'
         $powerToysRestore | Should -Match 'Robocopy\.exe'
         $powerToysRestore | Should -Match 'robocopyExitCode\s*-ge\s*8'
         $powerToysRestore | Should -Match 'E_POWERTOYS_RESTORE_ROBOCOPY_FAILED'
@@ -1231,8 +1237,8 @@ Describe "Restore script safety conventions" {
         $windowsTerminalRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WindowsTerminal/WindowsTerminalRestore.ps1') -Raw) -replace "`r", ''
 
         $windowsTerminalRestore | Should -Not -Match 'Copy-Item\s+-Path\s+\$settingsPath\s+-Destination\s+\$currentBackupFile'
-        $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsTerminalSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
-        $windowsTerminalRestore | Should -Match 'Test-Path\s+-Path\s+\$settingsPath\s+-PathType\s+Leaf'
+        $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$windowsTerminalSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
+        $windowsTerminalRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$settingsPath\s+-PathType\s+Leaf'
         $windowsTerminalRestore | Should -Match 'E_WT_RESTORE_SOURCE_MISSING'
         $windowsTerminalRestore | Should -Match 'W_WT_RESTORE_NO_LIVE_SETTINGS'
     }
@@ -1240,7 +1246,7 @@ Describe "Restore script safety conventions" {
     It "guards PowerShell profile backups on first-time machines" {
         $powershellRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Powershell/PowershellRestore.ps1') -Raw) -replace "`r", ''
 
-        $powershellRestore | Should -Match 'Test-Path\s+-Path\s+\$settingsPath\s+-PathType\s+Leaf'
+        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$settingsPath\s+-PathType\s+Leaf'
         $powershellRestore | Should -Match 'Write-Error\s+"E_POWERSHELL_RESTORE_SOURCE_MISSING:'
         $powershellRestore | Should -Not -Match 'Write-Host\s+"Powershell settings backup not found at'
         $powershellRestore | Should -Match '(?-i)Microsoft\.PowerShell_profile\.ps1'
@@ -1250,10 +1256,10 @@ Describe "Restore script safety conventions" {
         $powershellRestore | Should -Match 'Join-Path\s+-Path\s+\$documentsPath\s+-ChildPath\s+''WindowsPowerShell'''
         $powershellRestore | Should -Not -Match '\$HOME\\Documents\\PowerShell'
         $powershellRestore | Should -Not -Match '\$HOME\\Documents\\Powershell'
-        $powershellRestore | Should -Match 'Test-Path\s+-Path\s+\$powershellConfigPath\s+-PathType\s+Container'
-        $powershellRestore | Should -Match 'Test-Path\s+-Path\s+\$windowsPowershellConfigPath\s+-PathType\s+Container'
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$powershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$powershellSettings\s+-Destination\s+\$powershellBackupFile'
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsPowershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsPowershellSettings\s+-Destination\s+\$windowsPowershellBackupFile'
+        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$powershellConfigPath\s+-PathType\s+Container'
+        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$windowsPowershellConfigPath\s+-PathType\s+Container'
+        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$powershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$powershellSettings\s+-Destination\s+\$powershellBackupFile'
+        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$windowsPowershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsPowershellSettings\s+-Destination\s+\$windowsPowershellBackupFile'
         $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_POWERSHELL_PROFILE'
         $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_WINDOWS_POWERSHELL_PROFILE'
     }
@@ -1264,13 +1270,14 @@ Describe "Restore script safety conventions" {
         $komorebiRestore | Should -Match '\$missingSources\s*=\s*@\('
         $komorebiRestore | Should -Match 'E_KOMOREBI_RESTORE_SOURCE_MISSING'
         $komorebiRestore | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiSourceConfig,\s*\$komorebiSourceBarConfig,\s*\$komorebiSourceApplications\)\)'
-        $komorebiRestore | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Leaf'
+        $komorebiRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
     }
 
     It "fails fast when Config restore backup directory is empty" {
         $configRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Config/ConfigRestore.ps1') -Raw) -replace "`r", ''
 
-        $configRestore | Should -Match 'Get-ChildItem\s+-Path\s+\$backupDir\s+-Force\s+-ErrorAction\s+Stop'
+        $configRestore | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupDir\s+-Force\s+-ErrorAction\s+Stop'
+        $configRestore | Should -Match 'foreach\s*\(\$backupItem\s+in\s+\$backupItems\)\s*\{[\s\S]*Copy-Item\s+-LiteralPath\s+\$backupItem\.FullName\s+-Destination\s+\$configDir'
         $configRestore | Should -Match 'E_CONFIG_RESTORE_EMPTY_BACKUP'
         $configRestore | Should -Match 'E_CONFIG_RESTORE_BACKUP_MISSING'
         $configRestore | Should -Match 'E_CONFIG_RESTORE_COPY_FAILED'
@@ -1292,7 +1299,8 @@ Describe "Backup script safety conventions" {
 
         $backupScript | Should -Match '\$stepResults\s*=\s*New-Object\s+System\.Collections\.Generic\.List\[object\]'
         $backupScript | Should -Match 'Proceeding with git operations \(best-effort mode\)'
-        $backupScript | Should -Match 'partial success:'
+        $backupScript | Should -Match 'if\s*\(\s*\$hasBackupStepFailures\s*\)\s*\{[\s\S]*partial success:'
+        $backupScript | Should -Match 'else\s*\{[\s\S]*\$commitMessage\s*=\s*"Backup for \$dateString \(\$succeededCount/\$totalCount\)"'
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
         $backupScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
         $backupScript | Should -Match 'git\s+rev-parse\s+--is-inside-work-tree'
@@ -1310,6 +1318,9 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'W_BACKUP_GIT_ADD_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'E_BACKUP_STEP_SELECTION_INVALID'
+        $backupScript | Should -Match 'Assert-ApplicableBackupStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
+        $backupScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
         # git pull --ff-only must appear BEFORE git add --all: staging before pull causes pull to fail
         # with "local changes would be overwritten" when staged changes overlap with remote changes
         $backupScript | Should -Match 'git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+add\s+--all' -Because "git pull --ff-only must execute before git add --all; staging before pull causes pull to fail if remote changed the same files"
@@ -1367,7 +1378,10 @@ Describe "Backup script safety conventions" {
         $updateScript | Should -Match 'SupportedPlatforms\s*=\s*@\("All"\)'
         $updateScript | Should -Match 'SupportedPlatforms\s*=\s*@\("Windows"\)'
         $updateScript | Should -Match 'W_UPDATE_STEP_SKIPPED_PLATFORM'
+        $updateScript | Should -Match 'E_UPDATE_STEP_SELECTION_INVALID'
+        $updateScript | Should -Match 'Assert-ApplicableUpdateStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
         $updateScript | Should -Match 'Update platform diagnostics:'
+        $updateScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
         $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
     }
 
@@ -1376,7 +1390,7 @@ Describe "Backup script safety conventions" {
 
         $configBackup | Should -Match 'E_CONFIG_BACKUP_SOURCE_MISSING'
         $configBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
-        $configBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$configFolder[\s\S]*Remove-Item\s+-Path\s+\(Join-Path\s+-Path\s+\$backupFolder\s+-ChildPath\s+''\*''\)'
+        $configBackup | Should -Match 'foreach\s*\(\$backupEntry\s+in\s+\$backupEntries\)\s*\{[\s\S]*Remove-Item\s+-LiteralPath\s+\$backupEntry\.FullName'
         $configBackup | Should -Match 'Backup successful! \.config folder saved to \$backupFolder'
         $configBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
     }
@@ -1384,10 +1398,10 @@ Describe "Backup script safety conventions" {
     It "fails when Windows Terminal backup source is missing" {
         $windowsTerminalBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WindowsTerminal/WindowsTerminalBackup.ps1') -Raw) -replace "`r", ''
 
-        $windowsTerminalBackup | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Leaf'
+        $windowsTerminalBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
         $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING'
         $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING[\s\S]*exit\s+1'
-        $windowsTerminalBackup | Should -Match 'Test-Path\s+-Path\s+\$backupFolder\s+-PathType\s+Container'
+        $windowsTerminalBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupFolder\s+-PathType\s+Container'
     }
 
     It "uses profile-driven path-safe backup and fails when no PowerShell profiles are available" {
@@ -1405,7 +1419,8 @@ Describe "Backup script safety conventions" {
         $powershellBackup | Should -Match '\$profilesBackedUp\s*=\s*0'
         $powershellBackup | Should -Match 'if\s*\(\s*\$profilesBackedUp\s*-eq\s*0\s*\)'
         $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_NO_PROFILES_FOUND'
-        $powershellBackup | Should -Match 'Test-Path\s+-Path\s+\$backupFolder\s+-PathType\s+Container'
+        $powershellBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupFolder\s+-PathType\s+Container'
+        $powershellBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$candidate\.Path\s+-PathType\s+Leaf'
     }
 
     It "uses UTF-8 no-BOM writes for Scoop backup output" {
@@ -1424,7 +1439,8 @@ Describe "Backup script safety conventions" {
         $powerToysBackup | Should -Match 'robocopyExitCode\s*-ge\s*8'
         $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_ROBOCOPY_FAILED'
         $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_SOURCE_MISSING'
-        $powerToysBackup | Should -Match 'Get-ChildItem\s+-Path\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
+        $powerToysBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
+        $powerToysBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$backupEntry\.FullName'
         $powerToysBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
     }
 
@@ -1434,6 +1450,7 @@ Describe "Backup script safety conventions" {
         $komorebiBackup | Should -Match '\$missingSources\s*=\s*@\('
         $komorebiBackup | Should -Match 'E_KOMOREBI_BACKUP_SOURCE_MISSING'
         $komorebiBackup | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiConfig,\s*\$komorebiBarConfig,\s*\$applicationYaml\)\)'
+        $komorebiBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
     }
 
     It "documents backup safety contract in LLM context" {
@@ -2190,6 +2207,13 @@ Describe "Utility configuration safety conventions" {
             $content | Should -Match 'E_CONFIG_ERROR: Strict mode helper file not found at'
             $content | Should -Match '\$strictModeHelpersPath'
         }
+    }
+
+    It "uses literal path validation for Pandoc input directory" {
+        $pandocPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/PandocConvertDirectory.ps1'
+        $pandocContent = (Get-Content -Path $pandocPath -Raw) -replace "`r", ''
+
+        $pandocContent | Should -Match 'ValidateScript\(\{\s*Test-Path\s+-LiteralPath\s+\$_\s+-PathType\s+''Container''\s*\}\)'
     }
 }
 

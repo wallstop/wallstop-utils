@@ -119,7 +119,33 @@ function Get-ApplicableBackupSteps {
         )
     }
 
-    return , $applicableSteps.ToArray()
+    return $applicableSteps.ToArray()
+}
+
+function Assert-ApplicableBackupStepsFlat {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$ApplicableSteps,
+
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentPlatformName
+    )
+
+    $nestedStepContainers = @($ApplicableSteps | Where-Object { $_ -is [System.Array] })
+    Write-Verbose (
+        "Backup step selection diagnostics: currentPlatform='{0}', applicableSteps={1}, nestedStepContainers={2}" -f
+        $CurrentPlatformName,
+        $ApplicableSteps.Count,
+        $nestedStepContainers.Count
+    )
+
+    if ($nestedStepContainers.Count -gt 0) {
+        throw (
+            "E_BACKUP_STEP_SELECTION_INVALID: Applicable step selection contains nested array value(s) ({0}) on platform '{1}'. Ensure Get-ApplicableBackupSteps returns a flat step list and callers use @(...)." -f
+            $nestedStepContainers.Count,
+            $CurrentPlatformName
+        )
+    }
 }
 
 $stepResults = New-Object System.Collections.Generic.List[object]
@@ -139,6 +165,7 @@ $steps = @(
 
 $currentPlatformName = Get-CurrentPlatformName
 $applicableSteps = @(Get-ApplicableBackupSteps -Steps $steps -CurrentPlatformName $currentPlatformName)
+Assert-ApplicableBackupStepsFlat -ApplicableSteps $applicableSteps -CurrentPlatformName $currentPlatformName
 
 Write-Verbose ("Backup path diagnostics: scriptsDirectory='{0}'" -f $scriptsDirectory)
 Write-Verbose ("Backup platform diagnostics: currentPlatform='{0}', totalSteps={1}, applicableSteps={2}" -f $currentPlatformName, $steps.Count, $applicableSteps.Count)
@@ -260,7 +287,19 @@ try {
 
     if (-not $hasGitFailure) {
         if ($stagedFiles.Count -gt 0) {
-            $commitMessage = "Backup for $dateString (partial success: $succeededCount/$totalCount)"
+            if ($hasBackupStepFailures) {
+                $commitMessage = "Backup for $dateString (partial success: $succeededCount/$totalCount)"
+            }
+            else {
+                $commitMessage = "Backup for $dateString ($succeededCount/$totalCount)"
+            }
+
+            Write-Verbose (
+                "Backup git commit diagnostics: hasBackupStepFailures={0}; commitMessage='{1}'" -f
+                $hasBackupStepFailures,
+                $commitMessage
+            )
+
             git commit -m $commitMessage
             $commitExitCode = Get-LastExitCodeOrDefault
             if ($commitExitCode -ne 0) {

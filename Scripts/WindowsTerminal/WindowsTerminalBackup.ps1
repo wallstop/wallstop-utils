@@ -8,11 +8,11 @@ $backupFolder = "$baseDirectory\Config\WindowsTerminal"
 Push-Location -LiteralPath $baseDirectory
 
 try {
-    if (-not (Test-Path -Path $backupFolder -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
         New-Item -Path $backupFolder -ItemType Directory | Out-Null
     }
 
-    if (Test-Path -Path $sourcePath -PathType Leaf) {
+    if (Test-Path -LiteralPath $sourcePath -PathType Leaf) {
         $backupFile = "$backupFolder\settings.json"
         Copy-Item -Path $sourcePath -Destination $backupFile
         Write-Host "Windows Terminal settings exported successfully." -ForegroundColor Green

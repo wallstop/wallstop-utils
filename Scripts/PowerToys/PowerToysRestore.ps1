@@ -9,13 +9,13 @@ try {
     $copyFrom = Join-Path -Path $rootDirectory -ChildPath "Config"
     $copyFrom = Join-Path -Path $copyFrom -ChildPath "PowerToys"
 
-    if (-not (Test-Path -Path $copyFrom -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $copyFrom -PathType Container)) {
         Write-Error "E_POWERTOYS_RESTORE_SOURCE_MISSING: Failed to find PowerToys settings at '$copyFrom'."
         exit 1
     }
 
     $targetPath = "$env:LOCALAPPDATA\Microsoft\PowerToys"
-    if (-not (Test-Path -Path $targetPath -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $targetPath -PathType Container)) {
         Write-Error "E_POWERTOYS_RESTORE_TARGET_MISSING: Failed to detect PowerToys config directory at '$targetPath'."
         exit 1
     }

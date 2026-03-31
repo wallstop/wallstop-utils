@@ -7,22 +7,30 @@ $rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $scriptsDirectory -
 Push-Location -LiteralPath $baseDirectory
 try {
     $sourcePath = "$env:LOCALAPPDATA\Microsoft\PowerToys"
-    if (-not (Test-Path -Path $sourcePath -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Container)) {
         Write-Error "E_POWERTOYS_BACKUP_SOURCE_MISSING: Failed to detect PowerToys config directory at '$sourcePath'."
         exit 1
     }
 
     $backupFolder = Join-Path -Path $rootDirectory -ChildPath "Config"
     $backupFolder = Join-Path -Path $backupFolder -ChildPath "PowerToys"
-    if (-not (Test-Path -Path $backupFolder -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
         New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
     }
     else {
-        $backupEntries = @(Get-ChildItem -Path $backupFolder -Force -ErrorAction Stop)
+        $backupEntries = @(Get-ChildItem -LiteralPath $backupFolder -Force -ErrorAction Stop)
         if ($backupEntries.Count -gt 0) {
-            Remove-Item -Path "$backupFolder\*" -Recurse -Force -ErrorAction Stop
+            foreach ($backupEntry in $backupEntries) {
+                Remove-Item -LiteralPath $backupEntry.FullName -Recurse -Force -ErrorAction Stop
+            }
         }
     }
+
+    Write-Verbose (
+        "PowerToys backup path diagnostics: sourcePath='{0}', backupFolder='{1}'" -f
+        $sourcePath,
+        $backupFolder
+    )
 
     Robocopy.exe $sourcePath $backupFolder *.json /S > $null 2>&1
     $robocopyExitCodeVariable = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue

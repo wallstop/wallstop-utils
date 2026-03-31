@@ -19,7 +19,9 @@ try {
     else {
         $backupEntries = @(Get-ChildItem -LiteralPath $backupFolder -Force -ErrorAction Stop)
         if ($backupEntries.Count -gt 0) {
-            Remove-Item -Path (Join-Path -Path $backupFolder -ChildPath '*') -Recurse -Force -ErrorAction Stop
+            foreach ($backupEntry in $backupEntries) {
+                Remove-Item -LiteralPath $backupEntry.FullName -Recurse -Force -ErrorAction Stop
+            }
         }
     }
 

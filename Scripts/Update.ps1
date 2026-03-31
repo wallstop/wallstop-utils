@@ -51,7 +51,33 @@ function Get-ApplicableUpdateSteps {
         )
     }
 
-    return , $applicableSteps.ToArray()
+    return $applicableSteps.ToArray()
+}
+
+function Assert-ApplicableUpdateStepsFlat {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$ApplicableSteps,
+
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentPlatformName
+    )
+
+    $nestedStepContainers = @($ApplicableSteps | Where-Object { $_ -is [System.Array] })
+    Write-Verbose (
+        "Update step selection diagnostics: currentPlatform='{0}', applicableSteps={1}, nestedStepContainers={2}" -f
+        $CurrentPlatformName,
+        $ApplicableSteps.Count,
+        $nestedStepContainers.Count
+    )
+
+    if ($nestedStepContainers.Count -gt 0) {
+        throw (
+            "E_UPDATE_STEP_SELECTION_INVALID: Applicable step selection contains nested array value(s) ({0}) on platform '{1}'. Ensure Get-ApplicableUpdateSteps returns a flat step list and callers use @(...)." -f
+            $nestedStepContainers.Count,
+            $CurrentPlatformName
+        )
+    }
 }
 
 $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
@@ -64,6 +90,7 @@ $steps = @(
 
 $currentPlatformName = Get-CurrentPlatformName
 $applicableSteps = @(Get-ApplicableUpdateSteps -Steps $steps -CurrentPlatformName $currentPlatformName)
+Assert-ApplicableUpdateStepsFlat -ApplicableSteps $applicableSteps -CurrentPlatformName $currentPlatformName
 
 Write-Verbose ("Update platform diagnostics: currentPlatform='{0}', totalSteps={1}, applicableSteps={2}" -f $currentPlatformName, $steps.Count, $applicableSteps.Count)
 

@@ -7,7 +7,7 @@ $backupFolder = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Conf
 Push-Location -LiteralPath $baseDirectory
 
 try {
-    if (-not (Test-Path -Path $backupFolder -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
         New-Item -Path $backupFolder -ItemType Directory | Out-Null
     }
 
@@ -56,7 +56,7 @@ try {
     )
 
     foreach ($candidate in $normalizedCandidates) {
-        if (Test-Path -Path $candidate.Path -PathType Leaf) {
+        if (Test-Path -LiteralPath $candidate.Path -PathType Leaf) {
             $destinationFileName = "{0}_{1}" -f $candidate.Name, [System.IO.Path]::GetFileName($candidate.Path)
             $backupFile = Join-Path -Path $backupFolder -ChildPath $destinationFileName
             Copy-Item -Path $candidate.Path -Destination $backupFile -Force

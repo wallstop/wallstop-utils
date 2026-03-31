@@ -7,6 +7,17 @@ BeforeAll {
     $script:gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
 
     . $script:removeBomScriptPath
+
+    function Initialize-TestGitRepository {
+        param(
+            [string]$RepositoryRoot
+        )
+
+        & $script:gitCommand.Source -C $RepositoryRoot init | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "E_TEST_SETUP_FAILED: git init failed for '$RepositoryRoot'."
+        }
+    }
 }
 
 Describe "Remove-BOM file discovery" {
@@ -27,10 +38,7 @@ Describe "Remove-BOM file discovery" {
             return
         }
 
-        & $script:gitCommand.Source -C $script:testRoot init | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "E_TEST_SETUP_FAILED: git init failed for '$script:testRoot'."
-        }
+        Initialize-TestGitRepository -RepositoryRoot $script:testRoot
 
         @(
             ".venv/",
@@ -63,16 +71,76 @@ Describe "Remove-BOM file discovery" {
         $relativeFiles | Should -Not -Contain "trace.log"
     }
 
+    It "uses git-ls-files discovery mode for repository-backed scan roots (<Scenario>)" -TestCases @(
+        @{ Scenario = "repo root"; RelativeScanRoot = "." },
+        @{ Scenario = "nested directory"; RelativeScanRoot = "src" }
+    ) {
+        param(
+            [string]$Scenario,
+            [string]$RelativeScanRoot
+        )
+
+        if ($null -eq $script:gitCommand) {
+            Set-ItResult -Skipped -Because "git is unavailable on this runner"
+            return
+        }
+
+        Initialize-TestGitRepository -RepositoryRoot $script:testRoot
+        [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "src")) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "src/keep.txt"), "keep")
+
+        $scanRoot = if ($RelativeScanRoot -eq ".") {
+            $script:testRoot
+        }
+        else {
+            Join-Path -Path $script:testRoot -ChildPath $RelativeScanRoot
+        }
+
+        $scanPlan = Resolve-ScannableFileDiscovery -scanRoot $scanRoot
+        $scanPlan.Mode | Should -Be "git-ls-files" -Because "Scenario '$Scenario' should use git-native discovery"
+    }
+
+    It "handles symlink-alias scan roots with git-native discovery" {
+        if ($null -eq $script:gitCommand) {
+            Set-ItResult -Skipped -Because "git is unavailable on this runner"
+            return
+        }
+
+        $realRoot = Join-Path -Path $script:testRoot -ChildPath "real-root"
+        $aliasRoot = Join-Path -Path $script:testRoot -ChildPath "alias-root"
+        [System.IO.Directory]::CreateDirectory($realRoot) | Out-Null
+
+        try {
+            New-Item -ItemType SymbolicLink -Path $aliasRoot -Target $realRoot -ErrorAction Stop | Out-Null
+        }
+        catch {
+            Set-ItResult -Skipped -Because "symbolic links are unavailable on this runner"
+            return
+        }
+
+        Initialize-TestGitRepository -RepositoryRoot $realRoot
+        [System.IO.Directory]::CreateDirectory((Join-Path -Path $realRoot -ChildPath "src")) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path -Path $realRoot -ChildPath "keep.txt"), "keep")
+        [System.IO.File]::WriteAllText((Join-Path -Path $realRoot -ChildPath "src/keep2.txt"), "keep")
+
+        $scanPlan = Get-ScannableFiles -scanRoot $aliasRoot
+        $fileNames = @(
+            $scanPlan.Files |
+                ForEach-Object { $_.Name } |
+                Sort-Object -Unique
+        )
+
+        $scanPlan.Mode | Should -Be "git-ls-files"
+        $fileNames | Should -Be @("keep.txt", "keep2.txt")
+    }
+
     It "limits git-discovered files to the requested scan root" {
         if ($null -eq $script:gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable on this runner"
             return
         }
 
-        & $script:gitCommand.Source -C $script:testRoot init | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "E_TEST_SETUP_FAILED: git init failed for '$script:testRoot'."
-        }
+        Initialize-TestGitRepository -RepositoryRoot $script:testRoot
 
         [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "left")) | Out-Null
         [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "right")) | Out-Null
@@ -97,10 +165,7 @@ Describe "Remove-BOM file discovery" {
             return
         }
 
-        & $script:gitCommand.Source -C $script:testRoot init | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "E_TEST_SETUP_FAILED: git init failed for '$script:testRoot'."
-        }
+        Initialize-TestGitRepository -RepositoryRoot $script:testRoot
 
         [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "src")) | Out-Null
         [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "src/a.txt"), "a")
@@ -114,6 +179,7 @@ Describe "Remove-BOM file discovery" {
         )
 
         $scanPlan.Mode | Should -Be "git-ls-files"
+        $scanPlan.Diagnostics | Should -Match 'listedPaths=deferred'
         $relativeFiles | Should -Contain "src/a.txt"
         $relativeFiles | Should -Contain "src/b.txt"
     }

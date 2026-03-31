@@ -119,7 +119,33 @@ function Get-ApplicableRestoreSteps {
         )
     }
 
-    return , $applicableSteps.ToArray()
+    return $applicableSteps.ToArray()
+}
+
+function Assert-ApplicableRestoreStepsFlat {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$ApplicableSteps,
+
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentPlatformName
+    )
+
+    $nestedStepContainers = @($ApplicableSteps | Where-Object { $_ -is [System.Array] })
+    Write-Verbose (
+        "Restore step selection diagnostics: currentPlatform='{0}', applicableSteps={1}, nestedStepContainers={2}" -f
+        $CurrentPlatformName,
+        $ApplicableSteps.Count,
+        $nestedStepContainers.Count
+    )
+
+    if ($nestedStepContainers.Count -gt 0) {
+        throw (
+            "E_RESTORE_STEP_SELECTION_INVALID: Applicable step selection contains nested array value(s) ({0}) on platform '{1}'. Ensure Get-ApplicableRestoreSteps returns a flat step list and callers use @(...)." -f
+            $nestedStepContainers.Count,
+            $CurrentPlatformName
+        )
+    }
 }
 
 $stepResults = New-Object System.Collections.Generic.List[object]
@@ -134,6 +160,7 @@ $steps = @(
 
 $currentPlatformName = Get-CurrentPlatformName
 $applicableSteps = @(Get-ApplicableRestoreSteps -Steps $steps -CurrentPlatformName $currentPlatformName)
+Assert-ApplicableRestoreStepsFlat -ApplicableSteps $applicableSteps -CurrentPlatformName $currentPlatformName
 
 Write-Verbose ("Restore path diagnostics: scriptsDirectory='{0}'" -f $scriptsDirectory)
 Write-Verbose ("Restore platform diagnostics: currentPlatform='{0}', totalSteps={1}, applicableSteps={2}" -f $currentPlatformName, $steps.Count, $applicableSteps.Count)

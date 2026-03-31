@@ -8,7 +8,7 @@ Push-Location -LiteralPath $baseDirectory
 try {
     $windowsTerminalConfigPath = "$HOME\scoop\apps\windows-terminal\current\settings"
     $windowsTerminalSettings = "$windowsTerminalConfigPath\settings.json"
-    if (-not (Test-Path -Path $windowsTerminalConfigPath -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $windowsTerminalConfigPath -PathType Container)) {
         Write-Host "Windows Terminal settings directory not found at $windowsTerminalConfigPath, creating..."
         New-Item -ItemType Directory -Path $windowsTerminalConfigPath -Force
     }
@@ -16,7 +16,7 @@ try {
     $settingsPath = Join-Path -Path $baseDirectory -ChildPath 'Config'
     $settingsPath = Join-Path -Path $settingsPath -ChildPath 'WindowsTerminal'
     $settingsPath = Join-Path -Path $settingsPath -ChildPath 'settings.json'
-    if (-not (Test-Path -Path $settingsPath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $settingsPath -PathType Leaf)) {
         Write-Error "E_WT_RESTORE_SOURCE_MISSING: Windows Terminal settings backup not found at '$settingsPath'."
         exit 1
     }
@@ -25,12 +25,12 @@ try {
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $backupFolder = Join-Path -Path $HOME -ChildPath "Documents"
     $backupFolder = Join-Path -Path $backupFolder -ChildPath "WT_Settings_Backup"
-    if (-not (Test-Path -Path $backupFolder -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
         New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
     }
 
     $currentBackupFile = Join-Path -Path $backupFolder -ChildPath "settings_backup_$timestamp.json"
-    if (Test-Path -Path $windowsTerminalSettings -PathType Leaf) {
+    if (Test-Path -LiteralPath $windowsTerminalSettings -PathType Leaf) {
         Copy-Item -Path $windowsTerminalSettings -Destination $currentBackupFile -Force
         Write-Host "Current settings backed up to $currentBackupFile"
     }

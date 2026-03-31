@@ -26,7 +26,8 @@ All front-end wrapper files must point here and should not duplicate policy text
 10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
 11. Keep quality-harness diagnostics low-noise: in `Run-PreCommitValidation.ps1` and `Scripts/Utils/Quality/*`, use `Write-Verbose` for advisory telemetry and reserve `Write-Warning` for actionable degradation only; keep `Write-Host` for concise high-level status.
 12. Treat CI logs containing `files were modified by this hook` as autofix-required formatting drift (not a tool crash); emit explicit `E_CI_PRECOMMIT_AUTOFIX_REQUIRED` diagnostics and list modified files.
-13. Prefer git-native ignore semantics over ad-hoc `.gitignore` wildcard conversion: `Scripts/Utils/Remove-BOM.ps1` file discovery must use `git ls-files --cached --others --exclude-standard` when available, and emit explicit `W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK` diagnostics when it must degrade to filesystem traversal.
+13. Prefer git-native ignore semantics over ad-hoc `.gitignore` wildcard conversion: `Scripts/Utils/Remove-BOM.ps1` file discovery must use `git ls-files --cached --others --exclude-standard` when available, and emit explicit `W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK` diagnostics when it must degrade to filesystem traversal. Derive scoped pathspecs via `git rev-parse --show-prefix` (not `System.IO.Path.GetRelativePath`) to avoid symlink/canonical-path alias mismatches (for example `/var` vs `/private/var`) that can trigger `git ls-files` exit `128`.
+14. Keep `Remove-BOM` discovery lazy: `Resolve-ScannableFileDiscovery` must not execute eager `git ls-files` counting probes; in the success path enumerate once via `Get-ScannableFileStream` and keep discovery diagnostics explicit (for example `listedPaths=deferred`). Error paths may issue a single follow-up probe only for actionable diagnostics.
 
 ## Working Agreement For Agents
 
@@ -143,6 +144,7 @@ array semantics in empty-result paths.
 
 - Use `return , @()` (comma operator) when callers access `.Count` directly on the result.
 - If callers always wrap with `@()`, the bare `return @()` is safe — add `# array-unwrap-safe`.
+- Do not comma-wrap already materialized arrays returned to call sites that already use `@(...)`; `return , $array` in that case creates nested arrays and breaks `foreach` step iteration.
 - A convention test in `ScriptSafetyConventions.Tests.ps1` enforces this in `Scripts/`.
 
 ## Cross-Platform PowerShell Portability

@@ -102,6 +102,33 @@ function Test-IsPathUnderRoot {
     return $normalizedPath.StartsWith("$normalizedRoot/", $comparison)
 }
 
+function Get-GitCommandDetails {
+    param(
+        [string]$gitExecutable,
+        [string]$workingDirectory,
+        [string[]]$arguments
+    )
+
+    $commandOutput = @(& $gitExecutable -C $workingDirectory @arguments 2>&1)
+    $commandExitCode = $LASTEXITCODE
+
+    $firstOutputLine = $null
+    foreach ($line in $commandOutput) {
+        $normalizedLine = [string]$line
+        if (-not [string]::IsNullOrWhiteSpace($normalizedLine)) {
+            $firstOutputLine = $normalizedLine.Trim()
+            break
+        }
+    }
+
+    return [PSCustomObject]@{
+        ExitCode  = $commandExitCode
+        Output    = @($commandOutput)
+        FirstLine = $firstOutputLine
+        HasOutput = $null -ne $firstOutputLine
+    }
+}
+
 function Resolve-ScannableFileDiscovery {
     param(
         [string]$scanRoot
@@ -112,32 +139,68 @@ function Resolve-ScannableFileDiscovery {
     $gitDiscoveryFailureReason = ""
 
     if ($null -ne $gitCommand) {
-        $gitRootOutput = @(& $gitCommand.Source -C $resolvedScanRoot rev-parse --show-toplevel 2>$null)
-        if ($LASTEXITCODE -eq 0 -and $gitRootOutput.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($gitRootOutput[0])) {
-            $gitRoot = [System.IO.Path]::GetFullPath($gitRootOutput[0].Trim())
-            $relativeScanRoot = ([System.IO.Path]::GetRelativePath($gitRoot, $resolvedScanRoot) -replace '\\', '/').Trim()
+        $gitRootResult = Get-GitCommandDetails -gitExecutable $gitCommand.Source -workingDirectory $resolvedScanRoot -arguments @("rev-parse", "--show-toplevel")
+        if ($gitRootResult.ExitCode -eq 0 -and $gitRootResult.Output.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($gitRootResult.Output[0])) {
+            $gitRoot = [System.IO.Path]::GetFullPath(([string]$gitRootResult.Output[0]).Trim())
+            $gitPrefixResult = Get-GitCommandDetails -gitExecutable $gitCommand.Source -workingDirectory $resolvedScanRoot -arguments @("rev-parse", "--show-prefix")
+
+            if ($gitPrefixResult.ExitCode -eq 0) {
+                $gitPrefix = ""
+                if ($gitPrefixResult.Output.Count -gt 0) {
+                    $gitPrefix = ([string]$gitPrefixResult.Output[0]).Trim()
+                }
+
+                $relativeScanRoot = ($gitPrefix -replace '\\', '/').Trim().Trim('/')
+            }
+            else {
+                $gitPrefixFailureDetails = if ($gitPrefixResult.HasOutput) {
+                    " First output: '$($gitPrefixResult.FirstLine)'."
+                }
+                else {
+                    ""
+                }
+                Write-Verbose "W_REMOVE_BOM_GIT_PREFIX_UNAVAILABLE: git rev-parse --show-prefix failed with exit code $($gitPrefixResult.ExitCode). Enumerating git root and relying on post-filtering.$gitPrefixFailureDetails"
+                $relativeScanRoot = "."
+            }
+
+            if ([string]::IsNullOrWhiteSpace($relativeScanRoot) -or $relativeScanRoot -eq ".") {
+                $relativeScanRoot = "."
+            }
+            elseif ($relativeScanRoot -eq ".." -or $relativeScanRoot.StartsWith("../") -or $relativeScanRoot.StartsWith("..\\")) {
+                Write-Verbose "W_REMOVE_BOM_GIT_PREFIX_OUTSIDE_ROOT: Computed relative scan root '$relativeScanRoot' is outside git root '$gitRoot'. Enumerating git root and relying on post-filtering."
+                $relativeScanRoot = "."
+            }
+
+            $canonicalScanRoot = if ($relativeScanRoot -eq ".") {
+                $gitRoot
+            }
+            else {
+                [System.IO.Path]::GetFullPath((Join-Path -Path $gitRoot -ChildPath $relativeScanRoot))
+            }
+
             $gitListArguments = @("ls-files", "--cached", "--others", "--exclude-standard")
             if (-not [string]::IsNullOrWhiteSpace($relativeScanRoot) -and $relativeScanRoot -ne ".") {
                 $gitListArguments += @("--", $relativeScanRoot)
             }
 
-            $relativePaths = @(& $gitCommand.Source -C $gitRoot @gitListArguments 2>$null)
-
-            if ($LASTEXITCODE -eq 0) {
-                return [PSCustomObject]@{
-                    Mode             = "git-ls-files"
-                    Diagnostics      = "gitRoot=$gitRoot scanRoot=$resolvedScanRoot listedPaths=$($relativePaths.Count) streaming=true"
-                    ResolvedScanRoot = $resolvedScanRoot
-                    GitExecutable    = $gitCommand.Source
-                    GitRoot          = $gitRoot
-                    GitListArguments = @($gitListArguments)
-                }
+            Write-Verbose "Remove-BOM discovery diagnostics: deferring git ls-files enumeration to streaming pass for '$canonicalScanRoot'."
+            return [PSCustomObject]@{
+                Mode             = "git-ls-files"
+                Diagnostics      = "gitRoot=$gitRoot scanRoot=$canonicalScanRoot relativeScanRoot=$relativeScanRoot listedPaths=deferred streaming=true"
+                ResolvedScanRoot = $canonicalScanRoot
+                GitExecutable    = $gitCommand.Source
+                GitRoot          = $gitRoot
+                GitListArguments = @($gitListArguments)
             }
-
-            $gitDiscoveryFailureReason = "git ls-files failed with exit code $LASTEXITCODE"
         }
         else {
-            $gitDiscoveryFailureReason = "git rev-parse did not resolve a worktree for '$resolvedScanRoot'"
+            $gitRootFailureDetails = if ($gitRootResult.HasOutput) {
+                " first output: '$($gitRootResult.FirstLine)'"
+            }
+            else {
+                ""
+            }
+            $gitDiscoveryFailureReason = "git rev-parse did not resolve a worktree for '$resolvedScanRoot' (exit code $($gitRootResult.ExitCode)$gitRootFailureDetails)"
         }
     }
     else {
@@ -191,8 +254,16 @@ function Get-ScannableFileStream {
                 }
             }
 
-        if ($LASTEXITCODE -ne 0) {
-            throw "E_REMOVE_BOM_GIT_STREAM_FAILED: git ls-files failed during streaming enumeration with exit code $LASTEXITCODE for '$($scanPlan.ResolvedScanRoot)'."
+        $streamExitCode = $LASTEXITCODE
+        if ($streamExitCode -ne 0) {
+            $failureProbe = Get-GitCommandDetails -gitExecutable $scanPlan.GitExecutable -workingDirectory $scanPlan.GitRoot -arguments @($scanPlan.GitListArguments)
+            $failureDetails = if ($failureProbe.HasOutput) {
+                " First output: '$($failureProbe.FirstLine)'."
+            }
+            else {
+                ""
+            }
+            throw "E_REMOVE_BOM_GIT_STREAM_FAILED: git ls-files failed during streaming enumeration with exit code $streamExitCode for '$($scanPlan.ResolvedScanRoot)'.$failureDetails"
         }
         return
     }

@@ -15,7 +15,7 @@ try {
 
     $missingSources = @()
     foreach ($sourcePath in @($komorebiSourceConfig, $komorebiSourceBarConfig, $komorebiSourceApplications)) {
-        if (-not (Test-Path -Path $sourcePath -PathType Leaf)) {
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
             $missingSources += $sourcePath
         }
     }

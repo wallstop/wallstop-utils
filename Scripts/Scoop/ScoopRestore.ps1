@@ -6,7 +6,7 @@ $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -Chi
 $configDirectory = Join-Path -Path $baseDirectory -ChildPath "Config"
 $scoopFilePath = Join-Path -Path $configDirectory -ChildPath "scoopfile.json"
 
-if (-not (Test-Path -Path $scoopFilePath -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $scoopFilePath -PathType Leaf)) {
     Write-Error "E_SCOOP_RESTORE_SOURCE_MISSING: Scoop backup manifest not found at '$scoopFilePath'."
     exit 1
 }
