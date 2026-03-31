@@ -105,6 +105,18 @@ causing `IOException: The process cannot access the file` when another read foll
 - Always pass resolved absolute paths (e.g., from `.FullName` or `Resolve-Path`).
 - Always specify `[System.Text.Encoding]::UTF8` explicitly for consistency.
 
+## OpenRead Stream Disposal Safety
+
+`[System.IO.File]::OpenRead(...)` returns a `FileStream` and must never rely on manual
+`.Close()` without guaranteed cleanup.
+
+- Every `OpenRead` usage in `Scripts/*.ps1` must be protected by either:
+  `using (...) { ... }` or `try { ... } finally { $stream.Dispose() }`.
+- Prefer centralized helper functions for repeated prefix-read logic to avoid copy/paste
+  stream handling and disposal drift.
+- Conventions are policy-tested in `Tests/Utils/ScriptSafetyConventions.Tests.ps1`
+  under "File stream safety conventions".
+
 ## Start-Process Exit Code Race Condition
 
 `Start-Process -Wait -PassThru` on Windows has a known race where `.ExitCode` may not

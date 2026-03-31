@@ -1102,6 +1102,68 @@ Describe "Directory restoration safety conventions" {
     }
 }
 
+Describe "File stream safety conventions" {
+    It "requires protected disposal for OpenRead usage in Scripts PowerShell files" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Scripts'
+        $powerShellScripts = @(Get-ChildItem -LiteralPath $scriptsRoot -Filter '*.ps1' -File -Recurse -ErrorAction Stop)
+
+        foreach ($scriptFile in $powerShellScripts) {
+            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+            $content = (Get-Content -LiteralPath $scriptFile.FullName -Raw) -replace "`r", ''
+            $openReadMatches = [regex]::Matches($content, '\[System\.IO\.File\]::OpenRead\s*\(')
+
+            if ($openReadMatches.Count -eq 0) {
+                continue
+            }
+
+            foreach ($match in $openReadMatches) {
+                $startIndex = [Math]::Max(0, $match.Index - 400)
+                $endIndex = [Math]::Min($content.Length, $match.Index + 1600)
+                $snippet = $content.Substring($startIndex, $endIndex - $startIndex)
+                $lineNumber = ([regex]::Matches($content.Substring(0, $match.Index), "`n")).Count + 1
+
+                $isUsingOpenRead = $snippet -match 'using\s*\(\s*\$[A-Za-z0-9_]+\s*=\s*\[System\.IO\.File\]::OpenRead\s*\('
+                $isTryFinallyProtected = $snippet -match 'try\s*\{[\s\S]*?\[System\.IO\.File\]::OpenRead\s*\([\s\S]*?finally\s*\{[\s\S]*?(?:\.Dispose\(\)|\.Close\(\))'
+
+                ($isUsingOpenRead -or $isTryFinallyProtected) | Should -BeTrue -Because (
+                    "{0}:{1} OpenRead must be protected by using(...) or try/finally with Dispose()/Close() to guarantee file-handle cleanup." -f $relativePath, $lineNumber
+                )
+            }
+        }
+    }
+
+    It "centralizes Remove-BOM prefix reads in a disposal-safe helper" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'function\s+Read-FilePrefixBytes\s*\{[\s\S]*?try\s*\{[\s\S]*?\[System\.IO\.File\]::OpenRead\s*\([\s\S]*?finally\s*\{[\s\S]*?\.Dispose\(\)'
+
+        $openReadCount = ([regex]::Matches($content, '\[System\.IO\.File\]::OpenRead\s*\(')).Count
+        $openReadCount | Should -Be 1 -Because 'Remove-BOM should keep OpenRead centralized in Read-FilePrefixBytes to avoid duplicated disposal logic.'
+
+        $closeCount = ([regex]::Matches($content, '\.Close\s*\(\)')).Count
+        $closeCount | Should -Be 0 -Because 'Remove-BOM should avoid manual Close() calls and rely on centralized disposal logic.'
+    }
+
+    It "preserves directory intent in Remove-BOM gitignore conversion" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match '\$isDirectoryPattern\s*=\s*\$pattern\.EndsWith\(''\/''\)'
+        $content | Should -Match 'if\s*\(\$isDirectoryPattern\)\s*\{[\s\S]*?\$pattern\s*=\s*"\$pattern\/\*"'
+        $content | Should -Not -Match 'if\s*\(\$pattern\.EndsWith\(''\/''\)\)'
+    }
+
+    It "keeps explicit prefix-read diagnostics in Remove-BOM" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'W_REMOVE_BOM_READ_PREFIX_FAILED'
+        $content | Should -Match 'W_REMOVE_BOM_PREFIX_READ_FAILURES'
+        $content | Should -Match '\$script:prefixReadFailures\s*=\s*0'
+    }
+}
+
 Describe "Restore script safety conventions" {
     It "enforces strict mode and isolated child execution in Restore orchestrator" {
         $restoreScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Restore.ps1') -Raw) -replace "`r", ''

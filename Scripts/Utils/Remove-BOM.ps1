@@ -21,6 +21,39 @@ param(
     [string]$Path = ""
 )
 
+$script:prefixReadFailures = 0
+
+function Read-FilePrefixBytes {
+    param(
+        [string]$filePath,
+        [ValidateRange(1, 1048576)]
+        [int]$byteCount,
+        [string]$context
+    )
+
+    $fileStream = $null
+    try {
+        $fileStream = [System.IO.File]::OpenRead($filePath)
+        $buffer = New-Object byte[] $byteCount
+        $bytesRead = $fileStream.Read($buffer, 0, $byteCount)
+
+        return @{
+            Buffer    = $buffer
+            BytesRead = $bytesRead
+        }
+    }
+    catch {
+        $script:prefixReadFailures++
+        Write-Verbose "W_REMOVE_BOM_READ_PREFIX_FAILED ($context): Could not read '$filePath' - $($_.Exception.Message)"
+        return $null
+    }
+    finally {
+        if ($null -ne $fileStream) {
+            $fileStream.Dispose()
+        }
+    }
+}
+
 function Test-IsBinaryFile {
     param(
         [string]$filePath
@@ -30,11 +63,11 @@ function Test-IsBinaryFile {
         # Check the file extension first for common binary types
         $extension = [System.IO.Path]::GetExtension($filePath).ToLower()
         $binaryExtensions = @(
-            '.jpg','.jpeg','.png','.gif','.bmp','.ico','.tiff',
-            '.zip','.gz','.tar','.7z','.rar',
-            '.exe','.dll','.so','.dylib',
-            '.pdf','.doc','.docx','.xls','.xlsx','.ppt','.pptx',
-            '.mp3','.mp4','.avi','.mov','.mkv'
+            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.ico', '.tiff',
+            '.zip', '.gz', '.tar', '.7z', '.rar',
+            '.exe', '.dll', '.so', '.dylib',
+            '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+            '.mp3', '.mp4', '.avi', '.mov', '.mkv'
         )
 
         if ($binaryExtensions -contains $extension) {
@@ -42,10 +75,13 @@ function Test-IsBinaryFile {
         }
 
         # Read the first 8KB of the file to check for binary content
-        $fs = [System.IO.File]::OpenRead($filePath)
-        $buffer = New-Object byte[] 8192
-        $bytesRead = $fs.Read($buffer,0,8192)
-        $fs.Close()
+        $prefixRead = Read-FilePrefixBytes -filePath $filePath -byteCount 8192 -context "Test-IsBinaryFile"
+        if ($null -eq $prefixRead) {
+            return $false
+        }
+
+        $buffer = $prefixRead.Buffer
+        $bytesRead = $prefixRead.BytesRead
 
         # Check if the content has null bytes (common in binary files)
         for ($i = 0; $i -lt $bytesRead; $i++) {
@@ -71,7 +107,7 @@ function Test-IsBinaryFile {
     }
     catch {
         # On error, assume it's not binary to be safe
-        Write-Verbose "Error checking if file is binary: $($_.Exception.Message)"
+        Write-Verbose "W_REMOVE_BOM_BINARY_CHECK_FAILED: Error checking if file is binary '$filePath' - $($_.Exception.Message)"
     }
 
     return $false
@@ -121,11 +157,11 @@ function Get-GitIgnorePatterns {
 
     # Add binary file extensions
     $binaryExtensions = @(
-        "*.jpg","*.jpeg","*.png","*.gif","*.ico","*.bmp","*.tiff",
-        "*.zip","*.gz","*.tar","*.7z","*.rar",
-        "*.exe","*.dll","*.so","*.dylib",
-        "*.pdf","*.doc","*.docx","*.xls","*.xlsx","*.ppt","*.pptx",
-        "*.mp3","*.mp4","*.avi","*.mov","*.mkv"
+        "*.jpg", "*.jpeg", "*.png", "*.gif", "*.ico", "*.bmp", "*.tiff",
+        "*.zip", "*.gz", "*.tar", "*.7z", "*.rar",
+        "*.exe", "*.dll", "*.so", "*.dylib",
+        "*.pdf", "*.doc", "*.docx", "*.xls", "*.xlsx", "*.ppt", "*.pptx",
+        "*.mp3", "*.mp4", "*.avi", "*.mov", "*.mkv"
     )
 
     $patterns += $binaryExtensions
@@ -148,21 +184,33 @@ function Get-GitIgnorePatterns {
 
                 # Convert gitignore pattern to PowerShell wildcard pattern
 
+                # Preserve directory intent before trimming trailing slash.
+                $isDirectoryPattern = $pattern.EndsWith('/')
+
                 # Remove leading/trailing slashes
                 $pattern = $pattern.TrimStart('/').TrimEnd('/')
 
+                if ([string]::IsNullOrWhiteSpace($pattern)) {
+                    return
+                }
+
                 # Handle directory wildcards
-                if ($pattern.EndsWith('/')) {
-                    $pattern = $pattern.TrimEnd('/') + '/*'
+                if ($isDirectoryPattern) {
+                    $pattern = "$pattern/*"
                 }
 
                 # Handle ** wildcard (any directory depth)
-                $pattern = $pattern -replace '\*\*','*'
+                $pattern = $pattern -replace '\*\*', '*'
 
                 # Convert to full path using forward slash (normalized for cross-platform matching)
                 if ($pattern -match '^\w') {
                     # Pattern doesn't start with wildcard, make it relative to root
-                    $pattern = "*/$pattern*"
+                    if ($isDirectoryPattern) {
+                        $pattern = "*/$pattern"
+                    }
+                    else {
+                        $pattern = "*/$pattern*"
+                    }
                 }
                 elseif ($pattern.StartsWith('*')) {
                     # Pattern starts with wildcard, make it search anywhere
@@ -211,10 +259,13 @@ function Remove-BOMFromFile {
         }
 
         # Check if file has BOM by reading just the first few bytes (more efficient)
-        $fileStream = [System.IO.File]::OpenRead($filePath)
-        $buffer = New-Object byte[] 3
-        $bytesRead = $fileStream.Read($buffer,0,3)
-        $fileStream.Close()
+        $prefixRead = Read-FilePrefixBytes -filePath $filePath -byteCount 3 -context "Remove-BOMFromFile"
+        if ($null -eq $prefixRead) {
+            return $false
+        }
+
+        $buffer = $prefixRead.Buffer
+        $bytesRead = $prefixRead.BytesRead
 
         # Check if file has UTF-8 BOM (EF BB BF)
         if ($bytesRead -eq 3 -and $buffer[0] -eq 0xEF -and $buffer[1] -eq 0xBB -and $buffer[2] -eq 0xBF) {
@@ -226,14 +277,14 @@ function Remove-BOMFromFile {
 
             # Write the content back without BOM
             # The UTF8Encoding with false parameter will write without BOM
-            [System.IO.File]::WriteAllText($filePath,$content,$utf8NoBomEncoding)
+            [System.IO.File]::WriteAllText($filePath, $content, $utf8NoBomEncoding)
 
             Write-Host "Removed BOM from: $filePath"
             return $true
         }
     }
     catch {
-        Write-Host "Error processing file: $filePath - $($_.Exception.Message)" -ForegroundColor Red
+        Write-Warning "W_REMOVE_BOM_PROCESS_FILE_FAILED: Error processing '$filePath' - $($_.Exception.Message)"
     }
 
     return $false
@@ -283,10 +334,13 @@ Get-ChildItem -Path $repoRoot -File -Recurse |
 
         if ($DetectOnly) {
             # Just check for BOM but don't remove
-            $fileStream = [System.IO.File]::OpenRead($file.FullName)
-            $buffer = New-Object byte[] 3
-            $bytesRead = $fileStream.Read($buffer,0,3)
-            $fileStream.Close()
+            $prefixRead = Read-FilePrefixBytes -filePath $file.FullName -byteCount 3 -context "DetectOnly"
+            if ($null -eq $prefixRead) {
+                return
+            }
+
+            $buffer = $prefixRead.Buffer
+            $bytesRead = $prefixRead.BytesRead
 
             if ($bytesRead -eq 3 -and $buffer[0] -eq 0xEF -and $buffer[1] -eq 0xBB -and $buffer[2] -eq 0xBF) {
                 Write-Host "BOM found in: $($file.FullName)" -ForegroundColor Yellow
@@ -311,8 +365,13 @@ Write-Host "======== Summary ========" -ForegroundColor Cyan
 Write-Host "Mode: $(if ($DetectOnly) { 'Detection only' } else { 'Active (BOM removal)' })"
 Write-Host "Files checked: $filesChecked"
 Write-Host "Files with BOM: $bomCount"
+Write-Host "Prefix read failures: $script:prefixReadFailures"
 Write-Host "Time taken: $($elapsedTime.ToString('hh\:mm\:ss\.fff'))"
 Write-Host "=========================" -ForegroundColor Cyan
+
+if ($script:prefixReadFailures -gt 0) {
+    Write-Warning "W_REMOVE_BOM_PREFIX_READ_FAILURES: $script:prefixReadFailures file(s) could not be read while scanning file prefixes. Re-run with -Verbose for per-file details."
+}
 
 if ($DetectOnly) {
     Write-Host "Run the script without -DetectOnly to remove BOMs from the files" -ForegroundColor Yellow
