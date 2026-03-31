@@ -26,7 +26,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
 11. Keep quality-harness diagnostics low-noise: in `Run-PreCommitValidation.ps1` and `Scripts/Utils/Quality/*`, use `Write-Verbose` for advisory telemetry and reserve `Write-Warning` for actionable degradation only; keep `Write-Host` for concise high-level status.
 12. Treat CI logs containing `files were modified by this hook` as autofix-required formatting drift (not a tool crash); emit explicit `E_CI_PRECOMMIT_AUTOFIX_REQUIRED` diagnostics and list modified files.
-13. Prefer git-native ignore semantics over ad-hoc `.gitignore` wildcard conversion: `Scripts/Utils/Remove-BOM.ps1` file discovery must use `git ls-files --cached --others --exclude-standard` when available, and emit explicit `W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK` diagnostics when it must degrade to filesystem traversal. Derive scoped pathspecs via `git rev-parse --show-prefix` (not `System.IO.Path.GetRelativePath`) to avoid symlink/canonical-path alias mismatches (for example `/var` vs `/private/var`) that can trigger `git ls-files` exit `128`.
+13. Prefer git-native ignore semantics over ad-hoc `.gitignore` wildcard conversion: `Scripts/Utils/Remove-BOM.ps1` file discovery must use `git ls-files --cached --others --exclude-standard` when available, and emit explicit `W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK` diagnostics when it must degrade to filesystem traversal. Derive scoped pathspecs via `git rev-parse --show-prefix` (not `System.IO.Path.GetRelativePath`) to avoid symlink/canonical-path alias mismatches (for example `/var` vs `/private/var`) that can trigger `git ls-files` exit `128`. Canonicalize both scan roots and git roots through the same symlink-aware helper before `Test-IsPathUnderRoot` comparisons; do not mix alias-form and canonical-form roots.
 14. Keep `Remove-BOM` discovery lazy: `Resolve-ScannableFileDiscovery` must not execute eager `git ls-files` counting probes; in the success path enumerate once via `Get-ScannableFileStream` and keep discovery diagnostics explicit (for example `listedPaths=deferred`). Error paths may issue a single follow-up probe only for actionable diagnostics.
 
 ## Working Agreement For Agents
@@ -38,6 +38,8 @@ All front-end wrapper files must point here and should not duplicate policy text
 5. Keep every .llm markdown file at or below 300 lines.
 6. Treat failing tests/hooks/CI checks as current-session priority.
 7. Prefer category-level guidance over brittle one-off rules.
+8. Keep commits bisectable: each commit must pass all gates independently.
+9. **Mandatory post-work self-improvement**: after any significant work, execute the [post-work self-improvement workflow](./skills/post-work-self-improvement.md) using sub-agents with adversarial consensus to analyze work done, extract new knowledge, and update `.llm/` guidance. This is a session-close gate, not optional. See [expanded guide](./skill-details/post-work-self-improvement.md) for trigger criteria and protocol.
 
 ## Primary Commands
 
@@ -118,6 +120,20 @@ causing `IOException: The process cannot access the file` when another read foll
   stream handling and disposal drift.
 - Conventions are policy-tested in `Tests/Utils/ScriptSafetyConventions.Tests.ps1`
   under "File stream safety conventions".
+
+## Test Temp Directory Canonicalization
+
+On macOS, `[System.IO.Path]::GetTempPath()` returns `/var/folders/...` (symlink) but
+`FileInfo.FullName` resolves to `/private/var/folders/...` (canonical). When tests create
+temp directories and later compute relative paths with `GetRelativePath`, the base and
+target paths use different canonical forms, producing `../../../../../../private/var/...`
+instead of correct relative paths.
+
+- After creating a temp directory, canonicalize it: `$root = Resolve-CanonicalTempRoot -Path $root`
+- `Resolve-CanonicalTempRoot` uses `(Get-Item -LiteralPath $Path).FullName` to match
+  the resolution that `FileInfo.FullName` applies on each platform.
+- On Linux/Windows this is a no-op; on macOS it resolves the `/var` symlink.
+- Convention enforced in `ScriptSafetyConventions.Tests.ps1` under "Path derivation safety conventions".
 
 ## Start-Process Exit Code Race Condition
 
@@ -219,3 +235,6 @@ Backup and restore scripts under `Scripts/` must prioritize data safety and dete
 4. Run index generation and harness validation.
 5. Commit updated skills and generated index together.
 6. If file length approaches 280 lines, split content before it reaches 300.
+7. Retire unused skills: delete card + detail + index entry when a skill no longer applies. _(Process rule; validated by index regeneration removing stale entries.)_
+8. Prefer testable rules: if a new context.md rule cannot be enforced by a Pester test, justify why.
+9. Record non-obvious architectural decisions as comments in the relevant skill-detail file. _(Review-enforced; not mechanically testable because comment relevance is subjective.)_

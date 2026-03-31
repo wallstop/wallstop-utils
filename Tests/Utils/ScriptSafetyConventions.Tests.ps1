@@ -1163,6 +1163,40 @@ Describe "File stream safety conventions" {
         $content | Should -Not -Match 'function\s+Test-PathAgainstGitIgnore'
     }
 
+    It "preserves caller scan scope when git show-prefix fails in Remove-BOM" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'function\s+Resolve-CanonicalFileSystemPath' -Because 'Remove-BOM must centralize canonical path resolution for symlink-safe comparisons'
+        $content | Should -Match '\$resolvedScanRoot\s*=\s*Resolve-CanonicalFileSystemPath\s+-path\s+\$scanRoot' -Because 'The scan root must be canonicalized once at discovery entry'
+        $content | Should -Match '\$gitRoot\s*=\s*Resolve-CanonicalFileSystemPath\s+-path\s+\$gitRootCandidate' -Because 'git root must be canonicalized with the same helper as scan roots'
+
+        # When --show-prefix fails, the canonicalScanRoot must NOT be assigned $gitRoot.
+        # It must use the caller's original scope to prevent scope leaks.
+        $content | Should -Match 'W_REMOVE_BOM_GIT_PREFIX_UNAVAILABLE' -Because 'Remove-BOM must emit a diagnostic when --show-prefix fails'
+
+        # Extract the full canonicalScanRoot if/else assignment block.
+        $fullBlock = [regex]::Match(
+            $content,
+            '(?ms)\$canonicalScanRoot\s*=\s*if\s*\(\$relativeScanRoot\s*-eq\s*"\."\)\s*\{(?<dotBranch>[^}]+)\}\s*else\s*\{(?<elseBranch>[^}]+)\}'
+        )
+        $fullBlock.Success | Should -BeTrue -Because 'Remove-BOM must have a canonicalScanRoot if/else assignment with both "." and non-"." branches'
+
+        # ---- "." branch: MUST use caller's $resolvedScanRoot with symlink resolution ----
+        $dotBranch = $fullBlock.Groups['dotBranch'].Value.Trim()
+        $dotBranch | Should -Match '\$resolvedScanRoot' -Because 'The "." branch must use $resolvedScanRoot to preserve caller scope'
+        $dotBranch | Should -Not -Match '\$gitRoot' -Because 'The "." branch must NOT use $gitRoot (scope-leak risk)'
+
+        # ---- else branch: MUST canonicalize through helper for symlink-safe normalization ----
+        $elseBranch = $fullBlock.Groups['elseBranch'].Value.Trim()
+        $elseBranch | Should -Match 'Resolve-CanonicalFileSystemPath' -Because 'The else branch must canonicalize via Resolve-CanonicalFileSystemPath for symlink-safe comparisons'
+        $elseBranch | Should -Match '\$gitRoot' -Because 'The else branch must derive the canonical scan root from $gitRoot + relative path'
+
+        # Diagnostics must include resolvedScanRoot for traceability.
+        $content | Should -Match 'resolvedScanRoot=\$resolvedScanRoot' -Because 'Discovery diagnostics must include the original resolvedScanRoot for debugging scope issues'
+        $content | Should -Match 'scanRootInput=\$scanRootInput' -Because 'Discovery diagnostics must include the caller-provided scan root for alias-vs-canonical troubleshooting'
+    }
+
     It "keeps explicit prefix-read diagnostics in Remove-BOM" {
         $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
         $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
@@ -1592,6 +1626,33 @@ Describe "Path derivation safety conventions" {
                 '{0} must traverse two parents from nested Scripts subdirectories to reach repository root before targeting Config paths.' -f $relativePath
             )
         }
+    }
+    It "canonicalizes temp directory roots in test files that compute relative paths" {
+        # On macOS, GetTempPath() returns /var/folders/... (symlink) but FileInfo.FullName
+        # returns /private/var/folders/... (canonical). Tests that compute GetRelativePath
+        # on temp-created paths must canonicalize the base via Resolve-CanonicalTempRoot
+        # to prevent ../../../../../../private/var/... relative path mismatches.
+        $testsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Tests'
+        $testFiles = @(Get-ChildItem -Path $testsRoot -Filter '*.Tests.ps1' -File -Recurse -ErrorAction Stop)
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        foreach ($testFile in $testFiles) {
+            $content = (Get-Content -LiteralPath $testFile.FullName -Raw) -replace "`r", ''
+            $usesGetTempPath = $content -match '\[System\.IO\.Path\]::GetTempPath\(\)'
+            $usesGetRelativePath = $content -match '\[System\.IO\.Path\]::GetRelativePath\('
+            if ($usesGetTempPath -and $usesGetRelativePath) {
+                $definesHelper = $content -match 'function\s+Resolve-CanonicalTempRoot\s*\{'
+                $usesHelper = $content -match 'Resolve-CanonicalTempRoot\s+-Path\b'
+                if (-not ($definesHelper -and $usesHelper)) {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $testFile.FullName)
+                    $violations.Add($relativePath) | Out-Null
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Test files that create temp directories (GetTempPath) and compute relative paths (GetRelativePath) must canonicalize the temp root via Resolve-CanonicalTempRoot after directory creation to prevent macOS symlink aliasing (/var vs /private/var). See .llm/context.md 'Test Temp Directory Canonicalization'. Violations: {0}" -f ($violations -join ', ')
+        )
     }
 }
 

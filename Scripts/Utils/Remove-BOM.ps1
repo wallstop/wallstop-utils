@@ -129,19 +129,71 @@ function Get-GitCommandDetails {
     }
 }
 
+function Resolve-CanonicalFileSystemPath {
+    param(
+        [string]$path
+    )
+
+    $resolvedPath = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
+    $absolutePath = [System.IO.Path]::GetFullPath($resolvedPath)
+    $rootPath = [System.IO.Path]::GetPathRoot($absolutePath)
+
+    if ([string]::IsNullOrWhiteSpace($rootPath)) {
+        return $absolutePath
+    }
+
+    $relativePath = $absolutePath.Substring($rootPath.Length).TrimStart('\', '/')
+    if ([string]::IsNullOrWhiteSpace($relativePath)) {
+        return [System.IO.Path]::GetFullPath($rootPath)
+    }
+
+    $pathSegments = @($relativePath -split '[\\/]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $currentPath = [System.IO.Path]::GetFullPath($rootPath)
+
+    foreach ($segment in $pathSegments) {
+        $nextPath = Join-Path -Path $currentPath -ChildPath $segment
+        $nextItem = Get-Item -LiteralPath $nextPath -ErrorAction Stop
+
+        $resolvedLinkTarget = $null
+        if ($nextItem.PSObject.Methods.Name -contains "ResolveLinkTarget") {
+            try {
+                $resolvedLinkTarget = $nextItem.ResolveLinkTarget($true)
+            }
+            catch {
+                $resolvedLinkTarget = $null
+            }
+        }
+
+        if ($null -ne $resolvedLinkTarget) {
+            $currentPath = [System.IO.Path]::GetFullPath($resolvedLinkTarget.FullName)
+        }
+        else {
+            $currentPath = [System.IO.Path]::GetFullPath($nextItem.FullName)
+        }
+    }
+
+    return [System.IO.Path]::GetFullPath($currentPath)
+}
+
 function Resolve-ScannableFileDiscovery {
     param(
         [string]$scanRoot
     )
 
-    $resolvedScanRoot = (Resolve-Path -LiteralPath $scanRoot -ErrorAction Stop).Path
+    $scanRootInput = (Resolve-Path -LiteralPath $scanRoot -ErrorAction Stop).Path
+    $resolvedScanRoot = Resolve-CanonicalFileSystemPath -path $scanRoot
+    if (-not $resolvedScanRoot.Equals($scanRootInput, [System.StringComparison]::Ordinal)) {
+        Write-Verbose "Remove-BOM symlink origin diagnostics: scan root '$scanRootInput' canonicalized to '$resolvedScanRoot'."
+    }
+
     $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
     $gitDiscoveryFailureReason = ""
 
     if ($null -ne $gitCommand) {
         $gitRootResult = Get-GitCommandDetails -gitExecutable $gitCommand.Source -workingDirectory $resolvedScanRoot -arguments @("rev-parse", "--show-toplevel")
         if ($gitRootResult.ExitCode -eq 0 -and $gitRootResult.Output.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($gitRootResult.Output[0])) {
-            $gitRoot = [System.IO.Path]::GetFullPath(([string]$gitRootResult.Output[0]).Trim())
+            $gitRootCandidate = [System.IO.Path]::GetFullPath(([string]$gitRootResult.Output[0]).Trim())
+            $gitRoot = Resolve-CanonicalFileSystemPath -path $gitRootCandidate
             $gitPrefixResult = Get-GitCommandDetails -gitExecutable $gitCommand.Source -workingDirectory $resolvedScanRoot -arguments @("rev-parse", "--show-prefix")
 
             if ($gitPrefixResult.ExitCode -eq 0) {
@@ -160,6 +212,9 @@ function Resolve-ScannableFileDiscovery {
                     ""
                 }
                 Write-Verbose "W_REMOVE_BOM_GIT_PREFIX_UNAVAILABLE: git rev-parse --show-prefix failed with exit code $($gitPrefixResult.ExitCode). Enumerating git root and relying on post-filtering.$gitPrefixFailureDetails"
+                # Use "." for git pathspec (enumerate entire repo), but preserve
+                # the caller's original $resolvedScanRoot for post-filtering so
+                # that scope restriction is not lost.
                 $relativeScanRoot = "."
             }
 
@@ -171,12 +226,21 @@ function Resolve-ScannableFileDiscovery {
                 $relativeScanRoot = "."
             }
 
+            # $gitPathspec controls git ls-files scope; $canonicalScanRoot
+            # controls post-filter scope via Test-IsPathUnderRoot.
+            # When $relativeScanRoot is "." (whole-repo enumerate), preserve
+            # the caller's original scan root for post-filtering to prevent
+            # scope leaks when --show-prefix is unavailable.
+            # Both scan and git roots are canonicalized via Resolve-CanonicalFileSystemPath,
+            # which resolves symlink segments consistently before post-filtering.
             $canonicalScanRoot = if ($relativeScanRoot -eq ".") {
-                $gitRoot
+                $resolvedScanRoot
             }
             else {
-                [System.IO.Path]::GetFullPath((Join-Path -Path $gitRoot -ChildPath $relativeScanRoot))
+                Resolve-CanonicalFileSystemPath -path (Join-Path -Path $gitRoot -ChildPath $relativeScanRoot)
             }
+
+            Write-Verbose "Remove-BOM canonicalization diagnostics: scanRootInput='$scanRootInput' resolvedScanRoot='$resolvedScanRoot' gitRootRaw='$gitRootCandidate' gitRootCanonical='$gitRoot' canonicalScanRoot='$canonicalScanRoot'"
 
             $gitListArguments = @("ls-files", "--cached", "--others", "--exclude-standard")
             if (-not [string]::IsNullOrWhiteSpace($relativeScanRoot) -and $relativeScanRoot -ne ".") {
@@ -186,7 +250,7 @@ function Resolve-ScannableFileDiscovery {
             Write-Verbose "Remove-BOM discovery diagnostics: deferring git ls-files enumeration to streaming pass for '$canonicalScanRoot'."
             return [PSCustomObject]@{
                 Mode             = "git-ls-files"
-                Diagnostics      = "gitRoot=$gitRoot scanRoot=$canonicalScanRoot relativeScanRoot=$relativeScanRoot listedPaths=deferred streaming=true"
+                Diagnostics      = "scanRootInput=$scanRootInput gitRoot=$gitRoot scanRoot=$canonicalScanRoot relativeScanRoot=$relativeScanRoot resolvedScanRoot=$resolvedScanRoot listedPaths=deferred streaming=true"
                 ResolvedScanRoot = $canonicalScanRoot
                 GitExecutable    = $gitCommand.Source
                 GitRoot          = $gitRoot
@@ -286,6 +350,10 @@ function Get-ScannableFiles {
 
     $scanPlan = Resolve-ScannableFileDiscovery -scanRoot $scanRoot
     $files = @(Get-ScannableFileStream -scanPlan $scanPlan)
+
+    if ($scanPlan.Mode -eq "git-ls-files" -and $files.Count -eq 0) {
+        Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_EMPTY_RESULT: Git discovery returned zero files for scan root '$scanRoot'. Diagnostics: $($scanPlan.Diagnostics)"
+    }
 
     return [PSCustomObject]@{
         Files       = @($files)
