@@ -1150,8 +1150,12 @@ Describe "File stream safety conventions" {
         $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
 
         $content | Should -Match '\$gitListArguments\s*=\s*@\("ls-files",\s*"--cached",\s*"--others",\s*"--exclude-standard"\)'
-        $content | Should -Match '\-C\s+\$gitRoot\s+@gitListArguments'
+        $content | Should -Match '\-C\s+\$scanPlan\.GitRoot\s+@\(\$scanPlan\.GitListArguments\)'
+        $content | Should -Match 'function\s+Resolve-ScannableFileDiscovery'
+        $content | Should -Match 'function\s+Get-ScannableFileStream'
         $content | Should -Match 'function\s+Get-ScannableFiles'
+        $content | Should -Not -Match '\$scanFiles\s*=\s*@\(\$scanPlan\.Files\)'
+        $content | Should -Match 'Get-ScannableFileStream\s+-scanPlan\s+\$scanPlan\s*\|'
         $content | Should -Not -Match 'function\s+Get-GitIgnorePatterns'
         $content | Should -Not -Match 'function\s+Test-PathAgainstGitIgnore'
     }

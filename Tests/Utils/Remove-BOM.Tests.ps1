@@ -91,6 +91,33 @@ Describe "Remove-BOM file discovery" {
         $relativeFiles | Should -Be @("left/a.txt")
     }
 
+    It "streams files from the discovery plan without materializing eager scan arrays" {
+        if ($null -eq $script:gitCommand) {
+            Set-ItResult -Skipped -Because "git is unavailable on this runner"
+            return
+        }
+
+        & $script:gitCommand.Source -C $script:testRoot init | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "E_TEST_SETUP_FAILED: git init failed for '$script:testRoot'."
+        }
+
+        [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "src")) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "src/a.txt"), "a")
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "src/b.txt"), "b")
+
+        $scanPlan = Resolve-ScannableFileDiscovery -scanRoot $script:testRoot
+        $relativeFiles = @(
+            Get-ScannableFileStream -scanPlan $scanPlan |
+                ForEach-Object { [System.IO.Path]::GetRelativePath($script:testRoot, $_.FullName) -replace '\\', '/' } |
+                Sort-Object -Unique
+        )
+
+        $scanPlan.Mode | Should -Be "git-ls-files"
+        $relativeFiles | Should -Contain "src/a.txt"
+        $relativeFiles | Should -Contain "src/b.txt"
+    }
+
     It "fails safely when .gitignore exists but git discovery is unavailable" {
         [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath ".gitignore"), ".venv/`n")
         [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath ".venv")) | Out-Null

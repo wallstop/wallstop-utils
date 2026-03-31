@@ -102,7 +102,7 @@ function Test-IsPathUnderRoot {
     return $normalizedPath.StartsWith("$normalizedRoot/", $comparison)
 }
 
-function Get-ScannableFiles {
+function Resolve-ScannableFileDiscovery {
     param(
         [string]$scanRoot
     )
@@ -124,33 +124,13 @@ function Get-ScannableFiles {
             $relativePaths = @(& $gitCommand.Source -C $gitRoot @gitListArguments 2>$null)
 
             if ($LASTEXITCODE -eq 0) {
-                $files = New-Object System.Collections.Generic.List[System.IO.FileInfo]
-                foreach ($relativePath in $relativePaths) {
-                    $trimmedRelativePath = $relativePath.Trim()
-                    if ([string]::IsNullOrWhiteSpace($trimmedRelativePath)) {
-                        continue
-                    }
-
-                    $candidatePath = Join-Path -Path $gitRoot -ChildPath $trimmedRelativePath
-                    if (-not (Test-IsPathUnderRoot -path $candidatePath -root $resolvedScanRoot)) {
-                        continue
-                    }
-
-                    try {
-                        $candidateItem = Get-Item -LiteralPath $candidatePath -ErrorAction Stop
-                        if ($candidateItem -is [System.IO.FileInfo]) {
-                            $files.Add($candidateItem)
-                        }
-                    }
-                    catch {
-                        Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_ITEM_SKIP: Unable to materialize '$candidatePath' from git file list - $($_.Exception.Message)"
-                    }
-                }
-
                 return [PSCustomObject]@{
-                    Files       = @($files)
-                    Mode        = "git-ls-files"
-                    Diagnostics = "gitRoot=$gitRoot scanRoot=$resolvedScanRoot listedPaths=$($relativePaths.Count) selectedFiles=$($files.Count)"
+                    Mode             = "git-ls-files"
+                    Diagnostics      = "gitRoot=$gitRoot scanRoot=$resolvedScanRoot listedPaths=$($relativePaths.Count) streaming=true"
+                    ResolvedScanRoot = $resolvedScanRoot
+                    GitExecutable    = $gitCommand.Source
+                    GitRoot          = $gitRoot
+                    GitListArguments = @($gitListArguments)
                 }
             }
 
@@ -174,17 +154,72 @@ function Get-ScannableFiles {
     }
 
     $defaultExclusionPatterns = Get-DefaultExclusionPatterns
-    $fallbackFiles = @(
-        Get-ChildItem -LiteralPath $resolvedScanRoot -File -Recurse |
-            Where-Object {
-                -not (Test-PathAgainstPatterns -path $_.FullName -patterns $defaultExclusionPatterns)
-            }
+    return [PSCustomObject]@{
+        Mode                     = "filesystem-fallback"
+        Diagnostics              = "fallbackPatterns=$($defaultExclusionPatterns.Count) streaming=true"
+        ResolvedScanRoot         = $resolvedScanRoot
+        DefaultExclusionPatterns = @($defaultExclusionPatterns)
+    }
+}
+
+function Get-ScannableFileStream {
+    param(
+        [pscustomobject]$scanPlan
     )
 
+    if ($scanPlan.Mode -eq "git-ls-files") {
+        & $scanPlan.GitExecutable -C $scanPlan.GitRoot @($scanPlan.GitListArguments) 2>$null |
+            ForEach-Object {
+                $trimmedRelativePath = $_.Trim()
+                if ([string]::IsNullOrWhiteSpace($trimmedRelativePath)) {
+                    return
+                }
+
+                $candidatePath = Join-Path -Path $scanPlan.GitRoot -ChildPath $trimmedRelativePath
+                if (-not (Test-IsPathUnderRoot -path $candidatePath -root $scanPlan.ResolvedScanRoot)) {
+                    return
+                }
+
+                try {
+                    $candidateItem = Get-Item -LiteralPath $candidatePath -ErrorAction Stop
+                    if ($candidateItem -is [System.IO.FileInfo]) {
+                        Write-Output $candidateItem
+                    }
+                }
+                catch {
+                    Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_ITEM_SKIP: Unable to materialize '$candidatePath' from git file list - $($_.Exception.Message)"
+                }
+            }
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "E_REMOVE_BOM_GIT_STREAM_FAILED: git ls-files failed during streaming enumeration with exit code $LASTEXITCODE for '$($scanPlan.ResolvedScanRoot)'."
+        }
+        return
+    }
+
+    if ($scanPlan.Mode -eq "filesystem-fallback") {
+        Get-ChildItem -LiteralPath $scanPlan.ResolvedScanRoot -File -Recurse |
+            Where-Object {
+                -not (Test-PathAgainstPatterns -path $_.FullName -patterns $scanPlan.DefaultExclusionPatterns)
+            }
+        return
+    }
+
+    throw "E_REMOVE_BOM_UNKNOWN_DISCOVERY_MODE: Unknown scan discovery mode '$($scanPlan.Mode)'."
+}
+
+function Get-ScannableFiles {
+    param(
+        [string]$scanRoot
+    )
+
+    $scanPlan = Resolve-ScannableFileDiscovery -scanRoot $scanRoot
+    $files = @(Get-ScannableFileStream -scanPlan $scanPlan)
+
     return [PSCustomObject]@{
-        Files       = @($fallbackFiles)
-        Mode        = "filesystem-fallback"
-        Diagnostics = "fallbackPatterns=$($defaultExclusionPatterns.Count) selectedFiles=$($fallbackFiles.Count)"
+        Files       = @($files)
+        Mode        = $scanPlan.Mode
+        Diagnostics = "$($scanPlan.Diagnostics) selectedFiles=$($files.Count)"
     }
 }
 
@@ -349,8 +384,7 @@ function Invoke-Main {
         Write-Host "Running in detection-only mode - no changes will be made" -ForegroundColor Yellow
     }
 
-    $scanPlan = Get-ScannableFiles -scanRoot $repoRoot
-    $scanFiles = @($scanPlan.Files)
+    $scanPlan = Resolve-ScannableFileDiscovery -scanRoot $repoRoot
 
     Write-Host "File discovery mode: $($scanPlan.Mode)"
     Write-Host "File discovery diagnostics: $($scanPlan.Diagnostics)"
@@ -359,41 +393,42 @@ function Invoke-Main {
     # Create a timer to measure performance
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
 
-    foreach ($file in $scanFiles) {
-        $filesChecked++
+    Get-ScannableFileStream -scanPlan $scanPlan |
+        ForEach-Object {
+            $file = $_
+            $filesChecked++
 
-        # Status update every 1000 files to show progress
-        if ($filesChecked % 1000 -eq 0) {
-            Write-Host "Checked $filesChecked files so far..." -ForegroundColor Cyan
-        }
-
-        # Show file being processed if ShowProgress is enabled
-        if ($ShowProgress) {
-            Write-Host "Processing: $($file.FullName)" -ForegroundColor DarkGray
-        }
-
-        if ($DetectOnly) {
-            # Just check for BOM but don't remove
-            $prefixRead = Read-FilePrefixBytes -filePath $file.FullName -byteCount 3 -context "DetectOnly"
-            if ($null -eq $prefixRead) {
-                continue
+            # Status update every 1000 files to show progress
+            if ($filesChecked % 1000 -eq 0) {
+                Write-Host "Checked $filesChecked files so far..." -ForegroundColor Cyan
             }
 
-            $buffer = $prefixRead.Buffer
-            $bytesRead = $prefixRead.BytesRead
+            # Show file being processed if ShowProgress is enabled
+            if ($ShowProgress) {
+                Write-Host "Processing: $($file.FullName)" -ForegroundColor DarkGray
+            }
 
-            if ($bytesRead -eq 3 -and $buffer[0] -eq 0xEF -and $buffer[1] -eq 0xBB -and $buffer[2] -eq 0xBF) {
-                Write-Host "BOM found in: $($file.FullName)" -ForegroundColor Yellow
-                $bomCount++
+            if ($DetectOnly) {
+                # Just check for BOM but don't remove
+                $prefixRead = Read-FilePrefixBytes -filePath $file.FullName -byteCount 3 -context "DetectOnly"
+
+                if ($null -ne $prefixRead) {
+                    $buffer = $prefixRead.Buffer
+                    $bytesRead = $prefixRead.BytesRead
+
+                    if ($bytesRead -eq 3 -and $buffer[0] -eq 0xEF -and $buffer[1] -eq 0xBB -and $buffer[2] -eq 0xBF) {
+                        Write-Host "BOM found in: $($file.FullName)" -ForegroundColor Yellow
+                        $bomCount++
+                    }
+                }
+            }
+            else {
+                # Remove BOM
+                if (Remove-BOMFromFile -FilePath $file.FullName) {
+                    $bomCount++
+                }
             }
         }
-        else {
-            # Remove BOM
-            if (Remove-BOMFromFile -FilePath $file.FullName) {
-                $bomCount++
-            }
-        }
-    }
 
     # Stop the timer
     $timer.Stop()
