@@ -136,7 +136,51 @@ Describe "Remove-BOM file discovery" {
         Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $missingIntermediate } -Times 0 -Exactly
     }
 
-    It "normalizes top-level symlink aliases during canonicalization" {
+    It "normalizes top-level symlink aliases during canonicalization (<Scenario>)" -TestCases @(
+        @{
+            Scenario                  = "ResolveLinkTarget method"
+            AliasRootFullName         = "/var"
+            ResolveLinkTargetFullName = "/private/var"
+            LinkTargetPropertyName    = $null
+            LinkTargetPropertyValue   = $null
+        },
+        @{
+            Scenario                  = "LinkTarget property (absolute)"
+            AliasRootFullName         = "/var"
+            ResolveLinkTargetFullName = $null
+            LinkTargetPropertyName    = "LinkTarget"
+            LinkTargetPropertyValue   = "/private/var"
+        },
+        @{
+            Scenario                  = "Target property (absolute)"
+            AliasRootFullName         = "/var"
+            ResolveLinkTargetFullName = $null
+            LinkTargetPropertyName    = "Target"
+            LinkTargetPropertyValue   = "/private/var"
+        },
+        @{
+            Scenario                  = "LinkTarget property (relative)"
+            AliasRootFullName         = "/var"
+            ResolveLinkTargetFullName = $null
+            LinkTargetPropertyName    = "LinkTarget"
+            LinkTargetPropertyValue   = "private/var"
+        },
+        @{
+            Scenario                  = "FullName fallback"
+            AliasRootFullName         = "/private/var"
+            ResolveLinkTargetFullName = $null
+            LinkTargetPropertyName    = $null
+            LinkTargetPropertyValue   = $null
+        }
+    ) {
+        param(
+            [string]$Scenario,
+            [string]$AliasRootFullName,
+            [string]$ResolveLinkTargetFullName,
+            [string]$LinkTargetPropertyName,
+            [string]$LinkTargetPropertyValue
+        )
+
         if ($IsWindows) {
             Set-ItResult -Skipped -Because "Unix-style root alias canonicalization does not apply on Windows"
             return
@@ -144,7 +188,6 @@ Describe "Remove-BOM file discovery" {
 
         $aliasRoot = "/var"
         $aliasPath = "/var/folders/canonical-test-root"
-        $aliasTarget = "/private/var"
 
         Mock -CommandName Resolve-Path -MockWith {
             [PSCustomObject]@{ Path = $aliasPath }
@@ -159,42 +202,87 @@ Describe "Remove-BOM file discovery" {
         Mock -CommandName Get-Item -ParameterFilter {
             $LiteralPath -eq $aliasRoot
         } -MockWith {
-            $aliasRootItem = [PSCustomObject]@{ FullName = $aliasRoot }
-            Add-Member -InputObject $aliasRootItem -MemberType ScriptMethod -Name ResolveLinkTarget -Value {
-                param([bool]$returnFinalTarget)
-                return [PSCustomObject]@{ FullName = $aliasTarget }
+            $aliasRootItem = [PSCustomObject]@{ FullName = $AliasRootFullName }
+
+            if (-not [string]::IsNullOrWhiteSpace($LinkTargetPropertyName)) {
+                Add-Member -InputObject $aliasRootItem -MemberType NoteProperty -Name $LinkTargetPropertyName -Value $LinkTargetPropertyValue
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($ResolveLinkTargetFullName)) {
+                Add-Member -InputObject $aliasRootItem -MemberType NoteProperty -Name ResolveTargetPath -Value $ResolveLinkTargetFullName
+                Add-Member -InputObject $aliasRootItem -MemberType ScriptMethod -Name ResolveLinkTarget -Value {
+                    param([bool]$returnFinalTarget)
+                    return [PSCustomObject]@{ FullName = $this.ResolveTargetPath }
+                }
             }
 
             return $aliasRootItem
         }
 
         $actualCanonicalPath = Resolve-CanonicalFileSystemPath -path "ignored-by-mocks"
-        $actualCanonicalPath | Should -Be "/private/var/folders/canonical-test-root"
+        $actualCanonicalPath | Should -Be "/private/var/folders/canonical-test-root" -Because "Scenario '$Scenario' should normalize top-level aliases consistently."
     }
 
-    It "treats top-level alias and canonical roots as equivalent for scope checks" {
+    It "treats top-level alias and canonical roots as equivalent for scope checks (<Scenario>)" -TestCases @(
+        @{
+            Scenario                  = "ResolveLinkTarget method"
+            AliasRootFullName         = "/var"
+            ResolveLinkTargetFullName = "/private/var"
+            LinkTargetPropertyName    = $null
+            LinkTargetPropertyValue   = $null
+        },
+        @{
+            Scenario                  = "LinkTarget property"
+            AliasRootFullName         = "/var"
+            ResolveLinkTargetFullName = $null
+            LinkTargetPropertyName    = "LinkTarget"
+            LinkTargetPropertyValue   = "/private/var"
+        },
+        @{
+            Scenario                  = "FullName fallback"
+            AliasRootFullName         = "/private/var"
+            ResolveLinkTargetFullName = $null
+            LinkTargetPropertyName    = $null
+            LinkTargetPropertyValue   = $null
+        }
+    ) {
+        param(
+            [string]$Scenario,
+            [string]$AliasRootFullName,
+            [string]$ResolveLinkTargetFullName,
+            [string]$LinkTargetPropertyName,
+            [string]$LinkTargetPropertyValue
+        )
+
         if ($IsWindows) {
             Set-ItResult -Skipped -Because "Unix-style root alias canonicalization does not apply on Windows"
             return
         }
 
         $aliasRoot = "/var"
-        $aliasTarget = "/private/var"
 
         Mock -CommandName Get-Item -ParameterFilter {
             $LiteralPath -eq $aliasRoot
         } -MockWith {
-            $aliasRootItem = [PSCustomObject]@{ FullName = $aliasRoot }
-            Add-Member -InputObject $aliasRootItem -MemberType ScriptMethod -Name ResolveLinkTarget -Value {
-                param([bool]$returnFinalTarget)
-                return [PSCustomObject]@{ FullName = $aliasTarget }
+            $aliasRootItem = [PSCustomObject]@{ FullName = $AliasRootFullName }
+
+            if (-not [string]::IsNullOrWhiteSpace($LinkTargetPropertyName)) {
+                Add-Member -InputObject $aliasRootItem -MemberType NoteProperty -Name $LinkTargetPropertyName -Value $LinkTargetPropertyValue
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($ResolveLinkTargetFullName)) {
+                Add-Member -InputObject $aliasRootItem -MemberType NoteProperty -Name ResolveTargetPath -Value $ResolveLinkTargetFullName
+                Add-Member -InputObject $aliasRootItem -MemberType ScriptMethod -Name ResolveLinkTarget -Value {
+                    param([bool]$returnFinalTarget)
+                    return [PSCustomObject]@{ FullName = $this.ResolveTargetPath }
+                }
             }
 
             return $aliasRootItem
         }
 
         $underRoot = Test-IsPathUnderRoot -path "/private/var/tmp/repo/file.txt" -root "/var/tmp/repo"
-        $underRoot | Should -BeTrue
+        $underRoot | Should -BeTrue -Because "Scenario '$Scenario' should treat alias and canonical roots as equivalent during scope checks."
     }
 
     It "emits stable diagnostics when canonical path resolution fails" {

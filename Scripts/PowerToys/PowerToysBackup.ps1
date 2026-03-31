@@ -15,7 +15,7 @@ try {
     $backupFolder = Join-Path -Path $rootDirectory -ChildPath "Config"
     $backupFolder = Join-Path -Path $backupFolder -ChildPath "PowerToys"
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
+        New-Item -LiteralPath $backupFolder -ItemType Directory -Force | Out-Null
     }
     else {
         $backupEntries = @(Get-ChildItem -LiteralPath $backupFolder -Force -ErrorAction Stop)

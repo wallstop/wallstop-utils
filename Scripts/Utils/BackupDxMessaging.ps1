@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 
 # --- Configuration ---
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
-if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
@@ -38,23 +38,31 @@ $zipFilePath = Join-Path ([System.IO.Path]::GetTempPath()) $zipFileName # Final 
 $tempStagePath = Join-Path ([System.IO.Path]::GetTempPath()) "TempBackupStage_$(Get-Date -Format 'yyyyMMddHHmmssffff')" # Unique temp dir name
 $maxBackups = 7
 
+Write-Verbose (
+    "DX messaging backup path diagnostics: sourcePath='{0}'; backupDir='{1}'; tempStagePath='{2}'; zipFilePath='{3}'" -f
+    $sourcePath,
+    $backupDir,
+    $tempStagePath,
+    $zipFilePath
+)
+
 # --- Pre-flight Checks ---
 # Ensure destination directory exists
-if (-not (Test-Path -Path $backupDir -PathType Container)) {
+if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {
     Write-Host "Destination directory does not exist, attempting to create: $backupDir"
     try {
-        New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
+        New-Item -LiteralPath $backupDir -ItemType Directory -Force | Out-Null
         Write-Host "Destination directory created successfully."
     }
     catch {
-        Write-Error "Failed to create destination directory: $backupDir. Error: $($_.Exception.Message)"
+        Write-Error "E_DXMSG_BACKUP_DEST_CREATE_FAILED: Failed to create destination directory '$backupDir'. Error: $($_.Exception.Message)"
         exit 1
     }
 }
 
 # Ensure source directory exists
-if (-not (Test-Path -Path $sourcePath -PathType Container)) {
-    Write-Error "Source directory does not exist: $sourcePath"
+if (-not (Test-Path -LiteralPath $sourcePath -PathType Container)) {
+    Write-Error "E_DXMSG_BACKUP_SOURCE_MISSING: Source directory does not exist at '$sourcePath'."
     exit 1
 }
 
@@ -63,7 +71,7 @@ Write-Host "Starting backup process..."
 try {
     # 1. Create Temporary Staging Directory
     Write-Host "Creating temporary staging directory: $tempStagePath"
-    New-Item -Path $tempStagePath -ItemType Directory -Force | Out-Null
+    New-Item -LiteralPath $tempStagePath -ItemType Directory -Force | Out-Null
 
     # 2. Copy Source to Staging using Robocopy (includes hidden, excludes specified)
     Write-Host "Copying files from '$sourcePath' to staging area, excluding specified items..."

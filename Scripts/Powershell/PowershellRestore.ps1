@@ -18,13 +18,13 @@ try {
     $powershellConfigPath = Join-Path -Path $documentsPath -ChildPath 'PowerShell'
     if (-not (Test-Path -LiteralPath $powershellConfigPath -PathType Container)) {
         Write-Host "Powershell settings directory not found at $powershellConfigPath, creating..."
-        New-Item -ItemType Directory -Path $powershellConfigPath -Force
+        New-Item -ItemType Directory -LiteralPath $powershellConfigPath -Force
     }
 
     $windowsPowershellConfigPath = Join-Path -Path $documentsPath -ChildPath 'WindowsPowerShell'
     if (-not (Test-Path -LiteralPath $windowsPowershellConfigPath -PathType Container)) {
         Write-Host "Windows Powershell settings directory not found at $windowsPowershellConfigPath, creating..."
-        New-Item -ItemType Directory -Path $windowsPowershellConfigPath -Force
+        New-Item -ItemType Directory -LiteralPath $windowsPowershellConfigPath -Force
     }
 
     $powershellSettings = Join-Path -Path $powershellConfigPath -ChildPath 'Microsoft.PowerShell_profile.ps1'
@@ -34,12 +34,12 @@ try {
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $backupFolder = Join-Path -Path $documentsPath -ChildPath 'PowerShell_Settings_Backup'
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
+        New-Item -LiteralPath $backupFolder -ItemType Directory -Force | Out-Null
     }
 
     $powershellBackupFile = Join-Path -Path $backupFolder -ChildPath "powershell_settings_backup_$timestamp.ps1"
     if (Test-Path -LiteralPath $powershellSettings -PathType Leaf) {
-        Copy-Item -Path $powershellSettings -Destination $powershellBackupFile -Force
+        Copy-Item -LiteralPath $powershellSettings -Destination $powershellBackupFile -Force
         Write-Host "Current PowerShell settings backed up to $powershellBackupFile"
     }
     else {
@@ -48,15 +48,15 @@ try {
 
     $windowsPowershellBackupFile = Join-Path -Path $backupFolder -ChildPath "windows_powershell_settings_backup_$timestamp.ps1"
     if (Test-Path -LiteralPath $windowsPowershellSettings -PathType Leaf) {
-        Copy-Item -Path $windowsPowershellSettings -Destination $windowsPowershellBackupFile -Force
+        Copy-Item -LiteralPath $windowsPowershellSettings -Destination $windowsPowershellBackupFile -Force
         Write-Host "Current Windows PowerShell settings backed up to $windowsPowershellBackupFile"
     }
     else {
         Write-Warning "W_POWERSHELL_RESTORE_NO_WINDOWS_POWERSHELL_PROFILE: No existing Windows PowerShell profile found at '$windowsPowershellSettings'; skipping safety backup."
     }
 
-    Copy-Item -Path $settingsPath -Destination $powershellSettings -Force
-    Copy-Item -Path $settingsPath -Destination $windowsPowershellSettings -Force
+    Copy-Item -LiteralPath $settingsPath -Destination $powershellSettings -Force
+    Copy-Item -LiteralPath $settingsPath -Destination $windowsPowershellSettings -Force
 
     Write-Host "PowerShell settings restored from $settingsPath."
 }

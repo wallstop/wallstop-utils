@@ -217,7 +217,20 @@ try {
     Write-Host ""
     Write-Host "Proceeding with git operations (best-effort mode)." -ForegroundColor Cyan
 
-    $insideWorkTreeOutput = @(& git rev-parse --is-inside-work-tree 2>$null)
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    if ($null -eq $gitCommand) {
+        throw "E_BACKUP_GIT_NOT_AVAILABLE: git executable was not found on PATH. Install git and retry backup git operations."
+    }
+
+    $gitExecutable = $gitCommand.Source
+
+    Write-Verbose (
+        "Backup git availability diagnostics: gitPath='{0}'; scriptsDirectory='{1}'" -f
+        $gitCommand.Source,
+        $scriptsDirectory
+    )
+
+    $insideWorkTreeOutput = @(& $gitExecutable rev-parse --is-inside-work-tree 2>$null)
     $insideWorkTreeExitCode = Get-LastExitCodeOrDefault
     $insideWorkTree = if ($insideWorkTreeOutput.Count -gt 0) { ([string]$insideWorkTreeOutput[0]).Trim() } else { "" }
     Write-Verbose (
@@ -240,7 +253,7 @@ try {
     # If we stage first, any overlap with remote changes will cause pull to fail with
     # "local changes would be overwritten". Pulling before git add keeps the working tree clean.
     if (-not $hasGitFailure) {
-        git pull --ff-only origin main
+        & $gitExecutable pull --ff-only origin main
         $gitPullExitCode = Get-LastExitCodeOrDefault
         if ($gitPullExitCode -ne 0) {
             Write-Warning ("E_BACKUP_GIT_PULL_FAILED: git pull --ff-only origin main exited with code {0}." -f $gitPullExitCode)
@@ -255,7 +268,7 @@ try {
     $dateString = "{0:yyyy/MM/dd HH:mm:ss zzz}" -f $date
 
     if (-not $hasGitFailure) {
-        git add --all
+        & $gitExecutable add --all
         $gitAddExitCode = Get-LastExitCodeOrDefault
         if ($gitAddExitCode -ne 0) {
             Write-Warning ("E_BACKUP_GIT_ADD_FAILED: git add --all exited with code {0}." -f $gitAddExitCode)
@@ -270,7 +283,7 @@ try {
     # when the git diff step is skipped due to a prior failure.
     $stagedFiles = @()
     if (-not $hasGitFailure) {
-        $stagedFiles = @(& git diff --cached --name-only 2>&1)
+        $stagedFiles = @(& $gitExecutable diff --cached --name-only 2>&1)
         $stagedFilesExitCode = Get-LastExitCodeOrDefault
         if ($stagedFilesExitCode -ne 0) {
             Write-Warning ("E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only exited with code {0}." -f $stagedFilesExitCode)
@@ -300,7 +313,7 @@ try {
                 $commitMessage
             )
 
-            git commit -m $commitMessage
+            & $gitExecutable commit -m $commitMessage
             $commitExitCode = Get-LastExitCodeOrDefault
             if ($commitExitCode -ne 0) {
                 Write-Warning ("E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0}." -f $commitExitCode)
@@ -316,7 +329,7 @@ try {
     }
 
     if (-not $hasGitFailure) {
-        git push origin main
+        & $gitExecutable push origin main
         $gitPushExitCode = Get-LastExitCodeOrDefault
         if ($gitPushExitCode -ne 0) {
             Write-Warning ("E_BACKUP_GIT_PUSH_FAILED: git push origin main exited with code {0}." -f $gitPushExitCode)

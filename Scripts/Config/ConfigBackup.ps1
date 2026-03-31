@@ -14,7 +14,7 @@ try {
 
     $backupFolder = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Config") -ChildPath ".config"
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
+        New-Item -LiteralPath $backupFolder -ItemType Directory -Force | Out-Null
     }
     else {
         $backupEntries = @(Get-ChildItem -LiteralPath $backupFolder -Force -ErrorAction Stop)
@@ -27,7 +27,7 @@ try {
 
     $backupParent = (Split-Path -Path $backupFolder -Parent)
     try {
-        Copy-Item -Path $configFolder -Destination $backupParent -Recurse -Force
+        Copy-Item -LiteralPath $configFolder -Destination $backupParent -Recurse -Force
         Write-Host "Backup successful! .config folder saved to $backupFolder" -ForegroundColor Green
     }
     catch {

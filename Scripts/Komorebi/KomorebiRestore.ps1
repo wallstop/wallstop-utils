@@ -25,9 +25,9 @@ try {
         exit 1
     }
 
-    Copy-Item -Path $komorebiSourceConfig -Destination $komorebiConfig -Force
-    Copy-Item -Path $komorebiSourceBarConfig -Destination $komorebiBarConfig -Force
-    Copy-Item -Path $komorebiSourceApplications -Destination $applicationYaml -Force
+    Copy-Item -LiteralPath $komorebiSourceConfig -Destination $komorebiConfig -Force
+    Copy-Item -LiteralPath $komorebiSourceBarConfig -Destination $komorebiBarConfig -Force
+    Copy-Item -LiteralPath $komorebiSourceApplications -Destination $applicationYaml -Force
     Write-Host "Successfully restored Komorebi" -ForegroundColor Green
 }
 finally {

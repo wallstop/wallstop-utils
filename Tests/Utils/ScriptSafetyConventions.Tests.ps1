@@ -1203,6 +1203,10 @@ Describe "File stream safety conventions" {
         $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
 
         $content | Should -Match 'E_REMOVE_BOM_CANONICAL_PATH_RESOLUTION_FAILED' -Because 'Canonicalization failures must emit a stable diagnostic for root-cause triage.'
+        $content | Should -Match 'function\s+Resolve-TopLevelPathAlias' -Because 'Top-level alias canonicalization must remain centralized.'
+        $content | Should -Match 'PSObject\.Properties\.Name\s+-contains\s+"LinkTarget"' -Because 'Alias resolution should consume provider link metadata when available.'
+        $content | Should -Match 'PSObject\.Properties\.Name\s+-contains\s+"Target"' -Because 'Alias resolution should support alternate provider target metadata.'
+        $content | Should -Match '\$topLevelItem\.FullName' -Because 'Alias resolution should fall back to item FullName when explicit link metadata is unavailable.'
         $content | Should -Match 'Get-Item\s+-LiteralPath\s+\$resolvedPath\s+-ErrorAction\s+Stop' -Because 'Canonicalization should materialize the resolved path directly.'
         $content | Should -Not -Match '\$pathSegments\s*=' -Because 'Segment-by-segment canonicalization is fragile across runner path aliases and should not be reintroduced.'
         $content | Should -Not -Match 'foreach\s*\(\$segment\s+in\s+\$pathSegments\)' -Because 'Canonicalization should avoid intermediate segment traversal.'
@@ -1287,7 +1291,7 @@ Describe "Restore script safety conventions" {
         $windowsTerminalRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WindowsTerminal/WindowsTerminalRestore.ps1') -Raw) -replace "`r", ''
 
         $windowsTerminalRestore | Should -Not -Match 'Copy-Item\s+-Path\s+\$settingsPath\s+-Destination\s+\$currentBackupFile'
-        $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$windowsTerminalSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
+        $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$windowsTerminalSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-LiteralPath\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
         $windowsTerminalRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$settingsPath\s+-PathType\s+Leaf'
         $windowsTerminalRestore | Should -Match 'E_WT_RESTORE_SOURCE_MISSING'
         $windowsTerminalRestore | Should -Match 'W_WT_RESTORE_NO_LIVE_SETTINGS'
@@ -1308,8 +1312,8 @@ Describe "Restore script safety conventions" {
         $powershellRestore | Should -Not -Match '\$HOME\\Documents\\Powershell'
         $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$powershellConfigPath\s+-PathType\s+Container'
         $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$windowsPowershellConfigPath\s+-PathType\s+Container'
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$powershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$powershellSettings\s+-Destination\s+\$powershellBackupFile'
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$windowsPowershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsPowershellSettings\s+-Destination\s+\$windowsPowershellBackupFile'
+        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$powershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-LiteralPath\s+\$powershellSettings\s+-Destination\s+\$powershellBackupFile'
+        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$windowsPowershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-LiteralPath\s+\$windowsPowershellSettings\s+-Destination\s+\$windowsPowershellBackupFile'
         $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_POWERSHELL_PROFILE'
         $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_WINDOWS_POWERSHELL_PROFILE'
     }
@@ -1321,6 +1325,9 @@ Describe "Restore script safety conventions" {
         $komorebiRestore | Should -Match 'E_KOMOREBI_RESTORE_SOURCE_MISSING'
         $komorebiRestore | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiSourceConfig,\s*\$komorebiSourceBarConfig,\s*\$komorebiSourceApplications\)\)'
         $komorebiRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
+        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceConfig'
+        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceBarConfig'
+        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceApplications'
     }
 
     It "fails fast when Config restore backup directory is empty" {
@@ -1353,13 +1360,17 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'else\s*\{[\s\S]*\$commitMessage\s*=\s*"Backup for \$dateString \(\$succeededCount/\$totalCount\)"'
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
         $backupScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
-        $backupScript | Should -Match 'git\s+rev-parse\s+--is-inside-work-tree'
+        $backupScript | Should -Match 'Get-Command\s+-Name\s+"git"'
+        $backupScript | Should -Match 'E_BACKUP_GIT_NOT_AVAILABLE'
+        $backupScript | Should -Match '\$gitExecutable\s*=\s*\$gitCommand\.Source'
+        $backupScript | Should -Match '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree'
         $backupScript | Should -Match 'E_BACKUP_GIT_NOT_REPOSITORY'
         $backupScript | Should -Match 'E_BACKUP_GIT_ADD_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_DIFF_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED'
+        $backupScript | Should -Match 'Backup git availability diagnostics:'
         $backupScript | Should -Match 'Backup git preflight diagnostics:'
         $backupScript | Should -Match 'Backup git staging diagnostics:'
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main'
@@ -1373,9 +1384,9 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
         # git pull --ff-only must appear BEFORE git add --all: staging before pull causes pull to fail
         # with "local changes would be overwritten" when staged changes overlap with remote changes
-        $backupScript | Should -Match 'git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+add\s+--all' -Because "git pull --ff-only must execute before git add --all; staging before pull causes pull to fail if remote changed the same files"
+        $backupScript | Should -Match '\$gitExecutable\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?\$gitExecutable\s+add\s+--all' -Because "git pull --ff-only must execute before git add --all; staging before pull causes pull to fail if remote changed the same files"
         # git pull --ff-only must also appear BEFORE git commit
-        $backupScript | Should -Match 'git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+commit' -Because "git pull --ff-only must execute before git commit; committing first causes --ff-only to fail when origin/main has advanced"
+        $backupScript | Should -Match '\$gitExecutable\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?\$gitExecutable\s+commit' -Because "git pull --ff-only must execute before git commit; committing first causes --ff-only to fail when origin/main has advanced"
     }
 
     It "uses platform-aware backup step metadata and skip diagnostics" {
@@ -1452,6 +1463,7 @@ Describe "Backup script safety conventions" {
         $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING'
         $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING[\s\S]*exit\s+1'
         $windowsTerminalBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupFolder\s+-PathType\s+Container'
+        $windowsTerminalBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$sourcePath\s+-Destination\s+\$backupFile'
     }
 
     It "uses profile-driven path-safe backup and fails when no PowerShell profiles are available" {
@@ -1471,6 +1483,7 @@ Describe "Backup script safety conventions" {
         $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_NO_PROFILES_FOUND'
         $powershellBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupFolder\s+-PathType\s+Container'
         $powershellBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$candidate\.Path\s+-PathType\s+Leaf'
+        $powershellBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$candidate\.Path\s+-Destination\s+\$backupFile'
     }
 
     It "uses UTF-8 no-BOM writes for Scoop backup output" {
@@ -1489,6 +1502,8 @@ Describe "Backup script safety conventions" {
         $powerToysBackup | Should -Match 'robocopyExitCode\s*-ge\s*8'
         $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_ROBOCOPY_FAILED'
         $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_SOURCE_MISSING'
+        $powerToysBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupFolder\s+-PathType\s+Container'
+        $powerToysBackup | Should -Match 'New-Item\s+-LiteralPath\s+\$backupFolder\s+-ItemType\s+Directory'
         $powerToysBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
         $powerToysBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$backupEntry\.FullName'
         $powerToysBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
@@ -1501,6 +1516,9 @@ Describe "Backup script safety conventions" {
         $komorebiBackup | Should -Match 'E_KOMOREBI_BACKUP_SOURCE_MISSING'
         $komorebiBackup | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiConfig,\s*\$komorebiBarConfig,\s*\$applicationYaml\)\)'
         $komorebiBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
+        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiConfig'
+        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiBarConfig'
+        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$applicationYaml'
     }
 
     It "documents backup safety contract in LLM context" {
@@ -1515,9 +1533,11 @@ Describe "Backup script safety conventions" {
     It "keeps utility backup jobs fail-fast with explicit unexpected-error signaling" {
         $dxMessagingBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/BackupDxMessaging.ps1') -Raw) -replace "`r", ''
 
+        $dxMessagingBackup | Should -Match 'E_DXMSG_BACKUP_DEST_CREATE_FAILED'
+        $dxMessagingBackup | Should -Match 'E_DXMSG_BACKUP_SOURCE_MISSING'
         $dxMessagingBackup | Should -Match 'E_DXMSG_BACKUP_UNEXPECTED'
-        $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Container'
-        $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$backupDir\s+-PathType\s+Container'
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Container'
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupDir\s+-PathType\s+Container'
         $dxMessagingBackup | Should -Match 'catch\s*\{[\s\S]*E_DXMSG_BACKUP_UNEXPECTED[\s\S]*exit\s+1'
         # Cleanup finally block must use -LiteralPath and -PathType to be path-safe
         $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$tempStagePath\s+-PathType\s+Container'
@@ -2130,7 +2150,8 @@ Describe "Utility configuration safety conventions" {
 
         $formatterContent | Should -Match '\.psscriptanalyzer\.format\.psd1'
         $formatterContent | Should -Match 'Get-LeadingTabIndentedLineNumbers'
-        $formatterContent | Should -Match 'return\s*,\s*\$lineNumbers\.ToArray\(\)'
+        $formatterContent | Should -Match 'Write-Output\s+-NoEnumerate\s+\(\$lineNumbers\.ToArray\(\)\)'
+        $formatterContent | Should -Not -Match 'return\s*,\s*\$lineNumbers\.ToArray\(\)'
         $formatterContent | Should -Match "-split '\\r\?\\n'"
         $formatterContent | Should -Not -Match "-split '\\r\?\\n',\s*-1"
         $formatterContent | Should -Match 'E_FORMATTER_OUTPUT_INVALID'
@@ -2163,6 +2184,44 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'Write-Verbose\s*\(\s*"LLM harness staged-file diagnostics:'
         $content | Should -Match 'Write-Verbose\s*"No staged files requiring utility validation; skipping validation\."'
         $content | Should -Not -Match 'Write-Host\s*\(\s*"LLM harness staged-file diagnostics:'
+    }
+
+    It "uses explicit git availability preflight in git-consuming utility scripts" {
+        $gitPreflightCases = @(
+            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+diff\s+--cached\s+--name-only\s+--diff-filter=ACMR' },
+            @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+status\s+--porcelain=v1\s+--untracked-files=all' },
+            @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+status\s+--porcelain=v1\s+--untracked-files=all' },
+            @{ Path = 'Scripts/Utils/Increment-Version.ps1'; ErrorCode = 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree' }
+        )
+
+        foreach ($case in $gitPreflightCases) {
+            $content = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath $case.Path) -Raw) -replace "`r", ''
+            $content | Should -Match 'Get-Command\s+-Name\s+"git"\s+-ErrorAction\s+SilentlyContinue' -Because (
+                "{0} invokes git and must validate PATH availability first." -f $case.Path
+            )
+            $content | Should -Match $case.ErrorCode -Because (
+                "{0} must emit stable diagnostics when git is unavailable." -f $case.Path
+            )
+            $content | Should -Match $case.InvocationPattern -Because (
+                "{0} should invoke git through the resolved executable path after preflight." -f $case.Path
+            )
+        }
+    }
+
+    It "keeps quality script diagnostics low-noise in Remove-BOM and Windows language checks" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $removeBom = (Get-Content -Path $removeBomPath -Raw) -replace "`r", ''
+        $removeBom | Should -Match 'Write-Verbose\s+"File discovery diagnostics:'
+        $removeBom | Should -Not -Match 'Write-Host\s+"File discovery diagnostics:'
+        $removeBom | Should -Match 'Write-Verbose\s+"Checked \$filesChecked files so far\.\.\."'
+
+        $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
+        $windowsChecks = (Get-Content -Path $windowsChecksPath -Raw) -replace "`r", ''
+        $windowsChecks | Should -Match 'Write-Verbose\s+"AutoHotkey checks: no \.ahk files found for selected scope; skipping\."'
+        $windowsChecks | Should -Match 'Write-Verbose\s+"AutoHotkey checks: validating'
+        $windowsChecks | Should -Match 'Write-Verbose\s+"Batch checks: running best-effort static smoke checks'
+        $windowsChecks | Should -Match 'Write-Verbose\s+"Windows language checks: running in targeted mode'
+        $windowsChecks | Should -Not -Match 'Write-Host\s+"Batch checks limitation:'
     }
 
     It "keeps Invoke-PesterQualityGate diagnostics low-noise" {

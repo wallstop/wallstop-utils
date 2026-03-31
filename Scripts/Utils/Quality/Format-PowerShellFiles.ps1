@@ -23,8 +23,8 @@ function Get-LeadingTabIndentedLineNumbers {
         }
     }
 
-    # Unary comma keeps empty results as an empty int[] instead of `$null.
-    return , $lineNumbers.ToArray()
+    # Prevent output unrolling so callers always receive a true int[] value.
+    Write-Output -NoEnumerate ($lineNumbers.ToArray())
 }
 
 function Get-LineNumberPreview {

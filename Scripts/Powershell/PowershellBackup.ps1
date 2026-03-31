@@ -8,7 +8,7 @@ Push-Location -LiteralPath $baseDirectory
 
 try {
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -Path $backupFolder -ItemType Directory | Out-Null
+        New-Item -LiteralPath $backupFolder -ItemType Directory | Out-Null
     }
 
     $profilesBackedUp = 0
@@ -59,7 +59,7 @@ try {
         if (Test-Path -LiteralPath $candidate.Path -PathType Leaf) {
             $destinationFileName = "{0}_{1}" -f $candidate.Name, [System.IO.Path]::GetFileName($candidate.Path)
             $backupFile = Join-Path -Path $backupFolder -ChildPath $destinationFileName
-            Copy-Item -Path $candidate.Path -Destination $backupFile -Force
+            Copy-Item -LiteralPath $candidate.Path -Destination $backupFile -Force
             $profilesBackedUp++
             Write-Host ("PowerShell profile '{0}' exported successfully from '{1}' to '{2}'." -f $candidate.Name, $candidate.Path, $backupFile) -ForegroundColor Green
             continue

@@ -34,8 +34,23 @@ function Invoke-NativeCommand {
     }
 }
 
+function Get-GitExecutableOrThrow {
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    if ($null -eq $gitCommand) {
+        throw "E_VALIDATION_GIT_NOT_AVAILABLE: git is required for validation status checks but was not found on PATH."
+    }
+
+    Write-Verbose ("Validation git diagnostics: gitPath='{0}'" -f $gitCommand.Source)
+    return $gitCommand.Source
+}
+
 function Get-StatusSnapshot {
-    $statusLines = @(& git status --porcelain=v1 --untracked-files=all)
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable
+    )
+
+    $statusLines = @(& $GitExecutable status --porcelain=v1 --untracked-files=all)
     $statusExit = $LASTEXITCODE
     if ($statusExit -ne 0) {
         throw "E_VALIDATION_GIT_STATUS_FAILED: unable to read git status snapshot (exitCode=$statusExit)."
@@ -52,7 +67,8 @@ $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../.."))
 Push-Location -LiteralPath $repoRoot
 
 try {
-    $statusBeforeValidation = Get-StatusSnapshot
+    $gitExecutable = Get-GitExecutableOrThrow
+    $statusBeforeValidation = Get-StatusSnapshot -GitExecutable $gitExecutable
 
     if (-not (Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue)) {
         throw "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install pre-commit; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=$HOME/.local/bin:$PATH and persist that export in ~/.bashrc or ~/.zshrc), then run 'pre-commit install --hook-type pre-commit --hook-type pre-push'."
@@ -83,7 +99,7 @@ try {
     & $llmHarnessScript -RootPath $repoRoot
 
     Write-Host "[validation] workspace drift assertion"
-    $statusAfterValidation = Get-StatusSnapshot
+    $statusAfterValidation = Get-StatusSnapshot -GitExecutable $gitExecutable
     $beforeCount = if ($null -eq $statusBeforeValidation) { "<null>" } else { [string](@($statusBeforeValidation).Count) }
     $afterCount = if ($null -eq $statusAfterValidation) { "<null>" } else { [string](@($statusAfterValidation).Count) }
     Write-Verbose "Workspace drift snapshots: before=$beforeCount after=$afterCount"

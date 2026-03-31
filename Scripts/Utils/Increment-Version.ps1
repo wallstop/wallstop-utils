@@ -498,36 +498,52 @@ function Increment-Version {
 
         if ($operationContext.Updated -and $gitActionRequested) {
             $operationContext.GitStage = "starting"
+            $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+            if ($null -eq $gitCommand) {
+                $operationContext.GitStage = "failed-git-missing"
+                throw "E_INCREMENT_VERSION_GIT_NOT_AVAILABLE: git is not available on PATH. Install git or run without -CommitChanges/-RunPreCommit/-Push."
+            }
+
+            Write-Verbose (
+                "Increment-Version git diagnostics: gitPath='{0}'; commitRequested={1}; runPreCommit={2}; pushRequested={3}" -f
+                $gitCommand.Source,
+                $CommitChanges.IsPresent,
+                $RunPreCommit.IsPresent,
+                $Push.IsPresent
+            )
+
+            $gitExecutable = $gitCommand.Source
+
             $inside = ""
-            try { $inside = (git rev-parse --is-inside-work-tree 2>$null).Trim() } catch {}
+            try { $inside = (& $gitExecutable rev-parse --is-inside-work-tree 2>$null).Trim() } catch {}
             if ($inside -ne "true") {
                 $operationContext.GitStage = "skipped-not-git-repo"
                 Write-Warning "Not a git repository; skipping commit/push."
             }
             else {
-                $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+                $branch = (& $gitExecutable rev-parse --abbrev-ref HEAD).Trim()
                 $primary = @("master","main")
                 if (-not $AllowNonMainBranch.IsPresent -and -not ($primary -contains $branch)) {
                     $operationContext.GitStage = "skipped-non-primary-branch"
                     Write-Warning "On branch '$branch'. Version bumps are restricted to master/main. Use -AllowNonMainBranch to override."
                 }
                 else {
-                    try { git fetch --prune | Out-Null } catch {}
+                    try { & $gitExecutable fetch --prune | Out-Null } catch {}
                     # Safe, optional fast-forward pull: only if clean, no merge/rebase in progress, and behind without local commits
-                    $gitDir = (git rev-parse --git-dir 2>$null)
+                    $gitDir = (& $gitExecutable rev-parse --git-dir 2>$null)
                     $mergeInProgress = if ($gitDir) { Test-Path -LiteralPath (Join-Path $gitDir 'MERGE_HEAD') } else { $false }
                     $rebaseInProgress = if ($gitDir) { (Test-Path -LiteralPath (Join-Path $gitDir 'rebase-apply')) -or (Test-Path -LiteralPath (Join-Path $gitDir 'rebase-merge')) } else { $false }
                     $wtClean = $true
-                    try { git diff --no-ext-diff --quiet --exit-code; if ($LASTEXITCODE -ne 0) { $wtClean = $false } } catch { $wtClean = $false }
+                    try { & $gitExecutable diff --no-ext-diff --quiet --exit-code; if ($LASTEXITCODE -ne 0) { $wtClean = $false } } catch { $wtClean = $false }
                     if (-not $mergeInProgress -and -not $rebaseInProgress -and $wtClean) {
                         try {
-                            $countsRaw = git rev-list --left-right --count "@{u}...HEAD" 2>$null
+                            $countsRaw = & $gitExecutable rev-list --left-right --count "@{u}...HEAD" 2>$null
                             if ($countsRaw) {
                                 $parts = $countsRaw -split '\s+'
                                 if ($parts.Length -ge 2) {
                                     [int]$behind = $parts[0]; [int]$ahead = $parts[1]
                                     if ($behind -gt 0 -and $ahead -eq 0) {
-                                        git pull --ff-only | Out-Null
+                                        & $gitExecutable pull --ff-only | Out-Null
                                     }
                                 }
                             }
@@ -536,13 +552,13 @@ function Increment-Version {
                     }
 
                     $operationContext.GitStage = "staging"
-                    git add -- "$($operationContext.PackageJsonPath)" | Out-Null
+                    & $gitExecutable add -- "$($operationContext.PackageJsonPath)" | Out-Null
                     $lockPath = Join-Path (Split-Path -Path $operationContext.PackageJsonPath) "package-lock.json"
-                    if (Test-Path $lockPath -PathType Leaf) { git add -- "$lockPath" | Out-Null }
+                    if (Test-Path -LiteralPath $lockPath -PathType Leaf) { & $gitExecutable add -- "$lockPath" | Out-Null }
                     if ($RunPreCommit.IsPresent) {
                         if (Get-Command pre-commit -ErrorAction SilentlyContinue) {
                             try { pre-commit run -a | Out-Null } catch {}
-                            git add -a | Out-Null
+                            & $gitExecutable add -a | Out-Null
                         }
                         else {
                             if (Get-Command npm -ErrorAction SilentlyContinue) {
@@ -557,21 +573,21 @@ function Increment-Version {
                                     try { dotnet tool run csharpier format | Out-Null } catch {}
                                 }
                             }
-                            git add -a | Out-Null
+                            & $gitExecutable add -a | Out-Null
                         }
                     }
                     $operationContext.GitStage = "committing"
                     $msg = "chore(version): bump to $($operationContext.NewVersion)"
                     $args = @("commit","-m",$msg)
                     if ($NoVerify.IsPresent) { $args += "--no-verify" }
-                    & git @args
+                    & $gitExecutable @args
                     if ($LASTEXITCODE -ne 0) {
-                        git add -a | Out-Null
-                        git commit -m $msg --no-verify | Out-Null
+                        & $gitExecutable add -a | Out-Null
+                        & $gitExecutable commit -m $msg --no-verify | Out-Null
                     }
                     if ($Push.IsPresent) {
                         $operationContext.GitStage = "pushing"
-                        git push -u origin $branch | Out-Null
+                        & $gitExecutable push -u origin $branch | Out-Null
                     }
 
                     if (-not $Push.IsPresent) {

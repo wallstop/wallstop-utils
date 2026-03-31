@@ -134,26 +134,76 @@ function Resolve-TopLevelPathAlias {
     }
 
     if (-not $script:topLevelAliasCache.ContainsKey($topLevelSegment)) {
-        $resolvedTopLevelAliasTarget = $null
+        $resolvedTopLevelAliasTarget = $topLevelSegment
+        $aliasResolutionSource = "identity"
 
         try {
             $topLevelItem = Get-Item -LiteralPath $topLevelSegment -ErrorAction Stop
+
+            $resolvedAliasTarget = $null
             if ($topLevelItem.PSObject.Methods.Name -contains "ResolveLinkTarget") {
-                $resolvedAliasTarget = $topLevelItem.ResolveLinkTarget($true)
-                if ($null -ne $resolvedAliasTarget -and -not [string]::IsNullOrWhiteSpace($resolvedAliasTarget.FullName)) {
-                    $resolvedTopLevelAliasTarget = [System.IO.Path]::GetFullPath($resolvedAliasTarget.FullName)
+                try {
+                    $resolvedAliasTarget = $topLevelItem.ResolveLinkTarget($true)
+                }
+                catch {
+                    $resolvedAliasTarget = $null
+                }
+            }
+
+            if ($null -ne $resolvedAliasTarget -and -not [string]::IsNullOrWhiteSpace($resolvedAliasTarget.FullName)) {
+                $resolvedTopLevelAliasTarget = [System.IO.Path]::GetFullPath($resolvedAliasTarget.FullName)
+                $aliasResolutionSource = "ResolveLinkTarget"
+            }
+            else {
+                $linkTargetProperty = $null
+                $linkTargetPropertyName = $null
+                if ($topLevelItem.PSObject.Properties.Name -contains "LinkTarget") {
+                    $linkTargetProperty = [string]$topLevelItem.LinkTarget
+                    $linkTargetPropertyName = "LinkTarget"
+                }
+                elseif ($topLevelItem.PSObject.Properties.Name -contains "Target") {
+                    $linkTargetProperty = [string]$topLevelItem.Target
+                    $linkTargetPropertyName = "Target"
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($linkTargetProperty)) {
+                    $linkTargetPath = if ([System.IO.Path]::IsPathRooted($linkTargetProperty)) {
+                        $linkTargetProperty
+                    }
+                    else {
+                        $topLevelParent = Split-Path -Path $topLevelSegment -Parent
+                        if ([string]::IsNullOrWhiteSpace($topLevelParent)) {
+                            $topLevelParent = "/"
+                        }
+
+                        Join-Path -Path $topLevelParent -ChildPath $linkTargetProperty
+                    }
+
+                    $resolvedTopLevelAliasTarget = [System.IO.Path]::GetFullPath($linkTargetPath)
+                    $aliasResolutionSource = "property:$linkTargetPropertyName"
+                }
+                elseif (-not [string]::IsNullOrWhiteSpace($topLevelItem.FullName)) {
+                    # On some platforms/providers Get-Item can already expose the canonical target in FullName
+                    # even when explicit link-target APIs are unavailable.
+                    $resolvedTopLevelAliasTarget = [System.IO.Path]::GetFullPath($topLevelItem.FullName)
+                    $aliasResolutionSource = "FullName"
                 }
             }
         }
         catch {
-            $resolvedTopLevelAliasTarget = $null
+            $resolvedTopLevelAliasTarget = $topLevelSegment
+            $aliasResolutionSource = "fallback-on-error"
         }
 
         $script:topLevelAliasCache[$topLevelSegment] = $resolvedTopLevelAliasTarget
+
+        if (-not $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+            Write-Verbose "Remove-BOM alias diagnostics: mapped top-level segment '$topLevelSegment' to '$resolvedTopLevelAliasTarget' via $aliasResolutionSource."
+        }
     }
 
     $aliasTarget = $script:topLevelAliasCache[$topLevelSegment]
-    if ([string]::IsNullOrWhiteSpace($aliasTarget)) {
+    if ([string]::IsNullOrWhiteSpace($aliasTarget) -or $aliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
         return $fullPath
     }
 
@@ -676,7 +726,7 @@ function Invoke-Main {
     $scanPlan = Resolve-ScannableFileDiscovery -scanRoot $repoRoot
 
     Write-Host "File discovery mode: $($scanPlan.Mode)"
-    Write-Host "File discovery diagnostics: $($scanPlan.Diagnostics)"
+    Write-Verbose "File discovery diagnostics: $($scanPlan.Diagnostics)"
     Write-Host "Scanning files for BOM (this may take a while for large repositories)..."
 
     # Create a timer to measure performance
@@ -689,7 +739,7 @@ function Invoke-Main {
 
             # Status update every 1000 files to show progress
             if ($filesChecked % 1000 -eq 0) {
-                Write-Host "Checked $filesChecked files so far..." -ForegroundColor Cyan
+                Write-Verbose "Checked $filesChecked files so far..."
             }
 
             # Show file being processed if ShowProgress is enabled

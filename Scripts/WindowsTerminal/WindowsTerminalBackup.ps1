@@ -9,12 +9,12 @@ Push-Location -LiteralPath $baseDirectory
 
 try {
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -Path $backupFolder -ItemType Directory | Out-Null
+        New-Item -LiteralPath $backupFolder -ItemType Directory | Out-Null
     }
 
     if (Test-Path -LiteralPath $sourcePath -PathType Leaf) {
         $backupFile = "$backupFolder\settings.json"
-        Copy-Item -Path $sourcePath -Destination $backupFile
+        Copy-Item -LiteralPath $sourcePath -Destination $backupFile
         Write-Host "Windows Terminal settings exported successfully." -ForegroundColor Green
     }
     else {

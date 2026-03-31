@@ -23,9 +23,9 @@ try {
     }
 
     try {
-        Copy-Item -Path $komorebiConfig -Destination "$rootDirectory\Config\Komorebi\komorebi.json" -Force
-        Copy-Item -Path $komorebiBarConfig -Destination "$rootDirectory\Config\Komorebi\komorebi.bar.json" -Force
-        Copy-Item -Path $applicationYaml -Destination "$rootDirectory\Config\Komorebi\applications.yaml" -Force
+        Copy-Item -LiteralPath $komorebiConfig -Destination "$rootDirectory\Config\Komorebi\komorebi.json" -Force
+        Copy-Item -LiteralPath $komorebiBarConfig -Destination "$rootDirectory\Config\Komorebi\komorebi.bar.json" -Force
+        Copy-Item -LiteralPath $applicationYaml -Destination "$rootDirectory\Config\Komorebi\applications.yaml" -Force
         Write-Host "Successfully backed up Komorebi" -ForegroundColor Green
     }
     catch {

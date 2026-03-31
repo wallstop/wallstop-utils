@@ -67,7 +67,7 @@ if (-not (Get-Command pandoc -ErrorAction SilentlyContinue)) {
 # Create Output Directory if it doesn't exist
 if (-not (Test-Path -LiteralPath $OutputDir -PathType Container)) {
     try {
-        New-Item -Path $OutputDir -ItemType Directory -Force | Out-Null
+        New-Item -LiteralPath $OutputDir -ItemType Directory -Force | Out-Null
         Write-Host "Created output directory: $OutputDir" -ForegroundColor Cyan
     }
     catch {
@@ -106,7 +106,7 @@ foreach ($file in $htmlFiles) {
     $destinationDir = Split-Path -Path $destinationFile -Parent
     if (-not (Test-Path -LiteralPath $destinationDir -PathType Container)) {
         try {
-            New-Item -Path $destinationDir -ItemType Directory -Force | Out-Null
+            New-Item -LiteralPath $destinationDir -ItemType Directory -Force | Out-Null
             Write-Host "Created directory: $destinationDir" -ForegroundColor Cyan
         }
         catch {
