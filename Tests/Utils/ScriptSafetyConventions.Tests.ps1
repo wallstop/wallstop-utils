@@ -1017,19 +1017,30 @@ Describe "Shell quality conventions" {
 Describe "Directory restoration safety conventions" {
     It "requires try/finally restoration for Push-Location in PowerShell scripts" {
         $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Scripts'
-        $powerShellScripts = @(Get-ChildItem -Path $scriptsRoot -Filter '*.ps1' -File -Recurse -ErrorAction Stop)
+        $powerShellScripts = @(Get-ChildItem -LiteralPath $scriptsRoot -Filter '*.ps1' -File -Recurse -ErrorAction Stop)
 
         foreach ($scriptFile in $powerShellScripts) {
             # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
-            $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+            $content = (Get-Content -LiteralPath $scriptFile.FullName -Raw) -replace "`r", ''
             if ($content -notmatch '(?m)^\s*Push-Location\b') {
                 continue
             }
 
             $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
-            $content | Should -Match 'Push-Location[\s\S]*?try\s*\{[\s\S]*?finally\s*\{[\s\S]*?Pop-Location' -Because (
-                "{0} uses Push-Location and must restore caller location in a finally block." -f $relativePath
-            )
+
+            # Per-occurrence check: split content on each Push-Location invocation.
+            # Each part after index 0 is the content that follows one Push-Location call.
+            # Every such segment must contain a try/finally block with Pop-Location,
+            # ensuring every Push-Location is independently guarded — a single-regex check
+            # over the whole file would pass even when only one of multiple Push-Locations
+            # is protected.
+            $parts = [regex]::Split($content, '\bPush-Location\b[^\n]*')
+            for ($i = 1; $i -lt $parts.Count; $i++) {
+                $segment = $parts[$i]
+                $segment | Should -Match 'try\s*\{[\s\S]*?finally\s*\{[\s\S]*?Pop-Location' -Because (
+                    "{0}: Push-Location occurrence #{1} must be followed by a try/finally block that calls Pop-Location. Each Push-Location must be independently guarded." -f $relativePath, $i
+                )
+            }
         }
     }
 
@@ -1218,9 +1229,13 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main'
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+push\s+origin\s+main'
         $backupScript | Should -Match 'W_BACKUP_GIT_PULL_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'W_BACKUP_GIT_ADD_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE'
-        # git pull --ff-only must appear BEFORE git commit: pulling first ensures ff-only succeeds when origin/main has advanced
+        # git pull --ff-only must appear BEFORE git add --all: staging before pull causes pull to fail
+        # with "local changes would be overwritten" when staged changes overlap with remote changes
+        $backupScript | Should -Match 'git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+add\s+--all' -Because "git pull --ff-only must execute before git add --all; staging before pull causes pull to fail if remote changed the same files"
+        # git pull --ff-only must also appear BEFORE git commit
         $backupScript | Should -Match 'git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+commit' -Because "git pull --ff-only must execute before git commit; committing first causes --ff-only to fail when origin/main has advanced"
     }
 

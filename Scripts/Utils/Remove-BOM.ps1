@@ -85,38 +85,38 @@ function Get-GitIgnorePatterns {
     # Start with common exclusions from typical repositories
     $patterns = @(
         # Version control
-        "*\.git\*",
-        "*\.svn\*",
-        "*\.hg\*",
+        "*/.git/*",
+        "*/.svn/*",
+        "*/.hg/*",
 
         # Build directories
-        "*\bin\*",
-        "*\obj\*",
-        "*\build\*",
-        "*\dist\*",
-        "*\target\*",
-        "*\out\*",
-        "*\output\*",
-        "*\node_modules\*",
-        "*\.next\*",
-        "*\.nuxt\*",
-        "*\.vite\*",
-        "*\.svelte-kit\*",
-        "*\.turbo\*",
-        "*\cdk.out\*",
+        "*/bin/*",
+        "*/obj/*",
+        "*/build/*",
+        "*/dist/*",
+        "*/target/*",
+        "*/out/*",
+        "*/output/*",
+        "*/node_modules/*",
+        "*/.next/*",
+        "*/.nuxt/*",
+        "*/.vite/*",
+        "*/.svelte-kit/*",
+        "*/.turbo/*",
+        "*/cdk.out/*",
 
         # IDE files
-        "*\.vs\*",
-        "*\.idea\*",
-        "*\.vscode\*",
+        "*/.vs/*",
+        "*/.idea/*",
+        "*/.vscode/*",
 
         # Logs and temp files
-        "*\logs\*",
-        "*\coverage\*",
-        "*\.nyc_output\*",
-        "*\*.log",
-        "*\*.tmp",
-        "*\*.tsbuildinfo"
+        "*/logs/*",
+        "*/coverage/*",
+        "*/.nyc_output/*",
+        "*/*.log",
+        "*/*.tmp",
+        "*/*.tsbuildinfo"
     )
 
     # Add binary file extensions
@@ -153,16 +153,16 @@ function Get-GitIgnorePatterns {
 
                 # Handle directory wildcards
                 if ($pattern.EndsWith('/')) {
-                    $pattern = $pattern.TrimEnd('/') + '\*'
+                    $pattern = $pattern.TrimEnd('/') + '/*'
                 }
 
                 # Handle ** wildcard (any directory depth)
                 $pattern = $pattern -replace '\*\*','*'
 
-                # Convert to full path
+                # Convert to full path using forward slash (normalized for cross-platform matching)
                 if ($pattern -match '^\w') {
                     # Pattern doesn't start with wildcard, make it relative to root
-                    $pattern = "*\$pattern*"
+                    $pattern = "*/$pattern*"
                 }
                 elseif ($pattern.StartsWith('*')) {
                     # Pattern starts with wildcard, make it search anywhere
@@ -187,8 +187,11 @@ function Test-PathAgainstGitIgnore {
         [string[]]$ignorePatterns
     )
 
+    # Normalize to forward slashes for cross-platform matching (patterns use '/')
+    $normalizedPath = $path -replace '\\', '/'
+
     foreach ($pattern in $ignorePatterns) {
-        if ($path -like $pattern) {
+        if ($normalizedPath -like $pattern) {
             return $true
         }
     }

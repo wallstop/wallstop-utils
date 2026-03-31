@@ -209,27 +209,9 @@ try {
         )
     }
 
-    $date = Get-Date
-    $dateString = "{0:yyyy/MM/dd HH:mm:ss zzz}" -f $date
-    git add --all
-    $gitAddExitCode = Get-LastExitCodeOrDefault
-    if ($gitAddExitCode -ne 0) {
-        throw ("E_BACKUP_GIT_ADD_FAILED: git add --all exited with code {0}." -f $gitAddExitCode)
-    }
-
-    $stagedFiles = @(& git diff --cached --name-only 2>&1)
-    $stagedFilesExitCode = Get-LastExitCodeOrDefault
-    if ($stagedFilesExitCode -ne 0) {
-        throw ("E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only exited with code {0}." -f $stagedFilesExitCode)
-    }
-
-    Write-Verbose (
-        "Backup git staging diagnostics: stagedFilesCount={0}; hasGitFailure={1}; hasBackupStepFailures={2}" -f
-        $stagedFiles.Count,
-        $hasGitFailure,
-        $hasBackupStepFailures
-    )
-
+    # Pull before staging: ff-only succeeds only when local HEAD is an ancestor of remote.
+    # If we stage first, any overlap with remote changes will cause pull to fail with
+    # "local changes would be overwritten". Pulling before git add keeps the working tree clean.
     if (-not $hasGitFailure) {
         git pull --ff-only origin main
         $gitPullExitCode = Get-LastExitCodeOrDefault
@@ -241,6 +223,40 @@ try {
     else {
         Write-Warning "W_BACKUP_GIT_PULL_SKIPPED_PRIOR_GIT_FAILURE: Skipping git pull --ff-only origin main because a previous git operation failed."
     }
+
+    $date = Get-Date
+    $dateString = "{0:yyyy/MM/dd HH:mm:ss zzz}" -f $date
+
+    if (-not $hasGitFailure) {
+        git add --all
+        $gitAddExitCode = Get-LastExitCodeOrDefault
+        if ($gitAddExitCode -ne 0) {
+            Write-Warning ("E_BACKUP_GIT_ADD_FAILED: git add --all exited with code {0}." -f $gitAddExitCode)
+            $hasGitFailure = $true
+        }
+    }
+    else {
+        Write-Warning "W_BACKUP_GIT_ADD_SKIPPED_PRIOR_GIT_FAILURE: Skipping git add --all because a previous git operation failed."
+    }
+
+    # Initialize to empty so $stagedFiles.Count references below are safe under Set-StrictMode
+    # when the git diff step is skipped due to a prior failure.
+    $stagedFiles = @()
+    if (-not $hasGitFailure) {
+        $stagedFiles = @(& git diff --cached --name-only 2>&1)
+        $stagedFilesExitCode = Get-LastExitCodeOrDefault
+        if ($stagedFilesExitCode -ne 0) {
+            Write-Warning ("E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only exited with code {0}." -f $stagedFilesExitCode)
+            $hasGitFailure = $true
+        }
+    }
+
+    Write-Verbose (
+        "Backup git staging diagnostics: stagedFilesCount={0}; hasGitFailure={1}; hasBackupStepFailures={2}" -f
+        $stagedFiles.Count,
+        $hasGitFailure,
+        $hasBackupStepFailures
+    )
 
     if (-not $hasGitFailure) {
         if ($stagedFiles.Count -gt 0) {
