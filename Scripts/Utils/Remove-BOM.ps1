@@ -85,8 +85,8 @@ function Test-IsPathUnderRoot {
         [string]$root
     )
 
-    $normalizedPath = ([System.IO.Path]::GetFullPath($path) -replace '\\', '/').TrimEnd('/')
-    $normalizedRoot = ([System.IO.Path]::GetFullPath($root) -replace '\\', '/').TrimEnd('/')
+    $normalizedPath = ((Resolve-TopLevelPathAlias -path $path) -replace '\\', '/').TrimEnd('/')
+    $normalizedRoot = ((Resolve-TopLevelPathAlias -path $root) -replace '\\', '/').TrimEnd('/')
 
     $comparison = if ($IsWindows) {
         [System.StringComparison]::OrdinalIgnoreCase
@@ -100,6 +100,73 @@ function Test-IsPathUnderRoot {
     }
 
     return $normalizedPath.StartsWith("$normalizedRoot/", $comparison)
+}
+
+# Cache top-level alias resolutions (for example, /var -> /private/var on macOS)
+# for the current PowerShell session to avoid repeated filesystem probes.
+$script:topLevelAliasCache = @{}
+
+function Resolve-TopLevelPathAlias {
+    param(
+        [string]$path
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($path)
+
+    if ($IsWindows -or [string]::IsNullOrWhiteSpace($fullPath) -or -not $fullPath.StartsWith('/')) {
+        return $fullPath
+    }
+
+    if ($fullPath.Length -eq 1) {
+        return $fullPath
+    }
+
+    $segmentSeparatorIndex = $fullPath.IndexOf('/', 1)
+    $topLevelSegment = if ($segmentSeparatorIndex -gt 0) {
+        $fullPath.Substring(0, $segmentSeparatorIndex)
+    }
+    else {
+        $fullPath
+    }
+
+    if ($topLevelSegment -eq "/") {
+        return $fullPath
+    }
+
+    if (-not $script:topLevelAliasCache.ContainsKey($topLevelSegment)) {
+        $resolvedTopLevelAliasTarget = $null
+
+        try {
+            $topLevelItem = Get-Item -LiteralPath $topLevelSegment -ErrorAction Stop
+            if ($topLevelItem.PSObject.Methods.Name -contains "ResolveLinkTarget") {
+                $resolvedAliasTarget = $topLevelItem.ResolveLinkTarget($true)
+                if ($null -ne $resolvedAliasTarget -and -not [string]::IsNullOrWhiteSpace($resolvedAliasTarget.FullName)) {
+                    $resolvedTopLevelAliasTarget = [System.IO.Path]::GetFullPath($resolvedAliasTarget.FullName)
+                }
+            }
+        }
+        catch {
+            $resolvedTopLevelAliasTarget = $null
+        }
+
+        $script:topLevelAliasCache[$topLevelSegment] = $resolvedTopLevelAliasTarget
+    }
+
+    $aliasTarget = $script:topLevelAliasCache[$topLevelSegment]
+    if ([string]::IsNullOrWhiteSpace($aliasTarget)) {
+        return $fullPath
+    }
+
+    if ($fullPath.Length -eq $topLevelSegment.Length) {
+        return $aliasTarget
+    }
+
+    $remainingPath = $fullPath.Substring($topLevelSegment.Length).TrimStart('/')
+    if ([string]::IsNullOrWhiteSpace($remainingPath)) {
+        return $aliasTarget
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path -Path $aliasTarget -ChildPath $remainingPath))
 }
 
 function Get-GitCommandDetails {
@@ -155,7 +222,7 @@ function Resolve-CanonicalFileSystemPath {
             $resolvedItem.FullName
         }
 
-        return [System.IO.Path]::GetFullPath($canonicalCandidate)
+        return Resolve-TopLevelPathAlias -path $canonicalCandidate
     }
     catch {
         throw "E_REMOVE_BOM_CANONICAL_PATH_RESOLUTION_FAILED: Failed to canonicalize '$path' - $($_.Exception.Message)"
@@ -419,7 +486,23 @@ function Get-ScannableFiles {
     $files = @(Get-ScannableFileStream -scanPlan $scanPlan)
 
     if ($scanPlan.Mode -eq "git-ls-files" -and $files.Count -eq 0) {
-        Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_EMPTY_RESULT: Git discovery returned zero files for scan root '$scanRoot'. Diagnostics: $($scanPlan.Diagnostics)"
+        $scopeDiagnostics = $null
+        try {
+            $scopeDiagnostics = [System.IO.Path]::GetRelativePath(
+                (Resolve-TopLevelPathAlias -path $scanPlan.GitRoot),
+                (Resolve-TopLevelPathAlias -path $scanPlan.ResolvedScanRoot)
+            )
+        }
+        catch {
+            $scopeDiagnostics = $null
+        }
+
+        if ([string]::IsNullOrWhiteSpace($scopeDiagnostics)) {
+            Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_EMPTY_RESULT: Git discovery returned zero files for scan root '$scanRoot'. Diagnostics: $($scanPlan.Diagnostics)"
+        }
+        else {
+            Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_EMPTY_RESULT: Git discovery returned zero files for scan root '$scanRoot'. Diagnostics: $($scanPlan.Diagnostics) relativeScopeFromGitRoot=$scopeDiagnostics"
+        }
     }
 
     return [PSCustomObject]@{

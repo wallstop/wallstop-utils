@@ -10,11 +10,20 @@ BeforeAll {
 
     function Resolve-CanonicalTempRoot {
         param([string]$Path)
-        # On macOS, GetTempPath() returns /var/folders/... (symlink) but FileInfo.FullName
-        # resolves to /private/var/folders/... (canonical). Get-Item.FullName matches this
-        # platform-specific resolution, ensuring GetRelativePath produces correct results.
-        # On Linux/Windows this is a no-op (no symlink aliasing in standard temp paths).
-        return (Get-Item -LiteralPath $Path).FullName
+        # Use production canonicalization so test path derivation matches discovery behavior
+        # under symlink aliases (for example, /var vs /private/var on macOS).
+        return Resolve-CanonicalFileSystemPath -path $Path
+    }
+
+    function Get-CanonicalRelativePath {
+        param(
+            [string]$BasePath,
+            [string]$TargetPath
+        )
+
+        $canonicalBasePath = Resolve-CanonicalFileSystemPath -path $BasePath
+        $canonicalTargetPath = Resolve-CanonicalFileSystemPath -path $TargetPath
+        return ([System.IO.Path]::GetRelativePath($canonicalBasePath, $canonicalTargetPath) -replace '\\', '/')
     }
 
     function Initialize-TestGitRepository {
@@ -31,6 +40,7 @@ BeforeAll {
 
 Describe "Remove-BOM file discovery" {
     BeforeEach {
+        $script:topLevelAliasCache = @{}
         $script:testRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("remove-bom-tests-" + [System.Guid]::NewGuid().ToString("N"))
         [System.IO.Directory]::CreateDirectory($script:testRoot) | Out-Null
         $script:testRoot = Resolve-CanonicalTempRoot -Path $script:testRoot
@@ -126,6 +136,67 @@ Describe "Remove-BOM file discovery" {
         Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $missingIntermediate } -Times 0 -Exactly
     }
 
+    It "normalizes top-level symlink aliases during canonicalization" {
+        if ($IsWindows) {
+            Set-ItResult -Skipped -Because "Unix-style root alias canonicalization does not apply on Windows"
+            return
+        }
+
+        $aliasRoot = "/var"
+        $aliasPath = "/var/folders/canonical-test-root"
+        $aliasTarget = "/private/var"
+
+        Mock -CommandName Resolve-Path -MockWith {
+            [PSCustomObject]@{ Path = $aliasPath }
+        }
+
+        Mock -CommandName Get-Item -ParameterFilter {
+            $LiteralPath -eq $aliasPath
+        } -MockWith {
+            [PSCustomObject]@{ FullName = $aliasPath }
+        }
+
+        Mock -CommandName Get-Item -ParameterFilter {
+            $LiteralPath -eq $aliasRoot
+        } -MockWith {
+            $aliasRootItem = [PSCustomObject]@{ FullName = $aliasRoot }
+            Add-Member -InputObject $aliasRootItem -MemberType ScriptMethod -Name ResolveLinkTarget -Value {
+                param([bool]$returnFinalTarget)
+                return [PSCustomObject]@{ FullName = $aliasTarget }
+            }
+
+            return $aliasRootItem
+        }
+
+        $actualCanonicalPath = Resolve-CanonicalFileSystemPath -path "ignored-by-mocks"
+        $actualCanonicalPath | Should -Be "/private/var/folders/canonical-test-root"
+    }
+
+    It "treats top-level alias and canonical roots as equivalent for scope checks" {
+        if ($IsWindows) {
+            Set-ItResult -Skipped -Because "Unix-style root alias canonicalization does not apply on Windows"
+            return
+        }
+
+        $aliasRoot = "/var"
+        $aliasTarget = "/private/var"
+
+        Mock -CommandName Get-Item -ParameterFilter {
+            $LiteralPath -eq $aliasRoot
+        } -MockWith {
+            $aliasRootItem = [PSCustomObject]@{ FullName = $aliasRoot }
+            Add-Member -InputObject $aliasRootItem -MemberType ScriptMethod -Name ResolveLinkTarget -Value {
+                param([bool]$returnFinalTarget)
+                return [PSCustomObject]@{ FullName = $aliasTarget }
+            }
+
+            return $aliasRootItem
+        }
+
+        $underRoot = Test-IsPathUnderRoot -path "/private/var/tmp/repo/file.txt" -root "/var/tmp/repo"
+        $underRoot | Should -BeTrue
+    }
+
     It "emits stable diagnostics when canonical path resolution fails" {
         Mock -CommandName Resolve-Path -MockWith {
             throw "simulated canonicalization failure"
@@ -163,7 +234,7 @@ Describe "Remove-BOM file discovery" {
         $scanPlan = Get-ScannableFiles -scanRoot $script:testRoot
         $relativeFiles = @(
             $scanPlan.Files |
-                ForEach-Object { [System.IO.Path]::GetRelativePath($script:testRoot, $_.FullName) -replace '\\', '/' } |
+                ForEach-Object { Get-CanonicalRelativePath -BasePath $script:testRoot -TargetPath $_.FullName } |
                 Sort-Object -Unique
         )
 
@@ -320,7 +391,7 @@ Describe "Remove-BOM file discovery" {
         $scanPlan = Get-ScannableFiles -scanRoot $scanRoot
         $relativeFiles = @(
             $scanPlan.Files |
-                ForEach-Object { [System.IO.Path]::GetRelativePath($script:testRoot, $_.FullName) -replace '\\', '/' } |
+                ForEach-Object { Get-CanonicalRelativePath -BasePath $script:testRoot -TargetPath $_.FullName } |
                 Sort-Object -Unique
         )
 
@@ -375,12 +446,75 @@ Describe "Remove-BOM file discovery" {
         $scanPlan = Get-ScannableFiles -scanRoot $scanRoot
         $relativeFiles = @(
             $scanPlan.Files |
-                ForEach-Object { [System.IO.Path]::GetRelativePath($script:testRoot, $_.FullName) -replace '\\', '/' } |
+                ForEach-Object { Get-CanonicalRelativePath -BasePath $script:testRoot -TargetPath $_.FullName } |
                 Sort-Object -Unique
         )
 
         $scanPlan.Mode | Should -Be "git-ls-files"
         $relativeFiles | Should -Be @("left/a.txt") -Because "files outside the requested scan root must not leak through even when --show-prefix fails"
+    }
+
+    It "preserves scope when git rev-parse --show-prefix returns out-of-root prefix (<PrefixOutput>)" -TestCases @(
+        @{ PrefixOutput = ".." },
+        @{ PrefixOutput = "../outside" }
+    ) {
+        param(
+            [string]$PrefixOutput
+        )
+
+        if ($null -eq $script:gitCommand) {
+            Set-ItResult -Skipped -Because "git is unavailable on this runner"
+            return
+        }
+
+        Initialize-TestGitRepository -RepositoryRoot $script:testRoot
+
+        [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "left")) | Out-Null
+        [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "right")) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "left/a.txt"), "left")
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "right/b.txt"), "right")
+
+        Mock -CommandName Get-GitCommandDetails -MockWith {
+            param($gitExecutable, $workingDirectory, $arguments)
+            if ($arguments -contains "--show-prefix") {
+                return [PSCustomObject]@{
+                    ExitCode  = 0
+                    Output    = @($PrefixOutput)
+                    FirstLine = $PrefixOutput
+                    HasOutput = $true
+                }
+            }
+
+            $realOutput = @(& $gitExecutable -C $workingDirectory @arguments 2>&1)
+            $realExitCode = $LASTEXITCODE
+            $firstLine = $null
+            foreach ($line in $realOutput) {
+                $normalized = [string]$line
+                if (-not [string]::IsNullOrWhiteSpace($normalized)) {
+                    $firstLine = $normalized.Trim()
+                    break
+                }
+            }
+
+            return [PSCustomObject]@{
+                ExitCode  = $realExitCode
+                Output    = @($realOutput)
+                FirstLine = $firstLine
+                HasOutput = $null -ne $firstLine
+            }
+        }
+
+        $scanRoot = Join-Path -Path $script:testRoot -ChildPath "left"
+        $scanPlan = Get-ScannableFiles -scanRoot $scanRoot
+        $relativeFiles = @(
+            $scanPlan.Files |
+                ForEach-Object { Get-CanonicalRelativePath -BasePath $script:testRoot -TargetPath $_.FullName } |
+                Sort-Object -Unique
+        )
+
+        $scanPlan.Mode | Should -Be "git-ls-files"
+        $scanPlan.Diagnostics | Should -Match 'relativeScanRoot=\.' -Because "Out-of-root prefixes must degrade to git-root enumeration with post-filtering"
+        $relativeFiles | Should -Be @("left/a.txt") -Because "Out-of-root prefixes must not allow files outside the requested scan root"
     }
 
     It "preserves scope when called from git root and --show-prefix fails" {
@@ -429,7 +563,7 @@ Describe "Remove-BOM file discovery" {
         $scanPlan = Get-ScannableFiles -scanRoot $script:testRoot
         $relativeFiles = @(
             $scanPlan.Files |
-                ForEach-Object { [System.IO.Path]::GetRelativePath($script:testRoot, $_.FullName) -replace '\\', '/' } |
+                ForEach-Object { Get-CanonicalRelativePath -BasePath $script:testRoot -TargetPath $_.FullName } |
                 Sort-Object -Unique
         )
 
@@ -453,7 +587,7 @@ Describe "Remove-BOM file discovery" {
         $scanPlan = Resolve-ScannableFileDiscovery -scanRoot $script:testRoot
         $relativeFiles = @(
             Get-ScannableFileStream -scanPlan $scanPlan |
-                ForEach-Object { [System.IO.Path]::GetRelativePath($script:testRoot, $_.FullName) -replace '\\', '/' } |
+                ForEach-Object { Get-CanonicalRelativePath -BasePath $script:testRoot -TargetPath $_.FullName } |
                 Sort-Object -Unique
         )
 
@@ -557,6 +691,7 @@ Describe "Remove-BOM file discovery" {
 
 Describe "Remove-BOM core behavior" {
     BeforeEach {
+        $script:topLevelAliasCache = @{}
         $script:testRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("remove-bom-core-tests-" + [System.Guid]::NewGuid().ToString("N"))
         [System.IO.Directory]::CreateDirectory($script:testRoot) | Out-Null
         $script:testRoot = Resolve-CanonicalTempRoot -Path $script:testRoot
