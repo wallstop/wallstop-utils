@@ -1356,6 +1356,11 @@ Describe "Backup script safety conventions" {
         $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$sourcePath\s+-PathType\s+Container'
         $dxMessagingBackup | Should -Match 'Test-Path\s+-Path\s+\$backupDir\s+-PathType\s+Container'
         $dxMessagingBackup | Should -Match 'catch\s*\{[\s\S]*E_DXMSG_BACKUP_UNEXPECTED[\s\S]*exit\s+1'
+        # Cleanup finally block must use -LiteralPath and -PathType to be path-safe
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$tempStagePath\s+-PathType\s+Container'
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$zipFilePath\s+-PathType\s+Leaf'
+        $dxMessagingBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$tempStagePath'
+        $dxMessagingBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$zipFilePath'
     }
 
     It "enforces portable environment-variable usage in script scopes: <Name>" -TestCases @(
@@ -2430,7 +2435,7 @@ Describe "PowerShell return safety conventions" {
         $fullValidation | Should -Match '\$invariantCultureName\s*=\s*\[System\.Globalization\.CultureInfo\]::InvariantCulture\.Name' -Because "Sort-Object -Culture should use an explicit culture name string to avoid binder ambiguity."
         $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Sort-Object\s+-Culture\s+\$invariantCultureName' -Because "Get-StatusSnapshot should use an explicit invariant culture name string for deterministic sorting."
         $fullValidation | Should -Not -Match 'Sort-Object\s+-Culture\s+\(\[System\.Globalization\.CultureInfo\]::InvariantCulture\)' -Because "Sort-Object -Culture must not pass CultureInfo objects directly."
-        $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?return\s*,\s*(?:@\(|\$\w+)' -Because "Get-StatusSnapshot must preserve empty git-status snapshots as arrays."
+        $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Write-Output\s+-NoEnumerate\s+\(' -Because "Get-StatusSnapshot must use Write-Output -NoEnumerate to preserve empty git-status snapshots as a typed string[] without extra array wrapping."
         $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusBeforeValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_BEFORE_NULL' -Because "workspace drift comparison must guard null before-snapshot values with an explicit E_ code."
         $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusAfterValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_AFTER_NULL' -Because "workspace drift comparison must guard null after-snapshot values with an explicit E_ code."
     }

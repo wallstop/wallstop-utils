@@ -174,20 +174,20 @@ catch {
 }
 finally {
     # 6. Cleanup: Always remove the temporary staging directory
-    if (Test-Path $tempStagePath) {
+    if (Test-Path -LiteralPath $tempStagePath -PathType Container) {
         Write-Host "Cleaning up temporary staging directory '$tempStagePath'..."
         try {
-            Remove-Item -Path $tempStagePath -Recurse -Force -ErrorAction Stop
+            Remove-Item -LiteralPath $tempStagePath -Recurse -Force -ErrorAction Stop
         }
         catch {
             Write-Warning "W_DXMSG_BACKUP_TEMP_STAGE_CLEANUP_FAILED: Failed to remove temporary staging directory '$tempStagePath': $($_.Exception.Message)"
         }
     }
     # Optional: Clean up the zip file from TEMP if it still exists (e.g., if move failed but script didn't exit)
-    if (Test-Path $zipFilePath) {
+    if (Test-Path -LiteralPath $zipFilePath -PathType Leaf) {
         Write-Warning "Temporary zip file '$zipFilePath' still exists in $([System.IO.Path]::GetTempPath()). Removing it."
         try {
-            Remove-Item -Path $zipFilePath -Force -ErrorAction Stop
+            Remove-Item -LiteralPath $zipFilePath -Force -ErrorAction Stop
         }
         catch {
             Write-Warning "W_DXMSG_BACKUP_TEMP_ZIP_CLEANUP_FAILED: Failed to remove temporary zip file '$zipFilePath': $($_.Exception.Message)"

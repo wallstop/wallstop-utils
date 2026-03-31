@@ -29,7 +29,7 @@ Describe "Invoke-FullValidation workflow contract" {
     $workspaceDriftSafetyMarkers = @(
         @{ Name = "snapshot helper"; Pattern = 'Get-StatusSnapshot' }
         @{ Name = "snapshot sorting"; Pattern = 'function\s+Get-StatusSnapshot\b[\s\S]*?Sort-Object' }
-        @{ Name = "comma-wrapped snapshot return"; Pattern = 'function\s+Get-StatusSnapshot\b[\s\S]*?return\s*,\s*(?:@\(|\$\w+)' }
+        @{ Name = "non-enumerating snapshot return"; Pattern = 'function\s+Get-StatusSnapshot\b[\s\S]*?Write-Output\s+-NoEnumerate\s+\(\s*\[string\[\]\]\s*\$sortedStatusLines\s*\)' }
         @{ Name = "before snapshot null guard"; Pattern = 'if\s*\(\s*\$null\s*-eq\s*\$statusBeforeValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_BEFORE_NULL' }
         @{ Name = "after snapshot null guard"; Pattern = 'if\s*\(\s*\$null\s*-eq\s*\$statusAfterValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_AFTER_NULL' }
         @{ Name = "verbose snapshot diagnostics"; Pattern = 'Write-Verbose\s+".*before=\$beforeCount.*after=\$afterCount' }

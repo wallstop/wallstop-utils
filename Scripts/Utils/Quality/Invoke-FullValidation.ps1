@@ -45,7 +45,7 @@ function Get-StatusSnapshot {
     $sortedStatusLines = @($statusLines | Sort-Object -Culture $invariantCultureName)
     $cultureDiagnostic = if ([string]::IsNullOrEmpty($invariantCultureName)) { '<InvariantCulture>' } else { $invariantCultureName }
     Write-Verbose "Status snapshot diagnostics: entries=$($statusLines.Count) sortCulture=$cultureDiagnostic"
-    return , $sortedStatusLines
+    Write-Output -NoEnumerate ([string[]]$sortedStatusLines)
 }
 
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
