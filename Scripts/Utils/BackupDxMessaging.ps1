@@ -142,7 +142,7 @@ try {
 
     # 5. Cleanup: Delete Old Backups on the Network Share
     Write-Host "Checking for old backups to remove..."
-    $backups = Get-ChildItem -Path $backupDir -Filter "*.zip" | Sort-Object LastWriteTime
+    $backups = Get-ChildItem -LiteralPath $backupDir -Filter "*.zip" | Sort-Object LastWriteTime
     $backupTotal = Get-SafeCount -InputObject $backups
     if ($backupTotal -gt $maxBackups) {
         $toDelete = @($backups | Select-Object -First ($backupTotal - $maxBackups))
@@ -150,7 +150,7 @@ try {
         Write-Host "Found $deleteCount old backup(s) to remove."
         foreach ($file in $toDelete) {
             Write-Host "Removing old backup: $($file.FullName)"
-            Remove-Item -Path $file.FullName -Force
+            Remove-Item -LiteralPath $file.FullName -Force
         }
     }
     else {
@@ -158,7 +158,7 @@ try {
     }
 
     # --- Final Report ---
-    $backupCount = Get-SafeCount -InputObject (Get-ChildItem -Path $backupDir -Filter "*.zip")
+    $backupCount = Get-SafeCount -InputObject (Get-ChildItem -LiteralPath $backupDir -Filter "*.zip")
     Write-Host "----------------------------------------"
     Write-Host "Backup completed successfully!"
     Write-Host "Backup file: $backupDir\$zipFileName"

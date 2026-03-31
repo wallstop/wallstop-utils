@@ -35,7 +35,7 @@ try {
         Write-Host "Current settings backed up to $currentBackupFile"
     }
     else {
-        Write-Warning "E_WT_RESTORE_NO_LIVE_SETTINGS: No live Windows Terminal settings found at '$windowsTerminalSettings'; skipping safety backup."
+        Write-Warning "W_WT_RESTORE_NO_LIVE_SETTINGS: No live Windows Terminal settings found at '$windowsTerminalSettings'; skipping safety backup."
     }
 
     # Replace the current settings with the backup file

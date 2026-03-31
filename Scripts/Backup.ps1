@@ -230,19 +230,6 @@ try {
         $hasBackupStepFailures
     )
 
-    if ($stagedFiles.Count -gt 0) {
-        $commitMessage = "Backup for $dateString (partial success: $succeededCount/$totalCount)"
-        git commit -m $commitMessage
-        $commitExitCode = Get-LastExitCodeOrDefault
-        if ($commitExitCode -ne 0) {
-            Write-Warning ("E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0}." -f $commitExitCode)
-            $hasGitFailure = $true
-        }
-    }
-    else {
-        Write-Host "No file changes detected. Skipping git commit." -ForegroundColor DarkYellow
-    }
-
     if (-not $hasGitFailure) {
         git pull --ff-only origin main
         $gitPullExitCode = Get-LastExitCodeOrDefault
@@ -253,6 +240,24 @@ try {
     }
     else {
         Write-Warning "W_BACKUP_GIT_PULL_SKIPPED_PRIOR_GIT_FAILURE: Skipping git pull --ff-only origin main because a previous git operation failed."
+    }
+
+    if (-not $hasGitFailure) {
+        if ($stagedFiles.Count -gt 0) {
+            $commitMessage = "Backup for $dateString (partial success: $succeededCount/$totalCount)"
+            git commit -m $commitMessage
+            $commitExitCode = Get-LastExitCodeOrDefault
+            if ($commitExitCode -ne 0) {
+                Write-Warning ("E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0}." -f $commitExitCode)
+                $hasGitFailure = $true
+            }
+        }
+        else {
+            Write-Host "No file changes detected. Skipping git commit." -ForegroundColor DarkYellow
+        }
+    }
+    else {
+        Write-Warning "W_BACKUP_GIT_COMMIT_SKIPPED_PRIOR_GIT_FAILURE: Skipping git commit because a previous git operation failed."
     }
 
     if (-not $hasGitFailure) {

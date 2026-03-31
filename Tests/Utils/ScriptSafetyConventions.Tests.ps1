@@ -1145,7 +1145,7 @@ Describe "Restore script safety conventions" {
         $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsTerminalSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
         $windowsTerminalRestore | Should -Match 'Test-Path\s+-Path\s+\$settingsPath\s+-PathType\s+Leaf'
         $windowsTerminalRestore | Should -Match 'E_WT_RESTORE_SOURCE_MISSING'
-        $windowsTerminalRestore | Should -Match 'E_WT_RESTORE_NO_LIVE_SETTINGS'
+        $windowsTerminalRestore | Should -Match 'W_WT_RESTORE_NO_LIVE_SETTINGS'
     }
 
     It "guards PowerShell profile backups on first-time machines" {
@@ -1218,7 +1218,10 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main'
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+push\s+origin\s+main'
         $backupScript | Should -Match 'W_BACKUP_GIT_PULL_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE'
+        # git pull --ff-only must appear BEFORE git commit: pulling first ensures ff-only succeeds when origin/main has advanced
+        $backupScript | Should -Match 'git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+commit' -Because "git pull --ff-only must execute before git commit; committing first causes --ff-only to fail when origin/main has advanced"
     }
 
     It "uses platform-aware backup step metadata and skip diagnostics" {
@@ -1361,6 +1364,9 @@ Describe "Backup script safety conventions" {
         $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$zipFilePath\s+-PathType\s+Leaf'
         $dxMessagingBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$tempStagePath'
         $dxMessagingBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$zipFilePath'
+        # Old-backup rotation loop must use -LiteralPath for both enumeration and deletion
+        $dxMessagingBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupDir'
+        $dxMessagingBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$file\.FullName'
     }
 
     It "enforces portable environment-variable usage in script scopes: <Name>" -TestCases @(
@@ -2116,11 +2122,11 @@ Describe "PowerShell formatting conventions" {
         $violations = New-Object System.Collections.Generic.List[string]
 
         foreach ($root in $searchRoots) {
-            if (-not (Test-Path -Path $root -PathType Container)) {
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) {
                 continue
             }
 
-            $files = Get-ChildItem -Path $root -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+            $files = Get-ChildItem -LiteralPath $root -Filter "*.ps1" -File -Recurse -ErrorAction Stop
             foreach ($file in $files) {
                 $tokens = $null
                 $parseErrors = $null
@@ -2195,14 +2201,14 @@ Describe "PowerShell formatting conventions" {
         $violations = New-Object System.Collections.Generic.List[string]
 
         foreach ($root in $searchRoots) {
-            if (-not (Test-Path -Path $root -PathType Container)) {
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) {
                 continue
             }
 
             $files = @(
-                Get-ChildItem -Path $root -Filter "*.ps1" -File -Recurse -ErrorAction Stop
-                Get-ChildItem -Path $root -Filter "*.psm1" -File -Recurse -ErrorAction Stop
-                Get-ChildItem -Path $root -Filter "*.psd1" -File -Recurse -ErrorAction Stop
+                Get-ChildItem -LiteralPath $root -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+                Get-ChildItem -LiteralPath $root -Filter "*.psm1" -File -Recurse -ErrorAction Stop
+                Get-ChildItem -LiteralPath $root -Filter "*.psd1" -File -Recurse -ErrorAction Stop
             )
 
             foreach ($file in $files) {
