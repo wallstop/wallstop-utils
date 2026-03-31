@@ -26,6 +26,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
 11. Keep quality-harness diagnostics low-noise: in `Run-PreCommitValidation.ps1` and `Scripts/Utils/Quality/*`, use `Write-Verbose` for advisory telemetry and reserve `Write-Warning` for actionable degradation only; keep `Write-Host` for concise high-level status.
 12. Treat CI logs containing `files were modified by this hook` as autofix-required formatting drift (not a tool crash); emit explicit `E_CI_PRECOMMIT_AUTOFIX_REQUIRED` diagnostics and list modified files.
+13. Prefer git-native ignore semantics over ad-hoc `.gitignore` wildcard conversion: `Scripts/Utils/Remove-BOM.ps1` file discovery must use `git ls-files --cached --others --exclude-standard` when available, and emit explicit `W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK` diagnostics when it must degrade to filesystem traversal.
 
 ## Working Agreement For Agents
 

@@ -1145,13 +1145,15 @@ Describe "File stream safety conventions" {
         $closeCount | Should -Be 0 -Because 'Remove-BOM should avoid manual Close() calls and rely on centralized disposal logic.'
     }
 
-    It "preserves directory intent in Remove-BOM gitignore conversion" {
+    It "uses git-native ignore semantics in Remove-BOM file discovery" {
         $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
         $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
 
-        $content | Should -Match '\$isDirectoryPattern\s*=\s*\$pattern\.EndsWith\(''\/''\)'
-        $content | Should -Match 'if\s*\(\$isDirectoryPattern\)\s*\{[\s\S]*?\$pattern\s*=\s*"\$pattern\/\*"'
-        $content | Should -Not -Match 'if\s*\(\$pattern\.EndsWith\(''\/''\)\)'
+        $content | Should -Match '\$gitListArguments\s*=\s*@\("ls-files",\s*"--cached",\s*"--others",\s*"--exclude-standard"\)'
+        $content | Should -Match '\-C\s+\$gitRoot\s+@gitListArguments'
+        $content | Should -Match 'function\s+Get-ScannableFiles'
+        $content | Should -Not -Match 'function\s+Get-GitIgnorePatterns'
+        $content | Should -Not -Match 'function\s+Test-PathAgainstGitIgnore'
     }
 
     It "keeps explicit prefix-read diagnostics in Remove-BOM" {
@@ -1161,6 +1163,16 @@ Describe "File stream safety conventions" {
         $content | Should -Match 'W_REMOVE_BOM_READ_PREFIX_FAILED'
         $content | Should -Match 'W_REMOVE_BOM_PREFIX_READ_FAILURES'
         $content | Should -Match '\$script:prefixReadFailures\s*=\s*0'
+    }
+
+    It "keeps Remove-BOM discovery fallback diagnostics and direct-run guard" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK'
+        $content | Should -Match 'E_REMOVE_BOM_GIT_DISCOVERY_REQUIRED'
+        $content | Should -Match 'filesystem-fallback'
+        $content | Should -Match 'if\s*\(\$MyInvocation\.InvocationName\s*-ne\s*"\."\)\s*\{\s*Invoke-Main'
     }
 }
 
