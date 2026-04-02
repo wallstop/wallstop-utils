@@ -189,6 +189,24 @@ function Resolve-TopLevelPathAlias {
                     $aliasResolutionSource = "FullName"
                 }
             }
+
+            if ($resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                # Some providers expose identity FullName for top-level aliases (for example /var on macOS).
+                # Re-probe with Resolve-Path before accepting identity mapping.
+                try {
+                    $resolvePathAliasCandidate = (Resolve-Path -LiteralPath $topLevelSegment -ErrorAction Stop).Path
+                    if (-not [string]::IsNullOrWhiteSpace($resolvePathAliasCandidate)) {
+                        $resolvePathAliasCandidate = [System.IO.Path]::GetFullPath($resolvePathAliasCandidate)
+                        if (-not $resolvePathAliasCandidate.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                            $resolvedTopLevelAliasTarget = $resolvePathAliasCandidate
+                            $aliasResolutionSource = "Resolve-Path"
+                        }
+                    }
+                }
+                catch {
+                    # Keep identity mapping when alias re-probe is unavailable.
+                }
+            }
         }
         catch {
             $resolvedTopLevelAliasTarget = $topLevelSegment
@@ -199,6 +217,9 @@ function Resolve-TopLevelPathAlias {
 
         if (-not $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
             Write-Verbose "Remove-BOM alias diagnostics: mapped top-level segment '$topLevelSegment' to '$resolvedTopLevelAliasTarget' via $aliasResolutionSource."
+        }
+        else {
+            Write-Verbose "Remove-BOM alias diagnostics: top-level segment '$topLevelSegment' remained identity via $aliasResolutionSource."
         }
     }
 
@@ -483,6 +504,9 @@ function Get-ScannableFileStream {
     )
 
     if ($scanPlan.Mode -eq "git-ls-files") {
+        $scopeFilteredCount = 0
+        $scopeFilteredSample = $null
+
         & $scanPlan.GitExecutable -C $scanPlan.GitRoot @($scanPlan.GitListArguments) 2>$null |
             ForEach-Object {
                 $trimmedRelativePath = $_.Trim()
@@ -493,14 +517,26 @@ function Get-ScannableFileStream {
                 $candidatePath = Join-Path -Path $scanPlan.GitRoot -ChildPath $trimmedRelativePath
                 try {
                     $candidateItem = Get-Item -LiteralPath $candidatePath -ErrorAction Stop
-                    if ($candidateItem -is [System.IO.FileInfo] -and (Test-IsPathUnderRoot -path $candidateItem.FullName -root $scanPlan.ResolvedScanRoot)) {
-                        Write-Output $candidateItem
+                    if ($candidateItem -is [System.IO.FileInfo]) {
+                        if (Test-IsPathUnderRoot -path $candidateItem.FullName -root $scanPlan.ResolvedScanRoot) {
+                            Write-Output $candidateItem
+                        }
+                        else {
+                            $scopeFilteredCount++
+                            if ($null -eq $scopeFilteredSample) {
+                                $scopeFilteredSample = $candidateItem.FullName
+                            }
+                        }
                     }
                 }
                 catch {
                     Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_ITEM_SKIP: Unable to materialize '$candidatePath' from git file list - $($_.Exception.Message)"
                 }
             }
+
+        if ($scopeFilteredCount -gt 0) {
+            Write-Verbose "Remove-BOM discovery diagnostics: scope-filtered $scopeFilteredCount git-listed file(s) outside '$($scanPlan.ResolvedScanRoot)'. Sample='$scopeFilteredSample'."
+        }
 
         $streamExitCode = $LASTEXITCODE
         if ($streamExitCode -ne 0) {
@@ -537,10 +573,12 @@ function Get-ScannableFiles {
 
     if ($scanPlan.Mode -eq "git-ls-files" -and $files.Count -eq 0) {
         $scopeDiagnostics = $null
+        $canonicalGitRoot = Resolve-TopLevelPathAlias -path $scanPlan.GitRoot
+        $canonicalScanRoot = Resolve-TopLevelPathAlias -path $scanPlan.ResolvedScanRoot
         try {
             $scopeDiagnostics = [System.IO.Path]::GetRelativePath(
-                (Resolve-TopLevelPathAlias -path $scanPlan.GitRoot),
-                (Resolve-TopLevelPathAlias -path $scanPlan.ResolvedScanRoot)
+                $canonicalGitRoot,
+                $canonicalScanRoot
             )
         }
         catch {
@@ -548,10 +586,10 @@ function Get-ScannableFiles {
         }
 
         if ([string]::IsNullOrWhiteSpace($scopeDiagnostics)) {
-            Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_EMPTY_RESULT: Git discovery returned zero files for scan root '$scanRoot'. Diagnostics: $($scanPlan.Diagnostics)"
+            Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_EMPTY_RESULT: Git discovery returned zero files for scan root '$scanRoot'. Diagnostics: $($scanPlan.Diagnostics) canonicalGitRoot=$canonicalGitRoot canonicalScanRoot=$canonicalScanRoot"
         }
         else {
-            Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_EMPTY_RESULT: Git discovery returned zero files for scan root '$scanRoot'. Diagnostics: $($scanPlan.Diagnostics) relativeScopeFromGitRoot=$scopeDiagnostics"
+            Write-Verbose "W_REMOVE_BOM_GIT_DISCOVERY_EMPTY_RESULT: Git discovery returned zero files for scan root '$scanRoot'. Diagnostics: $($scanPlan.Diagnostics) relativeScopeFromGitRoot=$scopeDiagnostics canonicalGitRoot=$canonicalGitRoot canonicalScanRoot=$canonicalScanRoot"
         }
     }
 

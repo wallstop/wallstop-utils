@@ -171,6 +171,15 @@ Describe "Remove-BOM file discovery" {
             ResolveLinkTargetFullName = $null
             LinkTargetPropertyName    = $null
             LinkTargetPropertyValue   = $null
+            ResolvePathAliasPath      = $null
+        },
+        @{
+            Scenario                  = "Resolve-Path fallback"
+            AliasRootFullName         = "/var"
+            ResolveLinkTargetFullName = $null
+            LinkTargetPropertyName    = $null
+            LinkTargetPropertyValue   = $null
+            ResolvePathAliasPath      = "/private/var"
         }
     ) {
         param(
@@ -178,7 +187,8 @@ Describe "Remove-BOM file discovery" {
             [string]$AliasRootFullName,
             [string]$ResolveLinkTargetFullName,
             [string]$LinkTargetPropertyName,
-            [string]$LinkTargetPropertyValue
+            [string]$LinkTargetPropertyValue,
+            [string]$ResolvePathAliasPath
         )
 
         if ($IsWindows) {
@@ -189,8 +199,23 @@ Describe "Remove-BOM file discovery" {
         $aliasRoot = "/var"
         $aliasPath = "/var/folders/canonical-test-root"
 
-        Mock -CommandName Resolve-Path -MockWith {
+        Mock -CommandName Resolve-Path -ParameterFilter {
+            $LiteralPath -eq "ignored-by-mocks"
+        } -MockWith {
             [PSCustomObject]@{ Path = $aliasPath }
+        }
+
+        Mock -CommandName Resolve-Path -ParameterFilter {
+            $LiteralPath -eq $aliasRoot
+        } -MockWith {
+            $resolvedAliasPath = if (-not [string]::IsNullOrWhiteSpace($ResolvePathAliasPath)) {
+                $ResolvePathAliasPath
+            }
+            else {
+                $aliasRoot
+            }
+
+            [PSCustomObject]@{ Path = $resolvedAliasPath }
         }
 
         Mock -CommandName Get-Item -ParameterFilter {
@@ -221,6 +246,10 @@ Describe "Remove-BOM file discovery" {
 
         $actualCanonicalPath = Resolve-CanonicalFileSystemPath -path "ignored-by-mocks"
         $actualCanonicalPath | Should -Be "/private/var/folders/canonical-test-root" -Because "Scenario '$Scenario' should normalize top-level aliases consistently."
+
+        if (-not [string]::IsNullOrWhiteSpace($ResolvePathAliasPath)) {
+            Assert-MockCalled -CommandName Resolve-Path -ParameterFilter { $LiteralPath -eq $aliasRoot } -Times 1 -Exactly
+        }
     }
 
     It "treats top-level alias and canonical roots as equivalent for scope checks (<Scenario>)" -TestCases @(
