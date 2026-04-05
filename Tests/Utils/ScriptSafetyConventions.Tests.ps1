@@ -1196,6 +1196,8 @@ Describe "File stream safety conventions" {
         # Diagnostics must include resolvedScanRoot for traceability.
         $content | Should -Match 'resolvedScanRoot=\$resolvedScanRoot' -Because 'Discovery diagnostics must include the original resolvedScanRoot for debugging scope issues'
         $content | Should -Match 'scanRootInput=\$scanRootInput' -Because 'Discovery diagnostics must include the caller-provided scan root for alias-vs-canonical troubleshooting'
+        $content | Should -Match '\$relativePrefixSegments\s*=\s*@\(\$relativeScanRoot\s+-split\s+''\[\\\\/\]\+''' -Because 'Out-of-root protection should inspect normalized prefix segments for traversal components.'
+        $content | Should -Match 'Test-IsPathUnderRoot\s+-path\s+\$relativePrefixCandidateRoot\s+-root\s+\$gitRoot' -Because 'Out-of-root protection should validate canonicalized prefix roots against the git root boundary.'
     }
 
     It "keeps Remove-BOM canonical path resolution robust and diagnosable" {
@@ -1203,10 +1205,13 @@ Describe "File stream safety conventions" {
         $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
 
         $content | Should -Match 'E_REMOVE_BOM_CANONICAL_PATH_RESOLUTION_FAILED' -Because 'Canonicalization failures must emit a stable diagnostic for root-cause triage.'
+        $content | Should -Match 'function\s+Resolve-UnixPhysicalPath' -Because 'Unix physical-path fallback should remain centralized to cover provider-level alias resolution gaps.'
+        $content | Should -Match 'relativeScanRootSource=' -Because 'Discovery diagnostics should identify which show-prefix handling mode was used during git-native scope derivation.'
         $content | Should -Match 'function\s+Resolve-TopLevelPathAlias' -Because 'Top-level alias canonicalization must remain centralized.'
         $content | Should -Match 'PSObject\.Properties\.Name\s+-contains\s+"LinkTarget"' -Because 'Alias resolution should consume provider link metadata when available.'
         $content | Should -Match 'PSObject\.Properties\.Name\s+-contains\s+"Target"' -Because 'Alias resolution should support alternate provider target metadata.'
         $content | Should -Match '\$topLevelItem\.FullName' -Because 'Alias resolution should fall back to item FullName when explicit link metadata is unavailable.'
+        $content | Should -Match 'aliasResolutionSource\s*=\s*"pwd-physical"' -Because 'Alias resolution should preserve a physical-path fallback source marker for diagnostics and regression hardening.'
         $content | Should -Match 'Get-Item\s+-LiteralPath\s+\$resolvedPath\s+-ErrorAction\s+Stop' -Because 'Canonicalization should materialize the resolved path directly.'
         $content | Should -Not -Match '\$pathSegments\s*=' -Because 'Segment-by-segment canonicalization is fragile across runner path aliases and should not be reintroduced.'
         $content | Should -Not -Match 'foreach\s*\(\$segment\s+in\s+\$pathSegments\)' -Because 'Canonicalization should avoid intermediate segment traversal.'
@@ -1219,6 +1224,7 @@ Describe "File stream safety conventions" {
         $content | Should -Match 'W_REMOVE_BOM_READ_PREFIX_FAILED'
         $content | Should -Match 'W_REMOVE_BOM_PREFIX_READ_FAILURES'
         $content | Should -Match '\$script:prefixReadFailures\s*=\s*0'
+        $content | Should -Match 'processedCandidates=' -Because 'Git stream failures should include processed candidate counts for actionable diagnostics.'
     }
 
     It "keeps Remove-BOM discovery fallback diagnostics and direct-run guard" {

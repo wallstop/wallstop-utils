@@ -41,6 +41,7 @@ BeforeAll {
 Describe "Remove-BOM file discovery" {
     BeforeEach {
         $script:topLevelAliasCache = @{}
+        $script:unixPhysicalPathCache = @{}
         $script:testRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("remove-bom-tests-" + [System.Guid]::NewGuid().ToString("N"))
         [System.IO.Directory]::CreateDirectory($script:testRoot) | Out-Null
         $script:testRoot = Resolve-CanonicalTempRoot -Path $script:testRoot
@@ -49,6 +50,7 @@ Describe "Remove-BOM file discovery" {
         # identity mapping when .NET providers fail to resolve the symlink.
         # Mock-based tests need an empty cache so their mocks are exercised.
         $script:topLevelAliasCache = @{}
+        $script:unixPhysicalPathCache = @{}
     }
 
     AfterEach {
@@ -137,7 +139,8 @@ Describe "Remove-BOM file discovery" {
         $actualCanonicalPath = Resolve-CanonicalFileSystemPath -path "ignored-by-mocks"
 
         $actualCanonicalPath | Should -Be $expectedCanonicalPath -Because "Scenario '$Scenario' should canonicalize without traversing intermediate path segments."
-        Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $resolvedPath } -Times 1 -Exactly
+        $expectedResolvedPathCalls = if ($IsWindows) { 1 } else { 2 }
+        Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $resolvedPath } -Times $expectedResolvedPathCalls -Exactly
         Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $missingIntermediate } -Times 0 -Exactly
     }
 
@@ -565,7 +568,27 @@ Describe "Remove-BOM file discovery" {
         $relativeFiles | Should -Be @("left/a.txt")
     }
 
-    It "preserves scope restriction when git rev-parse --show-prefix fails" {
+    It "preserves scope when git rev-parse --show-prefix fails (<Scenario>)" -TestCases @(
+        @{
+            Scenario                  = "nested scan root"
+            ScanRootRelativePath      = "left"
+            ExpectedRelativeFiles     = @("left/a.txt")
+            ExpectedDiagnosticsSource = "show-prefix-unavailable"
+        },
+        @{
+            Scenario                  = "repository root scan"
+            ScanRootRelativePath      = "."
+            ExpectedRelativeFiles     = @("left/a.txt", "right/b.txt", "root.txt", "src/nested.txt")
+            ExpectedDiagnosticsSource = "show-prefix-unavailable"
+        }
+    ) {
+        param(
+            [string]$Scenario,
+            [string]$ScanRootRelativePath,
+            [string[]]$ExpectedRelativeFiles,
+            [string]$ExpectedDiagnosticsSource
+        )
+
         if ($null -eq $script:gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable on this runner"
             return
@@ -575,8 +598,11 @@ Describe "Remove-BOM file discovery" {
 
         [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "left")) | Out-Null
         [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "right")) | Out-Null
+        [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "src")) | Out-Null
         [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "left/a.txt"), "left")
         [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "right/b.txt"), "right")
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "root.txt"), "root")
+        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "src/nested.txt"), "nested")
 
         # Mock Get-GitCommandDetails to succeed for --show-toplevel but fail for --show-prefix
         Mock -CommandName Get-GitCommandDetails -MockWith {
@@ -589,7 +615,7 @@ Describe "Remove-BOM file discovery" {
                     HasOutput = $false
                 }
             }
-            # Let --show-toplevel pass through to real git
+
             $realOutput = @(& $gitExecutable -C $workingDirectory @arguments 2>&1)
             $realExitCode = $LASTEXITCODE
             $firstLine = $null
@@ -600,6 +626,7 @@ Describe "Remove-BOM file discovery" {
                     break
                 }
             }
+
             return [PSCustomObject]@{
                 ExitCode  = $realExitCode
                 Output    = @($realOutput)
@@ -608,7 +635,13 @@ Describe "Remove-BOM file discovery" {
             }
         }
 
-        $scanRoot = Join-Path -Path $script:testRoot -ChildPath "left"
+        $scanRoot = if ($ScanRootRelativePath -eq ".") {
+            $script:testRoot
+        }
+        else {
+            Join-Path -Path $script:testRoot -ChildPath $ScanRootRelativePath
+        }
+
         $scanPlan = Get-ScannableFiles -scanRoot $scanRoot
         $relativeFiles = @(
             $scanPlan.Files |
@@ -617,12 +650,14 @@ Describe "Remove-BOM file discovery" {
         )
 
         $scanPlan.Mode | Should -Be "git-ls-files"
-        $relativeFiles | Should -Be @("left/a.txt") -Because "files outside the requested scan root must not leak through even when --show-prefix fails"
+        $scanPlan.Diagnostics | Should -Match "relativeScanRootSource=$ExpectedDiagnosticsSource" -Because "Scenario '$Scenario' should report prefix-failure handling mode in diagnostics"
+        $relativeFiles | Should -Be $ExpectedRelativeFiles -Because "Scenario '$Scenario' must preserve scan scope when --show-prefix fails"
     }
 
     It "preserves scope when git rev-parse --show-prefix returns out-of-root prefix (<PrefixOutput>)" -TestCases @(
         @{ PrefixOutput = ".." },
-        @{ PrefixOutput = "../outside" }
+        @{ PrefixOutput = "../outside" },
+        @{ PrefixOutput = "left/../../outside" }
     ) {
         param(
             [string]$PrefixOutput
@@ -680,62 +715,8 @@ Describe "Remove-BOM file discovery" {
 
         $scanPlan.Mode | Should -Be "git-ls-files"
         $scanPlan.Diagnostics | Should -Match 'relativeScanRoot=\.' -Because "Out-of-root prefixes must degrade to git-root enumeration with post-filtering"
+        $scanPlan.Diagnostics | Should -Match 'relativeScanRootSource=show-prefix-outside-root' -Because "Out-of-root prefixes must report degraded source handling diagnostics"
         $relativeFiles | Should -Be @("left/a.txt") -Because "Out-of-root prefixes must not allow files outside the requested scan root"
-    }
-
-    It "preserves scope when called from git root and --show-prefix fails" {
-        if ($null -eq $script:gitCommand) {
-            Set-ItResult -Skipped -Because "git is unavailable on this runner"
-            return
-        }
-
-        Initialize-TestGitRepository -RepositoryRoot $script:testRoot
-
-        [System.IO.Directory]::CreateDirectory((Join-Path -Path $script:testRoot -ChildPath "src")) | Out-Null
-        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "root.txt"), "root")
-        [System.IO.File]::WriteAllText((Join-Path -Path $script:testRoot -ChildPath "src/nested.txt"), "nested")
-
-        # Mock Get-GitCommandDetails to succeed for --show-toplevel but fail for --show-prefix
-        Mock -CommandName Get-GitCommandDetails -MockWith {
-            param($gitExecutable, $workingDirectory, $arguments)
-            if ($arguments -contains "--show-prefix") {
-                return [PSCustomObject]@{
-                    ExitCode  = 1
-                    Output    = @()
-                    FirstLine = $null
-                    HasOutput = $false
-                }
-            }
-            $realOutput = @(& $gitExecutable -C $workingDirectory @arguments 2>&1)
-            $realExitCode = $LASTEXITCODE
-            $firstLine = $null
-            foreach ($line in $realOutput) {
-                $normalized = [string]$line
-                if (-not [string]::IsNullOrWhiteSpace($normalized)) {
-                    $firstLine = $normalized.Trim()
-                    break
-                }
-            }
-            return [PSCustomObject]@{
-                ExitCode  = $realExitCode
-                Output    = @($realOutput)
-                FirstLine = $firstLine
-                HasOutput = $null -ne $firstLine
-            }
-        }
-
-        # When called from git root with --show-prefix failing,
-        # all repo files should be returned (root IS the scope).
-        $scanPlan = Get-ScannableFiles -scanRoot $script:testRoot
-        $relativeFiles = @(
-            $scanPlan.Files |
-                ForEach-Object { Get-CanonicalRelativePath -BasePath $script:testRoot -TargetPath $_.FullName } |
-                Sort-Object -Unique
-        )
-
-        $scanPlan.Mode | Should -Be "git-ls-files"
-        $relativeFiles | Should -Contain "root.txt" -Because "files at git root must be included when scanning from root"
-        $relativeFiles | Should -Contain "src/nested.txt" -Because "nested files must be included when scanning from root"
     }
 
     It "streams files from the discovery plan without materializing eager scan arrays" {

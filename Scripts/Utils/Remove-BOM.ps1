@@ -105,6 +105,83 @@ function Test-IsPathUnderRoot {
 # Cache top-level alias resolutions (for example, /var -> /private/var on macOS)
 # for the current PowerShell session to avoid repeated filesystem probes.
 $script:topLevelAliasCache = @{}
+$script:unixPhysicalPathCache = @{}
+
+function Resolve-UnixPhysicalPath {
+    param(
+        [string]$path
+    )
+
+    if ($IsWindows -or [string]::IsNullOrWhiteSpace($path)) {
+        return $null
+    }
+
+    try {
+        $physicalCacheKey = [System.IO.Path]::GetFullPath($path)
+        if ($script:unixPhysicalPathCache.ContainsKey($physicalCacheKey)) {
+            return $script:unixPhysicalPathCache[$physicalCacheKey]
+        }
+
+        $resolvedItem = Get-Item -LiteralPath $path -ErrorAction Stop
+        $resolvedPath = $resolvedItem.FullName
+
+        $targetDirectory = if ($resolvedItem -is [System.IO.DirectoryInfo]) {
+            $resolvedPath
+        }
+        else {
+            Split-Path -Path $resolvedPath -Parent
+        }
+
+        if ([string]::IsNullOrWhiteSpace($targetDirectory)) {
+            return $null
+        }
+
+        Push-Location -LiteralPath $targetDirectory
+        try {
+            # /bin/pwd -P resolves physical directories and is a reliable
+            # fallback when provider metadata does not surface root aliases.
+            $physicalDirectoryOutput = @(& /bin/pwd -P 2>$null)
+            $physicalDirectoryExitCode = $LASTEXITCODE
+        }
+        finally {
+            Pop-Location
+        }
+
+        if ($physicalDirectoryExitCode -ne 0 -or $physicalDirectoryOutput.Count -eq 0) {
+            $script:unixPhysicalPathCache[$physicalCacheKey] = $null
+            return $null
+        }
+
+        $physicalDirectory = ([string]$physicalDirectoryOutput[0]).Trim()
+        if ([string]::IsNullOrWhiteSpace($physicalDirectory)) {
+            $script:unixPhysicalPathCache[$physicalCacheKey] = $null
+            return $null
+        }
+
+        $physicalPath = $null
+        if ($resolvedItem -is [System.IO.DirectoryInfo]) {
+            $physicalPath = [System.IO.Path]::GetFullPath($physicalDirectory)
+        }
+
+        if ($null -eq $physicalPath) {
+            $physicalPath = [System.IO.Path]::GetFullPath((Join-Path -Path $physicalDirectory -ChildPath $resolvedItem.Name))
+        }
+
+        $script:unixPhysicalPathCache[$physicalCacheKey] = $physicalPath
+        return $physicalPath
+    }
+    catch {
+        if (-not [string]::IsNullOrWhiteSpace($path)) {
+            try {
+                $script:unixPhysicalPathCache[[System.IO.Path]::GetFullPath($path)] = $null
+            }
+            catch {
+                # Ignore cache failures in error path.
+            }
+        }
+        return $null
+    }
+}
 
 function Resolve-TopLevelPathAlias {
     param(
@@ -232,6 +309,17 @@ function Resolve-TopLevelPathAlias {
                         # readlink unavailable or failed; keep identity mapping.
                     }
                 }
+
+                if (-not $IsWindows -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                    $physicalTopLevelPath = Resolve-UnixPhysicalPath -path $topLevelSegment
+                    if (-not [string]::IsNullOrWhiteSpace($physicalTopLevelPath)) {
+                        $physicalTopLevelPath = [System.IO.Path]::GetFullPath($physicalTopLevelPath)
+                        if (-not $physicalTopLevelPath.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                            $resolvedTopLevelAliasTarget = $physicalTopLevelPath
+                            $aliasResolutionSource = "pwd-physical"
+                        }
+                    }
+                }
             }
         }
         catch {
@@ -319,7 +407,14 @@ function Resolve-CanonicalFileSystemPath {
             $resolvedItem.FullName
         }
 
-        return Resolve-TopLevelPathAlias -path $canonicalCandidate
+        $canonicalPath = Resolve-TopLevelPathAlias -path $canonicalCandidate
+        $physicalCanonicalPath = Resolve-UnixPhysicalPath -path $canonicalPath
+        if (-not [string]::IsNullOrWhiteSpace($physicalCanonicalPath) -and -not $physicalCanonicalPath.Equals($canonicalPath, [System.StringComparison]::Ordinal)) {
+            Write-Verbose "Remove-BOM canonicalization diagnostics: physical-path fallback remapped '$canonicalPath' to '$physicalCanonicalPath'."
+            $canonicalPath = $physicalCanonicalPath
+        }
+
+        return $canonicalPath
     }
     catch {
         throw "E_REMOVE_BOM_CANONICAL_PATH_RESOLUTION_FAILED: Failed to canonicalize '$path' - $($_.Exception.Message)"
@@ -420,6 +515,7 @@ function Resolve-ScannableFileDiscovery {
             $gitRootCandidate = [System.IO.Path]::GetFullPath(([string]$gitRootResult.Output[0]).Trim())
             $gitRoot = Resolve-CanonicalFileSystemPath -path $gitRootCandidate
             $gitPrefixResult = Get-GitCommandDetails -gitExecutable $gitCommand.Source -workingDirectory $resolvedScanRoot -arguments @("rev-parse", "--show-prefix")
+            $relativeScanRootSource = "git-show-prefix"
 
             if ($gitPrefixResult.ExitCode -eq 0) {
                 $gitPrefix = ""
@@ -428,6 +524,9 @@ function Resolve-ScannableFileDiscovery {
                 }
 
                 $relativeScanRoot = ($gitPrefix -replace '\\', '/').Trim().Trim('/')
+                if ([string]::IsNullOrWhiteSpace($relativeScanRoot)) {
+                    $relativeScanRootSource = "git-show-prefix-root"
+                }
             }
             else {
                 $gitPrefixFailureDetails = if ($gitPrefixResult.HasOutput) {
@@ -441,14 +540,33 @@ function Resolve-ScannableFileDiscovery {
                 # the caller's original $resolvedScanRoot for post-filtering so
                 # that scope restriction is not lost.
                 $relativeScanRoot = "."
+                $relativeScanRootSource = "show-prefix-unavailable"
             }
 
             if ([string]::IsNullOrWhiteSpace($relativeScanRoot) -or $relativeScanRoot -eq ".") {
                 $relativeScanRoot = "."
             }
-            elseif ($relativeScanRoot -eq ".." -or $relativeScanRoot.StartsWith("../") -or $relativeScanRoot.StartsWith("..\\")) {
-                Write-Verbose "W_REMOVE_BOM_GIT_PREFIX_OUTSIDE_ROOT: Computed relative scan root '$relativeScanRoot' is outside git root '$gitRoot'. Enumerating git root and relying on post-filtering."
-                $relativeScanRoot = "."
+            elseif ($relativeScanRoot -ne ".") {
+                $relativePrefixSegments = @($relativeScanRoot -split '[\\/]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                $prefixEscapesGitRoot = $relativePrefixSegments -contains ".."
+
+                if (-not $prefixEscapesGitRoot) {
+                    try {
+                        $relativePrefixCandidateRoot = Resolve-CanonicalFileSystemPath -path (Join-Path -Path $gitRoot -ChildPath $relativeScanRoot)
+                        $prefixEscapesGitRoot = -not (Test-IsPathUnderRoot -path $relativePrefixCandidateRoot -root $gitRoot)
+                    }
+                    catch {
+                        # If the derived prefix cannot be canonicalized safely,
+                        # degrade to git-root enumeration and post-filtering.
+                        $prefixEscapesGitRoot = $true
+                    }
+                }
+
+                if ($prefixEscapesGitRoot) {
+                    Write-Verbose "W_REMOVE_BOM_GIT_PREFIX_OUTSIDE_ROOT: Computed relative scan root '$relativeScanRoot' is outside git root '$gitRoot'. Enumerating git root and relying on post-filtering."
+                    $relativeScanRoot = "."
+                    $relativeScanRootSource = "show-prefix-outside-root"
+                }
             }
 
             # $gitPathspec controls git ls-files scope; $canonicalScanRoot
@@ -475,7 +593,7 @@ function Resolve-ScannableFileDiscovery {
             Write-Verbose "Remove-BOM discovery diagnostics: deferring git ls-files enumeration to streaming pass for '$canonicalScanRoot'."
             return [PSCustomObject]@{
                 Mode             = "git-ls-files"
-                Diagnostics      = "scanRootInput=$scanRootInput gitRoot=$gitRoot scanRoot=$canonicalScanRoot relativeScanRoot=$relativeScanRoot resolvedScanRoot=$resolvedScanRoot listedPaths=deferred streaming=true"
+                Diagnostics      = "scanRootInput=$scanRootInput gitRoot=$gitRoot scanRoot=$canonicalScanRoot relativeScanRoot=$relativeScanRoot relativeScanRootSource=$relativeScanRootSource resolvedScanRoot=$resolvedScanRoot listedPaths=deferred streaming=true"
                 ResolvedScanRoot = $canonicalScanRoot
                 GitExecutable    = $gitCommand.Source
                 GitRoot          = $gitRoot
@@ -532,6 +650,7 @@ function Get-ScannableFileStream {
     if ($scanPlan.Mode -eq "git-ls-files") {
         $scopeFilteredCount = 0
         $scopeFilteredSample = $null
+        $processedCandidateCount = 0
 
         & $scanPlan.GitExecutable -C $scanPlan.GitRoot @($scanPlan.GitListArguments) 2>$null |
             ForEach-Object {
@@ -539,6 +658,8 @@ function Get-ScannableFileStream {
                 if ([string]::IsNullOrWhiteSpace($trimmedRelativePath)) {
                     return
                 }
+
+                $processedCandidateCount++
 
                 $candidatePath = Join-Path -Path $scanPlan.GitRoot -ChildPath $trimmedRelativePath
                 try {
@@ -573,7 +694,7 @@ function Get-ScannableFileStream {
             else {
                 ""
             }
-            throw "E_REMOVE_BOM_GIT_STREAM_FAILED: git ls-files failed during streaming enumeration with exit code $streamExitCode for '$($scanPlan.ResolvedScanRoot)'.$failureDetails"
+            throw "E_REMOVE_BOM_GIT_STREAM_FAILED: git ls-files failed during streaming enumeration with exit code $streamExitCode for '$($scanPlan.ResolvedScanRoot)'. Streaming diagnostics: processedCandidates=$processedCandidateCount scopeFiltered=$scopeFilteredCount.$failureDetails"
         }
         return
     }
