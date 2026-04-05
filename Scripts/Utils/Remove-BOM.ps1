@@ -206,6 +206,32 @@ function Resolve-TopLevelPathAlias {
                 catch {
                     # Keep identity mapping when alias re-probe is unavailable.
                 }
+
+                # Unix-specific fallback: readlink resolves symlinks that
+                # .NET/PowerShell providers may not detect (for example macOS
+                # /var -> /private/var, where readlink returns relative target "private/var").
+                if (-not $IsWindows -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                    try {
+                        $readlinkOutput = (& readlink $topLevelSegment 2>$null)
+                        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($readlinkOutput)) {
+                            $readlinkPath = ([string]$readlinkOutput).Trim()
+                            if (-not [System.IO.Path]::IsPathRooted($readlinkPath)) {
+                                $readlinkParent = Split-Path -Path $topLevelSegment -Parent
+                                if ([string]::IsNullOrWhiteSpace($readlinkParent)) {
+                                    $readlinkParent = "/"
+                                }
+                                $readlinkPath = [System.IO.Path]::GetFullPath((Join-Path -Path $readlinkParent -ChildPath $readlinkPath))
+                            }
+                            if (-not $readlinkPath.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                                $resolvedTopLevelAliasTarget = $readlinkPath
+                                $aliasResolutionSource = "readlink"
+                            }
+                        }
+                    }
+                    catch {
+                        # readlink unavailable or failed; keep identity mapping.
+                    }
+                }
             }
         }
         catch {

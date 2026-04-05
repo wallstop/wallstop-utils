@@ -44,6 +44,11 @@ Describe "Remove-BOM file discovery" {
         $script:testRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("remove-bom-tests-" + [System.Guid]::NewGuid().ToString("N"))
         [System.IO.Directory]::CreateDirectory($script:testRoot) | Out-Null
         $script:testRoot = Resolve-CanonicalTempRoot -Path $script:testRoot
+        # Clear the alias cache again after Resolve-CanonicalTempRoot: on macOS,
+        # the temp-root canonicalization probes /var which may cache an incorrect
+        # identity mapping when .NET providers fail to resolve the symlink.
+        # Mock-based tests need an empty cache so their mocks are exercised.
+        $script:topLevelAliasCache = @{}
     }
 
     AfterEach {
@@ -250,6 +255,50 @@ Describe "Remove-BOM file discovery" {
         if (-not [string]::IsNullOrWhiteSpace($ResolvePathAliasPath)) {
             Assert-MockCalled -CommandName Resolve-Path -ParameterFilter { $LiteralPath -eq $aliasRoot } -Times 1 -Exactly
         }
+    }
+
+    It "falls back to readlink when .NET providers fail to resolve top-level alias" {
+        if ($IsWindows) {
+            Set-ItResult -Skipped -Because "Unix-style root alias canonicalization does not apply on Windows"
+            return
+        }
+
+        $aliasRoot = "/var"
+        $aliasPath = "/var/folders/canonical-test-root"
+
+        Mock -CommandName Resolve-Path -ParameterFilter {
+            $LiteralPath -eq "ignored-by-mocks"
+        } -MockWith {
+            [PSCustomObject]@{ Path = $aliasPath }
+        }
+
+        # Resolve-Path returns identity (no alias resolution)
+        Mock -CommandName Resolve-Path -ParameterFilter {
+            $LiteralPath -eq $aliasRoot
+        } -MockWith {
+            [PSCustomObject]@{ Path = $aliasRoot }
+        }
+
+        Mock -CommandName Get-Item -ParameterFilter {
+            $LiteralPath -eq $aliasPath
+        } -MockWith {
+            [PSCustomObject]@{ FullName = $aliasPath }
+        }
+
+        # All .NET resolution methods return identity
+        Mock -CommandName Get-Item -ParameterFilter {
+            $LiteralPath -eq $aliasRoot
+        } -MockWith {
+            [PSCustomObject]@{ FullName = $aliasRoot }
+        }
+
+        # readlink provides the only working resolution path.
+        # Set $global:LASTEXITCODE because the production code checks it after
+        # invoking the native command, and PowerShell functions do not set it.
+        function readlink { $global:LASTEXITCODE = 0; "private/var" }
+
+        $actualCanonicalPath = Resolve-CanonicalFileSystemPath -path "ignored-by-mocks"
+        $actualCanonicalPath | Should -Be "/private/var/folders/canonical-test-root" -Because "readlink fallback should resolve top-level aliases when .NET providers fail."
     }
 
     It "treats top-level alias and canonical roots as equivalent for scope checks (<Scenario>)" -TestCases @(
