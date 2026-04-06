@@ -7,7 +7,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$status = @(& git status --porcelain=v1 --untracked-files=all)
+$gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+if ($null -eq $gitCommand) {
+    throw "E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE: git is not available on PATH."
+}
+
+Write-Verbose ("Assert-CleanGitTree git diagnostics: gitPath='{0}'" -f $gitCommand.Source)
+
+$gitExecutable = $gitCommand.Source
+$status = @(& $gitExecutable status --porcelain=v1 --untracked-files=all)
 $lecValue = Get-Variable -Name 'LASTEXITCODE' -ValueOnly -ErrorAction SilentlyContinue
 $statusExitCode = if ($null -ne $lecValue) { [int]$lecValue } else { -1 }
 if ($statusExitCode -ne 0) {

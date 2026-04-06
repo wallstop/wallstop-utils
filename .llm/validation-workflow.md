@@ -79,3 +79,4 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Test-LlmHarness.ps1
 - [ ] Ran `Invoke-FullValidation.ps1 -WatchCi` (or equivalent PR check watch) and reached green CI.
 - [ ] Any failure encountered in this session was fixed and revalidated in this session.
 - [ ] If a new issue category was discovered, generalized it in `.llm` skills/context/tests and revalidated harness/index.
+- [ ] **Executed post-work self-improvement workflow** with adversarial sub-agent consensus (see [post-work-self-improvement](./skill-details/post-work-self-improvement.md)).

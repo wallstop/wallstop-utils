@@ -10,13 +10,13 @@ function Get-WrapperContractEntries {
 
     $normalizedFallback = @(
         $DefaultFallback |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        ForEach-Object { ($_ -replace '[\\/]+', '/').Trim() } |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        Sort-Object { $_.ToUpperInvariant() } -Unique
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { ($_ -replace '[\\/]+', '/').Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object { $_.ToUpperInvariant() } -Unique
     )
 
-    if (-not (Test-Path -Path $ContextFilePath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $ContextFilePath -PathType Leaf)) {
         return $normalizedFallback
     }
 

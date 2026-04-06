@@ -20,14 +20,14 @@ function Convert-OutputToStringArray {
 
     return @(
         $Output |
-        ForEach-Object {
-            if ($null -eq $_) {
-                ""
+            ForEach-Object {
+                if ($null -eq $_) {
+                    ""
+                }
+                else {
+                    [string]$_
+                }
             }
-            else {
-                [string]$_
-            }
-        }
     )
 }
 
@@ -513,7 +513,7 @@ function Test-AutoHotkeyScripts {
     }
 
     if ($ahkFiles.Count -eq 0) {
-        Write-Host "AutoHotkey checks: no .ahk files found for selected scope; skipping."
+        Write-Verbose "AutoHotkey checks: no .ahk files found for selected scope; skipping."
         return
     }
 
@@ -527,8 +527,8 @@ function Test-AutoHotkeyScripts {
         return
     }
 
-    Write-Host "AutoHotkey checks: validating $($ahkFiles.Count) file(s) with runtime switch probing (/validate, then /iLib fallback)."
-    Write-Host "AutoHotkey checks: using executable '$ahkExecutable'."
+    Write-Verbose "AutoHotkey checks: validating $($ahkFiles.Count) file(s) with runtime switch probing (/validate, then /iLib fallback)."
+    Write-Verbose "AutoHotkey checks: using executable '$ahkExecutable'."
     $failures = New-Object System.Collections.Generic.List[string]
     $unsupportedMessage = ""
 
@@ -571,7 +571,7 @@ function Test-AutoHotkeyScripts {
     }
 
     if (-not [string]::IsNullOrWhiteSpace($unsupportedMessage)) {
-        Write-Host "AutoHotkey checks: skipped remaining AutoHotkey file validation because runtime probing showed validation switches unavailable."
+        Write-Verbose "AutoHotkey checks: skipped remaining AutoHotkey file validation because runtime probing showed validation switches unavailable."
     }
 }
 
@@ -588,12 +588,12 @@ function Test-BatchScriptsStaticSmoke {
     if ($RequestedTargetFilePaths.Count -gt 0) {
         $batchFiles = @(
             $RequestedTargetFilePaths |
-            Where-Object { [System.IO.Path]::GetExtension($_).ToLowerInvariant() -eq ".bat" } |
-            ForEach-Object {
-                if (Test-Path -Path $_ -PathType Leaf) {
-                    Get-Item -LiteralPath $_ -ErrorAction Stop
+                Where-Object { [System.IO.Path]::GetExtension($_).ToLowerInvariant() -eq ".bat" } |
+                ForEach-Object {
+                    if (Test-Path -Path $_ -PathType Leaf) {
+                        Get-Item -LiteralPath $_ -ErrorAction Stop
+                    }
                 }
-            }
         )
     }
     else {
@@ -601,12 +601,12 @@ function Test-BatchScriptsStaticSmoke {
     }
 
     if ($batchFiles.Count -eq 0) {
-        Write-Host "Batch checks: no .bat files found for selected scope; skipping."
+        Write-Verbose "Batch checks: no .bat files found for selected scope; skipping."
         return
     }
 
-    Write-Host "Batch checks: running best-effort static smoke checks for $($batchFiles.Count) file(s)."
-    Write-Host "Batch checks limitation: this is heuristic validation and does not fully parse cmd.exe syntax."
+    Write-Verbose "Batch checks: running best-effort static smoke checks for $($batchFiles.Count) file(s)."
+    Write-Verbose "Batch checks limitation: this is heuristic validation and does not fully parse cmd.exe syntax."
 
     $violations = New-Object System.Collections.Generic.List[string]
     foreach ($file in $batchFiles) {
@@ -670,7 +670,7 @@ function Invoke-Main {
     $requestedTargetFilePaths = Resolve-RequestedTargetFilePaths -RepoRoot $repoRoot -TargetFiles $TargetFiles
 
     if ($requestedTargetFilePaths.Count -gt 0) {
-        Write-Host "Windows language checks: running in targeted mode for $($requestedTargetFilePaths.Count) file(s)."
+        Write-Verbose "Windows language checks: running in targeted mode for $($requestedTargetFilePaths.Count) file(s)."
     }
 
     Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths -RequireAutoHotkey:$RequireAutoHotkey

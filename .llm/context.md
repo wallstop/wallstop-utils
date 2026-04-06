@@ -24,7 +24,11 @@ All front-end wrapper files must point here and should not duplicate policy text
 8. Prefer PEP 668-safe pre-commit bootstrap guidance (`pipx` or dedicated venv); avoid `python3 -m pip install --user pre-commit`.
 9. When a failure reveals a repeatable category, codify the invariant in skills/context/tests.
 10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
-11. Keep quality-harness diagnostics low-noise: in `Run-PreCommitValidation.ps1` and `Scripts/Utils/Quality/*`, use `Write-Verbose` for advisory telemetry and reserve `Write-Warning` for actionable degradation only; keep `Write-Host` for concise high-level status.
+11. Keep quality-harness diagnostics low-noise: in `Run-PreCommitValidation.ps1`, `Scripts/Utils/Quality/*`, and `Scripts/Utils/Remove-BOM.ps1`, use `Write-Verbose` for advisory telemetry (for example discovery diagnostics, probe details, and periodic progress) and reserve `Write-Warning` for actionable degradation only; keep `Write-Host` for concise high-level status summaries.
+12. Scripts that invoke `git` must preflight availability with `Get-Command -Name "git" -ErrorAction SilentlyContinue` before the first git call and emit a stable `E_*_GIT_NOT_AVAILABLE` diagnostic when missing.
+13. Treat CI logs containing `files were modified by this hook` as autofix-required formatting drift (not a tool crash); emit explicit `E_CI_PRECOMMIT_AUTOFIX_REQUIRED` diagnostics and list modified files.
+14. Prefer git-native ignore semantics over ad-hoc `.gitignore` wildcard conversion: `Scripts/Utils/Remove-BOM.ps1` file discovery must use `git ls-files --cached --others --exclude-standard` when available, and emit explicit `W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK` diagnostics when it must degrade to filesystem traversal. Derive scoped pathspecs via `git rev-parse --show-prefix` (not `System.IO.Path.GetRelativePath`) to avoid symlink/canonical-path alias mismatches (for example `/var` vs `/private/var`) that can trigger `git ls-files` exit `128`. Canonicalize both scan roots and git roots through the same symlink-aware helper before `Test-IsPathUnderRoot` comparisons; do not mix alias-form and canonical-form roots. Canonicalization helpers must canonicalize the requested path directly (for example, resolved path + `Get-Item.FullName`) rather than traversing intermediate segments, and on Unix must normalize top-level symlink aliases (for example, `/var` to `/private/var`) before scope comparisons. Top-level alias resolution must be resilient across metadata variations: prefer `ResolveLinkTarget`, then provider `LinkTarget`/`Target` properties, then `Get-Item.FullName`, then `Resolve-Path` re-probe, then Unix `readlink` fallback, then a physical-path fallback (`/bin/pwd -P`) for providers that still surface alias identities; when a relative link target is resolved for a root-level segment, treat empty parent output as `/` before `Join-Path`. If `git rev-parse --show-prefix` returns an out-of-root path (for example `..` or `../outside`), or the derived prefix cannot be canonicalized under git root, discovery must degrade to git-root enumeration with post-filtering and emit `W_REMOVE_BOM_GIT_PREFIX_OUTSIDE_ROOT`. Git discovery diagnostics should include `relativeScanRootSource=...` to make prefix-derivation decisions explicit, and git stream failures should include processed/scope-filtered counters (`processedCandidates=... scopeFiltered=...`) for actionable triage. When git discovery is unavailable, fallback safety must reject traversal if `.gitignore` is present in the scan root or any ancestor up to the nearest `.git` repository boundary. If no `.git` boundary is detected, non-repository fallback remains intentionally scoped to the requested scan root only; diagnostics must report fallback scope, checked ancestor depth, and detected boundary identity (`fallbackScope=... checkedAncestors=... gitBoundary=...`).
+15. Keep `Remove-BOM` discovery lazy: `Resolve-ScannableFileDiscovery` must not execute eager `git ls-files` counting probes; in the success path enumerate once via `Get-ScannableFileStream` and keep discovery diagnostics explicit (for example `listedPaths=deferred`). Error paths may issue a single follow-up probe only for actionable diagnostics.
 
 ## Working Agreement For Agents
 
@@ -35,6 +39,8 @@ All front-end wrapper files must point here and should not duplicate policy text
 5. Keep every .llm markdown file at or below 300 lines.
 6. Treat failing tests/hooks/CI checks as current-session priority.
 7. Prefer category-level guidance over brittle one-off rules.
+8. Keep commits bisectable: each commit must pass all gates independently.
+9. **Mandatory post-work self-improvement**: after any significant work, execute the [post-work self-improvement workflow](./skills/post-work-self-improvement.md) using sub-agents with adversarial consensus to analyze work done, extract new knowledge, and update `.llm/` guidance. This is a session-close gate, not optional. See [expanded guide](./skill-details/post-work-self-improvement.md) for trigger criteria and protocol.
 
 ## Primary Commands
 
@@ -104,6 +110,32 @@ causing `IOException: The process cannot access the file` when another read foll
 - Always pass resolved absolute paths (e.g., from `.FullName` or `Resolve-Path`).
 - Always specify `[System.Text.Encoding]::UTF8` explicitly for consistency.
 
+## OpenRead Stream Disposal Safety
+
+`[System.IO.File]::OpenRead(...)` returns a `FileStream` and must never rely on manual
+`.Close()` without guaranteed cleanup.
+
+- Every `OpenRead` usage in `Scripts/*.ps1` must be protected by either:
+  `using (...) { ... }` or `try { ... } finally { $stream.Dispose() }`.
+- Prefer centralized helper functions for repeated prefix-read logic to avoid copy/paste
+  stream handling and disposal drift.
+- Conventions are policy-tested in `Tests/Utils/ScriptSafetyConventions.Tests.ps1`
+  under "File stream safety conventions".
+
+## Test Temp Directory Canonicalization
+
+On macOS, `[System.IO.Path]::GetTempPath()` returns `/var/folders/...` (symlink) but
+`FileInfo.FullName` resolves to `/private/var/folders/...` (canonical). When tests create
+temp directories and later compute relative paths with `GetRelativePath`, the base and
+target paths use different canonical forms, producing `../../../../../../private/var/...`
+instead of correct relative paths.
+
+- After creating a temp directory, canonicalize it: `$root = Resolve-CanonicalTempRoot -Path $root`
+- `Resolve-CanonicalTempRoot` uses `(Get-Item -LiteralPath $Path).FullName` to match
+  the resolution that `FileInfo.FullName` applies on each platform.
+- On Linux/Windows this is a no-op; on macOS it resolves the `/var` symlink.
+- Convention enforced in `ScriptSafetyConventions.Tests.ps1` under "Path derivation safety conventions".
+
 ## Start-Process Exit Code Race Condition
 
 `Start-Process -Wait -PassThru` on Windows has a known race where `.ExitCode` may not
@@ -123,8 +155,13 @@ double quotes, and other special characters. Prefer `System.Diagnostics.Process`
 
 `return @()` inside a function silently returns `$null` instead of an empty array.
 
+`return @(<pipeline>)` has the same risk when the pipeline emits no values.
+Use a comma-wrapped return (`return , @(<expression>)`) whenever callers depend on
+array semantics in empty-result paths.
+
 - Use `return , @()` (comma operator) when callers access `.Count` directly on the result.
 - If callers always wrap with `@()`, the bare `return @()` is safe — add `# array-unwrap-safe`.
+- Do not comma-wrap already materialized arrays returned to call sites that already use `@(...)`; `return , $array` in that case creates nested arrays and breaks `foreach` step iteration.
 - A convention test in `ScriptSafetyConventions.Tests.ps1` enforces this in `Scripts/`.
 
 ## Cross-Platform PowerShell Portability
@@ -133,13 +170,21 @@ Scripts under `Scripts/Utils/` must run on Windows, macOS, and Linux with PowerS
 
 1. Use `Join-Path` and `[System.IO.Path]` for path construction; never hardcode `\` or `/`.
 2. Use `$IsWindows`, `$IsMacOS`, `$IsLinux` for OS branching; avoid `$env:OS` checks.
-3. Write files with explicit UTF-8 no-BOM encoding via `[System.IO.File]::WriteAllText()`.
+3. Write files with explicit UTF-8 no-BOM encoding via `[System.IO.File]::WriteAllText(..., [System.Text.UTF8Encoding]::new($false))`.
 4. Normalize line endings (`-replace "\r", ''`) before regex matching or string comparison.
 5. Normalize path separators to `/` in generated output for deterministic cross-OS comparison.
 6. Use `[System.IO.Path]::GetTempPath()` instead of `$env:TEMP` for portable temp directories.
 7. Use exact file name casing; Linux file systems are case-sensitive.
 8. Split `$env:PATH` with `;` on Windows and `:` on Unix; never assume one separator.
 9. Keep Windows-only scripts in platform-specific directories (e.g., `Scripts/Komorebi/`).
+10. Use `-LiteralPath` for user-supplied or config-sourced paths; reserve `-Path` for intentional wildcard expansion.
+11. Use `Test-Path` (`-PathType` where relevant) for existence/type checks. Use `Resolve-Path` to canonicalize existing paths before comparison or persistence.
+12. For `Get-ChildItem`, prefer `-Filter` on FileSystem for provider-side filtering; use `-Depth` as an optional bound for deep traversals, not as a universal requirement.
+13. For nested location workflows, use named stacks with `Push-Location -StackName` and restore via `Pop-Location` in `finally` blocks.
+14. For deterministic sorting with `Sort-Object -Culture`, pass a culture name string (for example `[System.Globalization.CultureInfo]::InvariantCulture.Name`) instead of a `CultureInfo` object.
+15. Follow `.editorconfig` indentation for PowerShell files (`*.ps1`, `*.psm1`, `*.psd1`): spaces only (no leading tab indentation).
+16. Keep PowerShell formatter settings in `.psscriptanalyzer.format.psd1` with `PSUseConsistentIndentation` (`Kind='space'`, `IndentationSize=4`) and fail fast when formatter output still contains leading tabs.
+17. Use `$HOME` for the user home directory instead of `$env:USERPROFILE`; `$env:USERPROFILE` is Windows-only and may be empty on macOS and Linux.
 
 ## Cross-Platform Shell Tooling (Bash grep awk sed)
 
@@ -163,6 +208,26 @@ See:
 - Skill card: [`.llm/skills/shell-tooling-portability-and-agentic-safety.md`](./skills/shell-tooling-portability-and-agentic-safety.md)
 - Expanded guide: [`.llm/skill-details/shell-tooling-portability-and-agentic-safety.md`](./skill-details/shell-tooling-portability-and-agentic-safety.md)
 
+## Backup/Restore Safety Contract
+
+Backup and restore scripts under `Scripts/` must prioritize data safety and deterministic behavior.
+
+1. Source Validation: validate all required source files/directories before any destructive mutation (clear/remove/overwrite) of destination paths.
+2. Destructive operations: clear destination content only after source preflight succeeds; avoid partially destructive flows when prerequisites are missing.
+3. Error signaling: emit explicit stable error codes (for example `E_*`) for actionable failure triage in CI and local runs.
+4. Encoding: when writing machine-readable artifacts (for example JSON), use explicit UTF-8 no-BOM via `[System.Text.UTF8Encoding]::new($false)` and `[System.IO.File]::WriteAllText(...)`.
+5. Robocopy Exit Codes: handle robocopy return semantics explicitly; treat exit codes `>= 8` as failures and `0..7` as success/warning classes with diagnostics.
+6. Best-Effort Orchestrators: orchestrator scripts may continue after step failures, but must record per-step outcomes, print a failure summary, and make partial success explicit before commit/push operations.
+7. Process isolation: invoke child scripts in isolated processes when those scripts may call `exit`, and classify non-zero exits as failed steps.
+8. Location safety: pair path changes with `try/finally` to guarantee location restoration even on failure. Use `Push-Location -StackName` for nested workflows.
+9. Path safety: use `-LiteralPath` for user/config-driven paths (including `Test-Path`, `New-Item`, and `Copy-Item` sources) and `Test-Path -PathType` for existence/type checks before mutation.
+10. Orchestrator step roots: derive backup/restore step roots from canonical `$PSScriptRoot` (for example `Resolve-Path -LiteralPath $PSScriptRoot`) and do not append an extra `Scripts` segment.
+11. Backup/restore utility scripts: always declare `Set-StrictMode -Version Latest` at script entry to prevent silent failures from uninitialized variables and typoed references.
+12. Nested utility scripts under `Scripts/*/`: when targeting repository-level assets such as `Config/`, resolve repository root explicitly (two parent traversals from `$PSScriptRoot`) before composing destination/source paths.
+13. Git sequencing safety in backup orchestrators: once any git step fails (for example `git commit`), subsequent remote-mutating steps (`git pull --ff-only`, `git push`) must be explicitly skipped with stable diagnostics to avoid operating on a dirty or inconsistent local state.
+14. Backup git preflight: first verify git availability with `Get-Command -Name "git"` and emit `E_*_GIT_NOT_AVAILABLE` when missing, then validate `git rev-parse --is-inside-work-tree` before git mutation (`add`/`commit`/`pull`/`push`) and fail with an explicit `E_*` code when not in a repository.
+15. Cross-platform orchestrators (`Backup.ps1`, `Restore.ps1`, `Update.ps1`) must annotate steps with `SupportedPlatforms` metadata, execute only platform-applicable steps, and emit stable `W_*_STEP_SKIPPED_PLATFORM` diagnostics for skipped Windows-only steps.
+
 ## Contribution Rules
 
 1. Add or update skill files in `.llm/skills`.
@@ -171,3 +236,6 @@ See:
 4. Run index generation and harness validation.
 5. Commit updated skills and generated index together.
 6. If file length approaches 280 lines, split content before it reaches 300.
+7. Retire unused skills: delete card + detail + index entry when a skill no longer applies. _(Process rule; validated by index regeneration removing stale entries.)_
+8. Prefer testable rules: if a new context.md rule cannot be enforced by a Pester test, justify why.
+9. Record non-obvious architectural decisions as comments in the relevant skill-detail file. _(Review-enforced; not mechanically testable because comment relevance is subjective.)_

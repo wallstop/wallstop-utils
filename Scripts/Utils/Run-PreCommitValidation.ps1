@@ -97,9 +97,9 @@ function New-LlmHarnessPattern {
 
     $normalizedWrappers = @(
         $WrapperFiles |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        ForEach-Object { $_ -replace '[\\/]+', '/' } |
-        Sort-Object -Unique
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_ -replace '[\\/]+', '/' } |
+            Sort-Object -Unique
     )
 
     foreach ($wrapperFile in $normalizedWrappers) {
@@ -113,14 +113,25 @@ function New-LlmHarnessPattern {
     return ('^({0})$' -f ($patternSegments -join '|'))
 }
 
+function Get-GitExecutableOrThrow {
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    if ($null -eq $gitCommand) {
+        throw "E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE: git is required to read staged files but was not found on PATH."
+    }
+
+    Write-Verbose ("Pre-commit validation git diagnostics: gitPath='{0}'" -f $gitCommand.Source)
+    return $gitCommand.Source
+}
+
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
-Push-Location -Path $repoRoot
+Push-Location -LiteralPath $repoRoot
 
 try {
     $stagedFiles = @()
     if (-not $All) {
+        $gitExecutable = Get-GitExecutableOrThrow
         $stagedFileQuery = 'git diff --cached --name-only --diff-filter=ACMR'
-        $stagedFileOutput = @(& git diff --cached --name-only --diff-filter=ACMR 2>&1)
+        $stagedFileOutput = @(& $gitExecutable diff --cached --name-only --diff-filter=ACMR 2>&1)
         if ($LASTEXITCODE -ne 0) {
             $gitErrorText = if ($stagedFileOutput.Count -gt 0) { $stagedFileOutput -join ' ' } else { '(no output)' }
             throw "E_CONFIG_ERROR: Failed to read staged files using '$stagedFileQuery' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"

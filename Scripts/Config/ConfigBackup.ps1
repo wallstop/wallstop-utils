@@ -1,31 +1,40 @@
-$baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-$baseDirectory = "$baseDirectory\.."
-Push-Location $baseDirectory
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
-# Define the path to the `.config` folder in the user's home directory
-$configFolder = "$env:USERPROFILE\.config"
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 
-# Define the destination folder where you want to store the backup
-# You can modify this path to any preferred backup location
-$backupFolder = "$baseDirectory\Config\.config"
+Push-Location -LiteralPath $baseDirectory
+try {
+    $configFolder = Join-Path -Path $HOME -ChildPath ".config"
+    if (-not (Test-Path -LiteralPath $configFolder -PathType Container)) {
+        Write-Error "E_CONFIG_BACKUP_SOURCE_MISSING: Source .config folder not found at '$configFolder'."
+        exit 1
+    }
 
-# Create the backup folder if it doesn't exist
-if (-not (Test-Path -Path $backupFolder)) {
-  New-Item -Path $backupFolder -ItemType Directory
+    $backupFolder = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Config") -ChildPath ".config"
+    if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
+        New-Item -LiteralPath $backupFolder -ItemType Directory -Force | Out-Null
+    }
+    else {
+        $backupEntries = @(Get-ChildItem -LiteralPath $backupFolder -Force -ErrorAction Stop)
+        if ($backupEntries.Count -gt 0) {
+            foreach ($backupEntry in $backupEntries) {
+                Remove-Item -LiteralPath $backupEntry.FullName -Recurse -Force -ErrorAction Stop
+            }
+        }
+    }
+
+    $backupParent = (Split-Path -Path $backupFolder -Parent)
+    try {
+        Copy-Item -LiteralPath $configFolder -Destination $backupParent -Recurse -Force
+        Write-Host "Backup successful! .config folder saved to $backupFolder" -ForegroundColor Green
+    }
+    catch {
+        Write-Error ("E_CONFIG_BACKUP_COPY_FAILED: Failed to back up .config from '{0}' to '{1}': {2}" -f $configFolder, $backupParent, $_.Exception.Message)
+        exit 1
+    }
 }
-else {
-  Remove-Item -Path "$backupFolder\*" -Recurse -Force
+finally {
+    Pop-Location
 }
-
-$backupFolder = "$backupFolder\.."
-
-# Check if the .config folder exists
-if (Test-Path -Path $configFolder) {
-  # Copy the .config folder to the backup destination
-  Copy-Item -Path $configFolder -Destination $backupFolder -Recurse -Force
-
-  Write-Host "Backup successful! .config folder saved to $backupFolder"
-} else {
-  Write-Host "The .config folder does not exist at $configFolder."
-}
-Pop-Location

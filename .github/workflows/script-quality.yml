@@ -56,7 +56,80 @@ jobs:
         run: pre-commit --version
 
       - name: Run deterministic non-shell hooks on full repository
-        run: SKIP=shellcheck,shfmt pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure --color always
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          precommit_log="$RUNNER_TEMP/precommit-deterministic.log"
+          clean_precommit_log="$RUNNER_TEMP/precommit-deterministic.clean.log"
+          if SKIP=shellcheck,shfmt pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure --color always 2>&1 | tee "$precommit_log"; then
+            exit 0
+          fi
+
+          # Strip ANSI escape sequences so downstream parsing is deterministic.
+          sed -E 's/\033\[[0-9;]*[[:alpha:]]//g; s/\r$//' "$precommit_log" > "$clean_precommit_log"
+
+          autofix_hook_ids="$(
+            awk '
+              /^[[:space:]]*- hook id:[[:space:]]*/ {
+                current = $0
+                sub(/^[[:space:]]*- hook id:[[:space:]]*/, "", current)
+                sub(/[[:space:]].*$/, "", current)
+                next
+              }
+              /^[[:space:]]*- files were modified by this hook[[:space:]]*$/ {
+                if (current != "") {
+                  print current
+                }
+              }
+            ' "$clean_precommit_log" | sort -u | tr '\n' ',' | sed 's/,$//'
+          )"
+
+          failed_hook_ids="$(
+            awk '
+              /^[[:space:]]*- hook id:[[:space:]]*/ {
+                current = $0
+                sub(/^[[:space:]]*- hook id:[[:space:]]*/, "", current)
+                sub(/[[:space:]].*$/, "", current)
+                next
+              }
+              /^[[:space:]]*- exit code:[[:space:]]*[1-9]/ {
+                if (current != "") {
+                  print current
+                  current = ""
+                }
+              }
+              /^[^[:space:]-]/ {
+                current = ""
+              }
+            ' "$clean_precommit_log" | sort -u | tr '\n' ',' | sed 's/,$//'
+          )"
+
+          if [[ -n "$autofix_hook_ids" ]]; then
+            echo "::error::E_CI_PRECOMMIT_AUTOFIX_REQUIRED: pre-commit hooks modified files. Run 'pre-commit run --all-files' locally and commit the resulting changes."
+            echo "::notice::Auto-fix hook(s): $autofix_hook_ids"
+
+            mapfile -t formatted_files < <(sed -n 's/^[[:space:]]*Formatted[[:space:]][[:space:]]*//p' "$clean_precommit_log" | sed '/^[[:space:]]*$/d' | sort -u)
+            if [[ ${#formatted_files[@]} -gt 0 ]]; then
+              echo "::group::Auto-formatted files"
+              printf '%s\n' "${formatted_files[@]}"
+              echo "::endgroup::"
+            fi
+          fi
+
+          if [[ -n "$failed_hook_ids" ]]; then
+            mapfile -t non_autofix_failed_hooks < <(
+              comm -23 \
+                <(printf '%s\n' "$failed_hook_ids" | tr ',' '\n' | sed '/^$/d' | sort -u) \
+                <(printf '%s\n' "$autofix_hook_ids" | tr ',' '\n' | sed '/^$/d' | sort -u)
+            )
+
+            if [[ ${#non_autofix_failed_hooks[@]} -gt 0 ]]; then
+              echo "::error::E_CI_PRECOMMIT_HOOK_FAILURE: Non-autofix hook failure(s): ${non_autofix_failed_hooks[*]}"
+            fi
+          fi
+
+          exit 1
 
       - name: Run LLM harness validator explicitly
         shell: pwsh

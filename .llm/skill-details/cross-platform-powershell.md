@@ -26,6 +26,50 @@ Avoid hardcoded drive letters (`C:\`) or Unix-only root paths (`/usr/local`).
 Use `$HOME`, `[System.IO.Path]::GetTempPath()`, and `$PSScriptRoot` for anchored paths.
 Do not use `$env:TEMP` directly; it is unset on Linux/macOS.
 
+## Literal Paths, Validation, And Canonicalization
+
+Use `-LiteralPath` for user-supplied or config-driven paths so wildcard characters are not expanded accidentally.
+
+```powershell
+# Safe: literal handling for special characters
+Test-Path -LiteralPath '[archive] report.txt' -PathType Leaf
+Get-Item -LiteralPath '[archive] report.txt'
+```
+
+Use `Test-Path` for existence checks and `-PathType` for explicit file/directory intent.
+Use `Resolve-Path` for canonicalization of existing paths before comparisons.
+
+```powershell
+if (Test-Path -LiteralPath $path -PathType Container) {
+    $resolved = (Resolve-Path -LiteralPath $path).Path
+}
+```
+
+`Resolve-Path` only resolves paths that already exist. For paths that may not exist yet,
+validate intent with `Test-Path` and handle creation separately.
+
+## Directory Traversal, Providers, And Symlinks
+
+`Get-ChildItem` behavior varies by provider. FileSystem-specific guidance does not always apply
+to providers like Registry or Certificate.
+
+For FileSystem scans, prefer `-Filter` when possible because it is applied by the provider.
+
+```powershell
+# Provider-side filtering (preferred for large trees)
+Get-ChildItem -LiteralPath $root -Recurse -Filter '*.ps1' -File
+```
+
+Use `-Depth` as an optional bound for deep or untrusted trees; do not require it for every recursion.
+
+```powershell
+# Optional bounded recursion for large trees
+Get-ChildItem -LiteralPath $root -Recurse -Depth 4 -Filter '*.log' -File
+```
+
+By default, `Get-ChildItem -Recurse` does not recurse into directory symlink targets.
+Use `-FollowSymlink` only when that behavior is explicitly intended.
+
 ## OS Detection And Conditional Logic
 
 Use PowerShell 7+ automatic variables for OS detection:
@@ -134,17 +178,17 @@ Avoid `Invoke-Expression`; it is slow, unsafe, and breaks static analysis.
 
 Commands and APIs that are Windows-only, or whose behavior is Windows-specific:
 
-| Command / API                                       | Cross-Platform Guidance                                                 |
-| --------------------------------------------------- | ----------------------------------------------------------------------- |
-| `Get-WmiObject` (Windows-only)                      | Prefer `Get-CimInstance` on Windows; on non-Windows use native OS tools |
-| `Get-CimInstance` (non-Windows: provider-dependent) | Available in PowerShell 7+, but CIM providers/data are often limited    |
-| `Registry` provider (`HKLM:\`)                      | Config files or environment variables                                   |
-| `Start-Process -Verb RunAs`                         | `sudo` on Unix (but prompt-interactive)                                 |
-| `[System.Windows.Forms]`                            | Windows UI only; use CLI alternatives                                   |
-| `Get-Clipboard` / `Set-Clipboard`                   | Platform-specific: `pbcopy/pbpaste`, `xclip`, `clip.exe`                |
-| `$env:APPDATA`, `$env:LOCALAPPDATA`                 | `$HOME/.config`, `$HOME/.local/share` (XDG)                             |
-| `$env:TEMP`                                         | `[System.IO.Path]::GetTempPath()`                                       |
-| `$env:PATH` split by `;`                            | Split by `;` on Windows, `:` on Unix                                    |
+| Command / API                                           | Cross-Platform Guidance                                                                                        |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Get-WmiObject` (Windows-only)                          | Prefer `Get-CimInstance` on Windows; on non-Windows use native OS tools                                        |
+| `Get-CimInstance` (cross-platform; non-Windows limited) | Available in PowerShell 7+; Windows has broad coverage, while non-Windows CIM providers/data are often limited |
+| `Registry` provider (`HKLM:\`)                          | Config files or environment variables                                                                          |
+| `Start-Process -Verb RunAs`                             | `sudo` on Unix (but prompt-interactive)                                                                        |
+| `[System.Windows.Forms]`                                | Windows UI only; use CLI alternatives                                                                          |
+| `Get-Clipboard` / `Set-Clipboard`                       | Platform-specific: `pbcopy/pbpaste`, `xclip`, `clip.exe`                                                       |
+| `$env:APPDATA`, `$env:LOCALAPPDATA`                     | `$HOME/.config`, `$HOME/.local/share` (XDG)                                                                    |
+| `$env:TEMP`                                             | `[System.IO.Path]::GetTempPath()`                                                                              |
+| `$env:PATH` split by `;`                                | Split by `;` on Windows, `:` on Unix                                                                           |
 
 `Get-CimInstance` is available in PowerShell 7+ on non-Windows, but CIM data is provider-dependent and often limited compared to Windows.
 
@@ -172,6 +216,17 @@ $exitCode = if ($null -ne $lecValue) { [int]$lecValue } else { -1 }
 
 Use `try/finally` with `Push-Location`/`Pop-Location` to ensure directory state is restored.
 
+For nested workflows, use a named stack to avoid collisions with outer scope location management.
+
+```powershell
+Push-Location -LiteralPath $workDir -StackName 'Validation'
+try {
+    # perform work in $workDir
+} finally {
+    Pop-Location -StackName 'Validation' -ErrorAction SilentlyContinue
+}
+```
+
 Return empty arrays safely with the comma operator: `return , @()`.
 
 Use `CmdletBinding` and parameter validation on all functions.
@@ -187,8 +242,10 @@ Emit structured error codes (`E_PREFIX_DETAIL`) for actionable diagnostics.
 4. Use exact file name casing; test on case-sensitive file systems.
 5. Write files with explicit UTF-8 no-BOM encoding.
 6. Prefer .NET methods over cmdlets in performance-sensitive code.
-7. Mark platform-specific scripts by directory; keep shared utilities portable.
-8. See `context.md` for `Start-Process` safety and file-handle patterns.
+7. Use `-LiteralPath` for external paths and `Test-Path -PathType` for existence/type validation.
+8. Canonicalize existing paths before comparison or persistence.
+9. Mark platform-specific scripts by directory; keep shared utilities portable.
+10. See `context.md` for `Start-Process` safety and file-handle patterns.
 
 ## References
 
@@ -197,3 +254,8 @@ Emit structured error codes (`E_PREFIX_DETAIL`) for actionable diagnostics.
 - `Scripts/Utils/Common/StrictModeHelpers.ps1` (shared helper patterns)
 - `.gitattributes` (line ending enforcement)
 - `.llm/context.md` (Start-Process safety, file-handle safety, empty array return)
+- [Get-ChildItem (PowerShell 7.5)](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/get-childitem?view=powershell-7.5)
+- [Set-Location (PowerShell 7.5)](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/set-location?view=powershell-7.5)
+- [Test-Path (PowerShell 7.5)](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/test-path?view=powershell-7.5)
+- [Resolve-Path (PowerShell 7.5)](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/resolve-path?view=powershell-7.5)
+- [about_Providers (PowerShell 7.5)](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_providers?view=powershell-7.5)

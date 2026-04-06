@@ -105,6 +105,45 @@ Describe "post-create.sh pre-commit integration" {
     }
 }
 
+Describe "post-create.sh ripgrep installation" {
+    It "defines a dedicated ripgrep install function" {
+        $script:postCreateContent | Should -Match '_install_ripgrep\(\)\s*\{'
+    }
+
+    It "checks whether ripgrep is already available before installation" {
+        $script:postCreateContent | Should -Match 'command\s+-v\s+rg'
+    }
+
+    It "guards ripgrep install with apt-get and sudo checks" {
+        $script:postCreateContent | Should -Match 'apt-get\s+not\s+available;\s+cannot\s+install\s+ripgrep'
+        $script:postCreateContent | Should -Match '_can_use_sudo_non_interactive'
+    }
+
+    It "verifies ripgrep is available after installation" {
+        $script:postCreateContent | Should -Match 'ripgrep\s+not\s+found\s+after\s+installation'
+    }
+
+    It "invokes ripgrep install before pre-commit install block" {
+        $lines = $script:postCreateContent -split "`n"
+        $ripgrepCallLine = -1
+        $preCommitCheckLine = -1
+
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '_install_ripgrep\s*\|\|\s*_warn' -and $ripgrepCallLine -eq -1) {
+                $ripgrepCallLine = $i
+            }
+            if ($lines[$i] -match 'command\s+-v\s+pre-commit' -and $preCommitCheckLine -eq -1) {
+                $preCommitCheckLine = $i
+            }
+        }
+
+        $ripgrepCallLine | Should -Not -Be -1 -Because "Main flow must call _install_ripgrep"
+        $preCommitCheckLine | Should -Not -Be -1 -Because "Main flow must check pre-commit availability"
+        $ripgrepCallLine | Should -BeLessThan $preCommitCheckLine `
+            -Because "ripgrep bootstrap should run before pre-commit install decision"
+    }
+}
+
 Describe "post-create.sh PowerShell module bootstrap" {
     It "installs Pester" {
         $script:postCreateContent | Should -Match 'Install-Module\s+Pester'
@@ -148,6 +187,31 @@ Describe "post-create.sh idempotence and resilience" {
     It "guards apt-get pipx strategy with command -v apt-get check" {
         # Critical for non-Debian portability: the apt-get strategy must be gated.
         $script:postCreateContent | Should -Match 'command\s+-v\s+apt-get'
+    }
+
+    It "guards venv apt fallback with a sudo availability check" {
+        $lines = $script:postCreateContent -split "`n"
+        $venvStart = -1
+        $venvEnd = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '_install_via_venv\(\)\s*\{' -and $venvStart -eq -1) {
+                $venvStart = $i
+            }
+            if ($venvStart -ne -1 -and $i -gt $venvStart -and $lines[$i] -match '^\}') {
+                $venvEnd = $i
+                break
+            }
+        }
+
+        $venvStart | Should -Not -Be -1 -Because "_install_via_venv function must exist"
+        $venvEnd | Should -Not -Be -1 -Because "_install_via_venv must have a closing brace"
+
+        $venvBody = $lines[$venvStart..$venvEnd] -join "`n"
+        $venvBody | Should -Match '_can_use_sudo_non_interactive' `
+            -Because "venv apt fallback must verify sudo availability before sudo apt-get"
+        $venvBody | Should -Match '_ensure_apt_index_updated' `
+            -Because "venv apt fallback must refresh apt package index before apt-get install"
+        $venvBody | Should -Match 'sudo\s+apt-get\s+install.*python3-venv'
     }
 
     It "calls apt-get update before apt-get install pipx in Strategy 2" {

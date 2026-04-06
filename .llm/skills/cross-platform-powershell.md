@@ -10,6 +10,8 @@ Lightweight skill card for writing portable PowerShell 7+ scripts across Windows
 ## Core concepts
 
 - [Path handling and separator safety](../skill-details/cross-platform-powershell.md#path-handling-and-separator-safety)
+- [Literal paths, validation, and canonicalization](../skill-details/cross-platform-powershell.md#literal-paths-validation-and-canonicalization)
+- [Directory traversal, providers, and symlinks](../skill-details/cross-platform-powershell.md#directory-traversal-providers-and-symlinks)
 - [OS detection and conditional logic](../skill-details/cross-platform-powershell.md#os-detection-and-conditional-logic)
 - [Line ending and encoding safety](../skill-details/cross-platform-powershell.md#line-ending-and-encoding-safety)
 - [Case sensitivity and file system differences](../skill-details/cross-platform-powershell.md#case-sensitivity-and-file-system-differences)

@@ -26,6 +26,7 @@ BeforeAll {
     $script:qualityConfigFiles = @(
         ".pre-commit-config.yaml",
         ".editorconfig",
+        ".psscriptanalyzer.format.psd1",
         ".shellcheckrc",
         ".stylua.toml"
     )
@@ -56,6 +57,19 @@ Describe "Shared helper migration" {
             $fullPath = Join-Path -Path $script:repoRoot -ChildPath $scriptPath
             $content = Get-Content -Path $fullPath -Raw
             $content | Should -Match "StrictModeHelpers\.ps1"
+        }
+    }
+
+    It "declares Set-StrictMode -Version Latest and ErrorActionPreference Stop in each migrated script" {
+        foreach ($scriptPath in $script:migratedScripts) {
+            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $scriptPath
+            $content = (Get-Content -Path $fullPath -Raw) -replace "`r", ''
+            $content | Should -Match 'Set-StrictMode\s+-Version\s+Latest' -Because (
+                "$scriptPath is a migrated utility script and must declare strict mode at script entry."
+            )
+            $content | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"' -Because (
+                "$scriptPath is a migrated utility script and must set ErrorActionPreference to Stop at script entry."
+            )
         }
     }
 
@@ -497,10 +511,11 @@ Describe "Cross-language quality platform conventions" {
         $indexUpdaterPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
         $indexUpdater = Get-Content -Path $indexUpdaterPath -Raw
 
-        $indexUpdater | Should -Match '\$script:InvariantCulture\s*=\s*\[System\.Globalization\.CultureInfo\]::InvariantCulture'
-        $indexUpdater | Should -Match 'Sort-Object\s+-Unique\s+-Culture\s+\$script:InvariantCulture'
-        $indexUpdater | Should -Match 'Sort-Object\s+Name,\s*RelativePath\s+-Culture\s+\$script:InvariantCulture'
-        $indexUpdater | Should -Match 'Sort-Object\s+FullName\s+-Culture\s+\$script:InvariantCulture'
+        $indexUpdater | Should -Match '\$script:InvariantCultureName\s*=\s*\[System\.Globalization\.CultureInfo\]::InvariantCulture\.Name'
+        $indexUpdater | Should -Match 'Sort-Object\s+-Unique\s+-Culture\s+\$script:InvariantCultureName'
+        $indexUpdater | Should -Match 'Sort-Object\s+Name,\s*RelativePath\s+-Culture\s+\$script:InvariantCultureName'
+        $indexUpdater | Should -Match 'Sort-Object\s+FullName\s+-Culture\s+\$script:InvariantCultureName'
+        $indexUpdater | Should -Not -Match 'Sort-Object\s+[^\r\n]*-Culture\s+\(\[System\.Globalization\.CultureInfo\]::InvariantCulture\)'
     }
 
     It "excludes encrypted snapshot directories from check-json validation" {
@@ -582,6 +597,14 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Match 'runs-on:\s+macos-latest'
 
         $workflow | Should -Match 'SKIP=shellcheck,shfmt pre-commit run --all-files'
+        $workflow | Should -Match 'E_CI_PRECOMMIT_AUTOFIX_REQUIRED'
+        $workflow | Should -Match 'E_CI_PRECOMMIT_HOOK_FAILURE'
+        $workflow | Should -Match 'files were modified by this hook'
+        $workflow | Should -Match 'Auto-formatted files'
+        $workflow | Should -Not -Match 'hook id:[\s\S]*\{\s*print\s+\$NF\s*\}'
+        # failed_hook_ids must use awk block-tracking (exit code) not a plain sed to avoid capturing passing hooks
+        $workflow | Should -Not -Match 'failed_hook_ids.*sed\s+-n\s+''s.*hook\s+id'
+        $workflow | Should -Match 'failed_hook_ids[\s\S]*exit code[\s\S]*[1-9]'
         $workflow | Should -Match 'Run shell hooks on changed files'
         $workflow | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
         $workflow | Should -Match 'Invoke-MacOSLanguageChecks\.sh'
@@ -991,29 +1014,334 @@ Describe "Shell quality conventions" {
     }
 }
 
+Describe "Directory restoration safety conventions" {
+    It "requires try/finally restoration for Push-Location in PowerShell scripts" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Scripts'
+        $powerShellScripts = @(Get-ChildItem -LiteralPath $scriptsRoot -Filter '*.ps1' -File -Recurse -ErrorAction Stop)
+
+        foreach ($scriptFile in $powerShellScripts) {
+            # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+            $content = (Get-Content -LiteralPath $scriptFile.FullName -Raw) -replace "`r", ''
+            if ($content -notmatch '(?m)^\s*Push-Location\b') {
+                continue
+            }
+
+            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+
+            # Per-occurrence check: split content on each Push-Location invocation.
+            # Each part after index 0 is the content that follows one Push-Location call.
+            # Every such segment must contain a try/finally block with Pop-Location,
+            # ensuring every Push-Location is independently guarded — a single-regex check
+            # over the whole file would pass even when only one of multiple Push-Locations
+            # is protected.
+            $parts = [regex]::Split($content, '\bPush-Location\b[^\n]*')
+            for ($i = 1; $i -lt $parts.Count; $i++) {
+                $segment = $parts[$i]
+                $segment | Should -Match 'try\s*\{[\s\S]*?finally\s*\{[\s\S]*?Pop-Location' -Because (
+                    "{0}: Push-Location occurrence #{1} must be followed by a try/finally block that calls Pop-Location. Each Push-Location must be independently guarded." -f $relativePath, $i
+                )
+            }
+        }
+    }
+
+    It "uses -LiteralPath with Push-Location in all PowerShell scripts under Scripts/" {
+        $allScripts = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts") -Filter "*.ps1" -Recurse -ErrorAction Stop)
+
+        foreach ($scriptFile in $allScripts) {
+            $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
+            $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+            $lines = $content -split '\n'
+            $pushLocationLines = @($lines | Where-Object { $_ -match 'Push-Location\b' })
+            if ($pushLocationLines.Count -eq 0) {
+                continue
+            }
+
+            # Every Push-Location line must explicitly specify -LiteralPath
+            $violations = New-Object System.Collections.Generic.List[string]
+            foreach ($line in $pushLocationLines) {
+                if ($line -notmatch '-LiteralPath\b') {
+                    [void]$violations.Add($line.Trim())
+                }
+            }
+
+            $violations.Count | Should -Be 0 -Because (
+                "$relativePath has Push-Location call(s) without -LiteralPath (catches -Path, positional, and named-param reordering). Violations: {0}" -f ($violations -join '; ')
+            )
+        }
+    }
+
+    It "avoids bare backup-dir cd in Mac brew scripts" {
+        foreach ($relativePath in @('Scripts/Mac/backup_brew.sh', 'Scripts/Mac/restore_brew.sh')) {
+            # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+            $content = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath $relativePath) -Raw) -replace "`r", ''
+            $lines = $content -split "`n"
+            $violations = New-Object System.Collections.Generic.List[string]
+
+            for ($index = 0; $index -lt $lines.Count; $index++) {
+                if ($lines[$index] -notmatch '^\s*cd\s+"\$BACKUP_DIR"\s*$') {
+                    continue
+                }
+
+                $previousIndex = $index - 1
+                while ($previousIndex -ge 0 -and [string]::IsNullOrWhiteSpace($lines[$previousIndex])) {
+                    $previousIndex--
+                }
+
+                if ($previousIndex -lt 0 -or $lines[$previousIndex] -notmatch '^\s*\(\s*$') {
+                    $violations.Add(("{0}:{1}" -f $relativePath, ($index + 1))) | Out-Null
+                }
+            }
+
+            $violations.Count | Should -Be 0 -Because (
+                '{0} must only use cd "$BACKUP_DIR" immediately inside a subshell. Violations: {1}' -f $relativePath, ($violations -join ', ')
+            )
+            $content | Should -Match '(?s)\(\s*\n\s*cd\s+"\$BACKUP_DIR"' -Because (
+                "{0} should scope BACKUP_DIR cd to a subshell to keep location changes local." -f $relativePath
+            )
+        }
+    }
+}
+
+Describe "File stream safety conventions" {
+    It "requires protected disposal for OpenRead usage in Scripts PowerShell files" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Scripts'
+        $powerShellScripts = @(Get-ChildItem -LiteralPath $scriptsRoot -Filter '*.ps1' -File -Recurse -ErrorAction Stop)
+
+        foreach ($scriptFile in $powerShellScripts) {
+            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+            $content = (Get-Content -LiteralPath $scriptFile.FullName -Raw) -replace "`r", ''
+            $openReadMatches = [regex]::Matches($content, '\[System\.IO\.File\]::OpenRead\s*\(')
+
+            if ($openReadMatches.Count -eq 0) {
+                continue
+            }
+
+            foreach ($match in $openReadMatches) {
+                $startIndex = [Math]::Max(0, $match.Index - 400)
+                $endIndex = [Math]::Min($content.Length, $match.Index + 1600)
+                $snippet = $content.Substring($startIndex, $endIndex - $startIndex)
+                $lineNumber = ([regex]::Matches($content.Substring(0, $match.Index), "`n")).Count + 1
+
+                $isUsingOpenRead = $snippet -match 'using\s*\(\s*\$[A-Za-z0-9_]+\s*=\s*\[System\.IO\.File\]::OpenRead\s*\('
+                $isTryFinallyProtected = $snippet -match 'try\s*\{[\s\S]*?\[System\.IO\.File\]::OpenRead\s*\([\s\S]*?finally\s*\{[\s\S]*?(?:\.Dispose\(\)|\.Close\(\))'
+
+                ($isUsingOpenRead -or $isTryFinallyProtected) | Should -BeTrue -Because (
+                    "{0}:{1} OpenRead must be protected by using(...) or try/finally with Dispose()/Close() to guarantee file-handle cleanup." -f $relativePath, $lineNumber
+                )
+            }
+        }
+    }
+
+    It "centralizes Remove-BOM prefix reads in a disposal-safe helper" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'function\s+Read-FilePrefixBytes\s*\{[\s\S]*?try\s*\{[\s\S]*?\[System\.IO\.File\]::OpenRead\s*\([\s\S]*?finally\s*\{[\s\S]*?\.Dispose\(\)'
+
+        $openReadCount = ([regex]::Matches($content, '\[System\.IO\.File\]::OpenRead\s*\(')).Count
+        $openReadCount | Should -Be 1 -Because 'Remove-BOM should keep OpenRead centralized in Read-FilePrefixBytes to avoid duplicated disposal logic.'
+
+        $closeCount = ([regex]::Matches($content, '\.Close\s*\(\)')).Count
+        $closeCount | Should -Be 0 -Because 'Remove-BOM should avoid manual Close() calls and rely on centralized disposal logic.'
+    }
+
+    It "uses git-native ignore semantics in Remove-BOM file discovery" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match '\$gitListArguments\s*=\s*@\("ls-files",\s*"--cached",\s*"--others",\s*"--exclude-standard"\)'
+        $content | Should -Match '\-C\s+\$scanPlan\.GitRoot\s+@\(\$scanPlan\.GitListArguments\)'
+        $content | Should -Match 'function\s+Resolve-ScannableFileDiscovery'
+        $content | Should -Match 'function\s+Get-ScannableFileStream'
+        $content | Should -Match 'function\s+Get-ScannableFiles'
+        $content | Should -Match 'Test-IsPathUnderRoot\s+-path\s+\$candidateItem\.FullName\s+-root\s+\$scanPlan\.ResolvedScanRoot' -Because 'Git-stream scope filtering should use materialized file paths to avoid alias-vs-canonical mismatches.'
+        $content | Should -Not -Match '\$scanFiles\s*=\s*@\(\$scanPlan\.Files\)'
+        $content | Should -Match 'Get-ScannableFileStream\s+-scanPlan\s+\$scanPlan\s*\|'
+        $content | Should -Match 'listedPaths=deferred'
+        $content | Should -Not -Match 'listedPaths=\$\(\$listedPathCount\)'
+        $content | Should -Not -Match 'Get-GitCommandDetails\s+-gitExecutable\s+\$gitCommand\.Source\s+-workingDirectory\s+\$gitRoot\s+-arguments\s+\$gitListArguments\s*\r?\n\s*if\s*\(\$gitListResult\.ExitCode\s*-eq\s*0\)'
+        $content | Should -Not -Match 'function\s+Get-GitIgnorePatterns'
+        $content | Should -Not -Match 'function\s+Test-PathAgainstGitIgnore'
+    }
+
+    It "preserves caller scan scope when git show-prefix fails in Remove-BOM" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'function\s+Resolve-CanonicalFileSystemPath' -Because 'Remove-BOM must centralize canonical path resolution for symlink-safe comparisons'
+        $content | Should -Match '\$resolvedScanRoot\s*=\s*Resolve-CanonicalFileSystemPath\s+-path\s+\$scanRoot' -Because 'The scan root must be canonicalized once at discovery entry'
+        $content | Should -Match '\$gitRoot\s*=\s*Resolve-CanonicalFileSystemPath\s+-path\s+\$gitRootCandidate' -Because 'git root must be canonicalized with the same helper as scan roots'
+
+        # When --show-prefix fails, the canonicalScanRoot must NOT be assigned $gitRoot.
+        # It must use the caller's original scope to prevent scope leaks.
+        $content | Should -Match 'W_REMOVE_BOM_GIT_PREFIX_UNAVAILABLE' -Because 'Remove-BOM must emit a diagnostic when --show-prefix fails'
+
+        # Extract the full canonicalScanRoot if/else assignment block.
+        $fullBlock = [regex]::Match(
+            $content,
+            '(?ms)\$canonicalScanRoot\s*=\s*if\s*\(\$relativeScanRoot\s*-eq\s*"\."\)\s*\{(?<dotBranch>[^}]+)\}\s*else\s*\{(?<elseBranch>[^}]+)\}'
+        )
+        $fullBlock.Success | Should -BeTrue -Because 'Remove-BOM must have a canonicalScanRoot if/else assignment with both "." and non-"." branches'
+
+        # ---- "." branch: MUST use caller's $resolvedScanRoot with symlink resolution ----
+        $dotBranch = $fullBlock.Groups['dotBranch'].Value.Trim()
+        $dotBranch | Should -Match '\$resolvedScanRoot' -Because 'The "." branch must use $resolvedScanRoot to preserve caller scope'
+        $dotBranch | Should -Not -Match '\$gitRoot' -Because 'The "." branch must NOT use $gitRoot (scope-leak risk)'
+
+        # ---- else branch: MUST canonicalize through helper for symlink-safe normalization ----
+        $elseBranch = $fullBlock.Groups['elseBranch'].Value.Trim()
+        $elseBranch | Should -Match 'Resolve-CanonicalFileSystemPath' -Because 'The else branch must canonicalize via Resolve-CanonicalFileSystemPath for symlink-safe comparisons'
+        $elseBranch | Should -Match '\$gitRoot' -Because 'The else branch must derive the canonical scan root from $gitRoot + relative path'
+
+        # Diagnostics must include resolvedScanRoot for traceability.
+        $content | Should -Match 'resolvedScanRoot=\$resolvedScanRoot' -Because 'Discovery diagnostics must include the original resolvedScanRoot for debugging scope issues'
+        $content | Should -Match 'scanRootInput=\$scanRootInput' -Because 'Discovery diagnostics must include the caller-provided scan root for alias-vs-canonical troubleshooting'
+        $content | Should -Match '\$relativePrefixSegments\s*=\s*@\(\$relativeScanRoot\s+-split\s+''\[\\\\/\]\+''' -Because 'Out-of-root protection should inspect normalized prefix segments for traversal components.'
+        $content | Should -Match 'Test-IsPathUnderRoot\s+-path\s+\$relativePrefixCandidateRoot\s+-root\s+\$gitRoot' -Because 'Out-of-root protection should validate canonicalized prefix roots against the git root boundary.'
+    }
+
+    It "keeps Remove-BOM canonical path resolution robust and diagnosable" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'E_REMOVE_BOM_CANONICAL_PATH_RESOLUTION_FAILED' -Because 'Canonicalization failures must emit a stable diagnostic for root-cause triage.'
+        $content | Should -Match 'function\s+Resolve-UnixPhysicalPath' -Because 'Unix physical-path fallback should remain centralized to cover provider-level alias resolution gaps.'
+        $content | Should -Match 'relativeScanRootSource=' -Because 'Discovery diagnostics should identify which show-prefix handling mode was used during git-native scope derivation.'
+        $content | Should -Match 'function\s+Resolve-TopLevelPathAlias' -Because 'Top-level alias canonicalization must remain centralized.'
+        $content | Should -Match 'PSObject\.Properties\.Name\s+-contains\s+"LinkTarget"' -Because 'Alias resolution should consume provider link metadata when available.'
+        $content | Should -Match 'PSObject\.Properties\.Name\s+-contains\s+"Target"' -Because 'Alias resolution should support alternate provider target metadata.'
+        $content | Should -Match '\$topLevelItem\.FullName' -Because 'Alias resolution should fall back to item FullName when explicit link metadata is unavailable.'
+        $content | Should -Match 'aliasResolutionSource\s*=\s*"pwd-physical"' -Because 'Alias resolution should preserve a physical-path fallback source marker for diagnostics and regression hardening.'
+        $content | Should -Match 'Get-Item\s+-LiteralPath\s+\$resolvedPath\s+-ErrorAction\s+Stop' -Because 'Canonicalization should materialize the resolved path directly.'
+        $content | Should -Not -Match '\$pathSegments\s*=' -Because 'Segment-by-segment canonicalization is fragile across runner path aliases and should not be reintroduced.'
+        $content | Should -Not -Match 'foreach\s*\(\$segment\s+in\s+\$pathSegments\)' -Because 'Canonicalization should avoid intermediate segment traversal.'
+    }
+
+    It "keeps explicit prefix-read diagnostics in Remove-BOM" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'W_REMOVE_BOM_READ_PREFIX_FAILED'
+        $content | Should -Match 'W_REMOVE_BOM_PREFIX_READ_FAILURES'
+        $content | Should -Match '\$script:prefixReadFailures\s*=\s*0'
+        $content | Should -Match 'processedCandidates=' -Because 'Git stream failures should include processed candidate counts for actionable diagnostics.'
+    }
+
+    It "keeps Remove-BOM discovery fallback diagnostics and direct-run guard" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'function\s+Get-FallbackSafetyAssessment' -Because 'Fallback safety checks should be centralized to avoid duplicated and drifting ancestor-walk logic.'
+        $content | Should -Match 'Get-FallbackSafetyAssessment\s+-resolvedScanRoot\s+\$resolvedScanRoot\s+-comparison\s+\$comparison' -Because 'Resolve-ScannableFileDiscovery should consume the centralized fallback safety assessment.'
+        $content | Should -Match 'W_REMOVE_BOM_GIT_DISCOVERY_FALLBACK'
+        $content | Should -Match 'E_REMOVE_BOM_GIT_DISCOVERY_REQUIRED'
+        $content | Should -Match 'fallbackScope=' -Because 'Fallback diagnostics should expose scope mode (scan-root-only vs repository-ancestors).'
+        $content | Should -Match 'checkedAncestors=' -Because 'Fallback diagnostics should report how many ancestor levels were safety-checked.'
+        $content | Should -Match 'gitBoundary=' -Because 'Fallback diagnostics should include detected repository boundary identity when available.'
+        $content | Should -Match 'filesystem-fallback'
+        $content | Should -Match 'if\s*\(\$MyInvocation\.InvocationName\s*-ne\s*"\."\)\s*\{\s*Invoke-Main'
+    }
+
+    It "prunes excluded directories during Remove-BOM filesystem fallback traversal" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'function\s+Get-FallbackFileStream'
+        $content | Should -Match 'Queue\[string\]'
+        $content | Should -Match 'Test-DirectoryPathAgainstPatterns'
+        $content | Should -Match 'foreach\s*\(\$linkMetadataPropertyName\s+in\s+@\(''LinkTarget'',\s*''Target''\)\)'
+        $content | Should -Match 'prunedSymlinkDirectories='
+        $content | Should -Match 'fallbackTraversal=directory-pruned'
+        $content | Should -Match 'Remove-BOM fallback traversal diagnostics:'
+        $content | Should -Not -Match 'Get-ChildItem\s+-LiteralPath\s+\$scanPlan\.ResolvedScanRoot\s+-File\s+-Recurse\s*\|\s*\r?\n\s*Where-Object'
+    }
+}
+
 Describe "Restore script safety conventions" {
+    It "enforces strict mode and isolated child execution in Restore orchestrator" {
+        $restoreScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Restore.ps1') -Raw) -replace "`r", ''
+
+        $restoreScript | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
+        $restoreScript | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
+        $restoreScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
+        $restoreScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
+        $restoreScript | Should -Match 'E_RESTORE_PARTIAL_FAILURE'
+    }
+
+    It "anchors restore step script resolution to PSScriptRoot with pre-flight diagnostics" {
+        $restoreScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Restore.ps1') -Raw) -replace "`r", ''
+
+        $restoreScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
+        $restoreScript | Should -Not -Match 'Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Scripts"'
+        $restoreScript | Should -Match 'Assert-RestoreStepScriptsExist\s+-Steps\s+\$applicableSteps'
+        $restoreScript | Should -Match 'E_RESTORE_PRE_FLIGHT_STEP_SCRIPT_MISSING'
+        $restoreScript | Should -Match 'E_RESTORE_PRE_FLIGHT_FAILED'
+    }
+
+    It "uses platform-aware restore step metadata and skip diagnostics" {
+        $restoreScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Restore.ps1') -Raw) -replace "`r", ''
+
+        $restoreScript | Should -Match 'function\s+Get-ApplicableRestoreSteps'
+        $restoreScript | Should -Match 'SupportedPlatforms\s*=\s*@\("All"\)'
+        $restoreScript | Should -Match 'SupportedPlatforms\s*=\s*@\("Windows"\)'
+        $restoreScript | Should -Match 'W_RESTORE_STEP_SKIPPED_PLATFORM'
+        $restoreScript | Should -Match 'E_RESTORE_STEP_SELECTION_INVALID'
+        $restoreScript | Should -Match 'Restore platform diagnostics:'
+        $restoreScript | Should -Match 'Assert-ApplicableRestoreStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
+        $restoreScript | Should -Match 'Assert-RestoreStepScriptsExist\s+-Steps\s+\$applicableSteps'
+        $restoreScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
+        $restoreScript | Should -Match 'foreach\s*\(\$step\s+in\s+\$applicableSteps\)'
+    }
+
     It "uses defined destination variables in PowerToys restore messages" {
         $powerToysRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/PowerToys/PowerToysRestore.ps1') -Raw) -replace "`r", ''
 
         $powerToysRestore | Should -Match '\$targetPath'
         $powerToysRestore | Should -Not -Match '\$targetFolder'
+        $powerToysRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$copyFrom\s+-PathType\s+Container'
+        $powerToysRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$targetPath\s+-PathType\s+Container'
+        $powerToysRestore | Should -Match 'Robocopy\.exe'
+        $powerToysRestore | Should -Match 'robocopyExitCode\s*-ge\s*8'
+        $powerToysRestore | Should -Match 'E_POWERTOYS_RESTORE_ROBOCOPY_FAILED'
+        $powerToysRestore | Should -Match 'E_POWERTOYS_RESTORE_SOURCE_MISSING'
+        $powerToysRestore | Should -Match 'E_POWERTOYS_RESTORE_TARGET_MISSING'
     }
 
     It "backs up live Windows Terminal settings and guards missing live files" {
         $windowsTerminalRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WindowsTerminal/WindowsTerminalRestore.ps1') -Raw) -replace "`r", ''
 
         $windowsTerminalRestore | Should -Not -Match 'Copy-Item\s+-Path\s+\$settingsPath\s+-Destination\s+\$currentBackupFile'
-        $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsTerminalSettings\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
-        $windowsTerminalRestore | Should -Match 'E_WT_RESTORE_NO_LIVE_SETTINGS'
+        $windowsTerminalRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$windowsTerminalSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-LiteralPath\s+\$windowsTerminalSettings\s+-Destination\s+\$currentBackupFile'
+        $windowsTerminalRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$settingsPath\s+-PathType\s+Leaf'
+        $windowsTerminalRestore | Should -Match 'E_WT_RESTORE_SOURCE_MISSING'
+        $windowsTerminalRestore | Should -Match 'W_WT_RESTORE_NO_LIVE_SETTINGS'
     }
 
-    It "guards PowerShell profile backups on first-time machines" {
+    It "discovers PowerShell backup sources and restores profile targets cross-platform" {
         $powershellRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Powershell/PowershellRestore.ps1') -Raw) -replace "`r", ''
 
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$powershellSettings\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$powershellSettings\s+-Destination\s+\$powershellBackupFile'
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-Path\s+\$windowsPowershellSettings\s*\)\s*\{[\s\S]*?Copy-Item\s+-Path\s+\$windowsPowershellSettings\s+-Destination\s+\$windowsPowershellBackupFile'
-        $powershellRestore | Should -Match 'E_PS_RESTORE_NO_POWERSHELL_PROFILE'
-        $powershellRestore | Should -Match 'E_PS_RESTORE_NO_WINDOWS_POWERSHELL_PROFILE'
+        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$settingsDir\s+-PathType\s+Container'
+        $powershellRestore | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$settingsDir\s+-Filter\s+"\*\$profileLeafName"\s+-File'
+        $powershellRestore | Should -Match 'Sort-Object\s+Name\s+-CaseSensitive'
+        $powershellRestore | Should -Match 'Get-PreferredBackupForProfileName'
+        $powershellRestore | Should -Match 'Write-Error\s+"E_POWERSHELL_RESTORE_SOURCE_MISSING:'
+        $powershellRestore | Should -Match 'E_POWERSHELL_RESTORE_NO_TARGET_PROFILES'
+        $powershellRestore | Should -Match 'E_POWERSHELL_RESTORE_FALLBACK_SOURCE_INVALID'
+        $powershellRestore | Should -Match 'E_POWERSHELL_RESTORE_SELECTED_SOURCE_MISSING'
+        $powershellRestore | Should -Match '(?-i)Microsoft\.PowerShell_profile\.ps1'
+        $powershellRestore | Should -Not -Match '(?-i)Microsoft\.Powershell_profile\.ps1'
+        $powershellRestore | Should -Match '\$PROFILE\.CurrentUserCurrentHost'
+        $powershellRestore | Should -Match '\$PROFILE\.CurrentUserAllHosts'
+        $powershellRestore | Should -Match 'if\s*\(\$IsWindows\)\s*\{[\s\S]*Join-Path\s+-Path\s+\$HOME\s+-ChildPath\s+''Documents''[\s\S]*Join-Path\s+-Path\s+\$documentsPath\s+-ChildPath\s+''WindowsPowerShell''' -Because 'Legacy Windows PowerShell paths should only be restored on Windows.'
+        $powershellRestore | Should -Not -Match '\$HOME\\Documents\\PowerShell'
+        $powershellRestore | Should -Not -Match '\$HOME\\Documents\\Powershell'
+        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
+        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$target\.Path\s+-PathType\s+Leaf'
+        $powershellRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$sourcePath\s+-Destination\s+\$target\.Path\s+-Force'
+        $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_EXISTING_TARGET_PROFILE'
+        $powershellRestore | Should -Match 'PowerShell restore source diagnostics:'
+        $powershellRestore | Should -Match 'PowerShell restore fallback diagnostics:'
+        $powershellRestore | Should -Match 'PowerShell restore target diagnostics:'
     }
 
     It "validates required Komorebi source files before restore copy" {
@@ -1022,13 +1350,376 @@ Describe "Restore script safety conventions" {
         $komorebiRestore | Should -Match '\$missingSources\s*=\s*@\('
         $komorebiRestore | Should -Match 'E_KOMOREBI_RESTORE_SOURCE_MISSING'
         $komorebiRestore | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiSourceConfig,\s*\$komorebiSourceBarConfig,\s*\$komorebiSourceApplications\)\)'
+        $komorebiRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
+        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceConfig'
+        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceBarConfig'
+        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceApplications'
     }
 
     It "fails fast when Config restore backup directory is empty" {
         $configRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Config/ConfigRestore.ps1') -Raw) -replace "`r", ''
 
-        $configRestore | Should -Match 'Get-ChildItem\s+-Path\s+\$backupDir\s+-Force\s+-ErrorAction\s+Stop'
+        $configRestore | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupDir\s+-Force\s+-ErrorAction\s+Stop'
+        $configRestore | Should -Match 'foreach\s*\(\$backupItem\s+in\s+\$backupItems\)\s*\{[\s\S]*Copy-Item\s+-LiteralPath\s+\$backupItem\.FullName\s+-Destination\s+\$configDir'
         $configRestore | Should -Match 'E_CONFIG_RESTORE_EMPTY_BACKUP'
+        $configRestore | Should -Match 'E_CONFIG_RESTORE_BACKUP_MISSING'
+        $configRestore | Should -Match 'E_CONFIG_RESTORE_COPY_FAILED'
+    }
+
+    It "validates Scoop restore source and import exit codes" {
+        $scoopRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Scoop/ScoopRestore.ps1') -Raw) -replace "`r", ''
+
+        $scoopRestore | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
+        $scoopRestore | Should -Match 'E_SCOOP_RESTORE_SOURCE_MISSING'
+        $scoopRestore | Should -Match 'E_SCOOP_RESTORE_IMPORT_FAILED'
+        $scoopRestore | Should -Match 'scoop\s+import\s+\$scoopFilePath'
+    }
+}
+
+Describe "Backup script safety conventions" {
+    It "tracks per-step results and emits best-effort summary in Backup orchestrator" {
+        $backupScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        $backupScript | Should -Match '\$stepResults\s*=\s*New-Object\s+System\.Collections\.Generic\.List\[object\]'
+        $backupScript | Should -Match 'Proceeding with git operations \(best-effort mode\)'
+        $backupScript | Should -Match 'if\s*\(\s*\$hasBackupStepFailures\s*\)\s*\{[\s\S]*partial success:'
+        $backupScript | Should -Match 'else\s*\{[\s\S]*\$commitMessage\s*=\s*"Backup for \$dateString \(\$succeededCount/\$totalCount\)"'
+        $backupScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
+        $backupScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
+        $backupScript | Should -Match 'Get-Command\s+-Name\s+"git"'
+        $backupScript | Should -Match 'E_BACKUP_GIT_NOT_AVAILABLE'
+        $backupScript | Should -Match '\$gitExecutable\s*=\s*\$gitCommand\.Source'
+        $backupScript | Should -Match '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree'
+        $backupScript | Should -Match 'E_BACKUP_GIT_NOT_REPOSITORY'
+        $backupScript | Should -Match 'E_BACKUP_GIT_ADD_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_DIFF_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED'
+        $backupScript | Should -Match 'Backup git availability diagnostics:'
+        $backupScript | Should -Match 'Backup git preflight diagnostics:'
+        $backupScript | Should -Match 'Backup git staging diagnostics:'
+        $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main'
+        $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+push\s+origin\s+main'
+        $backupScript | Should -Match 'W_BACKUP_GIT_PULL_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'W_BACKUP_GIT_ADD_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'E_BACKUP_STEP_SELECTION_INVALID'
+        $backupScript | Should -Match 'Assert-ApplicableBackupStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
+        $backupScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
+        # git pull --ff-only must appear BEFORE git add --all: staging before pull causes pull to fail
+        # with "local changes would be overwritten" when staged changes overlap with remote changes
+        $backupScript | Should -Match '\$gitExecutable\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?\$gitExecutable\s+add\s+--all' -Because "git pull --ff-only must execute before git add --all; staging before pull causes pull to fail if remote changed the same files"
+        # git pull --ff-only must also appear BEFORE git commit
+        $backupScript | Should -Match '\$gitExecutable\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?\$gitExecutable\s+commit' -Because "git pull --ff-only must execute before git commit; committing first causes --ff-only to fail when origin/main has advanced"
+    }
+
+    It "uses platform-aware backup step metadata and skip diagnostics" {
+        $backupScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        $backupScript | Should -Match 'function\s+Get-ApplicableBackupSteps'
+        $backupScript | Should -Match 'SupportedPlatforms\s*=\s*@\("All"\)'
+        $backupScript | Should -Match 'SupportedPlatforms\s*=\s*@\("Windows"\)'
+        $backupScript | Should -Match 'W_BACKUP_STEP_SKIPPED_PLATFORM'
+        $backupScript | Should -Match 'Backup platform diagnostics:'
+        $backupScript | Should -Match 'Assert-BackupStepScriptsExist\s+-Steps\s+\$applicableSteps'
+        $backupScript | Should -Match 'foreach\s*\(\$step\s+in\s+\$applicableSteps\)'
+    }
+
+    It "requires strict mode in utility backup and restore scripts" {
+        $targetDirectories = @('Config', 'Komorebi', 'PowerToys', 'Powershell', 'Scoop', 'WindowsTerminal')
+
+        foreach ($targetDirectory in $targetDirectories) {
+            $directoryPath = Join-Path -Path $script:repoRoot -ChildPath (Join-Path -Path 'Scripts' -ChildPath $targetDirectory)
+            $candidateScripts = @(Get-ChildItem -Path $directoryPath -Filter '*.ps1' -File -ErrorAction Stop)
+            $backupRestoreScripts = @($candidateScripts | Where-Object { $_.Name -match '(Backup|Restore)\.ps1$' })
+
+            foreach ($scriptFile in $backupRestoreScripts) {
+                $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+                $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                $content | Should -Match 'Set-StrictMode\s+-Version\s+Latest' -Because (
+                    '{0} is part of backup/restore flow and must declare strict mode.' -f $relativePath
+                )
+            }
+        }
+    }
+
+    It "anchors backup step script resolution to PSScriptRoot with pre-flight diagnostics" {
+        $backupScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        $backupScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
+        $backupScript | Should -Not -Match 'Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Scripts"'
+        $backupScript | Should -Match 'Assert-BackupStepScriptsExist\s+-Steps\s+\$applicableSteps'
+        $backupScript | Should -Match 'E_BACKUP_PRE_FLIGHT_STEP_SCRIPT_MISSING'
+        $backupScript | Should -Match 'E_BACKUP_PRE_FLIGHT_FAILED'
+    }
+
+    It "keeps Update orchestrator rooted at script directory without nested Scripts suffix" {
+        $updateScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Update.ps1') -Raw) -replace "`r", ''
+
+        $updateScript | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
+        $updateScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
+        $updateScript | Should -Match 'Push-Location\s+-LiteralPath\s+\$scriptsDirectory'
+        $updateScript | Should -Match 'function\s+Get-ApplicableUpdateSteps'
+        $updateScript | Should -Match 'SupportedPlatforms\s*=\s*@\("All"\)'
+        $updateScript | Should -Match 'SupportedPlatforms\s*=\s*@\("Windows"\)'
+        $updateScript | Should -Match 'W_UPDATE_STEP_SKIPPED_PLATFORM'
+        $updateScript | Should -Match 'E_UPDATE_STEP_SELECTION_INVALID'
+        $updateScript | Should -Match 'Assert-ApplicableUpdateStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
+        $updateScript | Should -Match 'Update platform diagnostics:'
+        $updateScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
+        $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
+    }
+
+    It "validates Config backup source before destructive clear" {
+        $configBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Config/ConfigBackup.ps1') -Raw) -replace "`r", ''
+
+        $configBackup | Should -Match 'E_CONFIG_BACKUP_SOURCE_MISSING'
+        $configBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
+        $configBackup | Should -Match 'foreach\s*\(\$backupEntry\s+in\s+\$backupEntries\)\s*\{[\s\S]*Remove-Item\s+-LiteralPath\s+\$backupEntry\.FullName'
+        $configBackup | Should -Match 'Backup successful! \.config folder saved to \$backupFolder'
+        $configBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
+    }
+
+    It "fails when Windows Terminal backup source is missing" {
+        $windowsTerminalBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WindowsTerminal/WindowsTerminalBackup.ps1') -Raw) -replace "`r", ''
+
+        $windowsTerminalBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
+        $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING'
+        $windowsTerminalBackup | Should -Match 'E_WT_BACKUP_SOURCE_MISSING[\s\S]*exit\s+1'
+        $windowsTerminalBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupFolder\s+-PathType\s+Container'
+        $windowsTerminalBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$sourcePath\s+-Destination\s+\$backupFile'
+    }
+
+    It "uses profile-driven path-safe backup and fails when no PowerShell profiles are available" {
+        $powershellBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Powershell/PowershellBackup.ps1') -Raw) -replace "`r", ''
+
+        $powershellBackup | Should -Match 'Join-Path\s+-Path\s+\(Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Config"\)\s+-ChildPath\s+"Powershell"'
+        $powershellBackup | Should -Match '\$PROFILE\.CurrentUserCurrentHost'
+        $powershellBackup | Should -Match '\$PROFILE\.CurrentUserAllHosts'
+        $powershellBackup | Should -Match '\$pathComparer\s*=\s*if\s*\(\$IsWindows\)'
+        $powershellBackup | Should -Match 'HashSet\[string\]\(\$pathComparer\)'
+        $powershellBackup | Should -Match 'W_POWERSHELL_BACKUP_PROFILE_MISSING\('
+        $powershellBackup | Should -Match 'PowerShell backup profile discovery diagnostics:'
+        $powershellBackup | Should -Match 'Join-Path\s+-Path\s+\$backupFolder\s+-ChildPath\s+\$canonicalLeafName'
+        $powershellBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$candidate\.Path\s+-Destination\s+\$canonicalBackupFile\s+-Force'
+        $powershellBackup | Should -Match 'PowerShell canonical backup diagnostics:'
+        $powershellBackup | Should -Match 'PowerShell backup output diagnostics:'
+        $powershellBackup | Should -Not -Match '\$backupFolder\s*=\s*"\$baseDirectory\\Config\\Powershell"'
+        $powershellBackup | Should -Not -Match '\$HOME\\Documents\\PowerShell'
+        $powershellBackup | Should -Not -Match '\$HOME\\Documents\\WindowsPowerShell'
+        $powershellBackup | Should -Match '\$profilesBackedUp\s*=\s*0'
+        $powershellBackup | Should -Match 'if\s*\(\s*\$profilesBackedUp\s*-eq\s*0\s*\)'
+        $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_NO_PROFILES_FOUND'
+        $powershellBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupFolder\s+-PathType\s+Container'
+        $powershellBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$candidate\.Path\s+-PathType\s+Leaf'
+        $powershellBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$candidate\.Path\s+-Destination\s+\$backupFile'
+    }
+
+    It "uses UTF-8 no-BOM writes for Scoop backup output" {
+        $scoopBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Scoop/ScoopBackup.ps1') -Raw) -replace "`r", ''
+
+        $scoopBackup | Should -Not -Match 'Out-File\s+-FilePath\s+"scoopfile\.json"\s+-Encoding\s+utf8'
+        $scoopBackup | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\$false\)'
+        $scoopBackup | Should -Match '\[System\.IO\.File\]::WriteAllText'
+        $scoopBackup | Should -Match 'E_SCOOP_BACKUP_EXPORT_FAILED'
+    }
+
+    It "checks robocopy exit semantics in PowerToys backup" {
+        $powerToysBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/PowerToys/PowerToysBackup.ps1') -Raw) -replace "`r", ''
+
+        $powerToysBackup | Should -Match 'Robocopy\.exe'
+        $powerToysBackup | Should -Match 'robocopyExitCode\s*-ge\s*8'
+        $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_ROBOCOPY_FAILED'
+        $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_SOURCE_MISSING'
+        $powerToysBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupFolder\s+-PathType\s+Container'
+        $powerToysBackup | Should -Match 'New-Item\s+-LiteralPath\s+\$backupFolder\s+-ItemType\s+Directory'
+        $powerToysBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
+        $powerToysBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$backupEntry\.FullName'
+        $powerToysBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
+    }
+
+    It "validates Komorebi backup sources before copy operations" {
+        $komorebiBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiBackup.ps1') -Raw) -replace "`r", ''
+
+        $komorebiBackup | Should -Match '\$missingSources\s*=\s*@\('
+        $komorebiBackup | Should -Match 'E_KOMOREBI_BACKUP_SOURCE_MISSING'
+        $komorebiBackup | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiConfig,\s*\$komorebiBarConfig,\s*\$applicationYaml\)\)'
+        $komorebiBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
+        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiConfig'
+        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiBarConfig'
+        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$applicationYaml'
+    }
+
+    It "documents backup safety contract in LLM context" {
+        $llmContext = (Get-Content -Path $script:llmContextPath -Raw) -replace "`r", ''
+
+        $llmContext | Should -Match '## Backup/Restore Safety Contract'
+        $llmContext | Should -Match 'Source Validation'
+        $llmContext | Should -Match 'Robocopy Exit Codes'
+        $llmContext | Should -Match 'Best-Effort Orchestrators'
+    }
+
+    It "keeps utility backup jobs fail-fast with explicit unexpected-error signaling" {
+        $dxMessagingBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/BackupDxMessaging.ps1') -Raw) -replace "`r", ''
+
+        $dxMessagingBackup | Should -Match 'E_DXMSG_BACKUP_DEST_CREATE_FAILED'
+        $dxMessagingBackup | Should -Match 'E_DXMSG_BACKUP_SOURCE_MISSING'
+        $dxMessagingBackup | Should -Match 'E_DXMSG_BACKUP_UNEXPECTED'
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Container'
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupDir\s+-PathType\s+Container'
+        $dxMessagingBackup | Should -Match 'catch\s*\{[\s\S]*E_DXMSG_BACKUP_UNEXPECTED[\s\S]*exit\s+1'
+        # Cleanup finally block must use -LiteralPath and -PathType to be path-safe
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$tempStagePath\s+-PathType\s+Container'
+        $dxMessagingBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$zipFilePath\s+-PathType\s+Leaf'
+        $dxMessagingBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$tempStagePath'
+        $dxMessagingBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$zipFilePath'
+        # Old-backup rotation loop must use -LiteralPath for both enumeration and deletion
+        $dxMessagingBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupDir'
+        $dxMessagingBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$file\.FullName'
+    }
+
+    It "enforces portable environment-variable usage in script scopes: <Name>" -TestCases @(
+        @{
+            Name             = "cross-platform scripts avoid env:USERPROFILE"
+            RootRelativePath = "Scripts"
+            ExcludePattern   = '[/\\](Komorebi|WindowsTerminal|WinGet|PowerToys)([/\\]|$)'
+            ForbiddenPattern = '\$env:USERPROFILE\b'
+        }
+        @{
+            Name             = "Scripts/Utils scripts avoid env:TEMP"
+            RootRelativePath = "Scripts/Utils"
+            ExcludePattern   = ""
+            ForbiddenPattern = '\$env:TEMP\b'
+        }
+    ) {
+        param($Name, $RootRelativePath, $ExcludePattern, $ForbiddenPattern)
+
+        $scriptRoot = Join-Path -Path $script:repoRoot -ChildPath $RootRelativePath
+        $scriptFiles = @(
+            Get-ChildItem -LiteralPath $scriptRoot -Filter "*.ps1" -Recurse -ErrorAction Stop |
+                Where-Object {
+                    [string]::IsNullOrWhiteSpace($ExcludePattern) -or $_.FullName -notmatch $ExcludePattern
+                }
+        )
+
+        $scriptFiles.Count | Should -BeGreaterThan 0 -Because (
+            "Expected at least one script under {0} for policy case '{1}'." -f $RootRelativePath, $Name
+        )
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        foreach ($scriptFile in $scriptFiles) {
+            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+            $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+
+            if ($content -match $ForbiddenPattern) {
+                $violations.Add($relativePath) | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Policy case '{0}' forbids '{1}' under '{2}'. Offending files: {3}" -f $Name, $ForbiddenPattern, $RootRelativePath, ($violations -join ', ')
+        )
+    }
+
+    It "uses 24-hour time format (HH) not 12-hour (hh) in backup git commit message timestamp" {
+        $backupScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Backup.ps1") -Raw
+        $backupScript | Should -Match 'HH:mm:ss' -Because (
+            "Backup.ps1 commit message timestamp must use 24-hour format (HH) for unambiguous diagnostics."
+        )
+        $backupScript | Should -Not -Match '"\{0:yyyy/MM/dd hh:mm:ss\}"' -Because (
+            "Backup.ps1 commit message must not use ambiguous 12-hour format (hh) without AM/PM."
+        )
+    }
+
+    It "calls WaitForExit after Start-Process -Wait -PassThru to avoid exit code race condition" {
+        $scriptFiles = @(Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts") -Filter "*.ps1" -Recurse -ErrorAction Stop)
+
+        foreach ($scriptFile in $scriptFiles) {
+            $relativePath = $scriptFile.FullName.Replace($script:repoRoot, '').TrimStart('/\')
+            $content = Get-Content -Path $scriptFile.FullName -Raw
+            if ($content -notmatch '(?i)Start-Process.*-Wait.*-PassThru|(?i)Start-Process.*-PassThru.*-Wait') {
+                continue
+            }
+            $content | Should -Match '\.WaitForExit\(' -Because (
+                "$relativePath uses Start-Process -Wait -PassThru and must call .WaitForExit() to avoid the exit code race condition."
+            )
+        }
+    }
+}
+
+Describe "Path derivation safety conventions" {
+    It "avoids string-concatenated parent directory derivation in Scripts PowerShell files" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Scripts'
+        $powerShellScripts = @(Get-ChildItem -Path $scriptsRoot -Filter '*.ps1' -File -Recurse -ErrorAction Stop)
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        foreach ($scriptFile in $powerShellScripts) {
+            $lines = @(Get-Content -Path $scriptFile.FullName)
+            for ($index = 0; $index -lt $lines.Count; $index++) {
+                if ($lines[$index] -match '\$[A-Za-z0-9_]+\s*=\s*"\$[A-Za-z0-9_]+[\\/]\.\.') {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $violations.Add("${relativePath}:$($index + 1)") | Out-Null
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Parent-directory derivation must use Resolve-Path/Join-Path instead of string '..' concatenation. Violations: {0}" -f ($violations -join ', ')
+        )
+    }
+
+    It "derives repository root with two parent traversals in nested backup/restore utility scripts" {
+        $nestedUtilityScripts = @(
+            'Scripts/Config/ConfigBackup.ps1',
+            'Scripts/Config/ConfigRestore.ps1',
+            'Scripts/Scoop/ScoopBackup.ps1',
+            'Scripts/Scoop/ScoopRestore.ps1',
+            'Scripts/Komorebi/KomorebiBackup.ps1',
+            'Scripts/Komorebi/KomorebiRestore.ps1',
+            'Scripts/Powershell/PowershellBackup.ps1',
+            'Scripts/Powershell/PowershellRestore.ps1',
+            'Scripts/WindowsTerminal/WindowsTerminalBackup.ps1',
+            'Scripts/WindowsTerminal/WindowsTerminalRestore.ps1',
+            'Scripts/PowerToys/PowerToysBackup.ps1',
+            'Scripts/PowerToys/PowerToysRestore.ps1'
+        )
+
+        foreach ($relativePath in $nestedUtilityScripts) {
+            $content = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath $relativePath) -Raw) -replace "`r", ''
+            $parentTraversalMatches = [regex]::Matches($content, 'Join-Path\s+-Path\s+\$[A-Za-z0-9_]+\s+-ChildPath\s+["'']\.\.["'']')
+            $parentTraversalMatches.Count | Should -BeGreaterOrEqual 2 -Because (
+                '{0} must traverse two parents from nested Scripts subdirectories to reach repository root before targeting Config paths.' -f $relativePath
+            )
+        }
+    }
+    It "canonicalizes temp directory roots in test files that compute relative paths" {
+        # On macOS, GetTempPath() returns /var/folders/... (symlink) but FileInfo.FullName
+        # returns /private/var/folders/... (canonical). Tests that compute GetRelativePath
+        # on temp-created paths must canonicalize the base via Resolve-CanonicalTempRoot
+        # to prevent ../../../../../../private/var/... relative path mismatches.
+        $testsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Tests'
+        $testFiles = @(Get-ChildItem -Path $testsRoot -Filter '*.Tests.ps1' -File -Recurse -ErrorAction Stop)
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        foreach ($testFile in $testFiles) {
+            $content = (Get-Content -LiteralPath $testFile.FullName -Raw) -replace "`r", ''
+            $usesGetTempPath = $content -match '\[System\.IO\.Path\]::GetTempPath\(\)'
+            $usesGetRelativePath = $content -match '\[System\.IO\.Path\]::GetRelativePath\('
+            if ($usesGetTempPath -and $usesGetRelativePath) {
+                $definesHelper = $content -match 'function\s+Resolve-CanonicalTempRoot\s*\{'
+                $usesHelper = $content -match 'Resolve-CanonicalTempRoot\s+-Path\b'
+                if (-not ($definesHelper -and $usesHelper)) {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $testFile.FullName)
+                    $violations.Add($relativePath) | Out-Null
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Test files that create temp directories (GetTempPath) and compute relative paths (GetRelativePath) must canonicalize the temp root via Resolve-CanonicalTempRoot after directory creation to prevent macOS symlink aliasing (/var vs /private/var). See .llm/context.md 'Test Temp Directory Canonicalization'. Violations: {0}" -f ($violations -join ', ')
+        )
     }
 }
 
@@ -1298,7 +1989,7 @@ Describe "Dependabot manifest coverage drift conventions" {
         $ignoredDirectoryNames = @('.git', '.venv', '.cache', '.tox', '.pytest_cache', '.egg-info', '.bundle', '.dart_tool', '.flutter-plugins', 'node_modules', 'dist', 'build', 'venv', 'vendor', 'target', '__pycache__')
         $ignoredPathAlternation = (
             $ignoredDirectoryNames |
-            ForEach-Object { [System.Text.RegularExpressions.Regex]::Escape($_) }
+                ForEach-Object { [System.Text.RegularExpressions.Regex]::Escape($_) }
         ) -join '|'
         $ignoredPathPattern = "(?:^|[\\/])($ignoredPathAlternation)(?:[\\/]|$)"
 
@@ -1330,9 +2021,9 @@ Describe "Dependabot manifest coverage drift conventions" {
         try {
             $relativePaths = @(
                 git -C $script:repoRoot ls-files --cached --others --exclude-standard 2>$null |
-                ForEach-Object { $_.Trim() } |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                Sort-Object -Unique
+                    ForEach-Object { $_.Trim() } |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    Sort-Object -Unique
             )
 
             if ($LASTEXITCODE -ne 0) {
@@ -1341,14 +2032,14 @@ Describe "Dependabot manifest coverage drift conventions" {
 
             $allRepoFiles = @(
                 $relativePaths |
-                Where-Object { $_ -notmatch $ignoredPathPattern } |
-                ForEach-Object {
-                    $absolutePath = Join-Path -Path $script:repoRoot -ChildPath $_
-                    if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
-                        Get-Item -LiteralPath $absolutePath -ErrorAction SilentlyContinue
-                    }
-                } |
-                Where-Object { $null -ne $_ }
+                    Where-Object { $_ -notmatch $ignoredPathPattern } |
+                    ForEach-Object {
+                        $absolutePath = Join-Path -Path $script:repoRoot -ChildPath $_
+                        if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
+                            Get-Item -LiteralPath $absolutePath -ErrorAction SilentlyContinue
+                        }
+                    } |
+                    Where-Object { $null -ne $_ }
             )
         }
         catch {
@@ -1385,7 +2076,7 @@ Describe "Dependabot manifest coverage drift conventions" {
 
             $allRepoFiles = @(
                 $collectedFiles |
-                Sort-Object FullName
+                    Sort-Object FullName
             )
         }
 
@@ -1398,7 +2089,7 @@ Describe "Dependabot manifest coverage drift conventions" {
         foreach ($mapping in $manifestMappings) {
             $foundFiles = @(
                 $allRepoFiles |
-                Where-Object { $_.Name -like $mapping.Filter }
+                    Where-Object { $_.Name -like $mapping.Filter }
             )
 
             if ($foundFiles.Count -eq 0) {
@@ -1412,8 +2103,8 @@ Describe "Dependabot manifest coverage drift conventions" {
 
             $sampleFiles = @(
                 $foundFiles |
-                Select-Object -First 3 |
-                ForEach-Object { [System.IO.Path]::GetRelativePath($script:repoRoot, $_.FullName) }
+                    Select-Object -First 3 |
+                    ForEach-Object { [System.IO.Path]::GetRelativePath($script:repoRoot, $_.FullName) }
             )
 
             $violations.Add(("{0} requires ecosystem '{1}' (matches={2}; example files: {3}; diagnostics: {4})" -f $mapping.Filter, $mapping.Ecosystem, $foundFiles.Count, ($sampleFiles -join '; '), $scanDiagnostics)) | Out-Null
@@ -1484,6 +2175,28 @@ Describe "JSON parsing conventions" {
 }
 
 Describe "Utility configuration safety conventions" {
+    It "keeps formatter settings and tab-normalization fail-fast diagnostics in Format-PowerShellFiles" {
+        $formatterPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Format-PowerShellFiles.ps1"
+        $formatterContent = Get-Content -Path $formatterPath -Raw
+
+        $formatterContent | Should -Match '\.psscriptanalyzer\.format\.psd1'
+        $formatterContent | Should -Match 'Get-LeadingTabIndentedLineNumbers'
+        $formatterContent | Should -Match 'Write-Output\s+-NoEnumerate\s+\(\$lineNumbers\.ToArray\(\)\)'
+        $formatterContent | Should -Not -Match 'return\s*,\s*\$lineNumbers\.ToArray\(\)'
+        $formatterContent | Should -Match "-split '\\r\?\\n'"
+        $formatterContent | Should -Not -Match "-split '\\r\?\\n',\s*-1"
+        $formatterContent | Should -Match 'E_FORMATTER_OUTPUT_INVALID'
+        $formatterContent | Should -Match 'E_FORMATTER_TAB_INDENTATION_REMAINING'
+        $formatterContent | Should -Match 'Formatter tab-normalization diagnostics:'
+        $formatterContent | Should -Match 'Get-LineNumberPreview'
+
+        $formatSettingsPath = Join-Path -Path $script:repoRoot -ChildPath '.psscriptanalyzer.format.psd1'
+        $formatSettings = Get-Content -Path $formatSettingsPath -Raw
+        $formatSettings | Should -Match 'PSUseConsistentIndentation'
+        $formatSettings | Should -Match 'Kind\s*=\s*''space'''
+        $formatSettings | Should -Match 'IndentationSize\s*=\s*4'
+    }
+
     It "guards Invoke-Pester usage in Run-PreCommitValidation" {
         $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
         $content = Get-Content -Path $preCommitPath -Raw
@@ -1502,6 +2215,44 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'Write-Verbose\s*\(\s*"LLM harness staged-file diagnostics:'
         $content | Should -Match 'Write-Verbose\s*"No staged files requiring utility validation; skipping validation\."'
         $content | Should -Not -Match 'Write-Host\s*\(\s*"LLM harness staged-file diagnostics:'
+    }
+
+    It "uses explicit git availability preflight in git-consuming utility scripts" {
+        $gitPreflightCases = @(
+            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+diff\s+--cached\s+--name-only\s+--diff-filter=ACMR' },
+            @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+status\s+--porcelain=v1\s+--untracked-files=all' },
+            @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+status\s+--porcelain=v1\s+--untracked-files=all' },
+            @{ Path = 'Scripts/Utils/Increment-Version.ps1'; ErrorCode = 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree' }
+        )
+
+        foreach ($case in $gitPreflightCases) {
+            $content = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath $case.Path) -Raw) -replace "`r", ''
+            $content | Should -Match 'Get-Command\s+-Name\s+"git"\s+-ErrorAction\s+SilentlyContinue' -Because (
+                "{0} invokes git and must validate PATH availability first." -f $case.Path
+            )
+            $content | Should -Match $case.ErrorCode -Because (
+                "{0} must emit stable diagnostics when git is unavailable." -f $case.Path
+            )
+            $content | Should -Match $case.InvocationPattern -Because (
+                "{0} should invoke git through the resolved executable path after preflight." -f $case.Path
+            )
+        }
+    }
+
+    It "keeps quality script diagnostics low-noise in Remove-BOM and Windows language checks" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $removeBom = (Get-Content -Path $removeBomPath -Raw) -replace "`r", ''
+        $removeBom | Should -Match 'Write-Verbose\s+"File discovery diagnostics:'
+        $removeBom | Should -Not -Match 'Write-Host\s+"File discovery diagnostics:'
+        $removeBom | Should -Match 'Write-Verbose\s+"Checked \$filesChecked files so far\.\.\."'
+
+        $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
+        $windowsChecks = (Get-Content -Path $windowsChecksPath -Raw) -replace "`r", ''
+        $windowsChecks | Should -Match 'Write-Verbose\s+"AutoHotkey checks: no \.ahk files found for selected scope; skipping\."'
+        $windowsChecks | Should -Match 'Write-Verbose\s+"AutoHotkey checks: validating'
+        $windowsChecks | Should -Match 'Write-Verbose\s+"Batch checks: running best-effort static smoke checks'
+        $windowsChecks | Should -Match 'Write-Verbose\s+"Windows language checks: running in targeted mode'
+        $windowsChecks | Should -Not -Match 'Write-Host\s+"Batch checks limitation:'
     }
 
     It "keeps Invoke-PesterQualityGate diagnostics low-noise" {
@@ -1624,6 +2375,54 @@ Describe "Utility configuration safety conventions" {
             $content | Should -Match '\$strictModeHelpersPath'
         }
     }
+
+    It "declares strict mode and ErrorActionPreference before dot-sourcing strict mode helpers in migrated scripts" {
+        foreach ($scriptPath in $script:migratedScripts) {
+            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $scriptPath
+            $content = (Get-Content -Path $fullPath -Raw) -replace "`r", ''
+
+            $dotSourceIndex = $content.IndexOf('. $strictModeHelpersPath', [System.StringComparison]::Ordinal)
+            if ($dotSourceIndex -lt 0) {
+                continue
+            }
+
+            $strictModeIndex = $content.IndexOf('Set-StrictMode -Version Latest', [System.StringComparison]::Ordinal)
+            $errorActionIndex = $content.IndexOf('$ErrorActionPreference = "Stop"', [System.StringComparison]::Ordinal)
+
+            $strictModeIndex | Should -BeGreaterThan -1 -Because "$scriptPath must declare strict mode."
+            $errorActionIndex | Should -BeGreaterThan -1 -Because "$scriptPath must set ErrorActionPreference."
+            $strictModeIndex | Should -BeLessThan $dotSourceIndex -Because "$scriptPath must enable strict mode before dot-sourcing helper code."
+            $errorActionIndex | Should -BeLessThan $dotSourceIndex -Because "$scriptPath must set ErrorActionPreference before dot-sourcing helper code."
+        }
+    }
+
+    It "uses literal path semantics for FormatPowershellScripts variable-driven filesystem paths" {
+        $formatScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/FormatPowershellScripts.ps1'
+        $content = (Get-Content -Path $formatScriptPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'Test-Path\s+-LiteralPath\s+\$strictModeHelpersPath\s+-PathType\s+Leaf'
+        $content | Should -Match 'Test-Path\s+-LiteralPath\s+\$ConfiguredPath\s+-PathType\s+Leaf'
+        $content | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$rootDirectory\s+-Recurse\s+-File\s+-Filter\s+''\*\.ps1'''
+        $content | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$rootDirectory\s+-Recurse\s+-File\s+-Filter\s+''\*\.psm1'''
+        $content | Should -Not -Match 'Get-ChildItem\s+-Path\s+\$rootDirectory\s+-Recurse\s+-Include'
+    }
+
+    It "uses literal path semantics in LLM wrapper contract helper" {
+        $helperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/LlmWrapperContractHelpers.ps1'
+        $content = (Get-Content -Path $helperPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'Test-Path\s+-LiteralPath\s+\$ContextFilePath\s+-PathType\s+Leaf'
+        $content | Should -Not -Match 'Test-Path\s+-Path\s+\$ContextFilePath\s+-PathType\s+Leaf'
+    }
+
+    It "uses literal path validation for Pandoc input directory" {
+        $pandocPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/PandocConvertDirectory.ps1'
+        $pandocContent = (Get-Content -Path $pandocPath -Raw) -replace "`r", ''
+
+        $pandocContent | Should -Match 'ValidateScript\(\{\s*Test-Path\s+-LiteralPath\s+\$_\s+-PathType\s+''Container''\s*\}\)'
+        $pandocContent.IndexOf('Set-StrictMode -Version Latest', [System.StringComparison]::Ordinal) | Should -BeLessThan $pandocContent.IndexOf('. $strictModeHelpersPath', [System.StringComparison]::Ordinal)
+        $pandocContent.IndexOf('$ErrorActionPreference = "Stop"', [System.StringComparison]::Ordinal) | Should -BeLessThan $pandocContent.IndexOf('. $strictModeHelpersPath', [System.StringComparison]::Ordinal)
+    }
 }
 
 Describe "GitHub fixture hygiene" {
@@ -1648,11 +2447,11 @@ Describe "PowerShell formatting conventions" {
         $violations = New-Object System.Collections.Generic.List[string]
 
         foreach ($root in $searchRoots) {
-            if (-not (Test-Path -Path $root -PathType Container)) {
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) {
                 continue
             }
 
-            $files = Get-ChildItem -Path $root -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+            $files = Get-ChildItem -LiteralPath $root -Filter "*.ps1" -File -Recurse -ErrorAction Stop
             foreach ($file in $files) {
                 $tokens = $null
                 $parseErrors = $null
@@ -1715,6 +2514,41 @@ Describe "PowerShell formatting conventions" {
 
         $violations.Count | Should -Be 0 -Because (
             "Standalone comma lines inside param blocks reduce readability and are easy to miss in review. Violations: {0}" -f ($violations -join ", ")
+        )
+    }
+
+    It "enforces space indentation in PowerShell files" {
+        $searchRoots = @(
+            (Join-Path -Path $script:repoRoot -ChildPath "Scripts"),
+            (Join-Path -Path $script:repoRoot -ChildPath "Tests")
+        )
+
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($root in $searchRoots) {
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+                continue
+            }
+
+            $files = @(
+                Get-ChildItem -LiteralPath $root -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+                Get-ChildItem -LiteralPath $root -Filter "*.psm1" -File -Recurse -ErrorAction Stop
+                Get-ChildItem -LiteralPath $root -Filter "*.psd1" -File -Recurse -ErrorAction Stop
+            )
+
+            foreach ($file in $files) {
+                $lines = @(Get-Content -Path $file.FullName)
+                for ($index = 0; $index -lt $lines.Count; $index++) {
+                    if ($lines[$index] -match '^(?: )*\t+') {
+                        $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                        $violations.Add("${relativePath}:$($index + 1)") | Out-Null
+                    }
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "PowerShell files must use space indentation per .editorconfig. Violations: {0}" -f ($violations -join ', ')
         )
     }
 }
@@ -1925,5 +2759,15 @@ Describe "PowerShell return safety conventions" {
         $violations.Count | Should -Be 0 -Because (
             "'return @()' silently returns `$null` instead of an empty array. Use 'return , @()' (comma operator) to preserve the array wrapper, or add '# array-unwrap-safe' if callers always wrap with @(). Violations: {0}" -f ($violations -join ', ')
         )
+
+        $fullValidationPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-FullValidation.ps1"
+        $fullValidation = Get-Content -Path $fullValidationPath -Raw
+        $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Sort-Object' -Because "Get-StatusSnapshot should keep deterministic sorting for stable drift comparisons."
+        $fullValidation | Should -Match '\$invariantCultureName\s*=\s*\[System\.Globalization\.CultureInfo\]::InvariantCulture\.Name' -Because "Sort-Object -Culture should use an explicit culture name string to avoid binder ambiguity."
+        $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Sort-Object\s+-Culture\s+\$invariantCultureName' -Because "Get-StatusSnapshot should use an explicit invariant culture name string for deterministic sorting."
+        $fullValidation | Should -Not -Match 'Sort-Object\s+-Culture\s+\(\[System\.Globalization\.CultureInfo\]::InvariantCulture\)' -Because "Sort-Object -Culture must not pass CultureInfo objects directly."
+        $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Write-Output\s+-NoEnumerate\s+\(' -Because "Get-StatusSnapshot must use Write-Output -NoEnumerate to preserve empty git-status snapshots as a typed string[] without extra array wrapping."
+        $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusBeforeValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_BEFORE_NULL' -Because "workspace drift comparison must guard null before-snapshot values with an explicit E_ code."
+        $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusAfterValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_AFTER_NULL' -Because "workspace drift comparison must guard null after-snapshot values with an explicit E_ code."
     }
 }

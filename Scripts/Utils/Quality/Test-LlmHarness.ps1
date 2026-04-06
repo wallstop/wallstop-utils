@@ -221,7 +221,7 @@ if (Test-Path -Path (Join-Path -Path $repoRoot -ChildPath '.llm') -PathType Cont
     $llmScanStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $llmMarkdownFiles = @(
         Get-ChildItem -Path (Join-Path -Path $repoRoot -ChildPath '.llm') -Filter '*.md' -File -Recurse -ErrorAction Stop |
-        Sort-Object FullName
+            Sort-Object FullName
     )
     $llmScanStopwatch.Stop()
     $diagnostics.Add((
@@ -255,7 +255,7 @@ $skillFiles = @()
 if (Test-Path -Path $skillsDir -PathType Container) {
     $skillFiles = @(
         Get-ChildItem -Path $skillsDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
-        Sort-Object FullName
+            Sort-Object FullName
     )
 }
 
@@ -366,8 +366,8 @@ if (Test-Path -Path $contextPath -PathType Leaf) {
         )
         $configuredEcosystems = @(
             $ecosystemMatches |
-            ForEach-Object { $_.Groups['name'].Value } |
-            Sort-Object -Unique
+                ForEach-Object { $_.Groups['name'].Value } |
+                Sort-Object -Unique
         )
 
         $scheduleDiagnostics = @{

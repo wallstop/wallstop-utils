@@ -1,6 +1,9 @@
-$rootDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-$rootDirectory = "$rootDirectory\.."
-Push-Location $rootDirectory
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
+$rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $rootDirectory -ChildPath "..") -ErrorAction Stop).Path
+Push-Location -LiteralPath $rootDirectory
 try {
     $applicationYaml = "$env:USERPROFILE\applications.yaml"
     $komorebiConfig = "$env:USERPROFILE\komorebi.json"
@@ -12,7 +15,7 @@ try {
 
     $missingSources = @()
     foreach ($sourcePath in @($komorebiSourceConfig, $komorebiSourceBarConfig, $komorebiSourceApplications)) {
-        if (-not (Test-Path -Path $sourcePath)) {
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
             $missingSources += $sourcePath
         }
     }
@@ -22,9 +25,9 @@ try {
         exit 1
     }
 
-    Copy-Item -Path $komorebiSourceConfig -Destination $komorebiConfig -Force
-    Copy-Item -Path $komorebiSourceBarConfig -Destination $komorebiBarConfig -Force
-    Copy-Item -Path $komorebiSourceApplications -Destination $applicationYaml -Force
+    Copy-Item -LiteralPath $komorebiSourceConfig -Destination $komorebiConfig -Force
+    Copy-Item -LiteralPath $komorebiSourceBarConfig -Destination $komorebiBarConfig -Force
+    Copy-Item -LiteralPath $komorebiSourceApplications -Destination $applicationYaml -Force
     Write-Host "Successfully restored Komorebi" -ForegroundColor Green
 }
 finally {

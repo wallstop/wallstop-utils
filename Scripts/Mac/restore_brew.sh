@@ -105,11 +105,13 @@ if ! command -v brew &> /dev/null; then
   exit 1
 fi
 
-# Navigate to backup directory
-cd "$BACKUP_DIR"
+# Run restore in a subshell so directory changes stay local.
+(
+  cd "$BACKUP_DIR"
 
-# Restore the Homebrew setup using brew bundle
-brew bundle --file="$BREWFILE_PATH"
+  # Restore the Homebrew setup using brew bundle
+  brew bundle --file="$BREWFILE_PATH"
+)
 
 echo "Homebrew restoration complete!"
 

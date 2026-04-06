@@ -1,19 +1,27 @@
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
 $sourcePath = "$HOME\scoop\apps\windows-terminal\current\settings\settings.json"
-$baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-$baseDirectory = "$baseDirectory\.."
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 $backupFolder = "$baseDirectory\Config\WindowsTerminal"
-Push-Location "$baseDirectory"
+Push-Location -LiteralPath $baseDirectory
 
-if (-not (Test-Path -Path $backupFolder)) {
-  New-Item -Path $backupFolder -ItemType Directory
+try {
+    if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
+        New-Item -LiteralPath $backupFolder -ItemType Directory | Out-Null
+    }
+
+    if (Test-Path -LiteralPath $sourcePath -PathType Leaf) {
+        $backupFile = "$backupFolder\settings.json"
+        Copy-Item -LiteralPath $sourcePath -Destination $backupFile
+        Write-Host "Windows Terminal settings exported successfully." -ForegroundColor Green
+    }
+    else {
+        Write-Error "E_WT_BACKUP_SOURCE_MISSING: Windows Terminal settings file not found at '$sourcePath'."
+        exit 1
+    }
 }
-
-if (Test-Path -Path $sourcePath) {
-  $backupFile = "$backupFolder\settings.json"
-  Copy-Item -Path $sourcePath -Destination $backupFile
-  Write-Host "Windows Terminal settings exported successfully."
-} else {
-  Write-Host "Windows Terminal settings file not found!"
+finally {
+    Pop-Location
 }
-
-Pop-Location

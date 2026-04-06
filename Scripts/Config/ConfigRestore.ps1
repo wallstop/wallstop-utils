@@ -1,39 +1,46 @@
-$baseDirectory = [IO.Path]::GetDirectoryName((Split-Path -Path $MyInvocation.MyCommand.Definition))
-$baseDirectory = "$baseDirectory\..\"
-Push-Location $baseDirectory
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
-# Define the path to the current user's .config directory
-$configDir = "$env:USERPROFILE\.config"
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
+$baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 
-# Define the path to the backup directory (you should set this to your backup location)
-# For example: "C:\Backups\.config_backup_20231005"
-$backupDir = "$baseDirectory\Config\.config"
+Push-Location -LiteralPath $baseDirectory
 try {
-    # Check if the backup directory exists
-    if (-not (Test-Path -Path $backupDir)) {
-        Write-Host "Backup directory not found: $backupDir" -ForegroundColor Red
+    $configDir = Join-Path -Path $HOME -ChildPath ".config"
+    $backupDir = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Config") -ChildPath ".config"
+
+    if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {
+        Write-Error "E_CONFIG_RESTORE_BACKUP_MISSING: Backup directory not found at '$backupDir'."
         exit 1
     }
 
-    # Check if the .config directory exists; if not, create it
-    if (-not (Test-Path -Path $configDir)) {
+    if (-not (Test-Path -LiteralPath $configDir -PathType Container)) {
         Write-Host ".config directory not found, creating it at: $configDir"
-        New-Item -Path $configDir -ItemType Directory -Force | Out-Null
+        New-Item -LiteralPath $configDir -ItemType Directory -Force | Out-Null
     }
 
-    $backupItems = @(Get-ChildItem -Path $backupDir -Force -ErrorAction Stop)
+    $backupItems = @(Get-ChildItem -LiteralPath $backupDir -Force -ErrorAction Stop)
     if ($backupItems.Count -eq 0) {
         Write-Error "E_CONFIG_RESTORE_EMPTY_BACKUP: Backup directory is empty: $backupDir"
         exit 1
     }
 
-    # Restore the contents of the backup to the .config directory
+    Write-Verbose (
+        "Config restore diagnostics: backupDir='{0}', configDir='{1}', backupItems={2}" -f
+        $backupDir,
+        $configDir,
+        $backupItems.Count
+    )
+
     try {
-        Copy-Item -Path "$backupDir\*" -Destination $configDir -Recurse -Force
+        foreach ($backupItem in $backupItems) {
+            Copy-Item -LiteralPath $backupItem.FullName -Destination $configDir -Recurse -Force
+        }
         Write-Host ".config directory restored from backup successfully." -ForegroundColor Green
     }
     catch {
-        Write-Host "An error occurred while restoring the .config directory: $_" -ForegroundColor Red
+        Write-Error ("E_CONFIG_RESTORE_COPY_FAILED: Failed to restore .config from '{0}' to '{1}': {2}" -f $backupDir, $configDir, $_.Exception.Message)
+        exit 1
     }
 }
 finally {

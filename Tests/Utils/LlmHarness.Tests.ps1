@@ -113,11 +113,11 @@ Describe "LLM harness structure" {
     It "keeps lightweight skill cards with trigger metadata and expanded guides" {
         $skillFiles = @(
             Get-ChildItem -Path $script:skillsDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
-            Sort-Object FullName
+                Sort-Object FullName
         )
         $skillDetailFiles = @(
             Get-ChildItem -Path $script:skillDetailsDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
-            Sort-Object FullName
+                Sort-Object FullName
         )
 
         $skillFiles.Count | Should -BeGreaterOrEqual 1
@@ -549,6 +549,33 @@ Describe "LLM harness automation" {
         }
         finally {
             & $script:RemoveTempRoot $tempRoot
+        }
+    }
+}
+
+Describe "LLM document drift detection" {
+    It "keeps all top-level .llm markdown files within 300-line limit" {
+        $topLevelFiles = @(Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm') -Filter '*.md' -File -ErrorAction Stop)
+        $topLevelFiles.Count | Should -BeGreaterOrEqual 1
+
+        foreach ($file in $topLevelFiles) {
+            $lineCount = [System.IO.File]::ReadAllLines($file.FullName, [System.Text.Encoding]::UTF8).Length
+            $lineCount | Should -BeLessOrEqual 300 -Because "$($file.Name) must remain within 300 lines"
+        }
+    }
+
+    It "keeps every skill-detail file paired with a skill card" {
+        $skillNames = @(
+            Get-ChildItem -Path $script:skillsDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
+                ForEach-Object { $_.BaseName }
+        )
+        # Only check top-level detail files; subdirectories contain reference material.
+        $detailFiles = @(
+            Get-ChildItem -Path $script:skillDetailsDir -Filter '*.md' -File -ErrorAction Stop
+        )
+
+        foreach ($detailFile in $detailFiles) {
+            $detailFile.BaseName | Should -BeIn $skillNames -Because "$($detailFile.Name) must have a matching skill card"
         }
     }
 }
