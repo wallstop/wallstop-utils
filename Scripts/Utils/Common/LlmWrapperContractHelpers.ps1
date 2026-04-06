@@ -16,7 +16,7 @@ function Get-WrapperContractEntries {
             Sort-Object { $_.ToUpperInvariant() } -Unique
     )
 
-    if (-not (Test-Path -Path $ContextFilePath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $ContextFilePath -PathType Leaf)) {
         return $normalizedFallback
     }
 

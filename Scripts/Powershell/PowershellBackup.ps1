@@ -31,7 +31,14 @@ try {
             })
     }
 
-    $seenProfilePaths = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    $pathComparer = if ($IsWindows) {
+        [System.StringComparer]::OrdinalIgnoreCase
+    }
+    else {
+        [System.StringComparer]::Ordinal
+    }
+
+    $seenProfilePaths = New-Object System.Collections.Generic.HashSet[string]($pathComparer)
     $normalizedCandidates = New-Object System.Collections.Generic.List[object]
     foreach ($candidate in $candidateProfiles) {
         if ([string]::IsNullOrWhiteSpace($candidate.Path)) {
@@ -55,13 +62,28 @@ try {
         $backupFolder
     )
 
+    $canonicalLeafName = "Microsoft.PowerShell_profile.ps1"
+    $canonicalBackupFile = Join-Path -Path $backupFolder -ChildPath $canonicalLeafName
+    $canonicalBackupSourceProfile = $null
+
     foreach ($candidate in $normalizedCandidates) {
         if (Test-Path -LiteralPath $candidate.Path -PathType Leaf) {
-            $destinationFileName = "{0}_{1}" -f $candidate.Name, [System.IO.Path]::GetFileName($candidate.Path)
+            $leafName = [System.IO.Path]::GetFileName($candidate.Path)
+            $destinationFileName = "{0}_{1}" -f $candidate.Name, $leafName
             $backupFile = Join-Path -Path $backupFolder -ChildPath $destinationFileName
             Copy-Item -LiteralPath $candidate.Path -Destination $backupFile -Force
             $profilesBackedUp++
             Write-Host ("PowerShell profile '{0}' exported successfully from '{1}' to '{2}'." -f $candidate.Name, $candidate.Path, $backupFile) -ForegroundColor Green
+
+            if ($leafName -ieq $canonicalLeafName) {
+                $shouldWriteCanonicalBackup = [string]::IsNullOrWhiteSpace($canonicalBackupSourceProfile) -or $candidate.Name -eq "CurrentUserCurrentHost"
+                if ($shouldWriteCanonicalBackup) {
+                    Copy-Item -LiteralPath $candidate.Path -Destination $canonicalBackupFile -Force
+                    $canonicalBackupSourceProfile = $candidate.Name
+                    Write-Verbose ("PowerShell canonical backup diagnostics: canonicalProfileSource='{0}'; canonicalBackupFile='{1}'" -f $candidate.Name, $canonicalBackupFile)
+                }
+            }
+
             continue
         }
 
@@ -72,6 +94,13 @@ try {
         Write-Error "E_POWERSHELL_BACKUP_NO_PROFILES_FOUND: No PowerShell profile files were found to back up from discovered CurrentUser profile paths."
         exit 1
     }
+
+    Write-Verbose (
+        "PowerShell backup output diagnostics: profilesBackedUp={0}; canonicalBackupFile='{1}'; canonicalSourceProfile='{2}'" -f
+        $profilesBackedUp,
+        $canonicalBackupFile,
+        $(if ([string]::IsNullOrWhiteSpace($canonicalBackupSourceProfile)) { "none" } else { $canonicalBackupSourceProfile })
+    )
 }
 finally {
     Pop-Location

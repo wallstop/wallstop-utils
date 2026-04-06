@@ -79,6 +79,96 @@ function Test-PathAgainstPatterns {
     return $false
 }
 
+function Test-DirectoryPathAgainstPatterns {
+    param(
+        [string]$directoryPath,
+        [string[]]$patterns
+    )
+
+    if ([string]::IsNullOrWhiteSpace($directoryPath)) {
+        return $false
+    }
+
+    $normalizedDirectoryPath = ($directoryPath -replace '\\', '/').TrimEnd('/')
+    if ([string]::IsNullOrWhiteSpace($normalizedDirectoryPath)) {
+        return $false
+    }
+
+    return Test-PathAgainstPatterns -path "$normalizedDirectoryPath/" -patterns $patterns
+}
+
+function Get-FallbackFileStream {
+    param(
+        [string]$scanRoot,
+        [string[]]$defaultExclusionPatterns
+    )
+
+    $pendingDirectories = New-Object 'System.Collections.Generic.Queue[string]'
+    $pendingDirectories.Enqueue($scanRoot)
+
+    $visitedDirectories = 0
+    $prunedDirectories = 0
+    $prunedSymlinkDirectories = 0
+    $yieldedFiles = 0
+    $excludedFiles = 0
+
+    while ($pendingDirectories.Count -gt 0) {
+        $currentDirectory = $pendingDirectories.Dequeue()
+        $visitedDirectories++
+
+        $entries = @(Get-ChildItem -LiteralPath $currentDirectory -Force -ErrorAction SilentlyContinue)
+        foreach ($entry in $entries) {
+            if ($entry -is [System.IO.DirectoryInfo]) {
+                $isSymlinkDirectory = ($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+                if (-not $isSymlinkDirectory) {
+                    foreach ($linkMetadataPropertyName in @('LinkTarget', 'Target')) {
+                        if ($entry.PSObject.Properties.Name -contains $linkMetadataPropertyName) {
+                            $linkTargetValue = [string]$entry.$linkMetadataPropertyName
+                            if (-not [string]::IsNullOrWhiteSpace($linkTargetValue)) {
+                                $isSymlinkDirectory = $true
+                                break
+                            }
+                        }
+                    }
+                }
+
+                if ($isSymlinkDirectory) {
+                    $prunedDirectories++
+                    $prunedSymlinkDirectories++
+                    continue
+                }
+
+                if (Test-DirectoryPathAgainstPatterns -directoryPath $entry.FullName -patterns $defaultExclusionPatterns) {
+                    $prunedDirectories++
+                    continue
+                }
+
+                $pendingDirectories.Enqueue($entry.FullName)
+                continue
+            }
+
+            if ($entry -is [System.IO.FileInfo]) {
+                if (Test-PathAgainstPatterns -path $entry.FullName -patterns $defaultExclusionPatterns) {
+                    $excludedFiles++
+                    continue
+                }
+
+                $yieldedFiles++
+                Write-Output $entry
+            }
+        }
+    }
+
+    Write-Verbose (
+        "Remove-BOM fallback traversal diagnostics: visitedDirectories={0} prunedDirectories={1} prunedSymlinkDirectories={2} yieldedFiles={3} excludedFiles={4}" -f
+        $visitedDirectories,
+        $prunedDirectories,
+        $prunedSymlinkDirectories,
+        $yieldedFiles,
+        $excludedFiles
+    )
+}
+
 function Test-IsPathUnderRoot {
     param(
         [string]$path,
@@ -136,7 +226,7 @@ function Resolve-UnixPhysicalPath {
             return $null
         }
 
-        Push-Location -LiteralPath $targetDirectory
+        Push-Location -LiteralPath $targetDirectory -ErrorAction Stop
         try {
             # /bin/pwd -P resolves physical directories and is a reliable
             # fallback when provider metadata does not surface root aliases.
@@ -636,7 +726,7 @@ function Resolve-ScannableFileDiscovery {
     $defaultExclusionPatterns = Get-DefaultExclusionPatterns
     return [PSCustomObject]@{
         Mode                     = "filesystem-fallback"
-        Diagnostics              = "scanRootInput=$scanRootInput resolvedScanRoot=$resolvedScanRoot fallbackPatterns=$($defaultExclusionPatterns.Count) $($fallbackSafetyAssessment.Diagnostics) streaming=true"
+        Diagnostics              = "scanRootInput=$scanRootInput resolvedScanRoot=$resolvedScanRoot fallbackPatterns=$($defaultExclusionPatterns.Count) fallbackTraversal=directory-pruned $($fallbackSafetyAssessment.Diagnostics) streaming=true"
         ResolvedScanRoot         = $resolvedScanRoot
         DefaultExclusionPatterns = @($defaultExclusionPatterns)
     }
@@ -700,10 +790,7 @@ function Get-ScannableFileStream {
     }
 
     if ($scanPlan.Mode -eq "filesystem-fallback") {
-        Get-ChildItem -LiteralPath $scanPlan.ResolvedScanRoot -File -Recurse |
-            Where-Object {
-                -not (Test-PathAgainstPatterns -path $_.FullName -patterns $scanPlan.DefaultExclusionPatterns)
-            }
+        Get-FallbackFileStream -scanRoot $scanPlan.ResolvedScanRoot -defaultExclusionPatterns $scanPlan.DefaultExclusionPatterns
         return
     }
 

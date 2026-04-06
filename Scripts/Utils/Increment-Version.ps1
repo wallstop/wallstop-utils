@@ -53,15 +53,15 @@
   about_Comment_Based_Help
 #>
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
-if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
 . $strictModeHelpersPath
-
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
 
 function Increment-Version {
     [CmdletBinding(SupportsShouldProcess = $true)]

@@ -249,9 +249,10 @@ try {
         )
     }
 
-    # Pull before staging: ff-only succeeds only when local HEAD is an ancestor of remote.
-    # If we stage first, any overlap with remote changes will cause pull to fail with
-    # "local changes would be overwritten". Pulling before git add keeps the working tree clean.
+    # Pull before later backup changes: ff-only succeeds only when local HEAD is an ancestor of remote.
+    # Later backup steps (for example Remove-BOM normalization) can modify tracked files in the working tree,
+    # and those local modifications can cause pull to fail with "local changes would be overwritten". git add only stages changes;
+    # a clean working tree is still required for this pull to succeed.
     if (-not $hasGitFailure) {
         & $gitExecutable pull --ff-only origin main
         $gitPullExitCode = Get-LastExitCodeOrDefault

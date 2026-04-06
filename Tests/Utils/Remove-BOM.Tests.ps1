@@ -813,6 +813,7 @@ Describe "Remove-BOM file discovery" {
 
         $scanPlan.Mode | Should -Be "filesystem-fallback"
         $scanPlan.Diagnostics | Should -Match 'fallbackScope=scan-root-only'
+        $scanPlan.Diagnostics | Should -Match 'fallbackTraversal=directory-pruned'
         $scanPlan.Diagnostics | Should -Match 'checkedAncestors=1'
         $scanPlan.Files.Count | Should -Be 1
         $scanPlan.Files[0].Name | Should -Be "keep.txt"
@@ -831,6 +832,7 @@ Describe "Remove-BOM file discovery" {
 
         $scanPlan.Mode | Should -Be "filesystem-fallback"
         $scanPlan.Diagnostics | Should -Match 'fallbackScope=repository-ancestors'
+        $scanPlan.Diagnostics | Should -Match 'fallbackTraversal=directory-pruned'
         $scanPlan.Diagnostics | Should -Match 'checkedAncestors=3'
         $scanPlan.Diagnostics | Should -Match 'gitBoundary='
     }

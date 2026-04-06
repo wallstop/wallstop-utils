@@ -1241,6 +1241,20 @@ Describe "File stream safety conventions" {
         $content | Should -Match 'filesystem-fallback'
         $content | Should -Match 'if\s*\(\$MyInvocation\.InvocationName\s*-ne\s*"\."\)\s*\{\s*Invoke-Main'
     }
+
+    It "prunes excluded directories during Remove-BOM filesystem fallback traversal" {
+        $removeBomPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1'
+        $content = (Get-Content -LiteralPath $removeBomPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'function\s+Get-FallbackFileStream'
+        $content | Should -Match 'Queue\[string\]'
+        $content | Should -Match 'Test-DirectoryPathAgainstPatterns'
+        $content | Should -Match 'foreach\s*\(\$linkMetadataPropertyName\s+in\s+@\(''LinkTarget'',\s*''Target''\)\)'
+        $content | Should -Match 'prunedSymlinkDirectories='
+        $content | Should -Match 'fallbackTraversal=directory-pruned'
+        $content | Should -Match 'Remove-BOM fallback traversal diagnostics:'
+        $content | Should -Not -Match 'Get-ChildItem\s+-LiteralPath\s+\$scanPlan\.ResolvedScanRoot\s+-File\s+-Recurse\s*\|\s*\r?\n\s*Where-Object'
+    }
 }
 
 Describe "Restore script safety conventions" {
@@ -1303,25 +1317,31 @@ Describe "Restore script safety conventions" {
         $windowsTerminalRestore | Should -Match 'W_WT_RESTORE_NO_LIVE_SETTINGS'
     }
 
-    It "guards PowerShell profile backups on first-time machines" {
+    It "discovers PowerShell backup sources and restores profile targets cross-platform" {
         $powershellRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Powershell/PowershellRestore.ps1') -Raw) -replace "`r", ''
 
-        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$settingsPath\s+-PathType\s+Leaf'
+        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$settingsDir\s+-PathType\s+Container'
+        $powershellRestore | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$settingsDir\s+-Filter\s+"\*\$profileLeafName"\s+-File'
+        $powershellRestore | Should -Match 'Sort-Object\s+Name\s+-CaseSensitive'
+        $powershellRestore | Should -Match 'Get-PreferredBackupForProfileName'
         $powershellRestore | Should -Match 'Write-Error\s+"E_POWERSHELL_RESTORE_SOURCE_MISSING:'
-        $powershellRestore | Should -Not -Match 'Write-Host\s+"Powershell settings backup not found at'
+        $powershellRestore | Should -Match 'E_POWERSHELL_RESTORE_NO_TARGET_PROFILES'
+        $powershellRestore | Should -Match 'E_POWERSHELL_RESTORE_FALLBACK_SOURCE_INVALID'
+        $powershellRestore | Should -Match 'E_POWERSHELL_RESTORE_SELECTED_SOURCE_MISSING'
         $powershellRestore | Should -Match '(?-i)Microsoft\.PowerShell_profile\.ps1'
         $powershellRestore | Should -Not -Match '(?-i)Microsoft\.Powershell_profile\.ps1'
-        $powershellRestore | Should -Match 'Join-Path\s+-Path\s+\$HOME\s+-ChildPath\s+''Documents'''
-        $powershellRestore | Should -Match 'Join-Path\s+-Path\s+\$documentsPath\s+-ChildPath\s+''PowerShell'''
-        $powershellRestore | Should -Match 'Join-Path\s+-Path\s+\$documentsPath\s+-ChildPath\s+''WindowsPowerShell'''
+        $powershellRestore | Should -Match '\$PROFILE\.CurrentUserCurrentHost'
+        $powershellRestore | Should -Match '\$PROFILE\.CurrentUserAllHosts'
+        $powershellRestore | Should -Match 'if\s*\(\$IsWindows\)\s*\{[\s\S]*Join-Path\s+-Path\s+\$HOME\s+-ChildPath\s+''Documents''[\s\S]*Join-Path\s+-Path\s+\$documentsPath\s+-ChildPath\s+''WindowsPowerShell''' -Because 'Legacy Windows PowerShell paths should only be restored on Windows.'
         $powershellRestore | Should -Not -Match '\$HOME\\Documents\\PowerShell'
         $powershellRestore | Should -Not -Match '\$HOME\\Documents\\Powershell'
-        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$powershellConfigPath\s+-PathType\s+Container'
-        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$windowsPowershellConfigPath\s+-PathType\s+Container'
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$powershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-LiteralPath\s+\$powershellSettings\s+-Destination\s+\$powershellBackupFile'
-        $powershellRestore | Should -Match 'if\s*\(\s*Test-Path\s+-LiteralPath\s+\$windowsPowershellSettings\s+-PathType\s+Leaf\s*\)\s*\{[\s\S]*?Copy-Item\s+-LiteralPath\s+\$windowsPowershellSettings\s+-Destination\s+\$windowsPowershellBackupFile'
-        $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_POWERSHELL_PROFILE'
-        $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_WINDOWS_POWERSHELL_PROFILE'
+        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
+        $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$target\.Path\s+-PathType\s+Leaf'
+        $powershellRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$sourcePath\s+-Destination\s+\$target\.Path\s+-Force'
+        $powershellRestore | Should -Match 'W_POWERSHELL_RESTORE_NO_EXISTING_TARGET_PROFILE'
+        $powershellRestore | Should -Match 'PowerShell restore source diagnostics:'
+        $powershellRestore | Should -Match 'PowerShell restore fallback diagnostics:'
+        $powershellRestore | Should -Match 'PowerShell restore target diagnostics:'
     }
 
     It "validates required Komorebi source files before restore copy" {
@@ -1478,9 +1498,14 @@ Describe "Backup script safety conventions" {
         $powershellBackup | Should -Match 'Join-Path\s+-Path\s+\(Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Config"\)\s+-ChildPath\s+"Powershell"'
         $powershellBackup | Should -Match '\$PROFILE\.CurrentUserCurrentHost'
         $powershellBackup | Should -Match '\$PROFILE\.CurrentUserAllHosts'
-        $powershellBackup | Should -Match 'HashSet\[string\]\(\[System\.StringComparer\]::OrdinalIgnoreCase\)'
+        $powershellBackup | Should -Match '\$pathComparer\s*=\s*if\s*\(\$IsWindows\)'
+        $powershellBackup | Should -Match 'HashSet\[string\]\(\$pathComparer\)'
         $powershellBackup | Should -Match 'W_POWERSHELL_BACKUP_PROFILE_MISSING\('
         $powershellBackup | Should -Match 'PowerShell backup profile discovery diagnostics:'
+        $powershellBackup | Should -Match 'Join-Path\s+-Path\s+\$backupFolder\s+-ChildPath\s+\$canonicalLeafName'
+        $powershellBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$candidate\.Path\s+-Destination\s+\$canonicalBackupFile\s+-Force'
+        $powershellBackup | Should -Match 'PowerShell canonical backup diagnostics:'
+        $powershellBackup | Should -Match 'PowerShell backup output diagnostics:'
         $powershellBackup | Should -Not -Match '\$backupFolder\s*=\s*"\$baseDirectory\\Config\\Powershell"'
         $powershellBackup | Should -Not -Match '\$HOME\\Documents\\PowerShell'
         $powershellBackup | Should -Not -Match '\$HOME\\Documents\\WindowsPowerShell'
@@ -2351,11 +2376,52 @@ Describe "Utility configuration safety conventions" {
         }
     }
 
+    It "declares strict mode and ErrorActionPreference before dot-sourcing strict mode helpers in migrated scripts" {
+        foreach ($scriptPath in $script:migratedScripts) {
+            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $scriptPath
+            $content = (Get-Content -Path $fullPath -Raw) -replace "`r", ''
+
+            $dotSourceIndex = $content.IndexOf('. $strictModeHelpersPath', [System.StringComparison]::Ordinal)
+            if ($dotSourceIndex -lt 0) {
+                continue
+            }
+
+            $strictModeIndex = $content.IndexOf('Set-StrictMode -Version Latest', [System.StringComparison]::Ordinal)
+            $errorActionIndex = $content.IndexOf('$ErrorActionPreference = "Stop"', [System.StringComparison]::Ordinal)
+
+            $strictModeIndex | Should -BeGreaterThan -1 -Because "$scriptPath must declare strict mode."
+            $errorActionIndex | Should -BeGreaterThan -1 -Because "$scriptPath must set ErrorActionPreference."
+            $strictModeIndex | Should -BeLessThan $dotSourceIndex -Because "$scriptPath must enable strict mode before dot-sourcing helper code."
+            $errorActionIndex | Should -BeLessThan $dotSourceIndex -Because "$scriptPath must set ErrorActionPreference before dot-sourcing helper code."
+        }
+    }
+
+    It "uses literal path semantics for FormatPowershellScripts variable-driven filesystem paths" {
+        $formatScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/FormatPowershellScripts.ps1'
+        $content = (Get-Content -Path $formatScriptPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'Test-Path\s+-LiteralPath\s+\$strictModeHelpersPath\s+-PathType\s+Leaf'
+        $content | Should -Match 'Test-Path\s+-LiteralPath\s+\$ConfiguredPath\s+-PathType\s+Leaf'
+        $content | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$rootDirectory\s+-Recurse\s+-File\s+-Filter\s+''\*\.ps1'''
+        $content | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$rootDirectory\s+-Recurse\s+-File\s+-Filter\s+''\*\.psm1'''
+        $content | Should -Not -Match 'Get-ChildItem\s+-Path\s+\$rootDirectory\s+-Recurse\s+-Include'
+    }
+
+    It "uses literal path semantics in LLM wrapper contract helper" {
+        $helperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/LlmWrapperContractHelpers.ps1'
+        $content = (Get-Content -Path $helperPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'Test-Path\s+-LiteralPath\s+\$ContextFilePath\s+-PathType\s+Leaf'
+        $content | Should -Not -Match 'Test-Path\s+-Path\s+\$ContextFilePath\s+-PathType\s+Leaf'
+    }
+
     It "uses literal path validation for Pandoc input directory" {
         $pandocPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/PandocConvertDirectory.ps1'
         $pandocContent = (Get-Content -Path $pandocPath -Raw) -replace "`r", ''
 
         $pandocContent | Should -Match 'ValidateScript\(\{\s*Test-Path\s+-LiteralPath\s+\$_\s+-PathType\s+''Container''\s*\}\)'
+        $pandocContent.IndexOf('Set-StrictMode -Version Latest', [System.StringComparison]::Ordinal) | Should -BeLessThan $pandocContent.IndexOf('. $strictModeHelpersPath', [System.StringComparison]::Ordinal)
+        $pandocContent.IndexOf('$ErrorActionPreference = "Stop"', [System.StringComparison]::Ordinal) | Should -BeLessThan $pandocContent.IndexOf('. $strictModeHelpersPath', [System.StringComparison]::Ordinal)
     }
 }
 

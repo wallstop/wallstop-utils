@@ -11,7 +11,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
-if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
@@ -25,7 +25,7 @@ function Resolve-BeautifierModulePath {
     )
 
     if (-not [string]::IsNullOrWhiteSpace($ConfiguredPath)) {
-        if (-not (Test-Path -Path $ConfiguredPath -PathType Leaf)) {
+        if (-not (Test-Path -LiteralPath $ConfiguredPath -PathType Leaf)) {
             throw "E_CONFIG_ERROR: PowerShell-Beautifier module file not found at '$ConfiguredPath'."
         }
 
@@ -47,12 +47,15 @@ function Invoke-Main {
     $modulePath = Resolve-BeautifierModulePath -ConfiguredPath $BeautifierModulePath
     Import-Module -Name $modulePath -ErrorAction Stop
 
-    $rootDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition
+    $rootDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
     Push-Location -LiteralPath $rootDirectory
 
     try {
-        # Get all .ps1/.psm1 files recursively in the directory.
-        $ps1Files = @(Get-ChildItem -Path $rootDirectory -Recurse -Include *.ps1,*.psm1)
+        # Use provider-side filters and literal root paths to avoid wildcard expansion on directory names.
+        $ps1Files = @(
+            Get-ChildItem -LiteralPath $rootDirectory -Recurse -File -Filter '*.ps1'
+            Get-ChildItem -LiteralPath $rootDirectory -Recurse -File -Filter '*.psm1'
+        )
         $ps1FileCount = Get-SafeCount -InputObject $ps1Files
 
         if ($ps1FileCount -eq 0) {
