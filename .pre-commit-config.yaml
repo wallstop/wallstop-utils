@@ -52,7 +52,7 @@ repos:
         files: '^(\.github/workflows/.*\.(yml|yaml)|Config/Komorebi/applications\.yaml)$'
 
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.11
+    rev: v1.7.12
     hooks:
       - id: actionlint
         files: '^\.github/workflows/.*\.(yml|yaml)$'
