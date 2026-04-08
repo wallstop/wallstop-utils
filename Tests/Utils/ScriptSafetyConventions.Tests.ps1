@@ -736,7 +736,7 @@ Describe "Cross-language quality platform conventions" {
 
         foreach ($file in $ahkFiles) {
             $content = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
-            $content | Should -Match '(?m)^\s*#Requires\s+AutoHotkey\s+v2(?:\.\d+)?\b' -Because "$($file.Name) must declare #Requires AutoHotkey v2.0 at the top"
+            $content | Should -Match '(?m)^\s*#Requires\s+AutoHotkey\s+v2(?:\.\d+)?\b' -Because "$($file.Name) must declare #Requires AutoHotkey v2 (or v2.x) at the top"
         }
     }
 
