@@ -514,6 +514,21 @@ Describe "Test-AutoHotkeyScripts control flow" {
 
         Assert-MockCalled -CommandName Invoke-AutoHotkeyValidationCommand -Times 1 -Exactly
     }
+
+    It "does not fall back to full-repo AHK discovery when targeted scope is requested but resolves zero files" {
+        $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo-targeted-empty-ahk")
+        New-Item -Path (Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey") -ItemType Directory -Force | Out-Null
+
+        Mock -CommandName Get-ChildItem -MockWith { throw "full-repo fallback should not run in targeted mode" }
+        Mock -CommandName Get-AutoHotkeyExecutablePath -MockWith { throw "runtime discovery should be skipped when no files are selected" }
+
+        {
+            Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @() -UseTargetedScope
+        } | Should -Not -Throw
+
+        Assert-MockCalled -CommandName Get-ChildItem -Times 0 -Exactly
+        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 0 -Exactly
+    }
 }
 
 Describe "Test-BatchScriptsStaticSmoke" {
@@ -567,6 +582,81 @@ Describe "Test-BatchScriptsStaticSmoke" {
             {
                 Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot -RequestedTargetFilePaths @($batchFilePath)
             } | Should -Not -Throw
+        }
+    }
+
+    It "does not fall back to full-repo batch discovery when targeted scope is requested but resolves zero files" {
+        $repoRoot = Join-Path -Path $TestDrive -ChildPath ([System.Guid]::NewGuid().ToString())
+        New-Item -Path (Join-Path -Path $repoRoot -ChildPath "Scripts") -ItemType Directory -Force | Out-Null
+
+        Mock -CommandName Get-ChildItem -MockWith { throw "full-repo fallback should not run in targeted mode" }
+
+        {
+            Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot -RequestedTargetFilePaths @() -UseTargetedScope
+        } | Should -Not -Throw
+
+        Assert-MockCalled -CommandName Get-ChildItem -Times 0 -Exactly
+    }
+}
+
+Describe "Resolve-RequestedTargetFilePaths" {
+    It "returns a stable array for a single targeted file" {
+        $repoRoot = Join-Path -Path $TestDrive -ChildPath ([System.Guid]::NewGuid().ToString())
+        $scriptsRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"
+        New-Item -Path $scriptsRoot -ItemType Directory -Force | Out-Null
+
+        $singleFile = Join-Path -Path $scriptsRoot -ChildPath "single.ahk"
+        Set-Content -Path $singleFile -Value "#Requires AutoHotkey v2" -NoNewline
+
+        $resolved = Resolve-RequestedTargetFilePaths -RepoRoot $repoRoot -TargetFiles "Scripts/AutoHotKey/single.ahk"
+
+        @($resolved).Count | Should -Be 1
+        $resolved.Count | Should -Be 1
+        $resolved[0] | Should -Be ((Resolve-Path -Path $singleFile).Path)
+    }
+
+    It "deduplicates valid targets and ignores unsupported extensions" {
+        $repoRoot = Join-Path -Path $TestDrive -ChildPath ([System.Guid]::NewGuid().ToString())
+        $scriptsRoot = Join-Path -Path $repoRoot -ChildPath "Scripts"
+        New-Item -Path $scriptsRoot -ItemType Directory -Force | Out-Null
+
+        $ahkFile = Join-Path -Path $scriptsRoot -ChildPath "a.ahk"
+        $batchFile = Join-Path -Path $scriptsRoot -ChildPath "b.bat"
+        $textFile = Join-Path -Path $scriptsRoot -ChildPath "ignore.txt"
+        Set-Content -Path $ahkFile -Value "#Requires AutoHotkey v2" -NoNewline
+        Set-Content -Path $batchFile -Value "@echo off" -NoNewline
+        Set-Content -Path $textFile -Value "ignore" -NoNewline
+
+        $targetFiles = "Scripts/a.ahk;Scripts/a.ahk;Scripts/b.bat;Scripts/ignore.txt"
+        $resolved = Resolve-RequestedTargetFilePaths -RepoRoot $repoRoot -TargetFiles $targetFiles
+
+        $resolved.Count | Should -Be 2
+        $resolved | Should -Contain ((Resolve-Path -Path $ahkFile).Path)
+        $resolved | Should -Contain ((Resolve-Path -Path $batchFile).Path)
+    }
+}
+
+Describe "Invoke-Main targeted mode behavior" {
+    It "keeps targeted mode when TargetFiles input resolves to zero files and emits diagnostics" {
+        Mock -CommandName Resolve-RequestedTargetFilePaths -MockWith { return , @() }
+        Mock -CommandName Test-AutoHotkeyScripts
+        Mock -CommandName Test-BatchScriptsStaticSmoke
+        Mock -CommandName Write-Verbose
+        Mock -CommandName Write-Host
+
+        Invoke-Main -TargetFiles "Scripts/does-not-exist.ahk"
+
+        Assert-MockCalled -CommandName Test-AutoHotkeyScripts -Times 1 -Exactly -ParameterFilter {
+            $UseTargetedScope -and $RequestedTargetFilePaths.Count -eq 0
+        }
+        Assert-MockCalled -CommandName Test-BatchScriptsStaticSmoke -Times 1 -Exactly -ParameterFilter {
+            $UseTargetedScope -and $RequestedTargetFilePaths.Count -eq 0
+        }
+        Assert-MockCalled -CommandName Write-Verbose -Times 1 -ParameterFilter {
+            $Message -like "Windows language checks: targeted mode requested via TargetFiles input."
+        }
+        Assert-MockCalled -CommandName Write-Verbose -Times 1 -ParameterFilter {
+            $Message -like "Windows language checks: targeted mode resolved zero existing .ahk/.bat files; skipping targeted checks without full-repo fallback."
         }
     }
 }

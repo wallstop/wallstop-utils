@@ -470,7 +470,7 @@ function Resolve-RequestedTargetFilePaths {
         return , @()
     }
 
-    return @($requested | Sort-Object -Unique)
+    return , @($requested | Sort-Object -Unique)
 }
 
 function Test-AutoHotkeyScripts {
@@ -482,11 +482,16 @@ function Test-AutoHotkeyScripts {
         [string[]]$RequestedTargetFilePaths = @(),
 
         [Parameter(Mandatory = $false)]
+        [switch]$UseTargetedScope,
+
+        [Parameter(Mandatory = $false)]
         [switch]$RequireAutoHotkey
     )
 
     $ahkFiles = New-Object System.Collections.Generic.List[System.IO.FileInfo]
-    if ($RequestedTargetFilePaths.Count -gt 0) {
+    # Keep targeted mode explicit even when resolution produced zero files (no full-repo fallback).
+    if ($UseTargetedScope -or $RequestedTargetFilePaths.Count -gt 0) {
+        Write-Verbose "AutoHotkey checks: targeted scope enabled; resolved target candidates=$($RequestedTargetFilePaths.Count)."
         foreach ($targetPath in $RequestedTargetFilePaths) {
             if ([System.IO.Path]::GetExtension($targetPath).ToLowerInvariant() -ne ".ahk") {
                 continue
@@ -581,11 +586,16 @@ function Test-BatchScriptsStaticSmoke {
         [string]$RepoRoot,
 
         [Parameter(Mandatory = $false)]
-        [string[]]$RequestedTargetFilePaths = @()
+        [string[]]$RequestedTargetFilePaths = @(),
+
+        [Parameter(Mandatory = $false)]
+        [switch]$UseTargetedScope
     )
 
     $batchFiles = @()
-    if ($RequestedTargetFilePaths.Count -gt 0) {
+    # Keep targeted mode explicit even when resolution produced zero files (no full-repo fallback).
+    if ($UseTargetedScope -or $RequestedTargetFilePaths.Count -gt 0) {
+        Write-Verbose "Batch checks: targeted scope enabled; resolved target candidates=$($RequestedTargetFilePaths.Count)."
         $batchFiles = @(
             $RequestedTargetFilePaths |
                 Where-Object { [System.IO.Path]::GetExtension($_).ToLowerInvariant() -eq ".bat" } |
@@ -668,13 +678,21 @@ function Invoke-Main {
 
     $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
     $requestedTargetFilePaths = Resolve-RequestedTargetFilePaths -RepoRoot $repoRoot -TargetFiles $TargetFiles
+    $targetedModeRequested = -not [string]::IsNullOrWhiteSpace($TargetFiles)
+
+    if ($targetedModeRequested) {
+        Write-Verbose "Windows language checks: targeted mode requested via TargetFiles input."
+    }
 
     if ($requestedTargetFilePaths.Count -gt 0) {
         Write-Verbose "Windows language checks: running in targeted mode for $($requestedTargetFilePaths.Count) file(s)."
     }
+    elseif ($targetedModeRequested) {
+        Write-Verbose "Windows language checks: targeted mode resolved zero existing .ahk/.bat files; skipping targeted checks without full-repo fallback."
+    }
 
-    Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths -RequireAutoHotkey:$RequireAutoHotkey
-    Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths
+    Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths -UseTargetedScope:$targetedModeRequested -RequireAutoHotkey:$RequireAutoHotkey
+    Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths -UseTargetedScope:$targetedModeRequested
 
     Write-Host "Windows language checks passed."
 }

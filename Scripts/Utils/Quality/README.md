@@ -22,6 +22,7 @@ Windows CI operating model:
 - Runtime source: PR lane must use the cached portable AutoHotkey runtime and must not depend on heavyweight package-manager installs.
 - Nightly deep lane: full-repository Windows validation runs on schedule (and optional manual dispatch) to preserve comprehensive coverage.
 - Fallback semantics: when baseline commit resolution is unavailable, CI validates all tracked Windows language targets in the current HEAD.
+- Targeted scope semantics: when explicit `TargetFiles` input is provided but resolves to zero existing `.ahk`/`.bat` files, checks remain in targeted mode and skip without broadening to full-repo scanning.
 
 Windows lane triage playbook:
 
