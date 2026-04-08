@@ -724,15 +724,19 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecks | Should -Not -Match '(?m)^\s*\$exitCode\s*=\s*\$LASTEXITCODE\b'
     }
 
-    It "all repository AHK scripts declare #Requires AutoHotkey v2" {
-        $ahkFiles = @(
-            Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/AutoHotKey') -Filter '*.ahk' -File -Recurse -ErrorAction SilentlyContinue
-        )
-        $ahkFiles.Count | Should -BeGreaterThan 0 -Because 'at least one .ahk file must exist under Scripts/AutoHotKey'
+    It "all repository AHK scripts in validated roots declare #Requires AutoHotkey v2" {
+        $ahkRoots = @('Scripts/AutoHotKey', 'Config/.config')
+        $ahkFiles = @()
+
+        foreach ($relativeRoot in $ahkRoots) {
+            $rootFiles = @(Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath $relativeRoot) -Filter '*.ahk' -File -Recurse -ErrorAction SilentlyContinue)
+            $rootFiles.Count | Should -BeGreaterThan 0 -Because "at least one .ahk file must exist under $relativeRoot"
+            $ahkFiles += $rootFiles
+        }
 
         foreach ($file in $ahkFiles) {
             $content = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
-            $content | Should -Match '(?m)^\s*#Requires\s+AutoHotkey\s+v2' -Because "$($file.Name) must declare #Requires AutoHotkey v2.0 at the top"
+            $content | Should -Match '(?m)^\s*#Requires\s+AutoHotkey\s+v2(?:\.\d+)?\b' -Because "$($file.Name) must declare #Requires AutoHotkey v2.0 at the top"
         }
     }
 

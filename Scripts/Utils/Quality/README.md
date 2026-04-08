@@ -17,6 +17,7 @@ These scripts are intentionally strict in CI and best-effort where platform tool
 Windows CI operating model:
 
 - PR fast lane: Windows language validation runs only when `*.ahk` or `*.bat` targets change.
+- AutoHotkey policy scope: CI validates `.ahk` files in both `Scripts/AutoHotKey/` and `Config/.config/`; keep both roots on AutoHotkey v2 (`#Requires AutoHotkey v2`).
 - PR budget: targeted Windows checks must complete within 180 seconds; CI fails fast on budget breach.
 - Runtime source: PR lane must use the cached portable AutoHotkey runtime and must not depend on heavyweight package-manager installs.
 - Nightly deep lane: full-repository Windows validation runs on schedule (and optional manual dispatch) to preserve comprehensive coverage.
