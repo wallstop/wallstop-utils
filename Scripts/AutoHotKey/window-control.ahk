@@ -65,8 +65,12 @@ SetTimer(WatchWindows, 1000)
 
 WatchWindows() {
     global minimizedWindows
-    Loop minimizedWindows.Length {
-        index := minimizedWindows.Length - A_Index + 1
+    initialLength := minimizedWindows.Length
+    Loop initialLength {
+        index := initialLength - A_Index + 1
+        if (index > minimizedWindows.Length) {
+            continue
+        }
         winID := minimizedWindows[index]
         if (!WinExist("ahk_id " winID)) {
             minimizedWindows.RemoveAt(index)

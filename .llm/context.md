@@ -18,6 +18,8 @@ All front-end wrapper files must point here and should not duplicate policy text
    - Windows PR lane remains changed-file scoped for AHK and batch.
    - Windows PR lane keeps 180-second runtime budget.
    - Nightly deep lane remains available for full-repo checks.
+   - AutoHotkey scripts in both `Scripts/AutoHotKey/` and `Config/.config/` remain v2-only (`#Requires AutoHotkey v2`).
+   - Targeted Windows language checks must keep explicit scope semantics: `TargetFiles` input that resolves to zero existing targets must skip without silently widening to full-repo validation.
 5. Do not introduce heavyweight installs into PR fast lanes.
 6. Keep generated content deterministic and reproducible.
 7. After major changes, run full validation before ending a session.
