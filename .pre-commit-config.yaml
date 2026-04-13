@@ -22,7 +22,7 @@ repos:
         files: '^(Config/Komorebi/(komorebi|komorebi\.bar)\.json|Config/WindowsTerminal/settings\.json|Config/scoopfile\.json)$'
 
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.13.0-1
+    rev: v3.13.1-1
     hooks:
       - id: shfmt
         args: [-w, -i, "2", -ci, -sr]
@@ -37,7 +37,7 @@ repos:
         stages: [pre-commit]
 
   - repo: https://github.com/JohnnyMorganz/StyLua
-    rev: v2.4.0
+    rev: v2.4.1
     hooks:
       - id: stylua
         args: [--config-path, .stylua.toml]
