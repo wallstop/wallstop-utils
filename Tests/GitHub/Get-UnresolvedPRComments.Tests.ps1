@@ -201,8 +201,8 @@ Describe "Resolve-GitHubGraphQLEndpoint" {
 }
 
 Describe "Assert-GraphQLVariableMap" {
-    It "accepts exact-case GraphQL variable payload keys" {
-        $query = @'
+    BeforeAll {
+        $script:assertGraphQLVariableMapQuery = @'
 query Demo(
     $owner: String!,
     $repo: String!,
@@ -215,64 +215,42 @@ query Demo(
     }
 }
 '@
+    }
+
+    It "validates GraphQL variable payload casing and strictness (<Name>)" -ForEach @(
+        @{
+            Name                    = "accepts exact-case GraphQL variable payload keys"
+            Variables               = @{ owner = "org"; repo = "repo"; prNumber = 10 }
+            RejectUnexpected        = $false
+            ShouldThrow             = $false
+            ExpectedThrowPattern    = ""
+        },
+        @{
+            Name                    = "rejects payload keys that differ by casing"
+            Variables               = @{ Owner = "org"; Repo = "repo"; prNumber = 10 }
+            RejectUnexpected        = $false
+            ShouldThrow             = $true
+            ExpectedThrowPattern    = "*E_CONFIG_ERROR*case mismatch*owner*Owner*repo*Repo*"
+        },
+        @{
+            Name                    = "rejects unexpected variables when strict mode is requested"
+            Variables               = @{ owner = "org"; repo = "repo"; prNumber = 10; extra = "unexpected" }
+            RejectUnexpected        = $true
+            ShouldThrow             = $true
+            ExpectedThrowPattern    = "*E_CONFIG_ERROR*unexpected variables*extra*"
+        }
+    ) {
+        if ($ShouldThrow) {
+            {
+                Assert-GraphQLVariableMap -Query $script:assertGraphQLVariableMapQuery -Variables $Variables -Context "unit" -RejectUnexpectedVariables:$RejectUnexpected
+            } | Should -Throw $ExpectedThrowPattern
+            return
+        }
 
         {
-            Assert-GraphQLVariableMap -Query $query -Variables @{
-                owner    = "org"
-                repo     = "repo"
-                prNumber = 10
-            } -Context "unit"
+            Assert-GraphQLVariableMap -Query $script:assertGraphQLVariableMapQuery -Variables $Variables -Context "unit" -RejectUnexpectedVariables:$RejectUnexpected
         } | Should -Not -Throw
     }
-
-    It "throws deterministic E_CONFIG_ERROR when payload keys differ by casing" {
-        $query = @'
-query Demo(
-    $owner: String!,
-    $repo: String!,
-    $prNumber: Int!
-) {
-    repository(owner: $owner, name: $repo) {
-        pullRequest(number: $prNumber) {
-            id
-        }
-    }
-}
-'@
-
-        {
-            Assert-GraphQLVariableMap -Query $query -Variables @{
-                Owner    = "org"
-                Repo     = "repo"
-                prNumber = 10
-            } -Context "unit"
-        } | Should -Throw "*E_CONFIG_ERROR*case mismatch*owner*Owner*repo*Repo*"
-    }
-
-    It "rejects unexpected variables when strict mode is requested" {
-        $query = @'
-        query Demo(
-            $owner: String!,
-            $repo: String!,
-            $prNumber: Int!
-        ) {
-            repository(owner: $owner, name: $repo) {
-            pullRequest(number: $prNumber) {
-                id
-            }
-            }
-        }
-        '@
-
-                {
-                    Assert-GraphQLVariableMap -Query $query -Variables @{
-                        owner = "org"
-                        repo = "repo"
-                        prNumber = 10
-                        extra = "unexpected"
-                    } -Context "unit" -RejectUnexpectedVariables
-                } | Should -Throw "*E_CONFIG_ERROR*unexpected variables*extra*"
-            }
 }
 
 Describe "Get-GitHubHeaders" {

@@ -444,6 +444,18 @@ Describe "CI scope expansion" {
             Pattern = 'E_CI_PESTER_VERSION_TOO_OLD'
         }
         @{
+            Name    = "fails with explicit discovery container diagnostic"
+            Pattern = 'E_CI_PESTER_DISCOVERY_FAILED'
+        }
+        @{
+            Name    = "fails with explicit zero-discovery diagnostic"
+            Pattern = 'E_CI_PESTER_NO_TESTS_DISCOVERED'
+        }
+        @{
+            Name    = "emits discovery count diagnostics"
+            Pattern = 'diagnostics: total=\$totalCount failedContainers=\$failedContainersCount result=\$resultState'
+        }
+        @{
             Name    = "fails when coverage properties are empty"
             Pattern = 'E_CI_PESTER_COVERAGE_PROPS_EMPTY'
         }
@@ -3009,6 +3021,51 @@ Describe "PowerShell formatting conventions" {
 }
 
 Describe "Retry test determinism conventions" {
+    It "parses all Pester test files without parser errors" {
+        $testRoot = Join-Path -Path $script:repoRoot -ChildPath "Tests"
+        $testFiles = @(Get-ChildItem -Path $testRoot -Filter "*.Tests.ps1" -File -Recurse -ErrorAction Stop)
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($file in $testFiles) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors)
+
+            $fileParseErrors = @($parseErrors)
+            if ($fileParseErrors.Count -eq 0) {
+                continue
+            }
+
+            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+            $errorSummary = ($fileParseErrors | ForEach-Object { $_.Message }) -join '; '
+            $violations.Add(("{0}: {1}" -f $relativePath, $errorSummary)) | Out-Null
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Pester test files must parse cleanly to avoid hidden zero-discovery CI failures. Violations: {0}" -f ($violations -join ' | ')
+        )
+    }
+
+    It "forbids indented here-string terminators in Pester test files" {
+        $testRoot = Join-Path -Path $script:repoRoot -ChildPath "Tests"
+        $testFiles = @(Get-ChildItem -Path $testRoot -Filter "*.Tests.ps1" -File -Recurse -ErrorAction Stop)
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($file in $testFiles) {
+            $lines = @(Get-Content -Path $file.FullName)
+            for ($index = 0; $index -lt $lines.Count; $index++) {
+                if ($lines[$index] -match '^\s+''@$' -or $lines[$index] -match '^\s+"@$') {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                    $violations.Add("${relativePath}:$($index + 1)") | Out-Null
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Here-string terminators must start at column 1. Violations: {0}" -f ($violations -join ', ')
+        )
+    }
+
     It "ensures Invoke-GitHubRequestWithRetry describe blocks define a default Start-Sleep mock" {
         $testRoot = Join-Path -Path $script:repoRoot -ChildPath "Tests"
         $testFiles = Get-ChildItem -Path $testRoot -Filter "*.Tests.ps1" -File -Recurse -ErrorAction Stop

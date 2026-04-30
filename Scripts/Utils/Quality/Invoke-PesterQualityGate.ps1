@@ -51,7 +51,12 @@ function Get-FailedTestSummary {
         return "(failed test details unavailable)"
     }
 
-    $failedTests = @($Result.Failed)
+    $failedTestResult = $Result.Failed
+    if ($null -eq $failedTestResult) {
+        return "(failed test details unavailable)"
+    }
+
+    $failedTests = @($failedTestResult)
     if ($failedTests.Count -eq 0) {
         return "(failed test details unavailable)"
     }
@@ -87,6 +92,105 @@ function Get-FailedTestSummary {
     }
 
     return ($preview -join " | ")
+}
+
+function Get-FailedContainerSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Result,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 20)]
+        [int]$MaxCount = 3
+    )
+
+    if ($null -eq $Result) {
+        return "(no result object)"
+    }
+
+    if (-not ($Result.PSObject.Properties.Name -contains "FailedContainers")) {
+        return "(failed container details unavailable)"
+    }
+
+    $failedContainerResult = $Result.FailedContainers
+    if ($null -eq $failedContainerResult) {
+        return "(failed container details unavailable)"
+    }
+
+    $failedContainers = @($failedContainerResult)
+    if ($failedContainers.Count -eq 0) {
+        return "(failed container details unavailable)"
+    }
+
+    $preview = @($failedContainers | Select-Object -First $MaxCount | ForEach-Object {
+            $containerPath = "(unknown container)"
+            if ($_.PSObject.Properties.Name -contains "Item" -and $null -ne $_.Item) {
+                $itemPathProperty = $_.Item.PSObject.Properties["Path"]
+                if ($null -ne $itemPathProperty -and -not [string]::IsNullOrWhiteSpace([string]$_.Item.Path)) {
+                    $containerPath = [string]$_.Item.Path
+                }
+            }
+
+            if ($containerPath -eq "(unknown container)" -and $_.PSObject.Properties.Name -contains "Path" -and -not [string]::IsNullOrWhiteSpace([string]$_.Path)) {
+                $containerPath = [string]$_.Path
+            }
+
+            $errorRecord = if ($_.PSObject.Properties.Name -contains "ErrorRecord") { $_.ErrorRecord } else { $null }
+            $errorMessage = if ($null -ne $errorRecord -and $null -ne $errorRecord.Exception -and -not [string]::IsNullOrWhiteSpace([string]$errorRecord.Exception.Message)) {
+                [string]$errorRecord.Exception.Message
+            }
+            elseif ($null -ne $errorRecord -and -not [string]::IsNullOrWhiteSpace([string]$errorRecord)) {
+                [string]$errorRecord
+            }
+            else {
+                "(no error message)"
+            }
+
+            $normalizedErrorMessage = [regex]::Replace($errorMessage, '\s+', ' ').Trim()
+            if ($normalizedErrorMessage.Length -gt 240) {
+                $normalizedErrorMessage = "{0}..." -f $normalizedErrorMessage.Substring(0, 240)
+            }
+
+            "{0}: {1}" -f $containerPath, $normalizedErrorMessage
+        })
+
+    if ($failedContainers.Count -gt $MaxCount) {
+        $remaining = $failedContainers.Count - $MaxCount
+        $preview += "... ($remaining more failed container(s))"
+    }
+
+    return ($preview -join " | ")
+}
+
+function Get-PesterResultCount {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Result,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$PropertyName
+    )
+
+    if ($null -eq $Result) {
+        return 0
+    }
+
+    if (-not ($Result.PSObject.Properties.Name -contains $PropertyName)) {
+        return 0
+    }
+
+    $rawValue = $Result.$PropertyName
+    if ($null -eq $rawValue) {
+        return 0
+    }
+
+    $intValue = 0
+    if ([int]::TryParse([string]$rawValue, [ref]$intValue)) {
+        return $intValue
+    }
+
+    return 0
 }
 
 $minimumPesterVersion = [version]"5.5.0"
@@ -178,11 +282,43 @@ if ($null -eq $result) {
 }
 
 Write-Verbose "$DiagnosticsPrefix diagnostics: passed=$($result.PassedCount) failed=$($result.FailedCount)"
+$totalCount = if ($result.PSObject.Properties.Name -contains "TotalCount") {
+    Get-PesterResultCount -Result $result -PropertyName "TotalCount"
+}
+else {
+    (Get-PesterResultCount -Result $result -PropertyName "PassedCount") +
+    (Get-PesterResultCount -Result $result -PropertyName "FailedCount") +
+    (Get-PesterResultCount -Result $result -PropertyName "SkippedCount") +
+    (Get-PesterResultCount -Result $result -PropertyName "InconclusiveCount") +
+    (Get-PesterResultCount -Result $result -PropertyName "NotRunCount")
+}
+$failedContainersCount = if ($result.PSObject.Properties.Name -contains "FailedContainersCount") {
+    Get-PesterResultCount -Result $result -PropertyName "FailedContainersCount"
+}
+else {
+    if (-not ($result.PSObject.Properties.Name -contains "FailedContainers") -or $null -eq $result.FailedContainers) {
+        0
+    }
+    else {
+        @($result.FailedContainers).Count
+    }
+}
+$resultState = if ($result.PSObject.Properties.Name -contains "Result") { [string]$result.Result } else { "(unknown)" }
+Write-Verbose "$DiagnosticsPrefix diagnostics: total=$totalCount failedContainers=$failedContainersCount result=$resultState"
 Write-Verbose "$DiagnosticsPrefix diagnostics: outputVerbosity=$($configuration.Output.Verbosity)"
 if ($null -ne $renderModeProperty) {
     Write-Verbose "$DiagnosticsPrefix diagnostics: renderMode=$($configuration.Output.RenderMode)"
 }
-if ($result.FailedCount -gt 0) {
+if ($failedContainersCount -gt 0) {
+    $failedContainerSummary = Get-FailedContainerSummary -Result $result
+    throw "E_CI_PESTER_DISCOVERY_FAILED: Pester reported $failedContainersCount failed test container(s) for '$TestPath'. Failed containers: $failedContainerSummary"
+}
+
+if ($totalCount -eq 0) {
+    throw "E_CI_PESTER_NO_TESTS_DISCOVERED: Pester discovered zero tests for '$TestPath'."
+}
+
+if ((Get-PesterResultCount -Result $result -PropertyName "FailedCount") -gt 0) {
     $failedSummary = Get-FailedTestSummary -Result $result
     throw "E_CI_PESTER_TESTS_FAILED: Pester failed with $($result.FailedCount) failed test(s). Failed tests: $failedSummary"
 }
