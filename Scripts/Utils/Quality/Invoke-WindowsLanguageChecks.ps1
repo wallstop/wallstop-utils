@@ -334,7 +334,7 @@ function Invoke-AutoHotkeyValidationCommand {
 
         # Only report definitive validation failure when there is actual diagnostic output that does
         # not look like an unsupported-switch message. A non-zero exit code with NO output (e.g.,
-        # exit code -1 returned by AHK v2 when processing an AHK v1 script) is ambiguous ? fall
+        # exit code -1 returned by AHK v2 when processing an AHK v1 script) is ambiguous, so fall
         # through to try the next validation mode before concluding the validation is unsupported.
         if ($hasActualOutput -and -not (Test-OutputLooksLikeUnsupportedAhkSwitch -Output $attemptResult.Output)) {
             return [pscustomobject]@{

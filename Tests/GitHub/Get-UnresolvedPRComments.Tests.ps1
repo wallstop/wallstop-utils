@@ -663,12 +663,23 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         }
 
         $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+        $propertyNames = @($record.PSObject.Properties.Name)
+
+        ($propertyNames -ccontains "path") | Should -BeTrue
+        ($propertyNames -ccontains "owner") | Should -BeTrue
+        ($propertyNames -ccontains "repo") | Should -BeTrue
+        ($propertyNames -ccontains "Path") | Should -BeFalse
+        ($propertyNames -ccontains "Owner") | Should -BeFalse
+        ($propertyNames -ccontains "Repo") | Should -BeFalse
         $record.path | Should -Be "src/main.ts"
         $record.lineStart | Should -Be 10
         $record.lineEnd | Should -Be 12
         $record.topLevelComment | Should -Be "Top level comment"
         $record.latestReplySummary | Should -Be "Reply summary"
         $record.threadId | Should -Be "THREAD_1"
+        $record.owner | Should -Be "org"
+        $record.repo | Should -Be "repo"
+        $record.url | Should -Be "https://github.com/org/repo/pull/77"
     }
 
     It "throws when comments nodes is not array-wrapped" {
@@ -784,6 +795,43 @@ Latest reply summary: Reply B
         $expectedNormalized = $expected.TrimEnd("`r", "`n") -replace "`r`n", "`n"
 
         $actualNormalized | Should -BeExactly $expectedNormalized
+    }
+}
+
+Describe "Format-UnresolvedThreadsAsJson" {
+    It "always emits an array and preserves lower-camel schema keys" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/main.ts"
+                lineStart          = 10
+                lineEnd            = 12
+                topLevelComment    = "Top"
+                latestReplySummary = "Reply"
+                threadId           = "THREAD_1"
+                prNumber           = 77
+                owner              = "org"
+                repo               = "repo"
+                url                = "https://github.com/org/repo/pull/77"
+            }
+        )
+
+        $json = Format-UnresolvedThreadsAsJson -Records $records
+        $json | Should -Match '^\s*\['
+
+        $parsed = @($json | ConvertFrom-Json -Depth 8)
+        $parsed.Count | Should -Be 1
+        $propertyNames = @($parsed[0].PSObject.Properties.Name)
+
+        ($propertyNames -ccontains "path") | Should -BeTrue
+        ($propertyNames -ccontains "owner") | Should -BeTrue
+        ($propertyNames -ccontains "repo") | Should -BeTrue
+        ($propertyNames -ccontains "Path") | Should -BeFalse
+        ($propertyNames -ccontains "Owner") | Should -BeFalse
+        ($propertyNames -ccontains "Repo") | Should -BeFalse
+
+        $parsed[0].path | Should -Be "src/main.ts"
+        $parsed[0].owner | Should -Be "org"
+        $parsed[0].repo | Should -Be "repo"
     }
 }
 

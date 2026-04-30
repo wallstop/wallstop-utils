@@ -285,6 +285,39 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Invoke-Main[\s\S]*Get-UnresolvedReviewThreads[^\n]*-AllowedGitHubHostsNormalized\s+\$allowedGitHubHostsNormalized'
     }
 
+    It "keeps unresolved-thread JSON output schema lower-camel and array-stable" {
+        $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $scriptContent = Get-Content -Path $scriptPath -Raw
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+
+        $convertRecordFunctionMatch = [regex]::Match($scriptContent, 'function\s+Convert-ReviewThreadToOutputRecord\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $convertRecordFunctionMatch.Success | Should -BeTrue -Because "Convert-ReviewThreadToOutputRecord must exist so output key casing can be validated"
+        $convertRecordFunctionBody = $convertRecordFunctionMatch.Groups["body"].Value
+
+        $lowerPathMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*path\s*=\s*\$safePath\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*owner\s*=\s*\$Owner\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*repo\s*=\s*\$Repo\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        # Lowercase checks enforce exact contract values; uppercase checks intentionally
+        # match any uppercase assignment so any PascalCase regression is caught.
+        $upperPathMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Path\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Owner\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Repo\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+
+        $lowerPathMatches.Count | Should -Be 1
+        $lowerOwnerMatches.Count | Should -Be 1
+        $lowerRepoMatches.Count | Should -Be 1
+        $upperPathMatches.Count | Should -Be 0
+        $upperOwnerMatches.Count | Should -Be 0
+        $upperRepoMatches.Count | Should -Be 0
+
+        $scriptContent | Should -Match 'function\s+Format-UnresolvedThreadsAsJson[\s\S]*ConvertTo-Json\s+-Depth\s+8\s+-AsArray'
+
+        $testsContent | Should -Match 'Format-UnresolvedThreadsAsJson'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"path"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"Path"\)\s+\|\s+Should\s+-BeFalse'
+    }
+
     It "keeps security regression tests for host mismatch and non-global host cases" {
         $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
         $testsContent = Get-Content -Path $testsPath -Raw

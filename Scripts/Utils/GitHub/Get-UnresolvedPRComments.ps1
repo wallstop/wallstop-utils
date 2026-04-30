@@ -1641,15 +1641,15 @@ function Convert-ReviewThreadToOutputRecord {
     }
 
     return [pscustomobject]@{
-        Path               = $safePath
+        path               = $safePath
         lineStart          = $lineStart
         lineEnd            = $lineEnd
         topLevelComment    = $topLevelComment
         latestReplySummary = $latestReplySummary
         threadId           = [string]$Thread.id
         prNumber           = $PrNumber
-        Owner              = $Owner
-        Repo               = $Repo
+        owner              = $Owner
+        repo               = $Repo
         url                = "https://$GitHubHost/$Owner/$Repo/pull/$PrNumber"
     }
 }
@@ -1669,7 +1669,7 @@ function Format-UnresolvedThreadsAsText {
         $lineEndText = if ($null -eq $record.lineEnd) { "?" } else { [string]$record.lineEnd }
 
         $lines.Add("---")
-        $lines.Add(("({0}) {1}-{2}" -f $record.Path, $lineStartText, $lineEndText))
+        $lines.Add(("({0}) {1}-{2}" -f $record.path, $lineStartText, $lineEndText))
         $lines.Add($record.topLevelComment)
         if ($null -eq $record.latestReplySummary) {
             $lines.Add("Latest reply summary: (none)")
@@ -1695,7 +1695,7 @@ function Format-UnresolvedThreadsAsJson {
         [object[]]$Records
     )
 
-    return ($Records | ConvertTo-Json -Depth 8)
+    return ($Records | ConvertTo-Json -Depth 8 -AsArray)
 }
 
 function Assert-GraphQLVariableMap {
