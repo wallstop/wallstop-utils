@@ -5,6 +5,10 @@ param(
     [string]$TestPath,
 
     [Parameter(Mandatory = $false)]
+    [ValidateSet("None", "Normal", "Detailed", "Diagnostic")]
+    [string]$OutputVerbosity = "None",
+
+    [Parameter(Mandatory = $false)]
     [switch]$EnableCoverage,
 
     [Parameter(Mandatory = $false)]
@@ -22,10 +26,73 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$moduleHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/ModuleHelpers.ps1"
+if (-not (Test-Path -Path $moduleHelpersPath -PathType Leaf)) {
+    throw "E_CI_PESTER_HELPER_MISSING: module helper file not found at '$moduleHelpersPath'."
+}
+
+.$moduleHelpersPath
+
+function Get-FailedTestSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Result,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 20)]
+        [int]$MaxCount = 3
+    )
+
+    if ($null -eq $Result) {
+        return "(no result object)"
+    }
+
+    if (-not ($Result.PSObject.Properties.Name -contains "Failed")) {
+        return "(failed test details unavailable)"
+    }
+
+    $failedTests = @($Result.Failed)
+    if ($failedTests.Count -eq 0) {
+        return "(failed test details unavailable)"
+    }
+
+    $preview = @($failedTests | Select-Object -First $MaxCount | ForEach-Object {
+            $testName = if ($_.PSObject.Properties.Name -contains "ExpandedPath" -and -not [string]::IsNullOrWhiteSpace([string]$_.ExpandedPath)) {
+                [string]$_.ExpandedPath
+            }
+            elseif ($_.PSObject.Properties.Name -contains "Name" -and -not [string]::IsNullOrWhiteSpace([string]$_.Name)) {
+                [string]$_.Name
+            }
+            else {
+                "(unknown test)"
+            }
+
+            $errorRecord = if ($_.PSObject.Properties.Name -contains "ErrorRecord") { $_.ErrorRecord } else { $null }
+            $errorMessage = if ($null -ne $errorRecord -and $null -ne $errorRecord.Exception -and -not [string]::IsNullOrWhiteSpace([string]$errorRecord.Exception.Message)) {
+                [string]$errorRecord.Exception.Message
+            }
+            elseif ($null -ne $errorRecord -and -not [string]::IsNullOrWhiteSpace([string]$errorRecord)) {
+                [string]$errorRecord
+            }
+            else {
+                "(no error message)"
+            }
+
+            "{0}: {1}" -f $testName, $errorMessage
+        })
+
+    if ($failedTests.Count -gt $MaxCount) {
+        $remaining = $failedTests.Count - $MaxCount
+        $preview += "... ($remaining more failed test(s))"
+    }
+
+    return ($preview -join " | ")
+}
+
 $minimumPesterVersion = [version]"5.5.0"
 
-if (-not (Test-Path -Path $TestPath -PathType Container)) {
-    throw "E_CI_PESTER_TEST_PATH_MISSING: test path directory not found at '$TestPath'."
+if (-not (Test-Path -Path $TestPath)) {
+    throw "E_CI_PESTER_TEST_PATH_MISSING: test path was not found at '$TestPath'."
 }
 
 if ($EnableCoverage) {
@@ -37,15 +104,26 @@ if ($EnableCoverage) {
     }
 }
 
-Import-Module Pester -MinimumVersion $minimumPesterVersion -ErrorAction Stop
+$invokePesterCommand = Get-CommandWithOptionalModuleImport -CommandName "Invoke-Pester" -ModuleName "Pester" -MinimumVersion $minimumPesterVersion
+if ($null -eq $invokePesterCommand) {
+    $installedPesterVersions = Get-AvailableModuleVersionsText -ModuleName "Pester"
+    $modulePathDiagnostics = Get-ModulePathDiagnosticsText
+    throw (
+        "E_CI_PESTER_VERSION_TOO_OLD: Invoke-Pester from Pester {0} or newer is required but unavailable. Installed versions: {1}. Module path diagnostics: {2}. Run 'pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester' or install manually with 'Install-Module Pester -Scope CurrentUser -MinimumVersion {0} -Force'." -f
+        $minimumPesterVersion,
+        $installedPesterVersions,
+        $modulePathDiagnostics
+    )
+}
+
 $pesterModule = Get-Module Pester | Sort-Object Version -Descending | Select-Object -First 1
 if ($null -eq $pesterModule) {
-    throw "E_CI_PESTER_IMPORT_FAILED: Pester module was not loaded after Import-Module."
+    throw "E_CI_PESTER_IMPORT_FAILED: Pester module was not loaded after helper-based module resolution."
 }
 
 $pesterVersion = $null
 try {
-    $pesterVersion = [version]::Parse([string]$pesterModule.Version)
+    $pesterVersion = [version]::Parse([string]$pesterModule.version)
 }
 catch {
     throw "E_CI_PESTER_VERSION_PARSE_FAILED: Unable to parse loaded Pester version '$($pesterModule.Version)'."
@@ -55,7 +133,7 @@ if ($pesterVersion -lt $minimumPesterVersion) {
     throw "E_CI_PESTER_VERSION_TOO_OLD: Loaded Pester version $pesterVersion is below minimum $minimumPesterVersion."
 }
 
-$newPesterConfigurationCommand = Get-Command -Name "New-PesterConfiguration" -ErrorAction SilentlyContinue
+$newPesterConfigurationCommand = Get-Command -Name "New-PesterConfiguration" -Module "Pester" -ErrorAction SilentlyContinue
 Write-Verbose "$DiagnosticsPrefix diagnostics: version=$pesterVersion"
 Write-Verbose "$DiagnosticsPrefix diagnostics: modulePath=$($pesterModule.Path)"
 Write-Verbose "$DiagnosticsPrefix diagnostics: hasNewPesterConfiguration=$($null -ne $newPesterConfigurationCommand)"
@@ -72,6 +150,23 @@ if ($null -eq $configuration) {
 $configuration.Run.Path = @($TestPath)
 $configuration.Run.PassThru = $true
 
+try {
+    $configuration.Output.Verbosity = $OutputVerbosity
+}
+catch {
+    throw "E_CI_PESTER_OUTPUT_VERBOSITY_INVALID: Unable to set Output.Verbosity to '$OutputVerbosity'."
+}
+
+$renderModeProperty = $configuration.Output.PSObject.Properties["RenderMode"]
+if ($null -ne $renderModeProperty) {
+    try {
+        $configuration.Output.RenderMode = "PlainText"
+    }
+    catch {
+        Write-Verbose "$DiagnosticsPrefix diagnostics: renderModeSetFailed=$($_.Exception.Message)"
+    }
+}
+
 if ($EnableCoverage) {
     $configuration.CodeCoverage.Enabled = $true
     $configuration.CodeCoverage.Path = @($CoveragePath)
@@ -83,8 +178,13 @@ if ($null -eq $result) {
 }
 
 Write-Verbose "$DiagnosticsPrefix diagnostics: passed=$($result.PassedCount) failed=$($result.FailedCount)"
+Write-Verbose "$DiagnosticsPrefix diagnostics: outputVerbosity=$($configuration.Output.Verbosity)"
+if ($null -ne $renderModeProperty) {
+    Write-Verbose "$DiagnosticsPrefix diagnostics: renderMode=$($configuration.Output.RenderMode)"
+}
 if ($result.FailedCount -gt 0) {
-    throw "E_CI_PESTER_TESTS_FAILED: Pester failed with $($result.FailedCount) failed test(s)."
+    $failedSummary = Get-FailedTestSummary -Result $result
+    throw "E_CI_PESTER_TESTS_FAILED: Pester failed with $($result.FailedCount) failed test(s). Failed tests: $failedSummary"
 }
 
 if (-not $EnableCoverage) {

@@ -11,7 +11,7 @@ function Get-WrapperContractEntries {
     $normalizedFallback = @(
         $DefaultFallback |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            ForEach-Object { ($_ -replace '[\\/]+', '/').Trim() } |
+            ForEach-Object { ($_ -replace '[\\/]+','/').Trim() } |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
             Sort-Object { $_.ToUpperInvariant() } -Unique
     )
@@ -23,7 +23,7 @@ function Get-WrapperContractEntries {
     $entries = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $inSection = $false
 
-    foreach ($line in [System.IO.File]::ReadLines($ContextFilePath, [System.Text.Encoding]::UTF8)) {
+    foreach ($line in [System.IO.File]::ReadLines($ContextFilePath,[System.Text.Encoding]::UTF8)) {
         if ($line -match '^\s{0,3}##\s+Wrapper Contract\s*$') {
             $inSection = $true
             continue
@@ -39,7 +39,7 @@ function Get-WrapperContractEntries {
                 continue
             }
 
-            $portableEntry = $entry -replace '[\\/]+', '/'
+            $portableEntry = $entry -replace '[\\/]+','/'
             [void]$entries.Add($portableEntry)
         }
     }

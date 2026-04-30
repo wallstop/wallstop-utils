@@ -200,6 +200,81 @@ Describe "Resolve-GitHubGraphQLEndpoint" {
     }
 }
 
+Describe "Assert-GraphQLVariableMap" {
+    It "accepts exact-case GraphQL variable payload keys" {
+        $query = @'
+query Demo(
+    $owner: String!,
+    $repo: String!,
+    $prNumber: Int!
+) {
+    repository(owner: $owner, name: $repo) {
+        pullRequest(number: $prNumber) {
+            id
+        }
+    }
+}
+'@
+
+        {
+            Assert-GraphQLVariableMap -Query $query -Variables @{
+                owner    = "org"
+                repo     = "repo"
+                prNumber = 10
+            } -Context "unit"
+        } | Should -Not -Throw
+    }
+
+    It "throws deterministic E_CONFIG_ERROR when payload keys differ by casing" {
+        $query = @'
+query Demo(
+    $owner: String!,
+    $repo: String!,
+    $prNumber: Int!
+) {
+    repository(owner: $owner, name: $repo) {
+        pullRequest(number: $prNumber) {
+            id
+        }
+    }
+}
+'@
+
+        {
+            Assert-GraphQLVariableMap -Query $query -Variables @{
+                Owner    = "org"
+                Repo     = "repo"
+                prNumber = 10
+            } -Context "unit"
+        } | Should -Throw "*E_CONFIG_ERROR*case mismatch*owner*Owner*repo*Repo*"
+    }
+
+    It "rejects unexpected variables when strict mode is requested" {
+        $query = @'
+        query Demo(
+            $owner: String!,
+            $repo: String!,
+            $prNumber: Int!
+        ) {
+            repository(owner: $owner, name: $repo) {
+            pullRequest(number: $prNumber) {
+                id
+            }
+            }
+        }
+        '@
+
+                {
+                    Assert-GraphQLVariableMap -Query $query -Variables @{
+                        owner = "org"
+                        repo = "repo"
+                        prNumber = 10
+                        extra = "unexpected"
+                    } -Context "unit" -RejectUnexpectedVariables
+                } | Should -Throw "*E_CONFIG_ERROR*unexpected variables*extra*"
+            }
+}
+
 Describe "Get-GitHubHeaders" {
     It "returns a hashtable without auth token" {
         $headers = Get-GitHubHeaders -AuthToken $null
@@ -1315,6 +1390,61 @@ Describe "Get-UnresolvedReviewThreads" {
         ($records | Select-Object -ExpandProperty threadId) | Should -Not -Contain "T2"
     }
 
+    It "sends lowercase GraphQL variable keys expected by the query" {
+        $script:capturedGraphQLBodyJson = $null
+
+        Mock Invoke-GitHubRequestWithRetry {
+            param($Body)
+
+            $script:capturedGraphQLBodyJson = $Body | ConvertTo-Json -Depth 20 -Compress
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{
+                            reviewThreads = @{
+                                pageInfo = @{ hasNextPage = $false; endCursor = $null }
+                                nodes    = @()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+
+        $capturedBody = $script:capturedGraphQLBodyJson | ConvertFrom-Json
+        $variableNames = @($capturedBody.variables.PSObject.Properties.Name)
+
+        $variableNames | Should -Contain "owner"
+        $variableNames | Should -Contain "repo"
+        $variableNames | Should -Contain "prNumber"
+        $variableNames | Should -Contain "first"
+        $variableNames | Should -Contain "after"
+        ($variableNames -ccontains "Owner") | Should -BeFalse
+        ($variableNames -ccontains "Repo") | Should -BeFalse
+        ($variableNames -ccontains "PrNumber") | Should -BeFalse
+        ($variableNames -ccontains "First") | Should -BeFalse
+        ($variableNames -ccontains "After") | Should -BeFalse
+    }
+
+    It "fails before request dispatch when GraphQL variable validation fails" {
+        Mock Assert-GraphQLVariableMap {
+            throw "E_CONFIG_ERROR: synthetic variable-map validation failure"
+        }
+
+        Mock Invoke-GitHubRequestWithRetry {
+            throw "network should not be called when variable validation fails"
+        }
+
+        {
+            [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_CONFIG_ERROR*synthetic variable-map validation failure*"
+
+        Assert-MockCalled Assert-GraphQLVariableMap -Times 1 -Scope It
+        Assert-MockCalled Invoke-GitHubRequestWithRetry -Times 0 -Scope It
+    }
+
     It "redacts sensitive text in GraphQL errors" {
         $secret = "ghp_verysecrettoken1234567890"
         Mock Invoke-GitHubRequestWithRetry {
@@ -1573,7 +1703,16 @@ Describe "Invoke-Main" {
             }
         }
         Mock Get-AuthToken { "auth-token" }
-        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
         Mock Assert-IsHashtableLike { }
         Mock Validate-GitHubTokenForRepoAccess { }
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
@@ -1636,7 +1775,16 @@ Describe "Invoke-Main" {
             return "interactive-token"
         }
 
-        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
         Mock Test-CanPromptForLogin { $true }
         Mock Assert-IsHashtableLike { }
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
@@ -1789,7 +1937,16 @@ Describe "Invoke-Main" {
             return "good-token"
         }
 
-        Mock Get-GitHubHeaders { @{ "Accept" = "application/json" } }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
         Mock Test-CanPromptForLogin { $true }
         Mock Assert-IsHashtableLike { }
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
@@ -1803,6 +1960,12 @@ Describe "Invoke-Main" {
         }
 
         Mock Get-UnresolvedReviewThreads {
+            param($Headers)
+
+            if ($null -eq $Headers -or -not $Headers.ContainsKey("Authorization")) {
+                throw "E_AUTH_INVALID: Authentication failed"
+            }
+
             @(
                 [pscustomobject]@{
                     path               = "src/recovered.ts"
@@ -1828,6 +1991,420 @@ Describe "Invoke-Main" {
         $script:validateCallCount | Should -Be 2
         $script:lastOutput | Should -Be "ok"
         Assert-MockCalled Read-Host -Times 1 -Scope It
+    }
+
+    It "offers login fallback in interactive mode when provided credentials are invalid" {
+        $PullRequestUrl = $null
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @()
+        $PullRequestNumber = 0
+        $Token = "bad-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($true)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        $script:authTokenCallCount = 0
+        Mock Get-AuthToken {
+            $script:authTokenCallCount++
+            if ($script:authTokenCallCount -eq 1) {
+                return "bad-token"
+            }
+
+            return "good-token"
+        }
+
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
+        Mock Test-CanPromptForLogin { $true }
+        Mock Assert-IsHashtableLike { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+
+        $script:validateCallCount = 0
+        Mock Validate-GitHubTokenForRepoAccess {
+            $script:validateCallCount++
+            if ($script:validateCallCount -eq 1) {
+                throw "E_AUTH_INVALID: Token authentication failed"
+            }
+        }
+
+        Mock Get-UnresolvedReviewThreads {
+            param($Headers)
+
+            if ($null -eq $Headers -or -not $Headers.ContainsKey("Authorization")) {
+                throw "E_AUTH_INVALID: Authentication failed"
+            }
+
+            @(
+                [pscustomobject]@{
+                    path               = "src/recovered.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "Recovered"
+                    latestReplySummary = $null
+                }
+            )
+        }
+
+        Mock Read-Host { "y" }
+        Mock Format-UnresolvedThreadsAsText { "interactive recovered" }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:lastOutput | Should -Be "interactive recovered"
+        $script:authTokenCallCount | Should -Be 2
+        $script:validateCallCount | Should -Be 2
+        Assert-MockCalled Read-Host -Times 1 -Scope It
+    }
+
+    It "does not offer fallback in direct owner/repo mode when credentials are invalid" {
+        $PullRequestUrl = $null
+        $Owner = "org"
+        $Repo = "repo"
+        $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @()
+        $PullRequestNumber = 5
+        $Token = "bad-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        Mock Get-AuthToken { "bad-token" }
+        Mock Assert-IsHashtableLike { }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token authentication failed" }
+        Mock Test-CanPromptForLogin { $true }
+        Mock Read-Host { throw "Read-Host should not be called in direct mode auth failure." }
+        Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called when token validation fails." }
+
+        { Invoke-Main } | Should -Throw "*E_AUTH_INVALID*"
+        Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "bad-token" }
+        Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
+        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
+    }
+
+    It "retries anonymously when token validation fails for PR URL mode" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @()
+        $PullRequestNumber = 0
+        $Token = "expired-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        Mock Get-AuthToken { "expired-token" }
+        Mock Assert-IsHashtableLike { }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token authentication failed" }
+        Mock Test-CanPromptForLogin { $false }
+        Mock Read-Host { throw "Read-Host should not be called when anonymous fallback succeeds." }
+
+        Mock Get-UnresolvedReviewThreads {
+            @(
+                [pscustomobject]@{
+                    path               = "src/public.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "Public"
+                    latestReplySummary = $null
+                }
+            )
+        }
+
+        Mock Format-UnresolvedThreadsAsText { "anonymous success" }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:lastOutput | Should -Be "anonymous success"
+        Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "expired-token" }
+        Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
+        Assert-MockCalled Get-UnresolvedReviewThreads -Times 1 -Scope It -ParameterFilter { -not $Headers.ContainsKey("Authorization") }
+        Assert-MockCalled Read-Host -Times 0 -Scope It
+    }
+
+    It "offers login fallback when anonymous retry fails with a non-auth error" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @()
+        $PullRequestNumber = 0
+        $Token = "expired-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        $script:authTokenCallCount = 0
+        Mock Get-AuthToken {
+            $script:authTokenCallCount++
+            if ($script:authTokenCallCount -eq 1) {
+                return "expired-token"
+            }
+
+            return "fresh-token"
+        }
+
+        Mock Assert-IsHashtableLike { }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+
+        $script:validateCallCount = 0
+        Mock Validate-GitHubTokenForRepoAccess {
+            $script:validateCallCount++
+            if ($script:validateCallCount -eq 1) {
+                throw "E_AUTH_INVALID: Token authentication failed"
+            }
+        }
+
+        Mock Test-CanPromptForLogin { $true }
+        Mock Read-Host { "y" }
+
+        $script:reviewCallCount = 0
+        Mock Get-UnresolvedReviewThreads {
+            param($Headers)
+
+            $script:reviewCallCount++
+            if ($null -eq $Headers -or -not $Headers.ContainsKey("Authorization")) {
+                throw "E_NETWORK_TIMEOUT: Anonymous request timed out"
+            }
+
+            @(
+                [pscustomobject]@{
+                    path               = "src/recovered.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "Recovered"
+                    latestReplySummary = $null
+                }
+            )
+        }
+
+        Mock Format-UnresolvedThreadsAsText { "recovered after prompt" }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:lastOutput | Should -Be "recovered after prompt"
+        $script:authTokenCallCount | Should -Be 2
+        $script:validateCallCount | Should -Be 2
+        $script:reviewCallCount | Should -Be 2
+        Assert-MockCalled Read-Host -Times 1 -Scope It
+    }
+
+    It "surfaces non-auth anonymous retry errors when prompt is unavailable" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @()
+        $PullRequestNumber = 0
+        $Token = "expired-token"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        Mock Get-AuthToken { "expired-token" }
+        Mock Assert-IsHashtableLike { }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token authentication failed" }
+        Mock Test-CanPromptForLogin { $false }
+        Mock Read-Host { throw "Read-Host should not be called when interactive prompt is unavailable." }
+        Mock Get-UnresolvedReviewThreads { throw "E_NETWORK_TIMEOUT: Anonymous request timed out" }
+
+        { Invoke-Main } | Should -Throw "*E_NETWORK_TIMEOUT*"
+        Assert-MockCalled Read-Host -Times 0 -Scope It
+    }
+
+    It "redacts original token in anonymous retry errors" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @()
+        $PullRequestNumber = 0
+        $Token = "secret-token-12345"
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        Mock Get-AuthToken { "secret-token-12345" }
+        Mock Assert-IsHashtableLike { }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token secret-token-12345 is invalid" }
+        Mock Test-CanPromptForLogin { $false }
+        Mock Read-Host { throw "Read-Host should not be called when interactive prompt is unavailable." }
+        Mock Get-UnresolvedReviewThreads { throw "E_NETWORK_TIMEOUT: leaked secret-token-12345" }
+
+        $thrownMessage = $null
+        try {
+            Invoke-Main
+        }
+        catch {
+            $thrownMessage = $_.Exception.Message
+        }
+
+        $thrownMessage | Should -Match "E_NETWORK_TIMEOUT"
+        $thrownMessage | Should -Not -Match [regex]::Escape("secret-token-12345")
     }
 
     It "fails with E_AUTH_REQUIRED when fallback prompt is unavailable due redirected IO" {

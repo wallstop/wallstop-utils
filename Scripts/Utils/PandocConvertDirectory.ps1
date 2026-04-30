@@ -39,7 +39,7 @@ if (-not (Test-Path -LiteralPath $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
-. $strictModeHelpersPath
+.$strictModeHelpersPath
 
 # Function to Convert HTML to Markdown
 function Convert-HtmlToMarkdown {

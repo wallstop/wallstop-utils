@@ -116,6 +116,7 @@ add `-Truncate` to restore legacy clipping behavior.
 
 Public repos can work without auth, but auth is preferred to avoid low rate limits.
 Private repos require auth.
+For PR URL and interactive flows, recoverable auth failures with an existing token are retried once anonymously before prompting for login.
 When auth is used, the script validates token access against repository metadata before querying review threads.
 For `github.com`, the script also validates `X-OAuth-Scopes` and expects:
 

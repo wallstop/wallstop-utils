@@ -14,6 +14,41 @@ echo "[devcontainer] Bootstrapping tooling..."
 _log() { echo "[devcontainer] $*"; }
 _warn() { echo "[devcontainer] WARNING: $*" >&2; }
 
+_resolve_timeout_command() {
+  if command -v timeout > /dev/null 2>&1; then
+    printf '%s\n' "timeout"
+    return 0
+  fi
+
+  if command -v gtimeout > /dev/null 2>&1; then
+    printf '%s\n' "gtimeout"
+    return 0
+  fi
+
+  return 1
+}
+
+_run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+
+  local timeout_command
+  if timeout_command="$(_resolve_timeout_command)"; then
+    set +e
+    "$timeout_command" --foreground "${timeout_seconds}s" "$@"
+    local command_exit=$?
+    set -e
+    return $command_exit
+  fi
+
+  _warn "timeout/gtimeout is unavailable; running command without timeout guard: $*"
+  set +e
+  "$@"
+  local fallback_exit=$?
+  set -e
+  return $fallback_exit
+}
+
 _apt_index_updated=0
 
 # ---------------------------------------------------------------------------
@@ -232,8 +267,8 @@ fi
 
 if command -v pre-commit > /dev/null 2>&1; then
   git config --local core.hooksPath .githooks || true
-  if pre-commit install --hook-type pre-commit --hook-type pre-push; then
-    _log "pre-commit hooks installed."
+  if pre-commit install --install-hooks --hook-type pre-commit --hook-type pre-push; then
+    _log "pre-commit hooks installed and hook environments pre-warmed."
   else
     _warn "pre-commit install returned non-zero; hooks may not be fully registered."
   fi
@@ -260,6 +295,22 @@ if command -v pwsh > /dev/null 2>&1; then
   ' || _warn "pwsh exited non-zero during module install; container is still usable."
 else
   _warn "pwsh is unavailable; skipping PowerShell module install."
+fi
+
+# ---------------------------------------------------------------------------
+# Validation preflight (non-blocking)
+# ---------------------------------------------------------------------------
+
+if command -v pwsh > /dev/null 2>&1; then
+  _log "Running validation preflight (non-blocking)..."
+  preflight_timeout_seconds="${WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS:-180}"
+  if _run_with_timeout "$preflight_timeout_seconds" pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly; then
+    _log "Validation preflight passed."
+  else
+    _warn "Validation preflight failed or timed out (timeout=${preflight_timeout_seconds}s); run 'pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly' before commit/push."
+  fi
+else
+  _warn "pwsh is unavailable; skipping validation preflight."
 fi
 
 _log "Ready."

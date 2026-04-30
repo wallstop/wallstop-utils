@@ -7,7 +7,7 @@ if (-not (Test-Path -LiteralPath $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
-. $strictModeHelpersPath
+.$strictModeHelpersPath
 
 if (-not $IsWindows) {
     Write-Error "E_DXMSG_BACKUP_WINDOWS_ONLY: This script requires Windows (Robocopy). Current OS is not Windows."
@@ -92,7 +92,7 @@ try {
     )
     # Add directory exclusions
     foreach ($dir in $excludedDirs) {
-        $robocopyArgs += '/XD', $dir
+        $robocopyArgs += '/XD',$dir
     }
     # Add file exclusions (if you defined $excludedFiles)
     # foreach ($file in $excludedFiles) {

@@ -11,6 +11,7 @@ Run quality work in the provided container baseline to reduce host-specific drif
 ## Post-Create Bootstrap Expectations
 
 Confirm that pre-commit hooks and PowerShell quality modules are installed during container bootstrap.
+Bootstrap should also run `Invoke-FullValidation.ps1 -PreflightOnly` once in non-blocking mode so module/tooling drift is surfaced before commit-time hooks.
 
 ## Parity Commands Before PR
 
@@ -19,6 +20,7 @@ Run the same documented local quality commands before opening or updating a pull
 ## Commands
 
 ```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly
 pre-commit run
 pre-commit run --all-files
 pwsh -NoLogo -NoProfile -File Scripts/Utils/Run-PreCommitValidation.ps1

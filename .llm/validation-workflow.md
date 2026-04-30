@@ -17,6 +17,16 @@ Treat a session as major when one or more apply:
 
 ## Major Change Session-Close Loop
 
+When a session touches hooks, quality gates, or validation scripts, run one early preflight invocation at session start (or immediately after environment/bootstrap updates) so tooling dependency drift is caught before commit-time hooks.
+
+- Run lightweight dependency preflight first:
+
+```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly
+```
+
+- In devcontainer sessions, `.devcontainer/post-create.sh` runs this preflight automatically once at bootstrap in non-blocking mode; rerun it manually after dependency or quality-tooling updates.
+
 - Run full local validation:
 
 ```bash
@@ -42,14 +52,31 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -W
 4. workspace drift assertion (before/after git-status snapshot comparison)
 5. optional CI watch via `gh pr checks --watch`
 
+`Run-PreCommitValidation.ps1` executes Pester through the centralized `Invoke-PesterQualityGate.ps1` wrapper in an isolated `pwsh -NoProfile -NonInteractive` subprocess with explicit timeout, bounded/truncated output capture, and bounded stream-drain timeout handling to avoid host/terminal lockups. In pre-commit mode (non-`-All`), ScriptAnalyzer targets must remain staged-file scoped (`Scripts/Utils/*.ps1`) to keep commit-time checks fast and reduce editor-host pressure; full-repo analyzer scope remains in `-All` paths.
+
+For Copilot/agent-driven ad-hoc test runs, do not call `Invoke-Pester` directly in terminal sessions. Use a timeout-bounded quality-gate invocation with low output verbosity:
+
+```bash
+timeout --foreground 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1 -TestPath Tests/Utils/ScriptSafetyConventions.Tests.ps1 -OutputVerbosity None -DiagnosticsPrefix AgentSafe
+```
+
+On macOS hosts, use `gtimeout` if `timeout` is unavailable.
+
 ## Failure Handling
 
 Use the first failing gate as the active remediation target.
 
 - `E_VALIDATION_PRECOMMIT_FAILED`: fix formatter/lint findings, rerun.
 - `E_VALIDATION_PREPUSH_FAILED`: fix tests/analyzer/policy failures, rerun.
+- `E_VALIDATION_POWERSHELL_MODULES_MISSING`: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1` in the current host shell (`pwsh`), rerun `Invoke-FullValidation.ps1 -PreflightOnly`, then continue validation in the same session.
+- `E_PRECOMMIT_VALIDATION_MODULES_MISSING`: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1` before running commit hooks, then rerun preflight and hooks in the same shell session.
+- `E_TEST_FAILURE`: isolated Pester suite failed; use `W_TEST_FAILURE_OUTPUT_PREVIEW` for compact head/tail context and `W_TEST_FAILURE_ARTIFACT` (`logPath` under temp root) for bounded, redacted stdout/stderr and failure metadata (`suite`, `exitCode`, `rootCode`).
+- `E_TEST_TIMEOUT` or `E_TEST_CAPTURE_*`: isolated Pester subprocess exceeded runtime or stream-capture bounds; treat as execution-path instability and remediate before rerunning.
 - `E_VALIDATION_CI_FAILED`: fix failing workflow checks, rerun with `-WatchCi`.
 - `E_VALIDATION_PR_MISSING`: open a PR, then rerun with `-WatchCi`.
+- `E_CONFIG_ERROR` from PowerShell hooks: install or update required modules using the command in the diagnostic, then rerun in the same session.
+- `E_VALIDATION_ARG_CONFLICT`: remove invalid flag combinations (for example `-PreflightOnly` with `-WatchCi`) and rerun with a valid workflow stage.
+- `E_HOOK_TIMEOUT` / `E_HOOK_TIMEOUT_CONFIG` from `.githooks/*`: raise timeout guardrail values only when needed (`WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`, `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`, `WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS`), then rerun with the same command path.
 
 ## Codify New Knowledge (Forest-Not-Trees)
 
@@ -74,6 +101,7 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Test-LlmHarness.ps1
 ## Mandatory Pre-Merge Checklist
 
 - [ ] Ran `Invoke-FullValidation.ps1` locally.
+- [ ] Ran an early `Invoke-FullValidation.ps1 -PreflightOnly` pass for hook/quality changes before commit/push.
 - [ ] Local validation gates are green.
 - [ ] Pushed branch updates for CI execution.
 - [ ] Ran `Invoke-FullValidation.ps1 -WatchCi` (or equivalent PR check watch) and reached green CI.

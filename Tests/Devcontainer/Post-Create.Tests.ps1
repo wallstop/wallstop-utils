@@ -89,6 +89,10 @@ Describe "post-create.sh pre-commit integration" {
         $script:postCreateContent | Should -Match 'pre-commit\s+install'
     }
 
+    It "pre-warms pre-commit hook environments during install" {
+        $script:postCreateContent | Should -Match 'pre-commit\s+install\s+--install-hooks'
+    }
+
     It "configures core.hooksPath to .githooks" {
         $script:postCreateContent | Should -Match 'core\.hooksPath'
         $script:postCreateContent | Should -Match '\.githooks'
@@ -102,6 +106,16 @@ Describe "post-create.sh pre-commit integration" {
     It "does not unconditionally print 'hooks installed' when pre-commit install may have failed" {
         # The success message must be conditional (inside an if block), not printed after || true.
         $script:postCreateContent | Should -Not -Match 'pre-commit\s+install.*\|\|\s*true'
+    }
+}
+
+Describe "post-create.sh validation preflight integration" {
+    It "runs Invoke-FullValidation preflight after bootstrap" {
+        $script:postCreateContent | Should -Match 'Invoke-FullValidation\.ps1\s+-PreflightOnly'
+    }
+
+    It "keeps validation preflight non-blocking with a warning path" {
+        $script:postCreateContent | Should -Match 'Validation preflight failed'
     }
 }
 

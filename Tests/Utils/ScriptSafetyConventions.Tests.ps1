@@ -2,6 +2,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 BeforeAll {
+    function Resolve-CanonicalTempRoot {
+        param([string]$Path)
+
+        $resolvedItem = Get-Item -LiteralPath $Path -ErrorAction Stop
+        return $resolvedItem.FullName
+    }
+
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     $script:migratedScripts = @(
         "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1",
@@ -20,6 +27,7 @@ BeforeAll {
     $script:qualityPowerShellScripts = @(
         "Scripts/Utils/Quality/Assert-CleanGitTree.ps1",
         "Scripts/Utils/Quality/Format-PowerShellFiles.ps1",
+        "Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1",
         "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1",
         "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
     )
@@ -408,8 +416,16 @@ Describe "CI scope expansion" {
 
     It "keeps shared Pester quality gate script contract: <Name>" -TestCases @(
         @{
-            Name    = "imports Pester with minimum supported version"
-            Pattern = 'Import-Module\s+Pester\s+-MinimumVersion\s+\$minimumPesterVersion'
+            Name    = "sources shared module helper"
+            Pattern = 'Common/ModuleHelpers\.ps1'
+        }
+        @{
+            Name    = "resolves Invoke-Pester via shared helper with minimum supported version"
+            Pattern = 'Get-CommandWithOptionalModuleImport\s+-CommandName\s+"Invoke-Pester"\s+-ModuleName\s+"Pester"\s+-MinimumVersion\s+\$minimumPesterVersion'
+        }
+        @{
+            Name    = "reports installed Pester versions in diagnostics"
+            Pattern = 'Get-AvailableModuleVersionsText\s+-ModuleName\s+"Pester"'
         }
         @{
             Name    = "uses New-PesterConfiguration command-based setup"
@@ -533,12 +549,16 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook | Should -Match 'pipx install pre-commit'
         $preCommitHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $preCommitHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
+        $preCommitHook | Should -Match 'run_with_timeout'
+        $preCommitHook | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
 
         $prePushHook | Should -Match 'pre-commit run --hook-stage pre-push --all-files'
         $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -All'
         $prePushHook | Should -Match 'pipx install pre-commit'
         $prePushHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $prePushHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
+        $prePushHook | Should -Match 'run_with_timeout'
+        $prePushHook | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
     }
 
     It "keeps pre-commit bootstrap guidance aligned with PEP 668-safe flows" {
@@ -550,6 +570,8 @@ Describe "Cross-language quality platform conventions" {
         $readme | Should -Match 'pipx install pre-commit'
         $readme | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $readme | Should -Match '~/.bashrc'
+        $readme | Should -Match 'Install-PowerShellQualityModules\.ps1'
+        $readme | Should -Match 'Invoke-FullValidation\.ps1 -PreflightOnly'
         $readme | Should -Not -Match 'python3 -m pip install --user pre-commit'
 
         $fullValidation | Should -Match 'E_VALIDATION_PREREQ_MISSING'
@@ -566,10 +588,27 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
 
-        $preCommitHook | Should -Match 'pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation\.ps1"\s*\r?\n\s*return\s+\$\?'
-        $prePushHook | Should -Match 'pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation\.ps1" -All\s*\r?\n\s*return\s+\$\?'
+        $preCommitHook | Should -Match 'run_with_timeout\s+"\$precommit_timeout_seconds"\s+"legacy pre-commit PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s*\r?\n\s*return\s+\$\?'
+        $prePushHook | Should -Match 'run_with_timeout\s+"\$prepush_timeout_seconds"\s+"legacy pre-push PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-All\s*\r?\n\s*return\s+\$\?'
         $preCommitHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
         $prePushHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
+    }
+
+    It "enforces timeout guardrails for hooks and devcontainer preflight" {
+        $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
+        $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
+        $postCreatePath = Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh'
+        $postCreate = Get-Content -Path $postCreatePath -Raw
+
+        $preCommitHook | Should -Match 'resolve_timeout_command'
+        $preCommitHook | Should -Match 'E_HOOK_TIMEOUT'
+        $prePushHook | Should -Match 'resolve_timeout_command'
+        $prePushHook | Should -Match 'E_HOOK_TIMEOUT'
+        $prePushHook | Should -Match 'pre-push full validation'
+
+        $postCreate | Should -Match '_run_with_timeout'
+        $postCreate | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $postCreate | Should -Match 'Invoke-FullValidation\.ps1 -PreflightOnly'
     }
 
     It "tracks pre-push hook executable mode in git" {
@@ -716,6 +755,7 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecks | Should -Match 'RedirectStandardOutput'
         $windowsChecks | Should -Match 'RedirectStandardError'
         $windowsChecks | Should -Match 'E_AHK_PROCESS_EXECUTION_FAILED'
+        $windowsChecks | Should -Match '\$streamDrainTimeoutMilliseconds\s*=\s*\[Math\]::Min\(\[Math\]::Max\(\[int\]\(\$processTimeoutMilliseconds / 10\),\s*1500\),\s*10000\)'
 
         # Prevent regression: do not rely on Start-Process which mangles special characters
         # (curly braces, double quotes) in arguments on Windows.
@@ -1781,6 +1821,35 @@ Describe "GitHub API resilience conventions" {
         $content | Should -Match 'E_GITHUB_API_ERROR\(\$statusCode\): GitHub request failed'
     }
 
+    It "keeps GraphQL variable payload keys aligned with declared casing" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $targetFunction = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-UnresolvedReviewThreads"
+                }, $true) | Select-Object -First 1)
+
+        $targetFunction.Count | Should -Be 1 -Because "Get-UnresolvedReviewThreads should exist so GraphQL variable-map contracts can be validated"
+        $functionBody = $targetFunction[0].Body.Extent.Text
+
+        $variablesMatch = [regex]::Match($functionBody,'(?ms)\$variables\s*=\s*@\{(?<body>.*?)^\s*\}')
+        $variablesMatch.Success | Should -BeTrue -Because "Get-UnresolvedReviewThreads should define a variables hashtable"
+        $variablesBody = $variablesMatch.Groups["body"].Value
+
+        $functionBody | Should -Match 'query\s+GetReviewThreads\([\s\S]*\$owner:\s*String![\s\S]*\$repo:\s*String![\s\S]*\$prNumber:\s*Int![\s\S]*\$first:\s*Int![\s\S]*\$after:\s*String'
+        $variablesBody | Should -Match '\bowner\s*=\s*\$Owner'
+        $variablesBody | Should -Match '\brepo\s*=\s*\$Repo'
+        $variablesBody | Should -Match '\bprNumber\s*=\s*\$PrNumber'
+        $variablesBody | Should -Match '\bfirst\s*=\s*\$PerPage'
+        $variablesBody | Should -Match '\bafter\s*=\s*\$cursor'
+        ($variablesBody -cmatch '\bOwner\s*=') | Should -BeFalse
+        ($variablesBody -cmatch '\bRepo\s*=') | Should -BeFalse
+        $functionBody | Should -Match 'Assert-GraphQLVariableMap\s+-Query\s+\$query\s+-Variables\s+\$variables\s+-Context\s+"Get-UnresolvedReviewThreads"\s+-RejectUnexpectedVariables'
+    }
+
     It "threads RequestTimeoutSeconds through interactive pull request selection" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
@@ -2183,6 +2252,12 @@ Describe "Utility configuration safety conventions" {
         $formatterPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Format-PowerShellFiles.ps1"
         $formatterContent = Get-Content -Path $formatterPath -Raw
 
+        $formatterContent | Should -Match 'Common/ModuleHelpers\.ps1'
+        $formatterContent | Should -Match '\$minimumScriptAnalyzerVersion\s*=\s*\[version\]"1\.21\.0"'
+        $formatterContent | Should -Match 'Get-CommandWithOptionalModuleImport\s+-CommandName\s+"Invoke-Formatter"\s+-ModuleName\s+"PSScriptAnalyzer"\s+-MinimumVersion\s+\$minimumScriptAnalyzerVersion'
+        $formatterContent | Should -Match 'Get-AvailableModuleVersionsText\s+-ModuleName\s+"PSScriptAnalyzer"'
+        $formatterContent | Should -Not -Match 'function\s+Ensure-PortableUserModulePaths\b'
+        $formatterContent | Should -Not -Match 'function\s+Get-CommandWithOptionalModuleImport\b'
         $formatterContent | Should -Match '\.psscriptanalyzer\.format\.psd1'
         $formatterContent | Should -Match 'Get-LeadingTabIndentedLineNumbers'
         $formatterContent | Should -Match 'Write-Output\s+-NoEnumerate\s+\(\$lineNumbers\.ToArray\(\)\)'
@@ -2201,12 +2276,381 @@ Describe "Utility configuration safety conventions" {
         $formatSettings | Should -Match 'IndentationSize\s*=\s*4'
     }
 
-    It "guards Invoke-Pester usage in Run-PreCommitValidation" {
+    It "runs Pester via isolated subprocess in Run-PreCommitValidation" {
         $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
         $content = Get-Content -Path $preCommitPath -Raw
 
-        $content | Should -Match 'Get-CommandWithOptionalModuleImport\s+-CommandName\s+"Invoke-Pester"'
-        $content | Should -Match 'E_CONFIG_ERROR:\s+Invoke-Pester is not available'
+        $content | Should -Match 'Common/ModuleHelpers\.ps1'
+        $content | Should -Match 'Assert-PreCommitPowerShellModuleAvailability'
+        $content | Should -Match 'E_PRECOMMIT_VALIDATION_MODULES_MISSING'
+        $content | Should -Match 'Invoke-PesterQualityGateInIsolatedProcess'
+        $content | Should -Match 'Invoke-PesterQualityGate\.ps1'
+        $content | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
+        $content | Should -Match '\$startInfo\.Environment\["PSModulePath"\]\s*=\s*\$env:PSModulePath'
+        $content | Should -Match 'BeginOutputReadLine\(\)'
+        $content | Should -Match 'BeginErrorReadLine\(\)'
+        $content | Should -Match '\$maxCapturedOutputLinesPerStream\s*=\s*2000'
+        $content | Should -Match '\$maxCapturedOutputCharactersPerStream\s*=\s*262144'
+        $content | Should -Match 'BoundedProcessCapture'
+        $content | Should -Match 'WaitForDrain\(\$remainingStreamWaitMilliseconds\)'
+        $content | Should -Match 'output truncated after'
+        $content | Should -Match '\$streamDrainTimeoutMilliseconds\s*=\s*\[Math\]::Min\(\[Math\]::Max\(\[int\]\(\$timeoutMilliseconds / 10\),\s*2000\),\s*15000\)'
+        $content | Should -Match '\$remainingStreamWaitMilliseconds\s*=\s*\$streamDrainTimeoutMilliseconds'
+        $content | Should -Match '\$processBookkeepingTimeoutMilliseconds\s*=\s*5000'
+        $content | Should -Match 'WaitForExit\(\$processBookkeepingTimeoutMilliseconds\)'
+        $content | Should -Not -Match '\[void\]\$process\.WaitForExit\(\)'
+        $content | Should -Match 'process bookkeeping wait exceeded'
+        $content | Should -Match 'processBookkeepingTimeoutMs='
+        $content | Should -Match 'process resource disposal raised exception'
+        $content | Should -Not -Match 'ReadToEndAsync\(\)'
+        $content | Should -Match '"-NoLogo"'
+        $content | Should -Match '"-NoProfile"'
+        $content | Should -Match '"-NonInteractive"'
+        $content | Should -Match 'E_TEST_TIMEOUT'
+        $content | Should -Match 'E_TEST_CAPTURE_TIMEOUT'
+        $content | Should -Match 'E_TEST_CAPTURE_FAILED'
+        $content | Should -Not -Match '\.HasExited'
+        $content | Should -Not -Match 'function\s+Ensure-PortableUserModulePaths\b'
+        $content | Should -Not -Match 'function\s+Get-CommandWithOptionalModuleImport\b'
+        $content | Should -Not -Match 'Invoke-Pester\s+-Path\s+"Tests/'
+    }
+
+    It "keeps isolated Pester failure exceptions compact and routes previews plus artifacts via warning diagnostics" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $content = Get-Content -Path $preCommitPath -Raw
+
+        $content | Should -Match 'Get-FirstRootErrorCode'
+        $content | Should -Match 'Write-IsolatedPesterFailureArtifact'
+        $content | Should -Match 'Convert-ToRedactedOutputLines\s+-OutputLines\s+\$combinedLines'
+        $content | Should -Match 'authorization\\s\*\[:=\]\\s\*'
+        $content | Should -Match 'authorization\\s\*\[:=\]\\s\*\)\.\+\$'
+        $content | Should -Match 'access\[_-\]\?token'
+        $content | Should -Match 'refresh\[_-\]\?token'
+        $content | Should -Match '\\s\*\[:=\]\\s\*'
+        $content | Should -Match 'W_TEST_FAILURE_OUTPUT_PREVIEW'
+        $content | Should -Match 'W_TEST_FAILURE_ARTIFACT'
+        $content | Should -Match 'Get-OutputPreview\s+-OutputLines\s+\$redactedCombinedLines\s+-MaxPreviewLines\s+4'
+        $content | Should -Match 'head: \{0\} \| \.\.\. \(\{1\} omitted line\(s\)\) \.\.\. \| tail: \{2\}'
+        $content | Should -Match 'W_TEST_FAILURE_ARTIFACT:\s+suite=\{0\}; exitCode=\{1\}; rootCode=\{2\}; logPath=\{3\}'
+        $content | Should -Not -Match 'throw\s+"E_TEST_FAILURE:[^"]*Output preview:'
+        $content | Should -Not -Match 'throw\s+"E_TEST_FAILURE:[^"]*\$preview'
+        $content | Should -Not -Match 'throw\s+"E_TEST_FAILURE:[^"]*logPath='
+        $content | Should -Match 'throw\s+"E_TEST_FAILURE:\s+\$SuiteLabel\s+failed in isolated Pester execution \(exitCode=\$\(\$process\.ExitCode\); rootCode=\$rootCode; details=see W_TEST_FAILURE_ARTIFACT\)\.'
+    }
+
+    It "redacts authorization and secret variants in isolated failure output helpers" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($preCommitPath, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count -gt 0) {
+            throw "E_CONFIG_ERROR: Failed to parse Run-PreCommitValidation.ps1 for redaction helper behavior checks."
+        }
+
+        $targetFunction = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-RedactedFailureLine"
+                }, $true) | Select-Object -First 1)
+
+        $targetFunction.Count | Should -Be 1
+
+        . ([scriptblock]::Create($targetFunction[0].Extent.Text))
+        try {
+            (Get-RedactedFailureLine -Line 'Authorization: Bearer "secretjwt"') | Should -Be 'Authorization: [REDACTED]'
+            (Get-RedactedFailureLine -Line "Authorization: Bearer 'secretjwt'") | Should -Be 'Authorization: [REDACTED]'
+            (Get-RedactedFailureLine -Line 'Authorization=Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==') | Should -Be 'Authorization=[REDACTED]'
+            (Get-RedactedFailureLine -Line 'Authorization: Digest username="u", response="r"') | Should -Be 'Authorization: [REDACTED]'
+            (Get-RedactedFailureLine -Line 'token = "abc def"') | Should -Be 'token = [REDACTED]'
+            (Get-RedactedFailureLine -Line 'access_token: abc123') | Should -Be 'access_token: [REDACTED]'
+        }
+        finally {
+            Remove-Item -Path Function:Get-RedactedFailureLine -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps isolated Pester failure artifacts temp-root based and redacted" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $content = Get-Content -Path $preCommitPath -Raw
+
+        $outsideRepoGuardIndex = $content.IndexOf('isolated Pester failure artifact path must be outside repository root', [System.StringComparison]::Ordinal)
+        $writeIndex = $content.IndexOf('[System.IO.FileStream]::new', [System.StringComparison]::Ordinal)
+
+        $content | Should -Match '\[System\.IO\.Path\]::GetTempPath\(\)'
+        $content | Should -Match 'function\s+Resolve-CanonicalPath\s*\{'
+        $content | Should -Match 'Resolve-CanonicalPath\s+-Path\s+\$tempRoot'
+        $content | Should -Match 'wallstop-precommit-validation'
+        $content | Should -Match 'Convert-ToRedactedOutputLines\s+-OutputLines\s+\$StdoutLines'
+        $content | Should -Match 'Convert-ToRedactedOutputLines\s+-OutputLines\s+\$StderrLines'
+        $content | Should -Match 'Get-RedactedFailureLine'
+        $content | Should -Match 'function\s+Test-IsLinkOrReparsePoint\s*\{'
+        $content | Should -Match 'Test-IsLinkOrReparsePoint\s+-Item\s+\$artifactDirectoryItem'
+        $content | Should -Match 'Test-IsLinkOrReparsePoint\s+-Item\s+\$resolvedArtifactDirectoryItem'
+        $content | Should -Match '\[System\.IO\.FileAttributes\]::ReparsePoint'
+        $content | Should -Match 'LinkType'
+        $content | Should -Match 'ResolveLinkTarget\(\$true\)'
+        $content | Should -Match 'isolated Pester failure artifact directory must not be a symbolic link or reparse point'
+        $content | Should -Match 'Resolve-CanonicalPath\s+-Path\s+\$artifactDirectory'
+        $content | Should -Match 'E_CONFIG_ERROR: isolated Pester failure artifact path must be outside repository root'
+        $content | Should -Not -Match 'Join-Path\s+-Path\s+\$RepoRoot\s+-ChildPath\s+"wallstop-precommit-validation"'
+        $content | Should -Not -Match 'artifactLines\.Add\("repoRoot='
+        $content | Should -Match '\[System\.IO\.FileMode\]::CreateNew'
+        $content | Should -Not -Match '\[System\.IO\.File\]::WriteAllText\('
+        $outsideRepoGuardIndex | Should -BeGreaterThan -1 -Because 'Outside-repository artifact path guard must exist.'
+        $writeIndex | Should -BeGreaterThan -1 -Because 'Artifact write operation must exist.'
+        $outsideRepoGuardIndex | Should -BeLessThan $writeIndex -Because 'Outside-repository guard must execute before writing the artifact file.'
+    }
+
+    It "scopes ScriptAnalyzer targets to staged Scripts/Utils files unless -All is used" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $content = (Get-Content -Path $preCommitPath -Raw) -replace "`r", ''
+
+        $content | Should -Match '\$analyzerTargets\s*=\s*@\(\)'
+        $content | Should -Match 'if\s*\(\$All\)\s*\{\s*\$analyzerTargets\s*=\s*@\("Scripts/Utils"\)'
+        $content | Should -Match 'elseif\s*\(\$scriptFiles\.Count\s*-gt\s*0\)'
+        $content | Should -Match 'Write-Verbose\s*\(\s*"ScriptAnalyzer staged-path diagnostics: skippedMissingCount='
+        $content | Should -Match '\$analyzerTargets\s*=\s*@\(\s*\$scriptFiles\s*\|\s*Where-Object\s*\{\s*Test-Path\s*-LiteralPath\s*\$_\s*-PathType\s*Leaf\s*\}\s*\|\s*Sort-Object\s*-Unique\s*\)'
+        $content | Should -Match 'foreach\s*\(\$analyzerTarget\s+in\s+\$analyzerTargets\)'
+        $content | Should -Match 'Invoke-ScriptAnalyzer\s+-Path\s+\$analyzerTarget\s+-Settings\s+"\.psscriptanalyzer\.psd1"'
+        $content | Should -Not -Match 'Invoke-ScriptAnalyzer\s+-Path\s+"Scripts/Utils"\s+-Settings\s+"\.psscriptanalyzer\.psd1"'
+    }
+
+    It "centralizes module discovery for formatter and pre-commit validation scripts" {
+        $formatterPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Format-PowerShellFiles.ps1"
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $pesterGatePath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
+        $fullValidationPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-FullValidation.ps1"
+        $moduleHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/ModuleHelpers.ps1"
+
+        $formatterContent = Get-Content -Path $formatterPath -Raw
+        $preCommitContent = Get-Content -Path $preCommitPath -Raw
+        $pesterGateContent = Get-Content -Path $pesterGatePath -Raw
+        $fullValidationContent = Get-Content -Path $fullValidationPath -Raw
+        $moduleHelperContent = Get-Content -Path $moduleHelperPath -Raw
+
+        $formatterContent | Should -Match 'Common/ModuleHelpers\.ps1'
+        $preCommitContent | Should -Match 'Common/ModuleHelpers\.ps1'
+        $pesterGateContent | Should -Match 'Common/ModuleHelpers\.ps1'
+        $fullValidationContent | Should -Match 'Common/ModuleHelpers\.ps1'
+        $fullValidationContent | Should -Match 'Assert-PowerShellQualityModuleAvailability'
+        $fullValidationContent | Should -Match 'Assert-ModuleCommandRequirements\s+-Requirements\s+\$moduleRequirements\s+-ErrorCode\s+"E_VALIDATION_POWERSHELL_MODULES_MISSING"'
+        $fullValidationContent | Should -Match 'E_VALIDATION_POWERSHELL_MODULES_MISSING'
+        $preCommitContent | Should -Match 'Assert-PreCommitPowerShellModuleAvailability'
+        $preCommitContent | Should -Match 'E_PRECOMMIT_VALIDATION_MODULES_MISSING'
+        $pesterGateContent | Should -Match 'Get-CommandWithOptionalModuleImport\s+-CommandName\s+"Invoke-Pester"\s+-ModuleName\s+"Pester"\s+-MinimumVersion\s+\$minimumPesterVersion'
+        $moduleHelperContent | Should -Match 'function\s+Get-CommandWithOptionalModuleImport\b'
+        $moduleHelperContent | Should -Match 'function\s+Assert-ModuleCommandRequirements\b'
+        $moduleHelperContent | Should -Match 'Import-Module\s+-Name\s+\$ModuleName\s+-MinimumVersion\s+\$MinimumVersion'
+        $moduleHelperContent | Should -Match 'Get-AvailableModuleVersionsText'
+        $moduleHelperContent | Should -Match 'GetFolderPath\("MyDocuments"\)'
+        $moduleHelperContent | Should -Match 'PowerShell/Modules'
+        $moduleHelperContent | Should -Match 'WindowsPowerShell/Modules'
+        $moduleHelperContent | Should -Match '/usr/local/share/powershell/Modules'
+        $moduleHelperContent | Should -Match 'Module path diagnostics:'
+        $moduleHelperContent | Should -Not -Match 'return\s+\(Get-Command\s+-Name\s+\$CommandName\s+-ErrorAction\s+SilentlyContinue\)'
+    }
+
+    It "uses explicit format argument arrays for module requirement diagnostics" {
+        $moduleHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/ModuleHelpers.ps1"
+        $moduleHelperContent = (Get-Content -Path $moduleHelperPath -Raw) -replace "`r", ''
+
+        $moduleHelperContent | Should -Match 'installCommand=''\{5\}''\{6\}"\s+-f\s+@\('
+        $moduleHelperContent | Should -Match 'command=\{1\}; minimumVersion=\{2\}; issue=command-not-exported; installCommand=''\{3\}''"\s+-f\s+@\('
+    }
+
+    It "wires format-operator safety helper into validation entrypoints" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $fullValidationPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-FullValidation.ps1"
+
+        $preCommitContent = (Get-Content -Path $preCommitPath -Raw) -replace "`r", ''
+        $fullValidationContent = (Get-Content -Path $fullValidationPath -Raw) -replace "`r", ''
+
+        $preCommitContent | Should -Match 'Common/FormatOperatorSafetyHelpers\.ps1'
+        $preCommitContent | Should -Match 'E_PRECOMMIT_FORMAT_OPERATOR_BINDING'
+        $preCommitContent | Should -Match 'Assert-NoFormatOperatorContinuationViolations\s+-RootPath\s+\$repoRoot'
+
+        $fullValidationContent | Should -Match 'Common/FormatOperatorSafetyHelpers\.ps1'
+        $fullValidationContent | Should -Match 'E_VALIDATION_FORMAT_OPERATOR_BINDING'
+        $fullValidationContent | Should -Match 'Assert-NoFormatOperatorContinuationViolations\s+-RootPath\s+\$repoRoot'
+    }
+
+    It "keeps Scripts and Tests free of multiline -f continuation binding risks" {
+        $helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/FormatOperatorSafetyHelpers.ps1"
+        . $helperPath
+
+        $violations = @(Get-FormatOperatorContinuationViolations -RootPath $script:repoRoot -RelativeRoots @("Scripts", "Tests"))
+        $violationPreview = @($violations | Select-Object -First 10 | ForEach-Object {
+                "{0}:{1} ({2})" -f $_.Path, $_.Line, $_.Snippet
+            })
+
+        $violations.Count | Should -Be 0 -Because (
+            "Multiline '-f' continuation can under-bind format arguments at runtime. Violations: {0}" -f ($violationPreview -join '; ')
+        )
+    }
+
+    It "detects multiline -f continuation violations in fixture scripts" {
+        $helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/FormatOperatorSafetyHelpers.ps1"
+        . $helperPath
+
+        $fixtureRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("format-operator-violation-{0}" -f ([guid]::NewGuid().ToString("N")))
+        [void](New-Item -ItemType Directory -Path $fixtureRoot -Force)
+        $fixtureRoot = Resolve-CanonicalTempRoot -Path $fixtureRoot
+        $fixtureScriptsPath = Join-Path -Path $fixtureRoot -ChildPath "Scripts"
+        $fixtureFilePath = Join-Path -Path $fixtureScriptsPath -ChildPath "Violation.ps1"
+
+        $fixtureContent = @'
+$list = New-Object System.Collections.Generic.List[string]
+$list.Add(
+    "value {0} {1}" -f
+    $first,
+    $second
+) | Out-Null
+'@
+
+        try {
+            [void](New-Item -ItemType Directory -Path $fixtureScriptsPath -Force)
+            [System.IO.File]::WriteAllText($fixtureFilePath, $fixtureContent, [System.Text.UTF8Encoding]::new($false))
+
+            $violations = @(Get-FormatOperatorContinuationViolations -RootPath $fixtureRoot -RelativeRoots @("Scripts"))
+            $violations.Count | Should -Be 1
+            $violations[0].Path | Should -Be "Scripts/Violation.ps1"
+            $violations[0].Path | Should -Not -Match '\\'
+            $violations[0].Line | Should -Be 4
+            $violations[0].PlaceholderMaxIndex | Should -Be 1
+            $violations[0].Snippet | Should -Be '$first,'
+        }
+        finally {
+            if (Test-Path -Path $fixtureRoot -PathType Container) {
+                Remove-Item -Path $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "keeps format-operator helper path outputs normalized for cross-platform determinism" {
+        $helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/FormatOperatorSafetyHelpers.ps1"
+        $content = (Get-Content -Path $helperPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'function\s+ConvertTo-PortableFormatOperatorPath\b'
+        $content | Should -Match "function\s+ConvertTo-PortableFormatOperatorPath[\s\S]*?-replace\s+'\[\\\\/\]\+'\s*,\s*'/'"
+        $content | Should -Match 'relativeParsePath\s*=\s*ConvertTo-PortableFormatOperatorPath\s+-PathValue\s+\(\[System\.IO\.Path\]::GetRelativePath'
+        $content | Should -Match 'relativePath\s*=\s*ConvertTo-PortableFormatOperatorPath\s+-PathValue\s+\(\[System\.IO\.Path\]::GetRelativePath'
+    }
+
+    It "emits verbose diagnostics for module path candidate handling in ModuleHelpers" {
+        $moduleHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/ModuleHelpers.ps1"
+        $content = Get-Content -Path $moduleHelperPath -Raw
+
+        $content | Should -Match 'Module path candidate skipped: empty-or-whitespace path\.'
+        $content | Should -Match 'Module path candidate skipped: directory does not exist; path='''
+        $content | Should -Match 'Module path candidate skipped: already present; path='''
+        $content | Should -Match 'Module path candidate added: path='''
+        $content | Should -Match 'Module path discovery: MyDocuments path unavailable\.'
+        $content | Should -Match 'Module path discovery: UserProfile path unavailable\.'
+        $content | Should -Match 'Module import diagnostics: module=\{0\}; minimumVersion=\{1\}; importFailure=\{2\}'
+        $content | Should -Match 'function\s+Get-ModulePathDiagnosticsText\b'
+    }
+
+    It "includes PSModulePath diagnostics in Pester minimum-version failure output" {
+        $pesterGatePath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
+        $content = Get-Content -Path $pesterGatePath -Raw
+
+        $content | Should -Match 'Get-ModulePathDiagnosticsText'
+        $content | Should -Match 'Module path diagnostics:'
+        $content | Should -Match 'Install-Module Pester -Scope CurrentUser -MinimumVersion \{0\} -Force'
+    }
+
+    It "adds module version scope diagnostics to module helper failures" {
+        $moduleHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/ModuleHelpers.ps1"
+        $content = Get-Content -Path $moduleHelperPath -Raw
+
+        $content | Should -Match 'function\s+Get-AvailableModuleVersionScopeText\b'
+        $content | Should -Match 'versionScopes='
+        $content | Should -Match 'windows-powershell'
+        $content | Should -Match 'pwsh'
+    }
+
+    It "provides explicit PowerShell quality module bootstrap automation" {
+        $bootstrapPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1"
+        Test-Path -Path $bootstrapPath -PathType Leaf | Should -BeTrue
+
+        $content = (Get-Content -Path $bootstrapPath -Raw) -replace "`r", ''
+        $content | Should -Match 'Common/ModuleHelpers\.ps1'
+        $content | Should -Match '\[ValidateSet\("Pester",\s*"PSScriptAnalyzer"\)\]'
+        $content | Should -Match 'Set-PSRepository\s+-Name\s+"PSGallery"\s+-InstallationPolicy\s+Trusted'
+        $content | Should -Match 'Install-Module\s+-Name\s+\$requirement\.ModuleName\s+-Repository\s+"PSGallery"\s+-Scope\s+CurrentUser\s+-MinimumVersion\s+\$requirement\.MinimumVersion\s+-Force'
+        $content | Should -Match 'E_MODULE_BOOTSTRAP_INSTALL_FAILED'
+        $content | Should -Match 'E_MODULE_BOOTSTRAP_VERIFY_FAILED'
+    }
+
+    It "uses bootstrap remediation commands in module prerequisite diagnostics" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $fullValidationPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-FullValidation.ps1"
+        $formatterPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Format-PowerShellFiles.ps1"
+        $pesterGatePath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
+
+        $preCommitContent = Get-Content -Path $preCommitPath -Raw
+        $fullValidationContent = Get-Content -Path $fullValidationPath -Raw
+        $formatterContent = Get-Content -Path $formatterPath -Raw
+        $pesterGateContent = Get-Content -Path $pesterGatePath -Raw
+
+        $preCommitContent | Should -Match 'Install-PowerShellQualityModules\.ps1 -Modules Pester'
+        $preCommitContent | Should -Match 'Install-PowerShellQualityModules\.ps1 -Modules PSScriptAnalyzer'
+        $fullValidationContent | Should -Match 'Install-PowerShellQualityModules\.ps1 -Modules Pester'
+        $fullValidationContent | Should -Match 'Install-PowerShellQualityModules\.ps1 -Modules PSScriptAnalyzer'
+        $formatterContent | Should -Match 'Install-PowerShellQualityModules\.ps1 -Modules PSScriptAnalyzer'
+        $pesterGateContent | Should -Match 'Install-PowerShellQualityModules\.ps1 -Modules Pester'
+    }
+
+    It "documents module path diagnostics contract in context rule 16" {
+        $contextPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/context.md'
+        $content = Get-Content -Path $contextPath -Raw
+
+        $content | Should -Match 'Module path candidate rejection reasons'
+        $content | Should -Match 'PSModulePath.*entry counts plus preview'
+        $content | Should -Match 'Avoid unbounded Process\.WaitForExit\(\)'
+    }
+
+    It "documents bootstrap remediation in context rule 17 and validation workflow" {
+        $contextPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/context.md'
+        $validationWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/validation-workflow.md'
+
+        $contextContent = Get-Content -Path $contextPath -Raw
+        $validationWorkflowContent = Get-Content -Path $validationWorkflowPath -Raw
+
+        $contextContent | Should -Match 'Install-PowerShellQualityModules\.ps1'
+        $contextContent | Should -Match 'rerun preflight before any hook execution'
+        $validationWorkflowContent | Should -Match 'Install-PowerShellQualityModules\.ps1'
+        $validationWorkflowContent | Should -Match 'Invoke-FullValidation\.ps1 -PreflightOnly'
+    }
+
+    It "documents hook timeout guardrails in context and precommit skill guidance" {
+        $contextPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/context.md'
+        $validationWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/validation-workflow.md'
+        $skillDetailPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details/precommit-hooks-and-fallbacks.md'
+
+        $contextContent = Get-Content -Path $contextPath -Raw
+        $validationWorkflowContent = Get-Content -Path $validationWorkflowPath -Raw
+        $skillDetailContent = Get-Content -Path $skillDetailPath -Raw
+
+        $contextContent | Should -Match 'E_HOOK_TIMEOUT'
+        $contextContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
+        $contextContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
+        $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $contextContent | Should -Match 'Copilot/agent-driven test execution'
+        $contextContent | Should -Match 'avoid direct `Invoke-Pester` terminal calls'
+
+        $validationWorkflowContent | Should -Match 'E_HOOK_TIMEOUT'
+        $validationWorkflowContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
+        $validationWorkflowContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
+        $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $validationWorkflowContent | Should -Match 'do not call `Invoke-Pester` directly'
+        $validationWorkflowContent | Should -Match 'timeout --foreground 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate\.ps1'
+        $validationWorkflowContent | Should -Match 'OutputVerbosity None'
+
+        $skillDetailContent | Should -Match 'Timeout-Guarded Hook Execution'
+        $skillDetailContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
+        $skillDetailContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
+        $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $skillDetailContent | Should -Match 'do not run direct `Invoke-Pester` terminal commands'
     }
 
     It "keeps Run-PreCommitValidation LLM harness telemetry low-noise" {
@@ -2263,10 +2707,12 @@ Describe "Utility configuration safety conventions" {
         $pesterGatePath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
         $content = Get-Content -Path $pesterGatePath -Raw
 
+        $content | Should -Match '\$OutputVerbosity\s*=\s*"None"'
         $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: version='
         $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: modulePath='
         $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: hasNewPesterConfiguration='
         $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: passed='
+        $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: outputVerbosity='
         $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: coverageProperties='
         $content | Should -Match 'Write-Verbose\s*"\$DiagnosticsPrefix diagnostics: coveragePercent='
         $content | Should -Not -Match 'Write-Host\s*"\$DiagnosticsPrefix diagnostics:'
@@ -2422,10 +2868,15 @@ Describe "Utility configuration safety conventions" {
     It "uses literal path validation for Pandoc input directory" {
         $pandocPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/PandocConvertDirectory.ps1'
         $pandocContent = (Get-Content -Path $pandocPath -Raw) -replace "`r", ''
+        $dotSourceIndex = $pandocContent.IndexOf('. $strictModeHelpersPath', [System.StringComparison]::Ordinal)
+        if ($dotSourceIndex -lt 0) {
+            $dotSourceIndex = $pandocContent.IndexOf('.$strictModeHelpersPath', [System.StringComparison]::Ordinal)
+        }
 
         $pandocContent | Should -Match 'ValidateScript\(\{\s*Test-Path\s+-LiteralPath\s+\$_\s+-PathType\s+''Container''\s*\}\)'
-        $pandocContent.IndexOf('Set-StrictMode -Version Latest', [System.StringComparison]::Ordinal) | Should -BeLessThan $pandocContent.IndexOf('. $strictModeHelpersPath', [System.StringComparison]::Ordinal)
-        $pandocContent.IndexOf('$ErrorActionPreference = "Stop"', [System.StringComparison]::Ordinal) | Should -BeLessThan $pandocContent.IndexOf('. $strictModeHelpersPath', [System.StringComparison]::Ordinal)
+        $dotSourceIndex | Should -BeGreaterThan -1 -Because 'PandocConvertDirectory.ps1 must dot-source StrictModeHelpers.'
+        $pandocContent.IndexOf('Set-StrictMode -Version Latest', [System.StringComparison]::Ordinal) | Should -BeLessThan $dotSourceIndex
+        $pandocContent.IndexOf('$ErrorActionPreference = "Stop"', [System.StringComparison]::Ordinal) | Should -BeLessThan $dotSourceIndex
     }
 }
 

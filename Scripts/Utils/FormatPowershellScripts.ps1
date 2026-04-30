@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
-. $strictModeHelpersPath
+.$strictModeHelpersPath
 
 function Resolve-BeautifierModulePath {
     [CmdletBinding()]

@@ -22,6 +22,9 @@ Describe "Invoke-FullValidation workflow contract" {
         "E_VALIDATION_CI_FAILED"
         "E_VALIDATION_PR_MISSING"
         "E_VALIDATION_PREREQ_MISSING"
+        "E_VALIDATION_ARG_CONFLICT"
+        "E_VALIDATION_POWERSHELL_MODULES_MISSING"
+        "E_VALIDATION_MODULE_HELPER_MISSING"
         "E_VALIDATION_STATUS_BEFORE_NULL"
         "E_VALIDATION_STATUS_AFTER_NULL"
     )
@@ -56,6 +59,23 @@ Describe "Invoke-FullValidation workflow contract" {
         $script:validationScript | Should -Match 'Test-LlmHarness\.ps1'
     }
 
+    It "runs PowerShell quality module preflight before pre-commit execution" {
+        $script:validationScript | Should -Match 'Common/ModuleHelpers\.ps1'
+        $script:validationScript | Should -Match 'Assert-PowerShellQualityModuleAvailability'
+        $script:validationScript | Should -Match 'PowerShell module prerequisite check'
+        $script:validationScript | Should -Match 'Assert-ModuleCommandRequirements\s+-Requirements\s+\$moduleRequirements\s+-ErrorCode\s+"E_VALIDATION_POWERSHELL_MODULES_MISSING"'
+        $script:validationScript | Should -Match 'Invoke-ScriptAnalyzer'
+        $script:validationScript | Should -Match 'Invoke-Formatter'
+        $script:validationScript | Should -Match 'Invoke-Pester'
+    }
+
+    It "supports lightweight preflight-only mode" {
+        $script:validationScript | Should -Match '\[switch\]\$PreflightOnly'
+        $script:validationScript | Should -Match 'E_VALIDATION_ARG_CONFLICT'
+        $script:validationScript | Should -Match 'Validation preflight passed\.'
+        $script:validationScript | Should -Match 'if\s*\(\$PreflightOnly\s*-and\s*\$WatchCi\)'
+    }
+
     It "enforces workspace drift safeguard: <Name>" -ForEach $workspaceDriftSafetyMarkers {
         $script:validationScript | Should -Match $Pattern
     }
@@ -75,5 +95,11 @@ Describe "Invoke-FullValidation workflow contract" {
 Describe "Pre-push enforcement integration" {
     It "uses Invoke-FullValidation.ps1 from pre-push when pwsh is available" {
         $script:prePushHook | Should -Match 'Invoke-FullValidation\.ps1'
+    }
+
+    It "keeps pre-push wrapper execution bounded by timeout guardrails" {
+        $script:prePushHook | Should -Match 'run_with_timeout'
+        $script:prePushHook | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
+        $script:prePushHook | Should -Match 'E_HOOK_TIMEOUT'
     }
 }

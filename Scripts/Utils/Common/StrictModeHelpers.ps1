@@ -41,7 +41,7 @@ function Get-SafeJsonPreview {
         [string]$Json,
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(20, 500)]
+        [ValidateRange(20,500)]
         [int]$MaxLength = 120
     )
 
@@ -49,14 +49,14 @@ function Get-SafeJsonPreview {
         return "<empty>"
     }
 
-    $preview = ($Json -replace "\s+", " ").Trim()
+    $preview = ($Json -replace "\s+"," ").Trim()
     # Keep diagnostics useful while avoiding token leakage.
-    $preview = [regex]::Replace($preview, '(?i)(Authorization\s*:\s*(?:Bearer|token)\s+)[A-Za-z0-9_\-\.]{20,}', '$1<redacted>')
-    $preview = [regex]::Replace($preview, '\bghp_[A-Za-z0-9]{36}\b', 'ghp_<redacted>')
-    $preview = [regex]::Replace($preview, '\bgithub_pat_[A-Za-z0-9_]{80,}\b', 'github_pat_<redacted>')
+    $preview = [regex]::Replace($preview,'(?i)(Authorization\s*:\s*(?:Bearer|token)\s+)[A-Za-z0-9_\-\.]{20,}','$1<redacted>')
+    $preview = [regex]::Replace($preview,'\bghp_[A-Za-z0-9]{36}\b','ghp_<redacted>')
+    $preview = [regex]::Replace($preview,'\bgithub_pat_[A-Za-z0-9_]{80,}\b','github_pat_<redacted>')
 
     if ($preview.Length -gt $MaxLength) {
-        return ($preview.Substring(0, $MaxLength) + "...")
+        return ($preview.Substring(0,$MaxLength) + "...")
     }
 
     return $preview

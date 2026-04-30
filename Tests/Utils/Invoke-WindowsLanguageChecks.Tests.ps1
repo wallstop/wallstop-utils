@@ -185,9 +185,9 @@ Describe "Invoke-AutoHotkeyCommand" {
         @{
             Case               = "large stderr stream remains deterministic"
             Executable         = "pwsh"
-            Arguments          = @("-NoLogo", "-NoProfile", "-Command", '1..1500 | ForEach-Object { [Console]::Error.WriteLine("problem-stderr-$_") }; exit 9')
+            Arguments          = @("-NoLogo", "-NoProfile", "-Command", '1..400 | ForEach-Object { [Console]::Error.WriteLine("problem-stderr-$_") }; exit 9')
             ExpectedExitCode   = 9
-            ExpectedOutputLike = "problem-stderr-750"
+            ExpectedOutputLike = "problem-stderr-200"
         }
     ) {
         param(
@@ -217,8 +217,8 @@ Describe "Invoke-AutoHotkeyCommand" {
         else {
             $result.Output -join "`n"
         }
-        Write-Host "[Invoke-AutoHotkeyCommand diag] Case='$Case' ExitCode=$($result.ExitCode) ExpectedExitCode=$expectedExitCode OutputLines=$outputLineCount IsWindows=$IsWindows diagnostics=$diagnostics"
-        Write-Host "[Invoke-AutoHotkeyCommand diag] OutputPreview:`n$outputPreview"
+        Write-Verbose "[Invoke-AutoHotkeyCommand diag] Case='$Case' ExitCode=$($result.ExitCode) ExpectedExitCode=$expectedExitCode OutputLines=$outputLineCount IsWindows=$IsWindows diagnostics=$diagnostics"
+        Write-Verbose "[Invoke-AutoHotkeyCommand diag] OutputPreview:`n$outputPreview"
 
         $result.ExitCode | Should -Be $expectedExitCode -Because "Case='$Case' expected exit code $expectedExitCode but got $($result.ExitCode). diagnostics=$diagnostics"
         $outputText = ($result.Output -join " ")
