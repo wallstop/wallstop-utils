@@ -171,6 +171,8 @@ array semantics in empty-result paths.
 - Use `return , @()` (comma operator) when callers access `.Count` directly on the result.
 - If callers always wrap with `@()`, the bare `return @()` is safe — add `# array-unwrap-safe`.
 - Do not comma-wrap already materialized arrays returned to call sites that already use `@(...)`; `return , $array` in that case creates nested arrays and breaks `foreach` step iteration.
+- For array-return helpers with multiple call sites, keep one explicit contract end-to-end: either bare returns + `@(...)` at every call site, or comma-wrapped returns + non-wrapped call sites; do not mix contracts.
+- Add both behavioral and structural coverage for high-risk array-return helpers: behavior tests for empty/non-empty flattening plus AST/pattern checks that call-site wrapper usage matches the helper's return contract.
 - A convention test in `ScriptSafetyConventions.Tests.ps1` enforces this in `Scripts/`.
 
 ## Cross-Platform PowerShell Portability

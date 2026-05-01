@@ -2366,7 +2366,7 @@ Describe "Utility configuration safety conventions" {
 
         $content | Should -Match 'Get-FirstRootErrorCode'
         $content | Should -Match 'Write-IsolatedPesterFailureArtifact'
-        $content | Should -Match 'Convert-ToRedactedOutputLines\s+-OutputLines\s+\$combinedLines'
+        $content | Should -Match '@\(\s*Convert-ToRedactedOutputLines\s+-OutputLines\s+\$combinedLines\s*\)'
         $content | Should -Match 'authorization\\s\*\[:=\]\\s\*'
         $content | Should -Match 'authorization\\s\*\[:=\]\\s\*\)\.\+\$'
         $content | Should -Match 'access\[_-\]\?token'
@@ -2413,6 +2413,75 @@ Describe "Utility configuration safety conventions" {
         }
     }
 
+    It "keeps Convert-ToRedactedOutputLines flat and wrapper-safe for @(... ) call sites" {
+        $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $content = (Get-Content -Path $preCommitPath -Raw) -replace "`r", ""
+
+        $content | Should -Match 'return\s+@\(\)\s+#\s*array-unwrap-safe:\s*callers always wrap with @\(\)'
+        $content | Should -Match 'return\s+@\(\$redactedLines\.ToArray\(\)\)\s+#\s*array-unwrap-safe:\s*callers always wrap with @\(\)'
+        $content | Should -Not -Match 'function\s+Convert-ToRedactedOutputLines\s*\{[\s\S]*?return\s*,\s*@\('
+
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($preCommitPath, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count -gt 0) {
+            throw "E_CONFIG_ERROR: Failed to parse Run-PreCommitValidation.ps1 for array-shape behavior checks."
+        }
+
+        $requiredFunctions = @("Get-RedactedFailureLine", "Convert-ToRedactedOutputLines")
+        foreach ($requiredFunction in $requiredFunctions) {
+            $targetFunction = @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $requiredFunction
+                    }, $true) | Select-Object -First 1)
+
+            $targetFunction.Count | Should -Be 1 -Because "Expected function '$requiredFunction' for array-shape behavior checks."
+            . ([scriptblock]::Create($targetFunction[0].Extent.Text))
+        }
+
+        try {
+            $emptyResult = @(Convert-ToRedactedOutputLines -OutputLines @())
+            $emptyResult.Count | Should -Be 0
+
+            $nullResult = @(Convert-ToRedactedOutputLines -OutputLines $null)
+            $nullResult.Count | Should -Be 0
+
+            $redactedResult = @(Convert-ToRedactedOutputLines -OutputLines @('Authorization: Bearer "secretjwt"', 'line-two'))
+            $redactedResult.Count | Should -Be 2
+            $redactedResult[0] | Should -Be 'Authorization: [REDACTED]'
+            $redactedResult[1] | Should -Be 'line-two'
+
+            foreach ($line in $redactedResult) {
+                $line | Should -BeOfType [string]
+            }
+        }
+        finally {
+            Remove-Item -Path Function:Convert-ToRedactedOutputLines -ErrorAction SilentlyContinue
+            Remove-Item -Path Function:Get-RedactedFailureLine -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps Convert-CapturedTextToLines defined only where it is used" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils"
+        $scriptFiles = @(Get-ChildItem -Path $scriptsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop)
+        $definitions = New-Object System.Collections.Generic.List[string]
+
+        foreach ($scriptFile in $scriptFiles) {
+            $lineNumber = 0
+            foreach ($line in @(Get-Content -Path $scriptFile.FullName)) {
+                $lineNumber++
+                if ($line -match '^\s*function\s+Convert-CapturedTextToLines\b') {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $portableRelativePath = $relativePath -replace '\\', '/'
+                    $definitions.Add("${portableRelativePath}:$lineNumber") | Out-Null
+                }
+            }
+        }
+
+        $definitions.Count | Should -Be 1 -Because ("Convert-CapturedTextToLines should not drift across scripts. Definitions: {0}" -f ($definitions -join ', '))
+        $definitions[0] | Should -Match '^Scripts/Utils/Quality/Invoke-WindowsLanguageChecks\.ps1:\d+$'
+    }
+
     It "keeps isolated Pester failure artifacts temp-root based and redacted" {
         $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
         $content = Get-Content -Path $preCommitPath -Raw
@@ -2424,8 +2493,8 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'function\s+Resolve-CanonicalPath\s*\{'
         $content | Should -Match 'Resolve-CanonicalPath\s+-Path\s+\$tempRoot'
         $content | Should -Match 'wallstop-precommit-validation'
-        $content | Should -Match 'Convert-ToRedactedOutputLines\s+-OutputLines\s+\$StdoutLines'
-        $content | Should -Match 'Convert-ToRedactedOutputLines\s+-OutputLines\s+\$StderrLines'
+        $content | Should -Match '@\(\s*Convert-ToRedactedOutputLines\s+-OutputLines\s+\$StdoutLines\s*\)'
+        $content | Should -Match '@\(\s*Convert-ToRedactedOutputLines\s+-OutputLines\s+\$StderrLines\s*\)'
         $content | Should -Match 'Get-RedactedFailureLine'
         $content | Should -Match 'function\s+Test-IsLinkOrReparsePoint\s*\{'
         $content | Should -Match 'Test-IsLinkOrReparsePoint\s+-Item\s+\$artifactDirectoryItem'

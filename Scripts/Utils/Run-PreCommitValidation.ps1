@@ -86,31 +86,6 @@ function Get-PwshExecutableOrThrow {
     return $pwshCommand.Source
 }
 
-function Convert-CapturedTextToLines {
-    param(
-        [Parameter(Mandatory = $false)]
-        [AllowNull()]
-        [string]$Text
-    )
-
-    if ([string]::IsNullOrEmpty($Text)) {
-        return @() # array-unwrap-safe: callers always wrap with @()
-    }
-
-    $normalized = $Text -replace "`r", ""
-    $lines = @($normalized -split "`n")
-
-    while ($lines.Count -gt 0 -and [string]::IsNullOrEmpty($lines[$lines.Count - 1])) {
-        if ($lines.Count -eq 1) {
-            return @() # array-unwrap-safe: callers always wrap with @()
-        }
-
-        $lines = @($lines[0..($lines.Count - 2)])
-    }
-
-    return @($lines)
-}
-
 function Get-OutputPreview {
     param(
         [Parameter(Mandatory = $false)]
@@ -281,7 +256,7 @@ function Convert-ToRedactedOutputLines {
     )
 
     if ($null -eq $OutputLines -or $OutputLines.Count -eq 0) {
-        return , @()
+        return @() # array-unwrap-safe: callers always wrap with @()
     }
 
     $redactedLines = New-Object System.Collections.Generic.List[string]
@@ -289,7 +264,7 @@ function Convert-ToRedactedOutputLines {
         $redactedLines.Add((Get-RedactedFailureLine -Line $line)) | Out-Null
     }
 
-    return , @($redactedLines.ToArray())
+    return @($redactedLines.ToArray()) # array-unwrap-safe: callers always wrap with @()
 }
 
 function Write-IsolatedPesterFailureArtifact {
