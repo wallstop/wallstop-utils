@@ -8,6 +8,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$diagnosticsHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/DiagnosticsHelpers.ps1"
+if (-not (Test-Path -Path $diagnosticsHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Diagnostics helper file not found at '$diagnosticsHelpersPath'."
+}
+
+.$diagnosticsHelpersPath
+
 function Convert-OutputToStringArray {
     param(
         [Parameter(Mandatory = $false)]
@@ -29,31 +36,6 @@ function Convert-OutputToStringArray {
                 }
             }
     )
-}
-
-function Get-OutputPreview {
-    param(
-        [Parameter(Mandatory = $false)]
-        [string[]]$Output = @(),
-
-        [Parameter(Mandatory = $false)]
-        [int]$MaxLength = 240
-    )
-
-    if ($null -eq $Output -or $Output.Count -eq 0) {
-        return "(no output)"
-    }
-
-    $collapsed = (($Output -join " ") -replace "\s+"," ").Trim()
-    if ([string]::IsNullOrWhiteSpace($collapsed)) {
-        return "(no output)"
-    }
-
-    if ($collapsed.Length -le $MaxLength) {
-        return $collapsed
-    }
-
-    return ($collapsed.Substring(0,$MaxLength) + " ...")
 }
 
 function Test-OutputLooksLikeUnsupportedAhkSwitch {
@@ -364,7 +346,7 @@ function Get-AutoHotkeyAttemptDiagnostics {
 
     $parts = New-Object System.Collections.Generic.List[string]
     foreach ($attempt in $Attempts) {
-        $preview = Get-OutputPreview -Output @($attempt.Output)
+        $preview = Get-OutputPreview -Output @($attempt.Output) -MaxLength 240 -CollapseWhitespace
         $parts.Add("$($attempt.Mode): exit=$($attempt.ExitCode), output=$preview") | Out-Null
     }
 

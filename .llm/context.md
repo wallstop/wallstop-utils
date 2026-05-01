@@ -241,8 +241,10 @@ Backup and restore scripts under `Scripts/` must prioritize data safety and dete
 15. Cross-platform orchestrators (`Backup.ps1`, `Restore.ps1`, `Update.ps1`) must annotate steps with `SupportedPlatforms` metadata, execute only platform-applicable steps, and emit stable `W_*_STEP_SKIPPED_PLATFORM` diagnostics for skipped Windows-only steps.
 16. `Backup.ps1` must run a clean-tree preflight before any backup step executes and fail with `E_BACKUP_GIT_TREE_DIRTY_PREFLIGHT` when pre-existing tracked/untracked changes are present.
 17. `Backup.ps1` must scope staging to managed backup outputs (`Config/`) and must not use `git add --all`; out-of-scope changes must fail with `E_BACKUP_GIT_SCOPE_VIOLATION`.
-18. Backup commit retries are allowed only for hook autofix cases (`files were modified by this hook`) and must use bounded restage-and-retry loops with explicit `E_BACKUP_GIT_RESTAGE_FAILED` / `E_BACKUP_GIT_COMMIT_RETRY_LIMIT` diagnostics.
+18. Backup commit retries are allowed only for hook autofix cases (`files were modified by this hook`) and must use bounded restage-and-retry loops with explicit `E_BACKUP_GIT_RESTAGE_FAILED` / `E_BACKUP_GIT_COMMIT_RETRY_LIMIT` diagnostics. Retry logic must not restage on the final allowed attempt, and retry-limit diagnostics must report actual commit attempts performed plus configured attempt/retry bounds.
 19. `Backup.ps1` and `Update.ps1` must not run `FormatPowershellScripts.ps1`; source-code formatting is governed by pre-commit hooks and explicit formatter workflows.
+20. Git status/diff failure diagnostics in backup and quality orchestrators (notably `Backup.ps1`, `Invoke-FullValidation.ps1`, and `Assert-CleanGitTree.ps1`) must preserve clean stdout in success paths while including actionable context on failure (`repositoryRoot`, pathspec where applicable, and bounded `outputPreview`).
+21. Shared diagnostics output-preview helpers in utility scripts must be centralized under `Scripts/Utils/Common/DiagnosticsHelpers.ps1`; consuming scripts (notably `Backup.ps1`, `Run-PreCommitValidation.ps1`, `Invoke-FullValidation.ps1`, `Assert-CleanGitTree.ps1`, and `Invoke-WindowsLanguageChecks.ps1`) must source that helper and avoid duplicate local `Get-OutputPreview` implementations.
 
 ## Contribution Rules
 

@@ -7,6 +7,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$diagnosticsHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/DiagnosticsHelpers.ps1"
+if (-not (Test-Path -Path $diagnosticsHelpersPath -PathType Leaf)) {
+    throw "E_ASSERT_CLEAN_GIT_TREE_DIAGNOSTICS_HELPER_MISSING: diagnostics helper file not found at '$diagnosticsHelpersPath'."
+}
+
+.$diagnosticsHelpersPath
+
 $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
 if ($null -eq $gitCommand) {
     throw "E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE: git is not available on PATH."
@@ -15,11 +22,15 @@ if ($null -eq $gitCommand) {
 Write-Verbose ("Assert-CleanGitTree git diagnostics: gitPath='{0}'" -f $gitCommand.Source)
 
 $gitExecutable = $gitCommand.Source
-$status = @(& $gitExecutable status --porcelain=v1 --untracked-files=all)
+$statusArgs = @("status", "--porcelain=v1", "--untracked-files=all")
+$status = @(& $gitExecutable @statusArgs 2>$null)
 $lecValue = Get-Variable -Name 'LASTEXITCODE' -ValueOnly -ErrorAction SilentlyContinue
 $statusExitCode = if ($null -ne $lecValue) { [int]$lecValue } else { -1 }
 if ($statusExitCode -ne 0) {
-    throw "E_GIT_STATUS_FAILED: Unable to inspect repository status after $Context."
+    $statusDiagnostics = @(& $gitExecutable @statusArgs 2>&1)
+    $statusPreview = Get-OutputPreview -OutputLines $statusDiagnostics
+    $workingDirectory = (Get-Location).Path
+    throw "E_GIT_STATUS_FAILED: Unable to inspect repository status after $Context (exitCode=$statusExitCode; repositoryRoot='$workingDirectory'; outputPreview=$statusPreview)."
 }
 
 if (@($status).Count -gt 0) {

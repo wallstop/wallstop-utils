@@ -3,6 +3,12 @@ $ErrorActionPreference = "Stop"
 
 $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
 $pwshCommand = (Get-Command -Name "pwsh" -ErrorAction Stop).Source
+$diagnosticsHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/DiagnosticsHelpers.ps1"
+if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
+    throw "E_BACKUP_DIAGNOSTICS_HELPER_MISSING: diagnostics helper file not found at '$diagnosticsHelpersPath'."
+}
+
+. $diagnosticsHelpersPath
 
 function Get-LastExitCodeOrDefault {
     $lecValue = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
@@ -11,6 +17,31 @@ function Get-LastExitCodeOrDefault {
     }
 
     return 0
+}
+
+function Get-PathspecDiagnosticsText {
+    param(
+        [Parameter(Mandatory = $false)]
+        [string[]]$Pathspec = @()
+    )
+
+    if (@($Pathspec).Count -eq 0) {
+        return "(none)"
+    }
+
+    return (@($Pathspec | ForEach-Object { "'{0}'" -f $_ }) -join ', ')
+}
+
+function Get-GitCommandDiagnosticsOutput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$GitArguments
+    )
+
+    return @(& $GitExecutable @GitArguments 2>&1) # array-unwrap-safe: callers always wrap with @()
 }
 
 function Get-GitExecutableOrThrow {
@@ -37,14 +68,18 @@ function Get-GitRepositoryRootOrThrow {
         [string]$StartDirectory
     )
 
-    $repoRootOutput = @(& $GitExecutable -C $StartDirectory rev-parse --show-toplevel 2>$null)
+    $repoRootArgs = @("-C", $StartDirectory, "rev-parse", "--show-toplevel")
+    $repoRootOutput = @(& $GitExecutable @repoRootArgs 2>$null)
     $repoRootExitCode = Get-LastExitCodeOrDefault
     if ($repoRootExitCode -ne 0 -or $repoRootOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$repoRootOutput[0])) {
+        $repoRootDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $GitExecutable -GitArguments $repoRootArgs)
+        $repoRootPreview = Get-OutputPreview -OutputLines $repoRootDiagnostics
         throw (
-            "E_BACKUP_GIT_NOT_REPOSITORY: expected a git work tree at '{0}' but rev-parse --show-toplevel returned exitCode={1} value='{2}'." -f
+            "E_BACKUP_GIT_NOT_REPOSITORY: expected a git work tree at '{0}' but rev-parse --show-toplevel returned exitCode={1} value='{2}' outputPreview={3}." -f
             $StartDirectory,
             $repoRootExitCode,
-            (($repoRootOutput -join ' ').Trim())
+            (($repoRootOutput -join ' ').Trim()),
+            $repoRootPreview
         )
     }
 
@@ -72,7 +107,16 @@ function Get-GitStatusLinesOrThrow {
     $statusOutput = @(& $GitExecutable @statusArgs 2>$null)
     $statusExitCode = Get-LastExitCodeOrDefault
     if ($statusExitCode -ne 0) {
-        throw "E_BACKUP_GIT_STATUS_FAILED: git status check failed (exitCode=$statusExitCode)."
+        $statusDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $GitExecutable -GitArguments $statusArgs)
+        $statusPreview = Get-OutputPreview -OutputLines $statusDiagnostics
+        $pathspecText = Get-PathspecDiagnosticsText -Pathspec $Pathspec
+        throw (
+            "E_BACKUP_GIT_STATUS_FAILED: git status --porcelain=v1 --untracked-files=all failed (exitCode={0}; repositoryRoot='{1}'; pathspec={2}; outputPreview={3})." -f
+            $statusExitCode,
+            $RepositoryRoot,
+            $pathspecText,
+            $statusPreview
+        )
     }
 
     return @($statusOutput) # array-unwrap-safe: callers always wrap with @()
@@ -306,15 +350,19 @@ try {
     $managedPathspecs = @(Get-BackupManagedPathspecs)
     Assert-BackupManagedPathspecs -ManagedPathspecs $managedPathspecs
 
-    $insideWorkTreeOutput = @(& $gitExecutable -C $repositoryRoot rev-parse --is-inside-work-tree 2>$null)
+    $insideWorkTreeArgs = @("-C", $repositoryRoot, "rev-parse", "--is-inside-work-tree")
+    $insideWorkTreeOutput = @(& $gitExecutable @insideWorkTreeArgs 2>$null)
     $insideWorkTreeExitCode = Get-LastExitCodeOrDefault
     $insideWorkTree = if ($insideWorkTreeOutput.Count -gt 0) { ([string]$insideWorkTreeOutput[0]).Trim() } else { "" }
     if ($insideWorkTreeExitCode -ne 0 -or $insideWorkTree -ne "true") {
+        $insideWorkTreeDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $gitExecutable -GitArguments $insideWorkTreeArgs)
+        $insideWorkTreePreview = Get-OutputPreview -OutputLines $insideWorkTreeDiagnostics
         throw (
-            "E_BACKUP_GIT_NOT_REPOSITORY: expected a git work tree at '{0}' but rev-parse returned exitCode={1} value='{2}'." -f
+            "E_BACKUP_GIT_NOT_REPOSITORY: expected a git work tree at '{0}' but rev-parse returned exitCode={1} value='{2}' outputPreview={3}." -f
             $repositoryRoot,
             $insideWorkTreeExitCode,
-            $insideWorkTree
+            $insideWorkTree,
+            $insideWorkTreePreview
         )
     }
 
@@ -429,7 +477,15 @@ try {
         $stagedFiles = @(& $gitExecutable @gitDiffArgs 2>$null)
         $stagedFilesExitCode = Get-LastExitCodeOrDefault
         if ($stagedFilesExitCode -ne 0) {
-            Write-Warning ("E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only (managed pathspecs) exited with code {0}." -f $stagedFilesExitCode)
+            $stagedFilesDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $gitExecutable -GitArguments $gitDiffArgs)
+            $stagedFilesPreview = Get-OutputPreview -OutputLines $stagedFilesDiagnostics
+            Write-Warning (
+                "E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only (managed pathspecs) exited with code {0}; repositoryRoot='{1}'; pathspec={2}; outputPreview={3}." -f
+                $stagedFilesExitCode,
+                $repositoryRoot,
+                (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs),
+                $stagedFilesPreview
+            )
             $hasGitFailure = $true
         }
     }
@@ -452,9 +508,9 @@ try {
             }
 
             $maxCommitAttempts = 5
+            $maxAutofixRetries = [Math]::Max(0, $maxCommitAttempts - 1)
             $commitAttempt = 0
             $commitSucceeded = $false
-            $restageFailed = $false
 
             while (-not $commitSucceeded -and $commitAttempt -lt $maxCommitAttempts) {
                 $commitAttempt++
@@ -470,12 +526,7 @@ try {
                 $commitOutputText = $commitOutput -join [Environment]::NewLine
                 $autofixDetected = $commitOutputText -match '(?im)(files were modified by this hook|modified by this hook|hook.+modified)'
                 if (-not $autofixDetected) {
-                    $commitOutputPreview = if ($commitOutput.Count -gt 0) {
-                        @($commitOutput | Select-Object -First 5 | ForEach-Object { $_.Trim() }) -join ' | '
-                    }
-                    else {
-                        '(no output)'
-                    }
+                    $commitOutputPreview = Get-OutputPreview -OutputLines $commitOutput
 
                     Write-Warning (
                         "E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0} on attempt {1}. outputPreview={2}" -f
@@ -487,10 +538,26 @@ try {
                     break
                 }
 
+                if ($commitAttempt -ge $maxCommitAttempts) {
+                    $commitOutputPreview = Get-OutputPreview -OutputLines $commitOutput
+                    Write-Warning (
+                        "E_BACKUP_GIT_COMMIT_RETRY_LIMIT: git commit did not succeed after {0} total commit attempt(s) (maxAttempts={1}; maxAutofixRetries={2}); lastOutputPreview={3}." -f
+                        $commitAttempt,
+                        $maxCommitAttempts,
+                        $maxAutofixRetries,
+                        $commitOutputPreview
+                    )
+                    $hasGitFailure = $true
+                    break
+                }
+
+                $nextCommitAttempt = $commitAttempt + 1
+
                 Write-Warning (
-                    "W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX: commit hook modified files; restaging managed pathspecs and retrying (attempt {0}/{1})." -f
-                    $commitAttempt,
-                    $maxCommitAttempts
+                    "W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX: commit hook modified files; restaging managed pathspecs before retry attempt {0} of {1} (maxAutofixRetries={2})." -f
+                    $nextCommitAttempt,
+                    $maxCommitAttempts,
+                    $maxAutofixRetries
                 )
 
                 $restageArgs = @("-C", $repositoryRoot, "add", "--")
@@ -503,7 +570,6 @@ try {
                         $restageExitCode,
                         $commitAttempt
                     )
-                    $restageFailed = $true
                     $hasGitFailure = $true
                     break
                 }
@@ -513,10 +579,15 @@ try {
                 $retryStagedFiles = @(& $gitExecutable @retryDiffArgs 2>$null)
                 $retryDiffExitCode = Get-LastExitCodeOrDefault
                 if ($retryDiffExitCode -ne 0) {
+                    $retryDiffDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $gitExecutable -GitArguments $retryDiffArgs)
+                    $retryDiffPreview = Get-OutputPreview -OutputLines $retryDiffDiagnostics
                     Write-Warning (
-                        "E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only (managed pathspecs) failed during commit retry (attempt {0}) with code {1}." -f
+                        "E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only (managed pathspecs) failed during commit retry (attempt {0}) with code {1}; repositoryRoot='{2}'; pathspec={3}; outputPreview={4}." -f
                         $commitAttempt,
-                        $retryDiffExitCode
+                        $retryDiffExitCode,
+                        $repositoryRoot,
+                        (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs),
+                        $retryDiffPreview
                     )
                     $hasGitFailure = $true
                     break
@@ -530,14 +601,6 @@ try {
                     $hasGitFailure = $true
                     break
                 }
-            }
-
-            if (-not $commitSucceeded -and -not $hasGitFailure -and -not $restageFailed) {
-                Write-Warning (
-                    "E_BACKUP_GIT_COMMIT_RETRY_LIMIT: git commit did not succeed after {0} autofix retry attempt(s)." -f
-                    $maxCommitAttempts
-                )
-                $hasGitFailure = $true
             }
         }
         else {

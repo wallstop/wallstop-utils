@@ -1479,7 +1479,8 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"git"'
         $backupScript | Should -Match 'E_BACKUP_GIT_NOT_AVAILABLE'
         $backupScript | Should -Match 'function\s+Get-GitRepositoryRootOrThrow'
-        $backupScript | Should -Match '&\s+\$gitExecutable\s+-C\s+\$repositoryRoot\s+rev-parse\s+--is-inside-work-tree'
+        $backupScript | Should -Match '\$insideWorkTreeArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"rev-parse",\s*"--is-inside-work-tree"\)'
+        $backupScript | Should -Match '&\s+\$gitExecutable\s+@insideWorkTreeArgs'
         $backupScript | Should -Match 'E_BACKUP_GIT_NOT_REPOSITORY'
         $backupScript | Should -Match 'E_BACKUP_GIT_TREE_DIRTY_PREFLIGHT'
         $backupScript | Should -Match 'E_BACKUP_GIT_SCOPE_VIOLATION'
@@ -1494,6 +1495,15 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'Backup git availability diagnostics:'
         $backupScript | Should -Match 'Backup git preflight diagnostics:'
         $backupScript | Should -Match 'Backup git staging diagnostics:'
+        $backupScript | Should -Match '\$diagnosticsHelpersPath\s*=\s*Join-Path\s+-Path\s+\$scriptsDirectory\s+-ChildPath\s+"Utils/Common/DiagnosticsHelpers\.ps1"'
+        $backupScript | Should -Match 'E_BACKUP_DIAGNOSTICS_HELPER_MISSING'
+        $backupScript | Should -Match '\.\s*\$diagnosticsHelpersPath'
+        $backupScript | Should -Not -Match 'function\s+Get-OutputPreview'
+        $backupScript | Should -Match 'function\s+Get-PathspecDiagnosticsText'
+        $backupScript | Should -Match 'function\s+Get-GitCommandDiagnosticsOutput'
+        $backupScript | Should -Match 'E_BACKUP_GIT_STATUS_FAILED:[\s\S]*repositoryRoot='
+        $backupScript | Should -Match 'E_BACKUP_GIT_STATUS_FAILED:[\s\S]*pathspec='
+        $backupScript | Should -Match 'E_BACKUP_GIT_STATUS_FAILED:[\s\S]*outputPreview='
         $backupScript | Should -Match 'Assert-BackupGitTreeCleanPreflight\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?foreach\s*\(\$step\s+in\s+\$applicableSteps\)'
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+push\s+origin\s+main'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX'
@@ -1518,6 +1528,10 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match '\$gitExecutable\s+-C\s+\$repositoryRoot\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?\$gitExecutable\s+-C\s+\$repositoryRoot\s+commit\s+-m\s+\$commitMessage' -Because "git pull --ff-only must execute before git commit; committing first causes --ff-only to fail when origin/main has advanced"
         $backupScript | Should -Match 'while\s*\(\s*-not\s+\$commitSucceeded\s+-and\s+\$commitAttempt\s+-lt\s+\$maxCommitAttempts\s*\)'
         $backupScript | Should -Match 'files were modified by this hook\|modified by this hook\|hook\.\+modified'
+        $backupScript | Should -Match 'if\s*\(\s*\$commitAttempt\s+-ge\s+\$maxCommitAttempts\s*\)\s*\{[\s\S]*?E_BACKUP_GIT_COMMIT_RETRY_LIMIT:[\s\S]*?lastOutputPreview=' -Because "Backup commit retry logic must fail immediately on final autofix attempt without restaging."
+        $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX:[\s\S]*before retry attempt \{0\} of \{1\}' -Because "Retry diagnostics should reference the next attempt, not the attempt that just failed."
+        $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT:[\s\S]*\$commitAttempt,\s*\$maxCommitAttempts,\s*\$maxAutofixRetries' -Because "Retry-limit diagnostics must report real attempts performed and configured bounds."
+        $backupScript | Should -Not -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT:[\s\S]*autofix retry attempt\(s\)' -Because "Retry-limit wording must distinguish total attempts from retry count."
     }
 
     It "uses platform-aware backup step metadata and skip diagnostics" {
@@ -2380,6 +2394,8 @@ Describe "Utility configuration safety conventions" {
     It "keeps isolated Pester failure exceptions compact and routes previews plus artifacts via warning diagnostics" {
         $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
         $content = Get-Content -Path $preCommitPath -Raw
+        $diagnosticsHelpersPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/DiagnosticsHelpers.ps1"
+        $diagnosticsHelpers = Get-Content -Path $diagnosticsHelpersPath -Raw
 
         $content | Should -Match 'Get-FirstRootErrorCode'
         $content | Should -Match 'Write-IsolatedPesterFailureArtifact'
@@ -2392,7 +2408,8 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'W_TEST_FAILURE_OUTPUT_PREVIEW'
         $content | Should -Match 'W_TEST_FAILURE_ARTIFACT'
         $content | Should -Match 'Get-OutputPreview\s+-OutputLines\s+\$redactedCombinedLines\s+-MaxPreviewLines\s+4'
-        $content | Should -Match 'head: \{0\} \| \.\.\. \(\{1\} omitted line\(s\)\) \.\.\. \| tail: \{2\}'
+        $content | Should -Match 'Get-OutputPreview\s+-OutputLines\s+\$redactedCombinedLines\s+-MaxPreviewLines\s+4\s+-FilterBlankLines\s+-HeadTailWhenTruncated\s+-PerLineMaxCharacters\s+240'
+        $diagnosticsHelpers | Should -Match 'head: \{0\} \| \.\.\. \(\{1\} omitted line\(s\)\) \.\.\. \| tail: \{2\}'
         $content | Should -Match 'W_TEST_FAILURE_ARTIFACT:\s+suite=\{0\}; exitCode=\{1\}; rootCode=\{2\}; logPath=\{3\}'
         $content | Should -Not -Match 'throw\s+"E_TEST_FAILURE:[^"]*Output preview:'
         $content | Should -Not -Match 'throw\s+"E_TEST_FAILURE:[^"]*\$preview'
@@ -2997,8 +3014,8 @@ $result = "value {0} {1}" -f
     It "uses explicit git availability preflight in git-consuming utility scripts" {
         $gitPreflightCases = @(
             @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+diff\s+--cached\s+--name-only\s+--diff-filter=ACMR' },
-            @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+status\s+--porcelain=v1\s+--untracked-files=all' },
-            @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+status\s+--porcelain=v1\s+--untracked-files=all' },
+            @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+@\$statusArgs|"status",\s*"--porcelain=v1",\s*"--untracked-files=all"' },
+            @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+@\$statusArgs|"status",\s*"--porcelain=v1",\s*"--untracked-files=all"' },
             @{ Path = 'Scripts/Utils/Increment-Version.ps1'; ErrorCode = 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree' }
         )
 
@@ -3014,6 +3031,55 @@ $result = "value {0} {1}" -f
                 "{0} should invoke git through the resolved executable path after preflight." -f $case.Path
             )
         }
+    }
+
+    It "keeps actionable git status diagnostics in backup and quality scripts" {
+        $diagnosticsHelpers = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/DiagnosticsHelpers.ps1') -Raw) -replace "`r", ''
+        $backupScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+        $fullValidation = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw) -replace "`r", ''
+        $assertClean = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1') -Raw) -replace "`r", ''
+
+        $diagnosticsHelpers | Should -Match 'function\s+Get-OutputPreview'
+
+        $backupScript | Should -Match 'DiagnosticsHelpers\.ps1'
+        $backupScript | Should -Match 'E_BACKUP_DIAGNOSTICS_HELPER_MISSING'
+        $backupScript | Should -Not -Match 'function\s+Get-OutputPreview'
+        $backupScript | Should -Match 'Get-GitCommandDiagnosticsOutput\s+-GitExecutable\s+\$GitExecutable\s+-GitArguments\s+\$statusArgs'
+        $backupScript | Should -Match 'E_BACKUP_GIT_STATUS_FAILED:[\s\S]*outputPreview='
+
+        $fullValidation | Should -Match 'DiagnosticsHelpers\.ps1'
+        $fullValidation | Should -Match 'E_VALIDATION_DIAGNOSTICS_HELPER_MISSING'
+        $fullValidation | Should -Not -Match 'function\s+Get-OutputPreview'
+        $fullValidation | Should -Match 'statusArgs\s*=\s*@\("status",\s*"--porcelain=v1",\s*"--untracked-files=all"\)'
+        $fullValidation | Should -Match 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*repositoryRoot=' -Because "Validation status failures should include repository context."
+        $fullValidation | Should -Match 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*outputPreview=' -Because "Validation status failures should include command output previews."
+
+        $assertClean | Should -Match 'DiagnosticsHelpers\.ps1'
+        $assertClean | Should -Match 'E_ASSERT_CLEAN_GIT_TREE_DIAGNOSTICS_HELPER_MISSING'
+        $assertClean | Should -Not -Match 'function\s+Get-OutputPreview'
+        $assertClean | Should -Match 'statusArgs\s*=\s*@\("status",\s*"--porcelain=v1",\s*"--untracked-files=all"\)'
+        $assertClean | Should -Match 'E_GIT_STATUS_FAILED:[^\n]*repositoryRoot=' -Because "Assert-CleanGitTree status failures should include repository context."
+        $assertClean | Should -Match 'E_GIT_STATUS_FAILED:[^\n]*outputPreview=' -Because "Assert-CleanGitTree status failures should include command output previews."
+    }
+
+    It "centralizes output preview helpers in Scripts/Utils/Common/DiagnosticsHelpers.ps1" {
+        $diagnosticsHelpers = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/DiagnosticsHelpers.ps1') -Raw) -replace "`r", ''
+        $preCommit = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1') -Raw) -replace "`r", ''
+        $windowsChecks = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1') -Raw) -replace "`r", ''
+
+        $diagnosticsHelpers | Should -Match 'function\s+Get-OutputPreview'
+        $diagnosticsHelpers | Should -Match 'switch\]\$HeadTailWhenTruncated'
+        $diagnosticsHelpers | Should -Match 'switch\]\$CollapseWhitespace'
+        $diagnosticsHelpers | Should -Match 'Alias\(\s*''MaxPreviewLines''\s*\)'
+        $diagnosticsHelpers | Should -Match 'Alias\(\s*''MaxLength''\s*\)'
+
+        $preCommit | Should -Match 'Common/DiagnosticsHelpers\.ps1'
+        $preCommit | Should -Not -Match 'function\s+Get-OutputPreview'
+        $preCommit | Should -Match 'Get-OutputPreview\s+-OutputLines\s+\$redactedCombinedLines\s+-MaxPreviewLines\s+4\s+-FilterBlankLines\s+-HeadTailWhenTruncated\s+-PerLineMaxCharacters\s+240'
+
+        $windowsChecks | Should -Match 'Common/DiagnosticsHelpers\.ps1'
+        $windowsChecks | Should -Not -Match 'function\s+Get-OutputPreview'
+        $windowsChecks | Should -Match 'Get-OutputPreview\s+-Output\s+@\(\$attempt\.Output\)\s+-MaxLength\s+240\s+-CollapseWhitespace'
     }
 
     It "keeps quality script diagnostics low-noise in Remove-BOM and Windows language checks" {

@@ -394,7 +394,7 @@ Describe "Diagnostic helpers" {
 
     It "truncates long output previews" {
         $veryLong = @("x" * 400)
-        $preview = Get-OutputPreview -Output $veryLong -MaxLength 40
+        $preview = Get-OutputPreview -Output $veryLong -MaxLength 40 -CollapseWhitespace
 
         $preview.Length | Should -BeGreaterThan 40
         $preview | Should -Match "\.\.\.$"

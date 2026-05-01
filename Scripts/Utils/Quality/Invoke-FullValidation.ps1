@@ -28,6 +28,13 @@ if (-not (Test-Path -Path $formatSafetyHelpersPath -PathType Leaf)) {
 
 .$formatSafetyHelpersPath
 
+$diagnosticsHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/DiagnosticsHelpers.ps1"
+if (-not (Test-Path -Path $diagnosticsHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_DIAGNOSTICS_HELPER_MISSING: diagnostics helper file not found at '$diagnosticsHelpersPath'."
+}
+
+.$diagnosticsHelpersPath
+
 if ($PreflightOnly -and $WatchCi) {
     throw "E_VALIDATION_ARG_CONFLICT: -PreflightOnly cannot be combined with -WatchCi."
 }
@@ -71,10 +78,14 @@ function Get-StatusSnapshot {
         [string]$GitExecutable
     )
 
-    $statusLines = @(& $GitExecutable status --porcelain=v1 --untracked-files=all)
+    $statusArgs = @("status", "--porcelain=v1", "--untracked-files=all")
+    $statusLines = @(& $GitExecutable @statusArgs 2>$null)
     $statusExit = $LASTEXITCODE
     if ($statusExit -ne 0) {
-        throw "E_VALIDATION_GIT_STATUS_FAILED: unable to read git status snapshot (exitCode=$statusExit)."
+        $statusDiagnostics = @(& $GitExecutable @statusArgs 2>&1)
+        $statusPreview = Get-OutputPreview -OutputLines $statusDiagnostics
+        $workingDirectory = (Get-Location).Path
+        throw "E_VALIDATION_GIT_STATUS_FAILED: unable to read git status snapshot (exitCode=$statusExit; repositoryRoot='$workingDirectory'; outputPreview=$statusPreview)."
     }
 
     $invariantCultureName = [System.Globalization.CultureInfo]::InvariantCulture.Name
