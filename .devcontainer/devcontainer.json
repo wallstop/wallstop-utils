@@ -9,12 +9,12 @@
       "upgradePackages": "false",
       "username": "vscode"
     },
-    "ghcr.io/devcontainers/features/powershell:1": {},
+    "ghcr.io/devcontainers/features/powershell:2": {},
     "ghcr.io/devcontainers/features/python:1": {
       "installTools": "true",
       "version": "3.12"
     },
-    "ghcr.io/devcontainers/features/node:1": {
+    "ghcr.io/devcontainers/features/node:2": {
       "version": "lts"
     },
     "ghcr.io/devcontainers/features/github-cli:1": {}
