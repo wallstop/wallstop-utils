@@ -4,12 +4,33 @@ param(
     [switch]$WatchCi,
 
     [Parameter(Mandatory = $false)]
-    [ValidateRange(30, 7200)]
+    [switch]$PreflightOnly,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(30,7200)]
     [int]$CiWatchTimeoutSeconds = 1800
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$moduleHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/ModuleHelpers.ps1"
+if (-not (Test-Path -Path $moduleHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_MODULE_HELPER_MISSING: module helper file not found at '$moduleHelpersPath'."
+}
+
+.$moduleHelpersPath
+
+$formatSafetyHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/FormatOperatorSafetyHelpers.ps1"
+if (-not (Test-Path -Path $formatSafetyHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_FORMAT_HELPER_MISSING: format-operator safety helper file not found at '$formatSafetyHelpersPath'."
+}
+
+.$formatSafetyHelpersPath
+
+if ($PreflightOnly -and $WatchCi) {
+    throw "E_VALIDATION_ARG_CONFLICT: -PreflightOnly cannot be combined with -WatchCi."
+}
 
 function Invoke-NativeCommand {
     param(
@@ -63,16 +84,51 @@ function Get-StatusSnapshot {
     Write-Output -NoEnumerate ([string[]]$sortedStatusLines)
 }
 
+function Assert-PowerShellQualityModuleAvailability {
+    $moduleRequirements = @(
+        [pscustomobject]@{
+            ModuleName = "Pester"
+            MinimumVersion = [version]"5.5.0"
+            CommandNames = @("Invoke-Pester")
+            InstallCommand = "pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester"
+            AdditionalNotes = @(
+                "Manual fallback: Install-Module Pester -Repository PSGallery -Scope CurrentUser -MinimumVersion 5.5.0 -Force"
+                "Windows note: built-in Windows PowerShell ships Pester 3.4.0, which is incompatible with this suite."
+            )
+        },
+        [pscustomobject]@{
+            ModuleName = "PSScriptAnalyzer"
+            MinimumVersion = [version]"1.21.0"
+            CommandNames = @("Invoke-ScriptAnalyzer","Invoke-Formatter")
+            InstallCommand = "pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules PSScriptAnalyzer"
+            AdditionalNotes = @("Manual fallback: Install-Module PSScriptAnalyzer -Repository PSGallery -Scope CurrentUser -MinimumVersion 1.21.0 -Force")
+        }
+    )
+
+    Assert-ModuleCommandRequirements -Requirements $moduleRequirements -ErrorCode "E_VALIDATION_POWERSHELL_MODULES_MISSING" -ContextLabel "PowerShell quality module prerequisites"
+}
+
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
 Push-Location -LiteralPath $repoRoot
 
 try {
-    $gitExecutable = Get-GitExecutableOrThrow
-    $statusBeforeValidation = Get-StatusSnapshot -GitExecutable $gitExecutable
+    Write-Host "[validation] PowerShell format-operator binding safety check"
+    Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts","Tests") -ErrorCode "E_VALIDATION_FORMAT_OPERATOR_BINDING" -ContextLabel "PowerShell format-operator safety"
 
     if (-not (Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue)) {
         throw "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install pre-commit; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=$HOME/.local/bin:$PATH and persist that export in ~/.bashrc or ~/.zshrc), then run 'pre-commit install --hook-type pre-commit --hook-type pre-push'."
     }
+
+    Write-Host "[validation] PowerShell module prerequisite check"
+    Assert-PowerShellQualityModuleAvailability
+
+    if ($PreflightOnly) {
+        Write-Host "Validation preflight passed."
+        return
+    }
+
+    $gitExecutable = Get-GitExecutableOrThrow
+    $statusBeforeValidation = Get-StatusSnapshot -gitExecutable $gitExecutable
 
     Invoke-NativeCommand -Label "pre-commit stage (all files)" -FailureCode "E_VALIDATION_PRECOMMIT_FAILED" -Remediation "Fix hook findings, then rerun this command." -ScriptBlock {
         pre-commit run --hook-stage pre-commit --all-files --show-diff-on-failure --color always
@@ -99,7 +155,7 @@ try {
     & $llmHarnessScript -RootPath $repoRoot
 
     Write-Host "[validation] workspace drift assertion"
-    $statusAfterValidation = Get-StatusSnapshot -GitExecutable $gitExecutable
+    $statusAfterValidation = Get-StatusSnapshot -gitExecutable $gitExecutable
     $beforeCount = if ($null -eq $statusBeforeValidation) { "<null>" } else { [string](@($statusBeforeValidation).Count) }
     $afterCount = if ($null -eq $statusAfterValidation) { "<null>" } else { [string](@($statusAfterValidation).Count) }
     Write-Verbose "Workspace drift snapshots: before=$beforeCount after=$afterCount"

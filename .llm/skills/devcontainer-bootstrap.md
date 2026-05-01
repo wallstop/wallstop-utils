@@ -11,4 +11,4 @@ Lightweight skill card for reproducible environment bootstrap and quality parity
 - [Devcontainer baseline toolchain](../skill-details/devcontainer-bootstrap.md#devcontainer-baseline-toolchain)
 - [Post-create bootstrap expectations](../skill-details/devcontainer-bootstrap.md#post-create-bootstrap-expectations)
 - [Parity commands before PR](../skill-details/devcontainer-bootstrap.md#parity-commands-before-pr)
-- Quick check: `pre-commit run --all-files`
+- Quick check: `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly`

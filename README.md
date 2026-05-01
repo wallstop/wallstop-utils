@@ -243,22 +243,41 @@ See [.llm/validation-workflow.md](.llm/validation-workflow.md) for the full reme
 
 The existing utility validation gate remains and is integrated into pre-commit:
 
-- `Invoke-Pester -Path Tests/Utils`
-- `Invoke-Pester -Path Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1` (when relevant files are staged)
+- `Tests/Utils` Pester suite (isolated `pwsh -NoProfile -NonInteractive` process)
+- `Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1` Pester suite (when relevant files are staged)
 - `Invoke-ScriptAnalyzer -Path Scripts/Utils -Settings .psscriptanalyzer.psd1 -Recurse`
 
-Install required modules:
+Bootstrap required modules (recommended on a new host shell):
 
 ```powershell
-Install-Module Pester -Scope CurrentUser -MinimumVersion 5.5.0
-Install-Module PSScriptAnalyzer -Scope CurrentUser -MinimumVersion 1.21.0
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1
 ```
+
+Manual fallback commands:
+
+```powershell
+Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+Install-Module Pester -Repository PSGallery -Scope CurrentUser -MinimumVersion 5.5.0 -Force
+Install-Module PSScriptAnalyzer -Repository PSGallery -Scope CurrentUser -MinimumVersion 1.21.0 -Force
+```
+
+Host-shell preflight (recommended before first commit/push from a new shell context):
+
+```powershell
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly
+```
+
+Windows host note:
+
+- Run these commands from `pwsh` (PowerShell 7+), not from legacy Windows PowerShell.
+- Windows PowerShell ships with Pester 3.4.0, which is incompatible with this repository's Pester 5 test syntax.
 
 One-off usage:
 
 ```powershell
 pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1
 pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1 -All
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly
 pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1
 ```
 

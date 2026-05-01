@@ -31,26 +31,26 @@ function ConvertTo-SkillTitle {
     )
 
     $knownCasing = @{
-        "github"      = "GitHub"
-        "powershell"  = "PowerShell"
-        "autohotkey"  = "AutoHotkey"
+        "github" = "GitHub"
+        "powershell" = "PowerShell"
+        "autohotkey" = "AutoHotkey"
         "applescript" = "AppleScript"
-        "macos"       = "macOS"
-        "ci"          = "CI"
-        "cd"          = "CD"
-        "llm"         = "LLM"
-        "pr"          = "PR"
-        "api"         = "API"
-        "url"         = "URL"
-        "uri"         = "URI"
-        "json"        = "JSON"
-        "yaml"        = "YAML"
-        "xml"         = "XML"
-        "html"        = "HTML"
-        "css"         = "CSS"
-        "osc52"       = "OSC52"
-        "utf8"        = "UTF-8"
-        "ahk"         = "AHK"
+        "macos" = "macOS"
+        "ci" = "CI"
+        "cd" = "CD"
+        "llm" = "LLM"
+        "pr" = "PR"
+        "api" = "API"
+        "url" = "URL"
+        "uri" = "URI"
+        "json" = "JSON"
+        "yaml" = "YAML"
+        "xml" = "XML"
+        "html" = "HTML"
+        "css" = "CSS"
+        "osc52" = "OSC52"
+        "utf8" = "UTF-8"
+        "ahk" = "AHK"
     }
 
     $tokens = @($FileName -split '[-_]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -79,7 +79,7 @@ function ConvertTo-MarkdownTableValue {
         [string]$Value
     )
 
-    return (($Value -replace '\|', '\\|').Trim())
+    return (($Value -replace '\|','\\|').Trim())
 }
 
 function ConvertTo-PortablePath {
@@ -93,7 +93,7 @@ function ConvertTo-PortablePath {
     }
 
     # Normalize all separators to POSIX-style so generated markdown is deterministic across OSes.
-    return ($PathValue -replace '[\\/]+', '/')
+    return ($PathValue -replace '[\\/]+','/')
 }
 
 function Normalize-ComparisonContent {
@@ -102,7 +102,7 @@ function Normalize-ComparisonContent {
         [string]$Content
     )
 
-    $normalized = $Content -replace "`r`n", "`n" -replace "`r", "`n"
+    $normalized = $Content -replace "`r`n","`n" -replace "`r","`n"
     if ($normalized.Length -eq 0) {
         return "`n"
     }
@@ -137,9 +137,9 @@ function Find-FirstDifferentLine {
         [string]$Actual
     )
 
-    $expectedLines = @($Expected -split "`n", -1)
-    $actualLines = @($Actual -split "`n", -1)
-    $lineCount = [Math]::Max($expectedLines.Count, $actualLines.Count)
+    $expectedLines = @($Expected -split "`n",-1)
+    $actualLines = @($Actual -split "`n",-1)
+    $lineCount = [math]::Max($expectedLines.Count,$actualLines.Count)
 
     for ($index = 0; $index -lt $lineCount; $index++) {
         $expectedLine = if ($index -lt $expectedLines.Count) { $expectedLines[$index] } else { '<missing>' }
@@ -148,8 +148,8 @@ function Find-FirstDifferentLine {
         if ($expectedLine -cne $actualLine) {
             return [pscustomobject]@{
                 LineNumber = $index + 1
-                Expected   = $expectedLine
-                Actual     = $actualLine
+                Expected = $expectedLine
+                Actual = $actualLine
             }
         }
     }
@@ -166,12 +166,12 @@ function ConvertTo-DiagnosticPreview {
         [int]$MaxLength = 140
     )
 
-    $preview = $Value.Replace("`t", '\t').Replace("`r", '\r').Replace("`n", '\n')
+    $preview = $Value.Replace("`t",'\t').Replace("`r",'\r').Replace("`n",'\n')
     if ($preview.Length -le $MaxLength) {
         return $preview
     }
 
-    return ($preview.Substring(0, $MaxLength) + '...')
+    return ($preview.Substring(0,$MaxLength) + '...')
 }
 
 function Get-SkillMetadata {
@@ -183,7 +183,7 @@ function Get-SkillMetadata {
         [string]$Root
     )
 
-    $content = [System.IO.File]::ReadAllText($SkillPath, [System.Text.Encoding]::UTF8)
+    $content = [System.IO.File]::ReadAllText($SkillPath,[System.Text.Encoding]::UTF8)
     $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
     $match = [System.Text.RegularExpressions.Regex]::Match(
         $content,
@@ -192,15 +192,15 @@ function Get-SkillMetadata {
     )
 
     if (-not $match.Success) {
-        $relative = [System.IO.Path]::GetRelativePath($Root, $SkillPath)
+        $relative = [System.IO.Path]::GetRelativePath($Root,$SkillPath)
         throw "E_LLM_TRIGGER_METADATA_MISSING: Missing trigger metadata comment in '$relative'."
     }
 
     $category = $match.Groups['category'].Value.Trim()
 
-    $relativePath = ConvertTo-PortablePath -PathValue ([System.IO.Path]::GetRelativePath($Root, $SkillPath))
+    $relativePath = ConvertTo-PortablePath -PathValue ([System.IO.Path]::GetRelativePath($Root,$SkillPath))
     $skillLinkPath = $relativePath
-    if ($skillLinkPath.StartsWith('.llm/', [System.StringComparison]::OrdinalIgnoreCase)) {
+    if ($skillLinkPath.StartsWith('.llm/',[System.StringComparison]::OrdinalIgnoreCase)) {
         $skillLinkPath = $skillLinkPath.Substring(5)
     }
 
@@ -209,20 +209,20 @@ function Get-SkillMetadata {
         $detailsPath = $skillLinkPath
     }
     $detailsPath = ConvertTo-PortablePath -PathValue $detailsPath
-    if ($detailsPath.StartsWith('.llm/', [System.StringComparison]::OrdinalIgnoreCase)) {
+    if ($detailsPath.StartsWith('.llm/',[System.StringComparison]::OrdinalIgnoreCase)) {
         $detailsPath = $detailsPath.Substring(5)
     }
 
     $baseName = [System.IO.Path]::GetFileNameWithoutExtension($SkillPath)
 
     return [pscustomobject]@{
-        Name          = ConvertTo-SkillTitle -FileName $baseName
-        RelativePath  = $relativePath
+        Name = ConvertTo-SkillTitle -FileName $baseName
+        RelativePath = $relativePath
         SkillCardLink = "./$skillLinkPath"
-        DetailsLink   = "./$detailsPath"
-        Keywords      = ConvertTo-MarkdownTableValue -Value $match.Groups['keywords'].Value
-        Description   = ConvertTo-MarkdownTableValue -Value $match.Groups['description'].Value
-        Category      = ConvertTo-MarkdownTableValue -Value $category
+        DetailsLink = "./$detailsPath"
+        Keywords = ConvertTo-MarkdownTableValue -Value $match.Groups['keywords'].Value
+        Description = ConvertTo-MarkdownTableValue -Value $match.Groups['description'].Value
+        Category = ConvertTo-MarkdownTableValue -Value $category
     }
 }
 
@@ -232,7 +232,7 @@ function New-GeneratedIndexLines {
         [System.Collections.Generic.List[object]]$Skills
     )
 
-    $categoryOrder = @('Core', 'Quality', 'Platform', 'GitHub')
+    $categoryOrder = @('Core','Quality','Platform','GitHub')
     $lines = New-Object System.Collections.Generic.List[string]
 
     $lines.Add('# Skills Index') | Out-Null
@@ -259,7 +259,7 @@ function New-GeneratedIndexLines {
 
     $isFirstCategory = $true
     foreach ($category in $orderedCategories) {
-        $categorySkills = @($Skills | Where-Object { $_.Category -eq $category } | Sort-Object Name, RelativePath -Culture $script:InvariantCultureName)
+        $categorySkills = @($Skills | Where-Object { $_.Category -eq $category } | Sort-Object Name,RelativePath -Culture $script:InvariantCultureName)
         if ($categorySkills.Count -eq 0) {
             continue
         }
@@ -312,7 +312,7 @@ foreach ($skillFile in $skillFiles) {
 
 $generatedLines = New-GeneratedIndexLines -Skills $skillEntries
 $newIndexContent = (($generatedLines -join "`n") + "`n")
-$currentIndexContent = [System.IO.File]::ReadAllText($indexPath, [System.Text.Encoding]::UTF8)
+$currentIndexContent = [System.IO.File]::ReadAllText($indexPath,[System.Text.Encoding]::UTF8)
 
 # Normalize line endings for cross-platform comparison (Windows checkout may add CR).
 $normalizedNew = Normalize-ComparisonContent -Content $newIndexContent
@@ -320,13 +320,13 @@ $normalizedCurrent = Normalize-ComparisonContent -Content $currentIndexContent
 
 if ($Check) {
     # Use ordinal equality to avoid culture-sensitive comparison drift across platforms.
-    if (-not [string]::Equals($normalizedNew, $normalizedCurrent, [System.StringComparison]::Ordinal)) {
+    if (-not [string]::Equals($normalizedNew,$normalizedCurrent,[System.StringComparison]::Ordinal)) {
         $generatedHash = Get-StringSha256 -Value $normalizedNew
         $currentHash = Get-StringSha256 -Value $normalizedCurrent
         Write-Warning "W_LLM_INDEX_STALE_DIAGNOSTICS: normalized hashes differ (generated=$generatedHash current=$currentHash)."
 
-        $generatedBackslashLinkCount = [regex]::Matches($normalizedNew, '\]\(\./[^)\r\n]*\\[^)\r\n]*\)').Count
-        $currentBackslashLinkCount = [regex]::Matches($normalizedCurrent, '\]\(\./[^)\r\n]*\\[^)\r\n]*\)').Count
+        $generatedBackslashLinkCount = [regex]::Matches($normalizedNew,'\]\(\./[^)\r\n]*\\[^)\r\n]*\)').Count
+        $currentBackslashLinkCount = [regex]::Matches($normalizedCurrent,'\]\(\./[^)\r\n]*\\[^)\r\n]*\)').Count
         Write-Warning "W_LLM_INDEX_LINK_SEPARATOR_DIAGNOSTICS: generatedBackslashLinks=$generatedBackslashLinkCount currentBackslashLinks=$currentBackslashLinkCount"
 
         $generatedHasBom = ($normalizedNew.Length -gt 0) -and ([int][char]$normalizedNew[0] -eq 0xFEFF)
@@ -338,22 +338,22 @@ if ($Check) {
         if ($null -ne $mismatch) {
             $expectedPreview = ConvertTo-DiagnosticPreview -Value $mismatch.Expected
             $actualPreview = ConvertTo-DiagnosticPreview -Value $mismatch.Actual
-            Write-Warning ("W_LLM_INDEX_STALE_FIRST_MISMATCH: line={0}; generated='{1}'; current='{2}'." -f $mismatch.LineNumber, $expectedPreview, $actualPreview)
+            Write-Warning ("W_LLM_INDEX_STALE_FIRST_MISMATCH: line={0}; generated='{1}'; current='{2}'." -f $mismatch.LineNumber,$expectedPreview,$actualPreview)
             $mismatchSummary = (" firstMismatchLine={0}" -f $mismatch.LineNumber)
         }
 
-        throw ("E_LLM_INDEX_STALE: Generated skills index is stale. Run Update-LlmSkillsIndex.ps1 and commit .llm/skills-index.md. generatedHash={0} currentHash={1}{2}" -f $generatedHash, $currentHash, $mismatchSummary)
+        throw ("E_LLM_INDEX_STALE: Generated skills index is stale. Run Update-LlmSkillsIndex.ps1 and commit .llm/skills-index.md. generatedHash={0} currentHash={1}{2}" -f $generatedHash,$currentHash,$mismatchSummary)
     }
 
     Write-Host 'LLM skills index is up to date.'
     return
 }
 
-if ([string]::Equals($normalizedNew, $normalizedCurrent, [System.StringComparison]::Ordinal)) {
+if ([string]::Equals($normalizedNew,$normalizedCurrent,[System.StringComparison]::Ordinal)) {
     Write-Host 'LLM skills index is already up to date.'
     return
 }
 
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($indexPath, $newIndexContent, $utf8NoBom)
+$utf8NoBom = New-Object System.Text.UTF8Encoding ($false)
+[System.IO.File]::WriteAllText($indexPath,$newIndexContent,$utf8NoBom)
 Write-Host "Updated generated skills index in $indexPath"

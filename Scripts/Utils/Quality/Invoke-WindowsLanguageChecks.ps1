@@ -44,7 +44,7 @@ function Get-OutputPreview {
         return "(no output)"
     }
 
-    $collapsed = (($Output -join " ") -replace "\s+", " ").Trim()
+    $collapsed = (($Output -join " ") -replace "\s+"," ").Trim()
     if ([string]::IsNullOrWhiteSpace($collapsed)) {
         return "(no output)"
     }
@@ -53,7 +53,7 @@ function Get-OutputPreview {
         return $collapsed
     }
 
-    return ($collapsed.Substring(0, $MaxLength) + " ...")
+    return ($collapsed.Substring(0,$MaxLength) + " ...")
 }
 
 function Test-OutputLooksLikeUnsupportedAhkSwitch {
@@ -85,21 +85,21 @@ function Test-IsAutoHotkeyV1Script {
     $v1Markers = @(
         '(?m)^\s*#NoEnv\b',
         '(?m)^\s*#Persistent\b',
-        '(?m)^\s*SendMode\s+\w',          # v1: SendMode Input  (v2: SendMode("Input"))
-        '(?m)^\s*SetWorkingDir\s+%',       # v1: SetWorkingDir %A_ScriptDir%
-        '(?m)^\s*CoordMode\s*,\s*\w',      # v1: CoordMode, Mouse, Screen
-        '(?m)^\s*SetTimer\s*,\s*\w',       # v1: SetTimer, Label, Period
-        '(?m)^\s*WinGet\s*,\s*\w',         # v1: WinGet, Var, Sub, Win
-        '(?m)^\s*WinGetTitle\s*,\s*\w',    # v1: WinGetTitle, Var, Win
-        '(?m)^\s*WinGetClass\s*,\s*\w',    # v1: WinGetClass, Var, Win
-        '(?m)^\s*WinGetPos\s*,\s*\w',      # v1: WinGetPos, X, Y, W, H, Win
-        '(?m)^\s*MouseGetPos\s*,\s*\w',    # v1: MouseGetPos, X, Y
-        '(?m)^\s*MouseMove\s*,\s*\S',      # v1: MouseMove, X, Y, Speed
-        '(?m)^\s*IfWinExist\s*,',          # v1: IfWinExist, Win
-        '(?m)^\s*WinActivate\s*,',         # v1: WinActivate, Win
-        '(?m)^\s*WinWaitActive\s*,',       # v1: WinWaitActive, Win
-        '(?m)^\s*VarSetCapacity\s*\(',     # v1: VarSetCapacity(Var, Size)
-        '(?m)^\s*(Loop|Loop\s*,)\s*%'      # v1: Loop, % expr
+        '(?m)^\s*SendMode\s+\w',# v1: SendMode Input  (v2: SendMode("Input"))
+        '(?m)^\s*SetWorkingDir\s+%',# v1: SetWorkingDir %A_ScriptDir%
+        '(?m)^\s*CoordMode\s*,\s*\w',# v1: CoordMode, Mouse, Screen
+        '(?m)^\s*SetTimer\s*,\s*\w',# v1: SetTimer, Label, Period
+        '(?m)^\s*WinGet\s*,\s*\w',# v1: WinGet, Var, Sub, Win
+        '(?m)^\s*WinGetTitle\s*,\s*\w',# v1: WinGetTitle, Var, Win
+        '(?m)^\s*WinGetClass\s*,\s*\w',# v1: WinGetClass, Var, Win
+        '(?m)^\s*WinGetPos\s*,\s*\w',# v1: WinGetPos, X, Y, W, H, Win
+        '(?m)^\s*MouseGetPos\s*,\s*\w',# v1: MouseGetPos, X, Y
+        '(?m)^\s*MouseMove\s*,\s*\S',# v1: MouseMove, X, Y, Speed
+        '(?m)^\s*IfWinExist\s*,',# v1: IfWinExist, Win
+        '(?m)^\s*WinActivate\s*,',# v1: WinActivate, Win
+        '(?m)^\s*WinWaitActive\s*,',# v1: WinWaitActive, Win
+        '(?m)^\s*VarSetCapacity\s*\(',# v1: VarSetCapacity(Var, Size)
+        '(?m)^\s*(Loop|Loop\s*,)\s*%' # v1: Loop, % expr
     )
 
     foreach ($pattern in $v1Markers) {
@@ -121,7 +121,7 @@ function Convert-CapturedTextToLines {
         return @() # array-unwrap-safe: callers always wrap with @()
     }
 
-    $normalized = $Text -replace "`r", ""
+    $normalized = $Text -replace "`r",""
     $lines = @($normalized -split "`n")
 
     while ($lines.Count -gt 0 -and [string]::IsNullOrEmpty($lines[$lines.Count - 1])) {
@@ -153,7 +153,7 @@ function Invoke-AutoHotkeyCommand {
     $stderrLines = @()
     $captureMode = "dotnet-process"
     $processTimeoutMilliseconds = 30000
-    $streamDrainTimeoutMilliseconds = 1000
+    $streamDrainTimeoutMilliseconds = [math]::Min([math]::Max([int]($processTimeoutMilliseconds / 10),1500),10000)
 
     try {
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -193,7 +193,7 @@ function Invoke-AutoHotkeyCommand {
             $remainingStreamWaitMilliseconds = $streamDrainTimeoutMilliseconds
         }
 
-        if (-not [System.Threading.Tasks.Task]::WaitAll(@($stdoutReadTask, $stderrReadTask), $remainingStreamWaitMilliseconds)) {
+        if (-not [System.Threading.Tasks.Task]::WaitAll(@($stdoutReadTask,$stderrReadTask),$remainingStreamWaitMilliseconds)) {
             throw "E_AHK_STREAM_CAPTURE_TIMEOUT: executable='$Executable', timeout_ms=$remainingStreamWaitMilliseconds"
         }
 
@@ -225,21 +225,21 @@ function Invoke-AutoHotkeyCommand {
             )
         }
 
-        $captureDiagnostics = [PSCustomObject]@{
-            CaptureMode                    = $captureMode
-            Executable                     = $Executable
-            ArgumentCount                  = $Arguments.Count
-            StdOutLineCount                = $stdoutLines.Count
-            StdErrLineCount                = $stderrLines.Count
-            TimeoutMilliseconds            = $processTimeoutMilliseconds
+        $captureDiagnostics = [pscustomobject]@{
+            CaptureMode = $captureMode
+            Executable = $Executable
+            ArgumentCount = $Arguments.Count
+            StdOutLineCount = $stdoutLines.Count
+            StdErrLineCount = $stderrLines.Count
+            TimeoutMilliseconds = $processTimeoutMilliseconds
             StreamDrainTimeoutMilliseconds = $streamDrainTimeoutMilliseconds
-            StdOutCaptureExists            = $false
-            StdErrCaptureExists            = $false
+            StdOutCaptureExists = $false
+            StdErrCaptureExists = $false
         }
 
-        return [PSCustomObject]@{
-            ExitCode    = [int]$process.ExitCode
-            Output      = (Convert-OutputToStringArray -Output $rawOutput)
+        return [pscustomobject]@{
+            ExitCode = [int]$process.ExitCode
+            Output = (Convert-OutputToStringArray -Output $rawOutput)
             Diagnostics = $captureDiagnostics
         }
     }
@@ -253,19 +253,19 @@ function Invoke-AutoHotkeyCommand {
             "E_AHK_PROCESS_EXECUTION_FAILED: mode='$captureMode', executable='$Executable', args='$argPreview', error=$exceptionMessage"
         }
 
-        return [PSCustomObject]@{
-            ExitCode    = -1
-            Output      = @($startFailure)
-            Diagnostics = [PSCustomObject]@{
-                CaptureMode                    = $captureMode
-                Executable                     = $Executable
-                ArgumentCount                  = $Arguments.Count
-                StdOutLineCount                = 0
-                StdErrLineCount                = 0
-                TimeoutMilliseconds            = $processTimeoutMilliseconds
+        return [pscustomobject]@{
+            ExitCode = -1
+            Output = @($startFailure)
+            Diagnostics = [pscustomobject]@{
+                CaptureMode = $captureMode
+                Executable = $Executable
+                ArgumentCount = $Arguments.Count
+                StdOutLineCount = 0
+                StdErrLineCount = 0
+                TimeoutMilliseconds = $processTimeoutMilliseconds
                 StreamDrainTimeoutMilliseconds = $streamDrainTimeoutMilliseconds
-                StdOutCaptureExists            = $false
-                StdErrCaptureExists            = $false
+                StdOutCaptureExists = $false
+                StdErrCaptureExists = $false
             }
         }
     }
@@ -298,30 +298,30 @@ function Invoke-AutoHotkeyValidationCommand {
     # /iLib NUL is a compatibility fallback for runtimes where /validate is unavailable.
     # It still performs parser-level loading and returns a non-zero exit code on syntax failures.
     $attemptDefinitions = @(
-        [PSCustomObject]@{
+        [pscustomobject]@{
             Mode = "/validate"
-            Args = @("/ErrorStdOut", "/validate", $ScriptPath)
+            Args = @("/ErrorStdOut","/validate",$ScriptPath)
         },
-        [PSCustomObject]@{
+        [pscustomobject]@{
             Mode = "/iLib"
-            Args = @("/ErrorStdOut", "/iLib", "NUL", $ScriptPath)
+            Args = @("/ErrorStdOut","/iLib","NUL",$ScriptPath)
         }
     )
 
     foreach ($attempt in $attemptDefinitions) {
-        $commandResult = Invoke-AutoHotkeyCommand -Executable $Executable -Arguments $attempt.Args
-        $attemptResult = [PSCustomObject]@{
-            Mode     = $attempt.Mode
+        $commandResult = Invoke-AutoHotkeyCommand -Executable $Executable -arguments $attempt.Args
+        $attemptResult = [pscustomobject]@{
+            Mode = $attempt.Mode
             ExitCode = $commandResult.ExitCode
-            Output   = @($commandResult.Output)
+            Output = @($commandResult.Output)
         }
 
-        $attemptResults += , $attemptResult
+        $attemptResults +=,$attemptResult
 
         if ($attemptResult.ExitCode -eq 0) {
-            return [PSCustomObject]@{
-                Status   = "ok"
-                Mode     = $attempt.Mode
+            return [pscustomobject]@{
+                Status = "ok"
+                Mode = $attempt.Mode
                 Attempts = @($attemptResults)
             }
         }
@@ -334,20 +334,20 @@ function Invoke-AutoHotkeyValidationCommand {
 
         # Only report definitive validation failure when there is actual diagnostic output that does
         # not look like an unsupported-switch message. A non-zero exit code with NO output (e.g.,
-        # exit code -1 returned by AHK v2 when processing an AHK v1 script) is ambiguous — fall
+        # exit code -1 returned by AHK v2 when processing an AHK v1 script) is ambiguous, so fall
         # through to try the next validation mode before concluding the validation is unsupported.
         if ($hasActualOutput -and -not (Test-OutputLooksLikeUnsupportedAhkSwitch -Output $attemptResult.Output)) {
-            return [PSCustomObject]@{
-                Status   = "validation-failed"
-                Mode     = $attempt.Mode
+            return [pscustomobject]@{
+                Status = "validation-failed"
+                Mode = $attempt.Mode
                 Attempts = @($attemptResults)
             }
         }
     }
 
-    return [PSCustomObject]@{
-        Status   = "unsupported"
-        Mode     = ""
+    return [pscustomobject]@{
+        Status = "unsupported"
+        Mode = ""
         Attempts = @($attemptResults)
     }
 }
@@ -396,7 +396,7 @@ function Test-AutoHotkeyAttemptsProducedNoOutput {
 }
 
 function Get-AutoHotkeyExecutablePath {
-    $commandCandidates = @("AutoHotkey64.exe", "AutoHotkey.exe", "autohotkey")
+    $commandCandidates = @("AutoHotkey64.exe","AutoHotkey.exe","autohotkey")
     foreach ($candidate in $commandCandidates) {
         $command = Get-Command -Name $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
@@ -429,7 +429,7 @@ function Resolve-RequestedTargetFilePaths {
     )
 
     if ([string]::IsNullOrWhiteSpace($TargetFiles)) {
-        return , @()
+        return ,@()
     }
 
     $requested = New-Object System.Collections.Generic.List[string]
@@ -447,7 +447,7 @@ function Resolve-RequestedTargetFilePaths {
             }
         }
         else {
-            $relativePath = $candidate.Replace('/', [System.IO.Path]::DirectorySeparatorChar).Replace('\\', [System.IO.Path]::DirectorySeparatorChar)
+            $relativePath = $candidate.Replace('/',[System.IO.Path]::DirectorySeparatorChar).Replace('\\',[System.IO.Path]::DirectorySeparatorChar)
             $absoluteCandidate = Join-Path -Path $RepoRoot -ChildPath $relativePath
             if (Test-Path -Path $absoluteCandidate -PathType Leaf) {
                 $resolvedPath = (Resolve-Path -Path $absoluteCandidate -ErrorAction Stop).Path
@@ -467,10 +467,10 @@ function Resolve-RequestedTargetFilePaths {
     }
 
     if ($requested.Count -eq 0) {
-        return , @()
+        return ,@()
     }
 
-    return , @($requested | Sort-Object -Unique)
+    return ,@($requested | Sort-Object -Unique)
 }
 
 function Test-AutoHotkeyScripts {
@@ -538,7 +538,7 @@ function Test-AutoHotkeyScripts {
     $unsupportedMessage = ""
 
     foreach ($file in $ahkFiles) {
-        $relative = [System.IO.Path]::GetRelativePath($RepoRoot, $file.FullName)
+        $relative = [System.IO.Path]::GetRelativePath($RepoRoot,$file.FullName)
 
         $fileContent = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
         if (Test-IsAutoHotkeyV1Script -Content $fileContent) {
@@ -626,7 +626,7 @@ function Test-BatchScriptsStaticSmoke {
         for ($index = 0; $index -lt $lines.Count; $index++) {
             $line = $lines[$index]
             $lineNumber = $index + 1
-            $relative = [System.IO.Path]::GetRelativePath($RepoRoot, $file.FullName)
+            $relative = [System.IO.Path]::GetRelativePath($RepoRoot,$file.FullName)
 
             if ($line -match "\s+$") {
                 $violations.Add("${relative}:$lineNumber trailing whitespace") | Out-Null
@@ -646,8 +646,8 @@ function Test-BatchScriptsStaticSmoke {
                 continue
             }
 
-            $openCount = [regex]::Matches($line, "(?<!\^)\(").Count
-            $closeCount = [regex]::Matches($line, "(?<!\^)\)").Count
+            $openCount = [regex]::Matches($line,"(?<!\^)\(").Count
+            $closeCount = [regex]::Matches($line,"(?<!\^)\)").Count
             $parenBalance += ($openCount - $closeCount)
 
             if ($parenBalance -lt 0) {
@@ -657,7 +657,7 @@ function Test-BatchScriptsStaticSmoke {
         }
 
         if ($parenBalance -ne 0) {
-            $relative = [System.IO.Path]::GetRelativePath($RepoRoot, $file.FullName)
+            $relative = [System.IO.Path]::GetRelativePath($RepoRoot,$file.FullName)
             $violations.Add("$relative unbalanced parentheses at end-of-file") | Out-Null
         }
     }

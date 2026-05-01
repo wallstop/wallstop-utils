@@ -4,9 +4,65 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+precommit_timeout_seconds="${WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS:-600}"
+
+validate_timeout_seconds() {
+  local timeout_value="$1"
+  local env_name="$2"
+
+  if [[ ! "$timeout_value" =~ ^[0-9]+$ ]] || [[ "$timeout_value" -lt 30 ]]; then
+    echo "E_HOOK_TIMEOUT_CONFIG: ${env_name} must be an integer >= 30 seconds (received '${timeout_value}')."
+    exit 2
+  fi
+}
+
+resolve_timeout_command() {
+  if command -v timeout > /dev/null 2>&1; then
+    printf '%s\n' "timeout"
+    return 0
+  fi
+
+  if command -v gtimeout > /dev/null 2>&1; then
+    printf '%s\n' "gtimeout"
+    return 0
+  fi
+
+  return 1
+}
+
+run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+  local label="$1"
+  shift
+
+  local timeout_command
+  if timeout_command="$(resolve_timeout_command)"; then
+    set +e
+    "$timeout_command" --foreground "${timeout_seconds}s" "$@"
+    local command_exit=$?
+    set -e
+
+    if [[ $command_exit -eq 124 || $command_exit -eq 137 ]]; then
+      echo "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
+    fi
+
+    return $command_exit
+  fi
+
+  echo "W_HOOK_TIMEOUT_UNAVAILABLE: timeout/gtimeout not found; running '${label}' without timeout guard."
+  set +e
+  "$@"
+  local fallback_exit=$?
+  set -e
+  return $fallback_exit
+}
+
+validate_timeout_seconds "$precommit_timeout_seconds" "WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS"
+
 run_legacy_validation() {
   if command -v pwsh > /dev/null 2>&1; then
-    pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1"
+    run_with_timeout "$precommit_timeout_seconds" "legacy pre-commit PowerShell validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1"
     return $?
   fi
 
@@ -22,7 +78,7 @@ run_legacy_validation() {
 }
 
 if command -v pre-commit > /dev/null 2>&1; then
-  pre-commit run --hook-stage pre-commit --show-diff-on-failure --color always
+  run_with_timeout "$precommit_timeout_seconds" "pre-commit hook-stage pre-commit" pre-commit run --hook-stage pre-commit --show-diff-on-failure --color always
   exit $?
 fi
 

@@ -94,7 +94,7 @@ function Test-DirectoryPathAgainstPatterns {
         return $false
     }
 
-    return Test-PathAgainstPatterns -path "$normalizedDirectoryPath/" -patterns $patterns
+    return Test-PathAgainstPatterns -Path "$normalizedDirectoryPath/" -Patterns $patterns
 }
 
 function Get-FallbackFileStream {
@@ -138,7 +138,7 @@ function Get-FallbackFileStream {
                     continue
                 }
 
-                if (Test-DirectoryPathAgainstPatterns -directoryPath $entry.FullName -patterns $defaultExclusionPatterns) {
+                if (Test-DirectoryPathAgainstPatterns -directoryPath $entry.FullName -Patterns $defaultExclusionPatterns) {
                     $prunedDirectories++
                     continue
                 }
@@ -148,7 +148,7 @@ function Get-FallbackFileStream {
             }
 
             if ($entry -is [System.IO.FileInfo]) {
-                if (Test-PathAgainstPatterns -path $entry.FullName -patterns $defaultExclusionPatterns) {
+                if (Test-PathAgainstPatterns -Path $entry.FullName -Patterns $defaultExclusionPatterns) {
                     $excludedFiles++
                     continue
                 }
@@ -175,8 +175,8 @@ function Test-IsPathUnderRoot {
         [string]$root
     )
 
-    $normalizedPath = ((Resolve-TopLevelPathAlias -path $path) -replace '\\', '/').TrimEnd('/')
-    $normalizedRoot = ((Resolve-TopLevelPathAlias -path $root) -replace '\\', '/').TrimEnd('/')
+    $normalizedPath = ((Resolve-TopLevelPathAlias -Path $path) -replace '\\', '/').TrimEnd('/')
+    $normalizedRoot = ((Resolve-TopLevelPathAlias -Path $root) -replace '\\', '/').TrimEnd('/')
 
     $comparison = if ($IsWindows) {
         [System.StringComparison]::OrdinalIgnoreCase
@@ -401,7 +401,7 @@ function Resolve-TopLevelPathAlias {
                 }
 
                 if (-not $IsWindows -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
-                    $physicalTopLevelPath = Resolve-UnixPhysicalPath -path $topLevelSegment
+                    $physicalTopLevelPath = Resolve-UnixPhysicalPath -Path $topLevelSegment
                     if (-not [string]::IsNullOrWhiteSpace($physicalTopLevelPath)) {
                         $physicalTopLevelPath = [System.IO.Path]::GetFullPath($physicalTopLevelPath)
                         if (-not $physicalTopLevelPath.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
@@ -463,7 +463,7 @@ function Get-GitCommandDetails {
         }
     }
 
-    return [PSCustomObject]@{
+    return [pscustomobject]@{
         ExitCode  = $commandExitCode
         Output    = @($commandOutput)
         FirstLine = $firstOutputLine
@@ -497,8 +497,8 @@ function Resolve-CanonicalFileSystemPath {
             $resolvedItem.FullName
         }
 
-        $canonicalPath = Resolve-TopLevelPathAlias -path $canonicalCandidate
-        $physicalCanonicalPath = Resolve-UnixPhysicalPath -path $canonicalPath
+        $canonicalPath = Resolve-TopLevelPathAlias -Path $canonicalCandidate
+        $physicalCanonicalPath = Resolve-UnixPhysicalPath -Path $canonicalPath
         if (-not [string]::IsNullOrWhiteSpace($physicalCanonicalPath) -and -not $physicalCanonicalPath.Equals($canonicalPath, [System.StringComparison]::Ordinal)) {
             Write-Verbose "Remove-BOM canonicalization diagnostics: physical-path fallback remapped '$canonicalPath' to '$physicalCanonicalPath'."
             $canonicalPath = $physicalCanonicalPath
@@ -576,7 +576,7 @@ function Get-FallbackSafetyAssessment {
         "none"
     }
 
-    return [PSCustomObject]@{
+    return [pscustomobject]@{
         GitMetadataBoundary = $gitMetadataBoundary
         GitIgnorePaths      = @($gitIgnorePaths)
         FallbackScope       = $fallbackScope
@@ -591,7 +591,7 @@ function Resolve-ScannableFileDiscovery {
     )
 
     $scanRootInput = (Resolve-Path -LiteralPath $scanRoot -ErrorAction Stop).Path
-    $resolvedScanRoot = Resolve-CanonicalFileSystemPath -path $scanRoot
+    $resolvedScanRoot = Resolve-CanonicalFileSystemPath -Path $scanRoot
     if (-not $resolvedScanRoot.Equals($scanRootInput, [System.StringComparison]::Ordinal)) {
         Write-Verbose "Remove-BOM symlink origin diagnostics: scan root '$scanRootInput' canonicalized to '$resolvedScanRoot'."
     }
@@ -600,11 +600,11 @@ function Resolve-ScannableFileDiscovery {
     $gitDiscoveryFailureReason = ""
 
     if ($null -ne $gitCommand) {
-        $gitRootResult = Get-GitCommandDetails -gitExecutable $gitCommand.Source -workingDirectory $resolvedScanRoot -arguments @("rev-parse", "--show-toplevel")
+        $gitRootResult = Get-GitCommandDetails -gitExecutable $gitCommand.Source -WorkingDirectory $resolvedScanRoot -arguments @("rev-parse", "--show-toplevel")
         if ($gitRootResult.ExitCode -eq 0 -and $gitRootResult.Output.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($gitRootResult.Output[0])) {
             $gitRootCandidate = [System.IO.Path]::GetFullPath(([string]$gitRootResult.Output[0]).Trim())
-            $gitRoot = Resolve-CanonicalFileSystemPath -path $gitRootCandidate
-            $gitPrefixResult = Get-GitCommandDetails -gitExecutable $gitCommand.Source -workingDirectory $resolvedScanRoot -arguments @("rev-parse", "--show-prefix")
+            $gitRoot = Resolve-CanonicalFileSystemPath -Path $gitRootCandidate
+            $gitPrefixResult = Get-GitCommandDetails -gitExecutable $gitCommand.Source -WorkingDirectory $resolvedScanRoot -arguments @("rev-parse", "--show-prefix")
             $relativeScanRootSource = "git-show-prefix"
 
             if ($gitPrefixResult.ExitCode -eq 0) {
@@ -642,8 +642,8 @@ function Resolve-ScannableFileDiscovery {
 
                 if (-not $prefixEscapesGitRoot) {
                     try {
-                        $relativePrefixCandidateRoot = Resolve-CanonicalFileSystemPath -path (Join-Path -Path $gitRoot -ChildPath $relativeScanRoot)
-                        $prefixEscapesGitRoot = -not (Test-IsPathUnderRoot -path $relativePrefixCandidateRoot -root $gitRoot)
+                        $relativePrefixCandidateRoot = Resolve-CanonicalFileSystemPath -Path (Join-Path -Path $gitRoot -ChildPath $relativeScanRoot)
+                        $prefixEscapesGitRoot = -not (Test-IsPathUnderRoot -Path $relativePrefixCandidateRoot -Root $gitRoot)
                     }
                     catch {
                         # If the derived prefix cannot be canonicalized safely,
@@ -670,7 +670,7 @@ function Resolve-ScannableFileDiscovery {
                 $resolvedScanRoot
             }
             else {
-                Resolve-CanonicalFileSystemPath -path (Join-Path -Path $gitRoot -ChildPath $relativeScanRoot)
+                Resolve-CanonicalFileSystemPath -Path (Join-Path -Path $gitRoot -ChildPath $relativeScanRoot)
             }
 
             Write-Verbose "Remove-BOM canonicalization diagnostics: scanRootInput='$scanRootInput' resolvedScanRoot='$resolvedScanRoot' gitRootRaw='$gitRootCandidate' gitRootCanonical='$gitRoot' canonicalScanRoot='$canonicalScanRoot'"
@@ -681,7 +681,7 @@ function Resolve-ScannableFileDiscovery {
             }
 
             Write-Verbose "Remove-BOM discovery diagnostics: deferring git ls-files enumeration to streaming pass for '$canonicalScanRoot'."
-            return [PSCustomObject]@{
+            return [pscustomobject]@{
                 Mode             = "git-ls-files"
                 Diagnostics      = "scanRootInput=$scanRootInput gitRoot=$gitRoot scanRoot=$canonicalScanRoot relativeScanRoot=$relativeScanRoot relativeScanRootSource=$relativeScanRootSource resolvedScanRoot=$resolvedScanRoot listedPaths=deferred streaming=true"
                 ResolvedScanRoot = $canonicalScanRoot
@@ -724,7 +724,7 @@ function Resolve-ScannableFileDiscovery {
     }
 
     $defaultExclusionPatterns = Get-DefaultExclusionPatterns
-    return [PSCustomObject]@{
+    return [pscustomobject]@{
         Mode                     = "filesystem-fallback"
         Diagnostics              = "scanRootInput=$scanRootInput resolvedScanRoot=$resolvedScanRoot fallbackPatterns=$($defaultExclusionPatterns.Count) fallbackTraversal=directory-pruned $($fallbackSafetyAssessment.Diagnostics) streaming=true"
         ResolvedScanRoot         = $resolvedScanRoot
@@ -755,7 +755,7 @@ function Get-ScannableFileStream {
                 try {
                     $candidateItem = Get-Item -LiteralPath $candidatePath -ErrorAction Stop
                     if ($candidateItem -is [System.IO.FileInfo]) {
-                        if (Test-IsPathUnderRoot -path $candidateItem.FullName -root $scanPlan.ResolvedScanRoot) {
+                        if (Test-IsPathUnderRoot -Path $candidateItem.FullName -Root $scanPlan.ResolvedScanRoot) {
                             Write-Output $candidateItem
                         }
                         else {
@@ -777,7 +777,7 @@ function Get-ScannableFileStream {
 
         $streamExitCode = $LASTEXITCODE
         if ($streamExitCode -ne 0) {
-            $failureProbe = Get-GitCommandDetails -gitExecutable $scanPlan.GitExecutable -workingDirectory $scanPlan.GitRoot -arguments @($scanPlan.GitListArguments)
+            $failureProbe = Get-GitCommandDetails -gitExecutable $scanPlan.GitExecutable -WorkingDirectory $scanPlan.GitRoot -arguments @($scanPlan.GitListArguments)
             $failureDetails = if ($failureProbe.HasOutput) {
                 " First output: '$($failureProbe.FirstLine)'."
             }
@@ -807,8 +807,8 @@ function Get-ScannableFiles {
 
     if ($scanPlan.Mode -eq "git-ls-files" -and $files.Count -eq 0) {
         $scopeDiagnostics = $null
-        $canonicalGitRoot = Resolve-TopLevelPathAlias -path $scanPlan.GitRoot
-        $canonicalScanRoot = Resolve-TopLevelPathAlias -path $scanPlan.ResolvedScanRoot
+        $canonicalGitRoot = Resolve-TopLevelPathAlias -Path $scanPlan.GitRoot
+        $canonicalScanRoot = Resolve-TopLevelPathAlias -Path $scanPlan.ResolvedScanRoot
         try {
             $scopeDiagnostics = [System.IO.Path]::GetRelativePath(
                 $canonicalGitRoot,
@@ -827,7 +827,7 @@ function Get-ScannableFiles {
         }
     }
 
-    return [PSCustomObject]@{
+    return [pscustomobject]@{
         Files       = @($files)
         Mode        = $scanPlan.Mode
         Diagnostics = "$($scanPlan.Diagnostics) selectedFiles=$($files.Count)"
@@ -886,7 +886,7 @@ function Test-IsBinaryFile {
         }
 
         # Read the first 8KB of the file to check for binary content
-        $prefixRead = Read-FilePrefixBytes -filePath $filePath -byteCount 8192 -context "Test-IsBinaryFile"
+        $prefixRead = Read-FilePrefixBytes -FilePath $filePath -byteCount 8192 -Context "Test-IsBinaryFile"
         if ($null -eq $prefixRead) {
             return $false
         }
@@ -939,7 +939,7 @@ function Remove-BOMFromFile {
         }
 
         # Check if file has BOM by reading just the first few bytes (more efficient)
-        $prefixRead = Read-FilePrefixBytes -filePath $filePath -byteCount 3 -context "Remove-BOMFromFile"
+        $prefixRead = Read-FilePrefixBytes -FilePath $filePath -byteCount 3 -Context "Remove-BOMFromFile"
         if ($null -eq $prefixRead) {
             return $false
         }
@@ -1021,7 +1021,7 @@ function Invoke-Main {
 
             if ($DetectOnly) {
                 # Just check for BOM but don't remove
-                $prefixRead = Read-FilePrefixBytes -filePath $file.FullName -byteCount 3 -context "DetectOnly"
+                $prefixRead = Read-FilePrefixBytes -FilePath $file.FullName -byteCount 3 -Context "DetectOnly"
 
                 if ($null -ne $prefixRead) {
                     $buffer = $prefixRead.Buffer

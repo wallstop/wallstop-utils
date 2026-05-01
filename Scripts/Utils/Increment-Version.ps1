@@ -61,7 +61,7 @@ if (-not (Test-Path -LiteralPath $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
-. $strictModeHelpersPath
+.$strictModeHelpersPath
 
 function Increment-Version {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -93,11 +93,11 @@ function Increment-Version {
     )
 
     $operationContext = @{
-        Updated         = $false
+        Updated = $false
         PackageJsonPath = $null
         OriginalVersion = $null
-        NewVersion      = $null
-        GitStage        = "not-requested"
+        NewVersion = $null
+        GitStage = "not-requested"
     }
 
     # Check for custom help invocation first
@@ -493,7 +493,7 @@ function Increment-Version {
         if (-not $operationContext.Updated -and $gitActionRequested) {
             $operationContext.GitStage = "skipped-not-updated"
             Write-Warning "Git integration was requested but skipped because version update was not completed."
-            Write-Verbose ("Diagnostics: updated={0}; packageJsonPath='{1}'; originalVersion='{2}'; newVersion='{3}'; gitStage='{4}'" -f $operationContext.Updated, $operationContext.PackageJsonPath, $operationContext.OriginalVersion, $operationContext.NewVersion, $operationContext.GitStage)
+            Write-Verbose ("Diagnostics: updated={0}; packageJsonPath='{1}'; originalVersion='{2}'; newVersion='{3}'; gitStage='{4}'" -f $operationContext.Updated,$operationContext.PackageJsonPath,$operationContext.OriginalVersion,$operationContext.NewVersion,$operationContext.GitStage)
         }
 
         if ($operationContext.Updated -and $gitActionRequested) {
@@ -599,7 +599,7 @@ function Increment-Version {
                 }
             }
 
-            Write-Verbose ("Diagnostics: updated={0}; packageJsonPath='{1}'; originalVersion='{2}'; newVersion='{3}'; gitStage='{4}'" -f $operationContext.Updated, $operationContext.PackageJsonPath, $operationContext.OriginalVersion, $operationContext.NewVersion, $operationContext.GitStage)
+            Write-Verbose ("Diagnostics: updated={0}; packageJsonPath='{1}'; originalVersion='{2}'; newVersion='{3}'; gitStage='{4}'" -f $operationContext.Updated,$operationContext.PackageJsonPath,$operationContext.OriginalVersion,$operationContext.NewVersion,$operationContext.GitStage)
         }
 
     }

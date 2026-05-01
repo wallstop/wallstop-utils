@@ -145,7 +145,7 @@ if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
-. $strictModeHelpersPath
+.$strictModeHelpersPath
 
 function Redact-SensitiveText {
     [CmdletBinding()]
@@ -1229,7 +1229,7 @@ function Invoke-GitHubRequestWithRetry {
                         throw "E_RATE_LIMIT: Rate-limit reset timestamp is too far in the future."
                     }
 
-                    $waitSeconds = [int][Math]::Ceiling($timeToReset.TotalSeconds)
+                    $waitSeconds = [int][math]::Ceiling($timeToReset.TotalSeconds)
                     if ($waitSeconds -lt 1) {
                         $waitSeconds = 1
                     }
@@ -1244,7 +1244,7 @@ function Invoke-GitHubRequestWithRetry {
             }
 
             if (($statusCode -eq 429 -or $statusCode -eq 403 -or $statusCode -ge 500 -or $null -eq $statusCode) -and $attempt -le $MaxRetries) {
-                $baseDelay = [Math]::Pow(2, $attempt - 1)
+                $baseDelay = [math]::Pow(2, $attempt - 1)
                 $jitterMs = Get-Random -Minimum 0 -Maximum 300
                 Start-Sleep -Milliseconds ([int]($baseDelay * 1000 + $jitterMs))
                 continue
@@ -1356,12 +1356,12 @@ function Validate-GitHubTokenForRepoAccess {
     while ($true) {
         $attempt++
 
-        $remainingSeconds = [int][Math]::Floor(($OverallDeadlineUtc - [datetime]::UtcNow).TotalSeconds)
+        $remainingSeconds = [int][math]::Floor(($OverallDeadlineUtc - [datetime]::UtcNow).TotalSeconds)
         if ($remainingSeconds -lt 1) {
             throw "E_NETWORK_TIMEOUT: Token validation deadline was exceeded before request start for $Owner/$Repo on $GitHubHost."
         }
 
-        $effectiveRequestTimeoutSeconds = [Math]::Min($RequestTimeoutSeconds, $remainingSeconds)
+        $effectiveRequestTimeoutSeconds = [math]::Min($RequestTimeoutSeconds, $remainingSeconds)
         if ($effectiveRequestTimeoutSeconds -lt 1) {
             throw "E_NETWORK_TIMEOUT: Token validation timeout budget is exhausted for $Owner/$Repo on $GitHubHost."
         }
@@ -1421,11 +1421,11 @@ function Validate-GitHubTokenForRepoAccess {
 
             $isRetryableTransient = $null -eq $statusCode -or $statusCode -ge 500
             if ($isRetryableTransient -and $attempt -le $maxRetries) {
-                $baseDelaySeconds = [Math]::Pow(2, $attempt - 1)
+                $baseDelaySeconds = [math]::Pow(2, $attempt - 1)
                 $jitterMs = Get-Random -Minimum 0 -Maximum 300
                 $delayMs = [int]($baseDelaySeconds * 1000 + $jitterMs)
 
-                $remainingDelayBudgetMs = [int][Math]::Floor(($OverallDeadlineUtc - [datetime]::UtcNow).TotalMilliseconds)
+                $remainingDelayBudgetMs = [int][math]::Floor(($OverallDeadlineUtc - [datetime]::UtcNow).TotalMilliseconds)
                 if ($remainingDelayBudgetMs -le 0 -or $delayMs -gt $remainingDelayBudgetMs) {
                     throw "E_NETWORK_TIMEOUT: Token validation retry budget exceeded for $Owner/$Repo on $GitHubHost after attempt $attempt of $($maxRetries + 1)."
                 }
@@ -1619,10 +1619,10 @@ function Convert-ReviewThreadToOutputRecord {
         throw "E_MALFORMED_RESPONSE: Review thread latest reply body must be a string (received '$replyBodyType')."
     }
 
-    $lineStart = if ($null -ne $Thread.startLine) { [int]$Thread.startLine } elseif ($null -ne $Thread.line) { [int]$Thread.line } else { $null }
-    $lineEnd = if ($null -ne $Thread.line) { [int]$Thread.line } elseif ($null -ne $lineStart) { [int]$lineStart } else { $null }
+    $lineStart = if ($null -ne $Thread.startLine) { [int]$Thread.startLine } elseif ($null -ne $Thread.Line) { [int]$Thread.Line } else { $null }
+    $lineEnd = if ($null -ne $Thread.Line) { [int]$Thread.Line } elseif ($null -ne $lineStart) { [int]$lineStart } else { $null }
 
-    $safePath = if ([string]::IsNullOrWhiteSpace($Thread.path)) { "<conversation>" } else { ($Thread.path -replace "\\", "/") }
+    $safePath = if ([string]::IsNullOrWhiteSpace($Thread.Path)) { "<conversation>" } else { ($Thread.Path -replace "\\", "/") }
     $topLevelComment = if ($Truncate.IsPresent) {
         Normalize-CommentText -Text $top.body -MaxLength 500
     }
@@ -1695,7 +1695,104 @@ function Format-UnresolvedThreadsAsJson {
         [object[]]$Records
     )
 
-    return ($Records | ConvertTo-Json -Depth 8)
+    return ($Records | ConvertTo-Json -Depth 8 -AsArray)
+}
+
+function Assert-GraphQLVariableMap {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Query,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Variables,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Context = "GraphQL request",
+
+        [Parameter(Mandatory = $false)]
+        [switch]$RejectUnexpectedVariables
+    )
+
+    $declarationMatches = [regex]::Matches($Query, '\$(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*:')
+    $expectedVariableNames = New-Object System.Collections.Generic.List[string]
+    $seenExpectedVariableNames = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+
+    foreach ($declarationMatch in $declarationMatches) {
+        $variableName = [string]$declarationMatch.Groups["name"].Value
+        if ([string]::IsNullOrWhiteSpace($variableName)) {
+            continue
+        }
+
+        if ($seenExpectedVariableNames.Add($variableName)) {
+            $expectedVariableNames.Add($variableName) | Out-Null
+        }
+    }
+
+    if ($expectedVariableNames.Count -eq 0) {
+        throw "E_CONFIG_ERROR: $Context query does not declare any GraphQL variables."
+    }
+
+    $actualVariableNames = New-Object System.Collections.Generic.List[string]
+    foreach ($variableKey in $Variables.Keys) {
+        if ($null -eq $variableKey) {
+            continue
+        }
+
+        $actualVariableNames.Add([string]$variableKey) | Out-Null
+    }
+
+    $missingVariables = New-Object System.Collections.Generic.List[string]
+    $caseMismatchedVariables = New-Object System.Collections.Generic.List[string]
+    $unexpectedVariables = New-Object System.Collections.Generic.List[string]
+
+    foreach ($expectedVariableName in $expectedVariableNames) {
+        if ($actualVariableNames -ccontains $expectedVariableName) {
+            continue
+        }
+
+        $caseInsensitiveMatches = @($actualVariableNames | Where-Object { $_ -ieq $expectedVariableName })
+        if ($caseInsensitiveMatches.Count -gt 0) {
+            $caseMismatchedVariables.Add(("{0} (provided: {1})" -f $expectedVariableName, ($caseInsensitiveMatches -join ", "))) | Out-Null
+            continue
+        }
+
+        $missingVariables.Add($expectedVariableName) | Out-Null
+    }
+
+    if ($RejectUnexpectedVariables.IsPresent) {
+        foreach ($actualVariableName in $actualVariableNames) {
+            if ($expectedVariableNames -ccontains $actualVariableName) {
+                continue
+            }
+
+            $caseInsensitiveExpectedMatches = @($expectedVariableNames | Where-Object { $_ -ieq $actualVariableName })
+            if ($caseInsensitiveExpectedMatches.Count -gt 0) {
+                continue
+            }
+
+            $unexpectedVariables.Add($actualVariableName) | Out-Null
+        }
+    }
+
+    if ($missingVariables.Count -eq 0 -and $caseMismatchedVariables.Count -eq 0 -and $unexpectedVariables.Count -eq 0) {
+        return
+    }
+
+    $issues = New-Object System.Collections.Generic.List[string]
+    if ($missingVariables.Count -gt 0) {
+        $issues.Add(("missing variables: {0}" -f ($missingVariables -join ", "))) | Out-Null
+    }
+
+    if ($caseMismatchedVariables.Count -gt 0) {
+        $issues.Add(("case mismatch: {0}" -f ($caseMismatchedVariables -join "; "))) | Out-Null
+    }
+
+    if ($unexpectedVariables.Count -gt 0) {
+        $issues.Add(("unexpected variables: {0}" -f ($unexpectedVariables -join ", "))) | Out-Null
+    }
+
+    throw ("E_CONFIG_ERROR: {0} GraphQL variables are invalid ({1})." -f $Context, ($issues -join "; "))
 }
 
 function Get-UnresolvedReviewThreads {
@@ -1799,6 +1896,8 @@ query GetReviewThreads(
             after    = $cursor
         }
 
+        Assert-GraphQLVariableMap -Query $query -Variables $variables -Context "Get-UnresolvedReviewThreads" -RejectUnexpectedVariables
+
         $body = @{
             query     = $query
             variables = $variables
@@ -1830,7 +1929,7 @@ query GetReviewThreads(
                     }
                 }
                 elseif ($firstError.PSObject.Properties.Name -contains "message") {
-                    $messageValue = Get-FirstNonEmptyStringValue -Value $firstError.message
+                    $messageValue = Get-FirstNonEmptyStringValue -Value $firstError.Message
                     if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
                         $message = $messageValue
                     }
@@ -2073,6 +2172,8 @@ function Invoke-Main {
     $headers = Get-GitHubHeaders -AuthToken $authToken
     Assert-IsHashtableLike -Value $headers -Name "Headers"
 
+    # Recovery prompts are intentionally limited to URL and interactive workflows.
+    # Direct owner/repo mode is typically automation-oriented and should fail fast.
     $allowPromptedLoginFallback = $Interactive.IsPresent -or -not [string]::IsNullOrWhiteSpace($PullRequestUrl)
 
     $endpoint = Resolve-GitHubGraphQLEndpoint -GitHubHost $target.Host
@@ -2088,12 +2189,39 @@ function Invoke-Main {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
 
         $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+        $originalAuthRecoverableFailure = $isAuthRecoverableFailure
+        $originalSensitiveTokens = @($sensitiveTokens)
+        $anonymousRetrySucceeded = $false
 
-        if ($allowPromptedLoginFallback -and $isAuthRecoverableFailure -and -not (Test-CanPromptForLogin)) {
-            throw "E_AUTH_REQUIRED: Authentication is missing or invalid, but interactive login prompt is unavailable because input/output is redirected. Provide -Token or set GITHUB_TOKEN/GH_TOKEN."
+        if ($allowPromptedLoginFallback -and $isAuthRecoverableFailure -and -not [string]::IsNullOrWhiteSpace($authToken)) {
+            Write-Verbose "Recoverable authentication failure detected. Retrying request anonymously before prompting for login."
+
+            $authToken = $null
+            $sensitiveTokens = @()
+            $headers = Get-GitHubHeaders -AuthToken $null
+            Assert-IsHashtableLike -Value $headers -Name "Headers"
+
+            try {
+                $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
+                $anonymousRetrySucceeded = $true
+            }
+            catch {
+                $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $originalSensitiveTokens
+                $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+            }
         }
 
-        if ($allowPromptedLoginFallback -and $isAuthRecoverableFailure) {
+        if (-not $anonymousRetrySucceeded -and $allowPromptedLoginFallback -and $originalAuthRecoverableFailure -and -not (Test-CanPromptForLogin)) {
+            # If retry produced a non-auth error (for example network timeout), surface
+            # that actionable failure instead of forcing an E_AUTH_REQUIRED wrapper.
+            if ($isAuthRecoverableFailure) {
+                throw "E_AUTH_REQUIRED: Authentication is missing or invalid, but interactive login prompt is unavailable because input/output is redirected. Provide -Token or set GITHUB_TOKEN/GH_TOKEN."
+            }
+
+            throw $message
+        }
+
+        if (-not $anonymousRetrySucceeded -and $allowPromptedLoginFallback -and $originalAuthRecoverableFailure) {
             $choice = Read-Host "Authentication is missing or invalid. Log in using GitHub CLI now? [y/N]"
             if ($choice -match "^(y|yes)$") {
                 $authToken = Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive
@@ -2120,7 +2248,7 @@ function Invoke-Main {
                 throw $message
             }
         }
-        else {
+        elseif (-not $anonymousRetrySucceeded) {
             throw $message
         }
     }

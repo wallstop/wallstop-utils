@@ -4,11 +4,11 @@ param(
     [string]$RootPath,
 
     [Parameter(Mandatory = $false)]
-    [ValidateRange(1, 2000)]
+    [ValidateRange(1,2000)]
     [int]$MaxLines = 300,
 
     [Parameter(Mandatory = $false)]
-    [ValidateRange(1, 2000)]
+    [ValidateRange(1,2000)]
     [int]$WarningLines = 280
 )
 
@@ -20,7 +20,7 @@ if (-not (Test-Path -Path $llmWrapperHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: LLM wrapper helper file not found at '$llmWrapperHelpersPath'."
 }
 
-. $llmWrapperHelpersPath
+.$llmWrapperHelpersPath
 
 function Get-RepositoryRoot {
     param(
@@ -44,13 +44,13 @@ function ConvertTo-MarkdownAnchor {
         [System.Collections.Generic.Dictionary[string, int]]$AnchorCounts
     )
 
-    $normalizedHeading = [regex]::Replace($HeadingText, '\[([^\]]+)\]\([^\)]+\)', '$1')
-    $normalizedHeading = [regex]::Replace($normalizedHeading, '<[^>]+>', '')
-    $normalizedHeading = $normalizedHeading -replace '`', ''
+    $normalizedHeading = [regex]::Replace($HeadingText,'\[([^\]]+)\]\([^\)]+\)','$1')
+    $normalizedHeading = [regex]::Replace($normalizedHeading,'<[^>]+>','')
+    $normalizedHeading = $normalizedHeading -replace '`',''
     $normalizedHeading = $normalizedHeading.ToLowerInvariant()
-    $normalizedHeading = [regex]::Replace($normalizedHeading, '[^a-z0-9 _-]', '')
-    $normalizedHeading = [regex]::Replace($normalizedHeading, '\s+', '-')
-    $normalizedHeading = [regex]::Replace($normalizedHeading, '-{2,}', '-')
+    $normalizedHeading = [regex]::Replace($normalizedHeading,'[^a-z0-9 _-]','')
+    $normalizedHeading = [regex]::Replace($normalizedHeading,'\s+','-')
+    $normalizedHeading = [regex]::Replace($normalizedHeading,'-{2,}','-')
     $normalizedHeading = $normalizedHeading.Trim('-')
 
     if ([string]::IsNullOrWhiteSpace($normalizedHeading)) {
@@ -58,7 +58,7 @@ function ConvertTo-MarkdownAnchor {
     }
 
     $existingCount = 0
-    if ($AnchorCounts.TryGetValue($normalizedHeading, [ref]$existingCount)) {
+    if ($AnchorCounts.TryGetValue($normalizedHeading,[ref]$existingCount)) {
         $nextCount = $existingCount + 1
         $AnchorCounts[$normalizedHeading] = $nextCount
         return "$normalizedHeading-$nextCount"
@@ -78,7 +78,7 @@ function Get-MarkdownHeadingAnchors {
     $anchorCounts = New-Object 'System.Collections.Generic.Dictionary[string, int]' ([System.StringComparer]::Ordinal)
     $inFencedCodeBlock = $false
 
-    foreach ($line in [System.IO.File]::ReadLines($MarkdownPath, [System.Text.Encoding]::UTF8)) {
+    foreach ($line in [System.IO.File]::ReadLines($MarkdownPath,[System.Text.Encoding]::UTF8)) {
         if ($line -match '^\s*(```|~~~)') {
             $inFencedCodeBlock = -not $inFencedCodeBlock
             continue
@@ -88,13 +88,13 @@ function Get-MarkdownHeadingAnchors {
             continue
         }
 
-        $headingMatch = [regex]::Match($line, '^\s{0,3}#{1,6}\s+(?<heading>.+?)\s*$')
+        $headingMatch = [regex]::Match($line,'^\s{0,3}#{1,6}\s+(?<heading>.+?)\s*$')
         if (-not $headingMatch.Success) {
             continue
         }
 
         $headingText = $headingMatch.Groups['heading'].Value.Trim()
-        $headingText = [regex]::Replace($headingText, '\s+#+\s*$', '')
+        $headingText = [regex]::Replace($headingText,'\s+#+\s*$','')
 
         $anchor = ConvertTo-MarkdownAnchor -HeadingText $headingText -AnchorCounts $anchorCounts
         if (-not [string]::IsNullOrWhiteSpace($anchor)) {
@@ -102,7 +102,7 @@ function Get-MarkdownHeadingAnchors {
         }
     }
 
-    return , $anchors
+    return ,$anchors
 }
 
 function Test-IsPathWithinDirectory {
@@ -114,7 +114,7 @@ function Test-IsPathWithinDirectory {
         [string]$CandidatePath
     )
 
-    $relativePath = [System.IO.Path]::GetRelativePath($BasePath, $CandidatePath)
+    $relativePath = [System.IO.Path]::GetRelativePath($BasePath,$CandidatePath)
     if ([string]::IsNullOrWhiteSpace($relativePath) -or $relativePath -eq '.') {
         return $true
     }
@@ -127,8 +127,8 @@ function Test-IsPathWithinDirectory {
     $parentWithAltDirectorySeparator = "..$([System.IO.Path]::AltDirectorySeparatorChar)"
 
     return -not (
-        $relativePath.StartsWith($parentWithDirectorySeparator, [System.StringComparison]::Ordinal) -or
-        $relativePath.StartsWith($parentWithAltDirectorySeparator, [System.StringComparison]::Ordinal)
+        $relativePath.StartsWith($parentWithDirectorySeparator,[System.StringComparison]::Ordinal) -or
+        $relativePath.StartsWith($parentWithAltDirectorySeparator,[System.StringComparison]::Ordinal)
     )
 }
 
@@ -142,7 +142,7 @@ function ConvertTo-PortablePath {
         return ''
     }
 
-    return ($PathValue -replace '[\\/]+', '/')
+    return ($PathValue -replace '[\\/]+','/')
 }
 
 function Test-UsesCanonicalTriOsPhrase {
@@ -210,7 +210,7 @@ foreach ($wrapper in $requiredWrappers) {
         continue
     }
 
-    $wrapperContent = [System.IO.File]::ReadAllText($wrapperPath, [System.Text.Encoding]::UTF8)
+    $wrapperContent = [System.IO.File]::ReadAllText($wrapperPath,[System.Text.Encoding]::UTF8)
     if ($wrapperContent -notmatch '(?i)\.llm/context\.md') {
         $errors.Add("Wrapper file '$wrapper' does not point to .llm/context.md") | Out-Null
     }
@@ -238,8 +238,8 @@ if ($llmMarkdownFiles.Count -eq 0) {
 }
 
 foreach ($file in $llmMarkdownFiles) {
-    $lineCount = [System.IO.File]::ReadAllLines($file.FullName, [System.Text.Encoding]::UTF8).Length
-    $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $file.FullName)
+    $lineCount = [System.IO.File]::ReadAllLines($file.FullName,[System.Text.Encoding]::UTF8).Length
+    $relativePath = [System.IO.Path]::GetRelativePath($repoRoot,$file.FullName)
 
     if ($lineCount -gt $MaxLines) {
         $errors.Add("$relativePath exceeds max line limit ($lineCount > $MaxLines)") | Out-Null
@@ -272,10 +272,10 @@ $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[
 $anchorLinkPattern = '\[[^\]]+\]\(\.\./skill-details/(?<detailsPath>(?:[^/#)\s]+/)*[^/#)\s]+\.md)#(?<anchor>[^)\s]+)\)'
 $detailsAnchorsByPath = @{}
 foreach ($skillFile in $skillFiles) {
-    $skillContent = [System.IO.File]::ReadAllText($skillFile.FullName, [System.Text.Encoding]::UTF8)
-    $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $skillFile.FullName)
+    $skillContent = [System.IO.File]::ReadAllText($skillFile.FullName,[System.Text.Encoding]::UTF8)
+    $relativePath = [System.IO.Path]::GetRelativePath($repoRoot,$skillFile.FullName)
 
-    $match = [regex]::Match($skillContent, $triggerPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $match = [regex]::Match($skillContent,$triggerPattern,[System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if (-not $match.Success) {
         $errors.Add("$relativePath is missing trigger metadata comment.") | Out-Null
         continue
@@ -286,7 +286,7 @@ foreach ($skillFile in $skillFiles) {
         $errors.Add("$relativePath trigger description must use the canonical phrase 'Windows, macOS, and Linux' when listing all three operating systems.") | Out-Null
     }
 
-    $skillLineCount = [System.IO.File]::ReadAllLines($skillFile.FullName, [System.Text.Encoding]::UTF8).Length
+    $skillLineCount = [System.IO.File]::ReadAllLines($skillFile.FullName,[System.Text.Encoding]::UTF8).Length
     if ($skillLineCount -gt 80) {
         $errors.Add("$relativePath should remain lightweight (<= 80 lines, found $skillLineCount).") | Out-Null
     }
@@ -302,7 +302,7 @@ foreach ($skillFile in $skillFiles) {
     }
 
     $normalizedDetails = ConvertTo-PortablePath -PathValue $detailsPathValue
-    if ($normalizedDetails.StartsWith('.llm/', [System.StringComparison]::OrdinalIgnoreCase)) {
+    if ($normalizedDetails.StartsWith('.llm/',[System.StringComparison]::OrdinalIgnoreCase)) {
         $normalizedDetails = $normalizedDetails.Substring(5)
     }
 
@@ -311,7 +311,7 @@ foreach ($skillFile in $skillFiles) {
         $errors.Add("$relativePath references missing details file '$detailsPathValue'.") | Out-Null
     }
 
-    $anchorMatches = [regex]::Matches($skillContent, $anchorLinkPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $anchorMatches = [regex]::Matches($skillContent,$anchorLinkPattern,[System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     foreach ($anchorMatch in $anchorMatches) {
         $detailsPath = [System.Uri]::UnescapeDataString($anchorMatch.Groups['detailsPath'].Value.Trim())
         $detailsPath = ConvertTo-PortablePath -PathValue $detailsPath
@@ -352,14 +352,14 @@ foreach ($skillFile in $skillFiles) {
 }
 
 if (Test-Path -Path $contextPath -PathType Leaf) {
-    $contextContent = [System.IO.File]::ReadAllText($contextPath, [System.Text.Encoding]::UTF8)
+    $contextContent = [System.IO.File]::ReadAllText($contextPath,[System.Text.Encoding]::UTF8)
     if ($contextContent -notmatch '\(\./skills-index\.md\)') {
         $errors.Add('.llm/context.md must link to .llm/skills-index.md.') | Out-Null
     }
 
     if (Test-Path -Path $dependabotConfigPath -PathType Leaf) {
-        $dependabotContent = ([System.IO.File]::ReadAllText($dependabotConfigPath, [System.Text.Encoding]::UTF8)) -replace "`r", ''
-        $normalizedContext = $contextContent -replace "`r", ''
+        $dependabotContent = ([System.IO.File]::ReadAllText($dependabotConfigPath,[System.Text.Encoding]::UTF8)) -replace "`r",''
+        $normalizedContext = $contextContent -replace "`r",''
         $ecosystemMatches = [System.Text.RegularExpressions.Regex]::Matches(
             $dependabotContent,
             '(?m)^\s*-\s*package-ecosystem:\s*"?(?<name>[A-Za-z0-9-]+)"?\s*$'
@@ -371,10 +371,10 @@ if (Test-Path -Path $contextPath -PathType Leaf) {
         )
 
         $scheduleDiagnostics = @{
-            IntervalWeeklyCount = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count
-            DayMondayCount      = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count
-            Time0300Count       = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count
-            TimezoneUtcCount    = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count
+            IntervalWeeklyCount = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent,'(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count
+            DayMondayCount = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent,'(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count
+            Time0300Count = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent,'(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count
+            TimezoneUtcCount = @([System.Text.RegularExpressions.Regex]::Matches($dependabotContent,'(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count
         }
         $usesPerUpdateTypeGroups = (
             $dependabotContent -match '(?m)^\s*applies-to:\s*(?:"version-updates"|version-updates)\s*$' -and
@@ -417,7 +417,7 @@ if (Test-Path -Path $contextPath -PathType Leaf) {
 }
 
 if (Test-Path -Path $crossPlatformDetailsPath -PathType Leaf) {
-    $crossPlatformContent = ([System.IO.File]::ReadAllText($crossPlatformDetailsPath, [System.Text.Encoding]::UTF8)) -replace "`r", ''
+    $crossPlatformContent = ([System.IO.File]::ReadAllText($crossPlatformDetailsPath,[System.Text.Encoding]::UTF8)) -replace "`r",''
     $windowsOnlySectionMatch = [System.Text.RegularExpressions.Regex]::Match(
         $crossPlatformContent,
         '(?ms)^##\s+Avoiding\s+Windows-Only\s+APIs\s+And\s+Commands\s*$\n(?<section>.*?)(?=^##\s|\z)'
@@ -474,9 +474,9 @@ if (Test-Path -Path $crossPlatformDetailsPath -PathType Leaf) {
 }
 
 if (Test-Path -Path $skillsIndexPath -PathType Leaf) {
-    $indexContent = [System.IO.File]::ReadAllText($skillsIndexPath, [System.Text.Encoding]::UTF8)
-    $beginCount = [regex]::Matches($indexContent, '<!-- BEGIN GENERATED SKILLS INDEX -->').Count
-    $endCount = [regex]::Matches($indexContent, '<!-- END GENERATED SKILLS INDEX -->').Count
+    $indexContent = [System.IO.File]::ReadAllText($skillsIndexPath,[System.Text.Encoding]::UTF8)
+    $beginCount = [regex]::Matches($indexContent,'<!-- BEGIN GENERATED SKILLS INDEX -->').Count
+    $endCount = [regex]::Matches($indexContent,'<!-- END GENERATED SKILLS INDEX -->').Count
 
     if ($beginCount -ne 1 -or $endCount -ne 1) {
         $errors.Add('.llm/skills-index.md must contain exactly one BEGIN/END generated index sentinel pair.') | Out-Null

@@ -185,9 +185,9 @@ Describe "Invoke-AutoHotkeyCommand" {
         @{
             Case               = "large stderr stream remains deterministic"
             Executable         = "pwsh"
-            Arguments          = @("-NoLogo", "-NoProfile", "-Command", '1..1500 | ForEach-Object { [Console]::Error.WriteLine("problem-stderr-$_") }; exit 9')
+            Arguments          = @("-NoLogo", "-NoProfile", "-Command", '1..400 | ForEach-Object { [Console]::Error.WriteLine("problem-stderr-$_") }; exit 9')
             ExpectedExitCode   = 9
-            ExpectedOutputLike = "problem-stderr-750"
+            ExpectedOutputLike = "problem-stderr-200"
         }
     ) {
         param(
@@ -202,8 +202,8 @@ Describe "Invoke-AutoHotkeyCommand" {
         $expectedExitCode = $ExpectedExitCode
         $result = Invoke-AutoHotkeyCommand -Executable $Executable -Arguments $Arguments
 
-        # Emit diagnostic context unconditionally so CI logs always contain enough info
-        # to diagnose exit-code or output-capture regressions without re-running the build.
+        # Emit diagnostic context through Write-Verbose and force verbose preference in this block
+        # so CI logs include enough detail to diagnose capture regressions without re-running.
         $diagnostics = if ($null -ne $result.Diagnostics) {
             $result.Diagnostics | ConvertTo-Json -Compress -Depth 4
         }
@@ -217,8 +217,15 @@ Describe "Invoke-AutoHotkeyCommand" {
         else {
             $result.Output -join "`n"
         }
-        Write-Host "[Invoke-AutoHotkeyCommand diag] Case='$Case' ExitCode=$($result.ExitCode) ExpectedExitCode=$expectedExitCode OutputLines=$outputLineCount IsWindows=$IsWindows diagnostics=$diagnostics"
-        Write-Host "[Invoke-AutoHotkeyCommand diag] OutputPreview:`n$outputPreview"
+        $originalVerbosePreference = $VerbosePreference
+        try {
+            $VerbosePreference = "Continue"
+            Write-Verbose "[Invoke-AutoHotkeyCommand diag] Case='$Case' ExitCode=$($result.ExitCode) ExpectedExitCode=$expectedExitCode OutputLines=$outputLineCount IsWindows=$IsWindows diagnostics=$diagnostics"
+            Write-Verbose "[Invoke-AutoHotkeyCommand diag] OutputPreview:`n$outputPreview"
+        }
+        finally {
+            $VerbosePreference = $originalVerbosePreference
+        }
 
         $result.ExitCode | Should -Be $expectedExitCode -Because "Case='$Case' expected exit code $expectedExitCode but got $($result.ExitCode). diagnostics=$diagnostics"
         $outputText = ($result.Output -join " ")

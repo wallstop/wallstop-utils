@@ -3,9 +3,11 @@
 This folder contains quality helper scripts used by local hooks and CI:
 
 - `Format-PowerShellFiles.ps1`: deterministic PowerShell formatting for staged or selected files.
+- `Install-PowerShellQualityModules.ps1`: explicit host-shell bootstrap for required PowerShell quality modules (`Pester`, `PSScriptAnalyzer`) used by hooks and validation workflows.
 - `Invoke-WindowsLanguageChecks.ps1`: Windows-only checks for AutoHotkey (runtime probing with `/validate`, then `/iLib` fallback) and best-effort batch smoke validation. AutoHotkey process execution uses `System.Diagnostics.Process` with `ArgumentList.Add()` for reliable stdout/stderr capture across all platforms, avoiding `Start-Process -ArgumentList` which mangles special characters on Windows.
 
 Batch smoke checks intentionally remain heuristic, but they now apply uniformly to both single-line and multi-line `.bat` files.
+
 - `Invoke-MacOSLanguageChecks.sh`: macOS AppleScript validation with a source-first migration path and `.scpt` fallback.
 - `Assert-CleanGitTree.ps1`: fails when formatting or checks mutate files in CI.
 - `Invoke-FullValidation.ps1`: session-close full validation wrapper (pre-commit stage all-files, pre-push stage all-files, clean-tree assertion, optional PR CI watch).
@@ -52,6 +54,8 @@ AI remediation workflow:
 Major-change session-close workflow:
 
 ```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly
 pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1
 pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -WatchCi
 ```
