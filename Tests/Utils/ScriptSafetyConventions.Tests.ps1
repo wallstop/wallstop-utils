@@ -977,6 +977,27 @@ Describe "Shell quality conventions" {
         $backupContent | Should -Match '(?m)^\s*for\s+file\s+in\s+"\$HOME"/\*\.sh;\s+do\s*$'
     }
 
+    It "guards Backup.sh pull/push with explicit branch assertions" {
+        $backupPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/Backup.sh'
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $backupContent = (Get-Content -Path $backupPath -Raw) -replace "`r", ''
+
+        $backupContent | Should -Match 'command\s+-v\s+git'
+        $backupContent | Should -Match 'E_BACKUP_MAC_GIT_NOT_AVAILABLE'
+        $backupContent | Should -Match 'assert_backup_git_branch\(\)'
+        $backupContent | Should -Match 'E_BACKUP_GIT_BRANCH_DETECTION_FAILED'
+        $backupContent | Should -Match 'E_BACKUP_GIT_DETACHED_HEAD'
+        $backupContent | Should -Match 'E_BACKUP_GIT_BRANCH_MISMATCH'
+        $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main'
+        $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+add\s+--all'
+        $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+commit\s+-m\s+"Backup for \$current_date"'
+        $backupContent | Should -Match 'current_date=\$\(date\)[\s\S]*?assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+add\s+--all'
+        $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main'
+        $backupContent | Should -Not -Match '(?m)^\s*git\s+add\s+--all\s*$'
+        $backupContent | Should -Not -Match '(?m)^\s*git\s+pull\s+origin\s+main\s*$'
+        $backupContent | Should -Not -Match '(?m)^\s*git\s+push\s+origin\s+main\s*$'
+    }
+
     It "avoids parse-ls backup selection pattern in restore_brew" {
         $restorePath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/restore_brew.sh'
         # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
@@ -1479,15 +1500,21 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"git"'
         $backupScript | Should -Match 'E_BACKUP_GIT_NOT_AVAILABLE'
         $backupScript | Should -Match 'function\s+Get-GitRepositoryRootOrThrow'
+        $backupScript | Should -Match 'function\s+Assert-BackupGitBranchOrThrow'
         $backupScript | Should -Match '\$insideWorkTreeArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"rev-parse",\s*"--is-inside-work-tree"\)'
         $backupScript | Should -Match '&\s+\$gitExecutable\s+@insideWorkTreeArgs'
         $backupScript | Should -Match 'E_BACKUP_GIT_NOT_REPOSITORY'
+        $backupScript | Should -Match 'E_BACKUP_GIT_BRANCH_DETECTION_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_DETACHED_HEAD'
+        $backupScript | Should -Match 'E_BACKUP_GIT_BRANCH_MISMATCH'
         $backupScript | Should -Match 'E_BACKUP_GIT_TREE_DIRTY_PREFLIGHT'
         $backupScript | Should -Match 'E_BACKUP_GIT_SCOPE_VIOLATION'
         $backupScript | Should -Match 'E_BACKUP_GIT_ADD_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_DIFF_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_RESTAGE_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_RETRY_EMPTY_STAGE'
+        $backupScript | Should -Match 'if\s*\(\s*\$retryStagedFiles\.Count\s*-eq\s*0\s*\)\s*\{[\s\S]*?E_BACKUP_GIT_COMMIT_RETRY_EMPTY_STAGE' -Because "Backup must emit explicit empty-stage diagnostics when autofix restage removes all managed staged files."
         $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT'
         $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED'
@@ -1504,8 +1531,9 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'E_BACKUP_GIT_STATUS_FAILED:[\s\S]*repositoryRoot='
         $backupScript | Should -Match 'E_BACKUP_GIT_STATUS_FAILED:[\s\S]*pathspec='
         $backupScript | Should -Match 'E_BACKUP_GIT_STATUS_FAILED:[\s\S]*outputPreview='
-        $backupScript | Should -Match 'Assert-BackupGitTreeCleanPreflight\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?foreach\s*\(\$step\s+in\s+\$applicableSteps\)'
+        $backupScript | Should -Match 'Assert-BackupGitTreeCleanPreflight\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot[\s\S]*?Assert-BackupGitBranchOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot\s+-ExpectedBranch\s+"main"[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?foreach\s*\(\$step\s+in\s+\$applicableSteps\)'
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+push\s+origin\s+main'
+        $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?Assert-BackupGitBranchOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot\s+-ExpectedBranch\s+"main"[\s\S]*?git\s+push\s+origin\s+main'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX'
         $backupScript | Should -Match 'W_BACKUP_GIT_ADD_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_SKIPPED_PRIOR_GIT_FAILURE'
@@ -3014,8 +3042,8 @@ $result = "value {0} {1}" -f
     It "uses explicit git availability preflight in git-consuming utility scripts" {
         $gitPreflightCases = @(
             @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+diff\s+--cached\s+--name-only\s+--diff-filter=ACMR' },
-            @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+@\$statusArgs|"status",\s*"--porcelain=v1",\s*"--untracked-files=all"' },
-            @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+@\$statusArgs|"status",\s*"--porcelain=v1",\s*"--untracked-files=all"' },
+            @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
+            @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
             @{ Path = 'Scripts/Utils/Increment-Version.ps1'; ErrorCode = 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree' }
         )
 
@@ -3050,15 +3078,19 @@ $result = "value {0} {1}" -f
         $fullValidation | Should -Match 'DiagnosticsHelpers\.ps1'
         $fullValidation | Should -Match 'E_VALIDATION_DIAGNOSTICS_HELPER_MISSING'
         $fullValidation | Should -Not -Match 'function\s+Get-OutputPreview'
-        $fullValidation | Should -Match 'statusArgs\s*=\s*@\("status",\s*"--porcelain=v1",\s*"--untracked-files=all"\)'
+        $fullValidation | Should -Match 'statusArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all"\)'
+        $fullValidation | Should -Match 'E_VALIDATION_GIT_NOT_REPOSITORY'
         $fullValidation | Should -Match 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*repositoryRoot=' -Because "Validation status failures should include repository context."
+        $fullValidation | Should -Match 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*workingDirectory=' -Because "Validation status failures should include calling working-directory context."
         $fullValidation | Should -Match 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*outputPreview=' -Because "Validation status failures should include command output previews."
 
         $assertClean | Should -Match 'DiagnosticsHelpers\.ps1'
         $assertClean | Should -Match 'E_ASSERT_CLEAN_GIT_TREE_DIAGNOSTICS_HELPER_MISSING'
         $assertClean | Should -Not -Match 'function\s+Get-OutputPreview'
-        $assertClean | Should -Match 'statusArgs\s*=\s*@\("status",\s*"--porcelain=v1",\s*"--untracked-files=all"\)'
+        $assertClean | Should -Match 'statusArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all"\)'
+        $assertClean | Should -Match 'E_ASSERT_CLEAN_GIT_TREE_NOT_REPOSITORY'
         $assertClean | Should -Match 'E_GIT_STATUS_FAILED:[^\n]*repositoryRoot=' -Because "Assert-CleanGitTree status failures should include repository context."
+        $assertClean | Should -Match 'E_GIT_STATUS_FAILED:[^\n]*workingDirectory=' -Because "Assert-CleanGitTree status failures should include calling working-directory context."
         $assertClean | Should -Match 'E_GIT_STATUS_FAILED:[^\n]*outputPreview=' -Because "Assert-CleanGitTree status failures should include command output previews."
     }
 

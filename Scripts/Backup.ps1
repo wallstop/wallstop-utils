@@ -86,6 +86,58 @@ function Get-GitRepositoryRootOrThrow {
     return (Resolve-Path -LiteralPath ([string]$repoRootOutput[0]).Trim() -ErrorAction Stop).Path
 }
 
+function Assert-BackupGitBranchOrThrow {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedBranch
+    )
+
+    $branchArgs = @("-C", $RepositoryRoot, "rev-parse", "--abbrev-ref", "HEAD")
+    $branchOutput = @(& $GitExecutable @branchArgs 2>$null)
+    $branchExitCode = Get-LastExitCodeOrDefault
+    if ($branchExitCode -ne 0 -or $branchOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$branchOutput[0])) {
+        $branchDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $GitExecutable -GitArguments $branchArgs)
+        $branchPreview = Get-OutputPreview -OutputLines $branchDiagnostics
+        throw (
+            "E_BACKUP_GIT_BRANCH_DETECTION_FAILED: git rev-parse --abbrev-ref HEAD failed (exitCode={0}; repositoryRoot='{1}'; outputPreview={2})." -f
+            $branchExitCode,
+            $RepositoryRoot,
+            $branchPreview
+        )
+    }
+
+    $currentBranch = ([string]$branchOutput[0]).Trim()
+    if ($currentBranch -eq "HEAD") {
+        throw (
+            "E_BACKUP_GIT_DETACHED_HEAD: git HEAD is detached at repositoryRoot='{0}'. Backup requires branch '{1}'." -f
+            $RepositoryRoot,
+            $ExpectedBranch
+        )
+    }
+
+    if ($currentBranch -ne $ExpectedBranch) {
+        throw (
+            "E_BACKUP_GIT_BRANCH_MISMATCH: current branch is '{0}' but backup requires '{1}' (repositoryRoot='{2}')." -f
+            $currentBranch,
+            $ExpectedBranch,
+            $RepositoryRoot
+        )
+    }
+
+    Write-Verbose (
+        "Backup git branch diagnostics: currentBranch='{0}'; expectedBranch='{1}'; repositoryRoot='{2}'" -f
+        $currentBranch,
+        $ExpectedBranch,
+        $RepositoryRoot
+    )
+}
+
 function Get-GitStatusLinesOrThrow {
     param(
         [Parameter(Mandatory = $true)]
@@ -376,6 +428,7 @@ try {
     Write-Host ""
     Write-Host "========== BACKUP GIT PREFLIGHT ==========" -ForegroundColor Cyan
     Assert-BackupGitTreeCleanPreflight -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot
+    Assert-BackupGitBranchOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ExpectedBranch "main"
     Write-Host "Git tree is clean before backup mutations." -ForegroundColor Green
 
     # Pull before backup mutations so backup never starts from an out-of-date branch.
@@ -612,6 +665,7 @@ try {
     }
 
     if (-not $hasGitFailure) {
+        Assert-BackupGitBranchOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ExpectedBranch "main"
         & $gitExecutable -C $repositoryRoot push origin main
         $gitPushExitCode = Get-LastExitCodeOrDefault
         if ($gitPushExitCode -ne 0) {

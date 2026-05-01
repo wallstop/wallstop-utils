@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Exit on error, undefined variables, and pipe failures
 set -euo pipefail
@@ -13,6 +13,36 @@ brew upgrade
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+if ! command -v git > /dev/null 2>&1; then
+  echo "E_BACKUP_MAC_GIT_NOT_AVAILABLE: git is required for macOS backup but was not found on PATH." >&2
+  exit 1
+fi
+
+assert_backup_git_branch() {
+  local repo_root="$1"
+  local expected_branch="$2"
+  local current_branch
+
+  current_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2> /dev/null || true)"
+  if [[ -z "$current_branch" ]]; then
+    echo "E_BACKUP_GIT_BRANCH_DETECTION_FAILED: Unable to determine current branch for repository '$repo_root'." >&2
+    return 1
+  fi
+
+  if [[ "$current_branch" == "HEAD" ]]; then
+    echo "E_BACKUP_GIT_DETACHED_HEAD: git HEAD is detached for repository '$repo_root'. Backup requires branch '$expected_branch'." >&2
+    return 1
+  fi
+
+  if [[ "$current_branch" != "$expected_branch" ]]; then
+    echo "E_BACKUP_GIT_BRANCH_MISMATCH: current branch is '$current_branch' but backup requires '$expected_branch' (repositoryRoot='$repo_root')." >&2
+    return 1
+  fi
+}
+
+assert_backup_git_branch "$REPO_ROOT" "main"
+git -C "$REPO_ROOT" pull --ff-only origin main
+
 # Execute Homebrew backup script
 "$SCRIPT_DIR/backup_brew.sh"
 
@@ -24,10 +54,11 @@ if [[ -x "$WEZTERM_BACKUP" ]]; then
 fi
 
 current_date=$(date)
-git add --all
-git commit -m "Backup for $current_date" || echo "No changes to commit"
-git pull origin main
-git push origin main
+assert_backup_git_branch "$REPO_ROOT" "main"
+git -C "$REPO_ROOT" add --all
+git -C "$REPO_ROOT" commit -m "Backup for $current_date" || echo "No changes to commit"
+assert_backup_git_branch "$REPO_ROOT" "main"
+git -C "$REPO_ROOT" push origin main
 
 # Directory to store the backups
 BACKUP_DIR="$REPO_ROOT/Config/Mac"
