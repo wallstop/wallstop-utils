@@ -82,7 +82,6 @@ function Assert-ApplicableUpdateStepsFlat {
 
 $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
 $steps = @(
-    @{ Name = "FormatPowershellScripts"; RelativeScriptPath = "Utils/FormatPowershellScripts.ps1"; SupportedPlatforms = @("All") },
     @{ Name = "StopKomorebi"; RelativeScriptPath = "Komorebi/StopKomorebi.ps1"; SupportedPlatforms = @("Windows") },
     @{ Name = "ScoopUpdate"; RelativeScriptPath = "Scoop/ScoopUpdate.ps1"; SupportedPlatforms = @("Windows") },
     @{ Name = "WinGetUpdate"; RelativeScriptPath = "WinGet/WinGetUpdate.ps1"; SupportedPlatforms = @("Windows") }
@@ -93,6 +92,7 @@ $applicableSteps = @(Get-ApplicableUpdateSteps -Steps $steps -CurrentPlatformNam
 Assert-ApplicableUpdateStepsFlat -ApplicableSteps $applicableSteps -CurrentPlatformName $currentPlatformName
 
 Write-Verbose ("Update platform diagnostics: currentPlatform='{0}', totalSteps={1}, applicableSteps={2}" -f $currentPlatformName, $steps.Count, $applicableSteps.Count)
+Write-Host "INFO_UPDATE_FORMATTER_BOUNDARY: FormatPowershellScripts is no longer run automatically by Update.ps1. Source code formatting is enforced by pre-commit hooks. Run 'pre-commit run --all-files' when manual formatting is needed." -ForegroundColor DarkYellow
 
 Push-Location -LiteralPath $scriptsDirectory
 try {

@@ -31,6 +31,7 @@ Current invariants to preserve:
 7. In GitHub Actions PowerShell steps, import Pester in every step that configures tests and use `New-PesterConfiguration`; avoid raw `[PesterConfiguration]::Default` type literals because step isolation can leave module types unloaded.
 8. Keep Pester CI wiring centralized through `Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1` so diagnostics, version guards, and coverage-gate behavior stay consistent across workflow steps.
 9. Cover extreme test scenarios systematically: empty/null input, maximum-size input, special characters (spaces, brackets, unicode, globs), concurrent access, and platform boundary conditions. See [adversarial-handoff-protocol](adversarial-handoff-protocol.md) for the full checklist.
+10. Keep backup automation deterministic: `Scripts/Backup.ps1` must fail preflight on dirty trees, stage only managed backup outputs (`Config/`), and use bounded commit retries only for hook autofix flows.
 
 ## Commands
 

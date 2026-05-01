@@ -18,6 +18,8 @@ Treat snapshot-like JSON as data artifacts unless ownership and schema are repos
 
 Run focused checks before widening any validator include patterns.
 
+Backup orchestration should stage only managed snapshot outputs under `Config/`; any out-of-scope mutations must fail fast rather than being auto-committed.
+
 ## References
 
 - `.pre-commit-config.yaml`

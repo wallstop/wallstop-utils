@@ -239,6 +239,10 @@ Backup and restore scripts under `Scripts/` must prioritize data safety and dete
 13. Git sequencing safety in backup orchestrators: once any git step fails (for example `git commit`), subsequent remote-mutating steps (`git pull --ff-only`, `git push`) must be explicitly skipped with stable diagnostics to avoid operating on a dirty or inconsistent local state.
 14. Backup git preflight: first verify git availability with `Get-Command -Name "git"` and emit `E_*_GIT_NOT_AVAILABLE` when missing, then validate `git rev-parse --is-inside-work-tree` before git mutation (`add`/`commit`/`pull`/`push`) and fail with an explicit `E_*` code when not in a repository.
 15. Cross-platform orchestrators (`Backup.ps1`, `Restore.ps1`, `Update.ps1`) must annotate steps with `SupportedPlatforms` metadata, execute only platform-applicable steps, and emit stable `W_*_STEP_SKIPPED_PLATFORM` diagnostics for skipped Windows-only steps.
+16. `Backup.ps1` must run a clean-tree preflight before any backup step executes and fail with `E_BACKUP_GIT_TREE_DIRTY_PREFLIGHT` when pre-existing tracked/untracked changes are present.
+17. `Backup.ps1` must scope staging to managed backup outputs (`Config/`) and must not use `git add --all`; out-of-scope changes must fail with `E_BACKUP_GIT_SCOPE_VIOLATION`.
+18. Backup commit retries are allowed only for hook autofix cases (`files were modified by this hook`) and must use bounded restage-and-retry loops with explicit `E_BACKUP_GIT_RESTAGE_FAILED` / `E_BACKUP_GIT_COMMIT_RETRY_LIMIT` diagnostics.
+19. `Backup.ps1` and `Update.ps1` must not run `FormatPowershellScripts.ps1`; source-code formatting is governed by pre-commit hooks and explicit formatter workflows.
 
 ## Contribution Rules
 

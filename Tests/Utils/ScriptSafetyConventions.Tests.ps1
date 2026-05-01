@@ -1475,33 +1475,49 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'else\s*\{[\s\S]*\$commitMessage\s*=\s*"Backup for \$dateString \(\$succeededCount/\$totalCount\)"'
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
         $backupScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
+        $backupScript | Should -Match 'function\s+Get-GitExecutableOrThrow'
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"git"'
         $backupScript | Should -Match 'E_BACKUP_GIT_NOT_AVAILABLE'
-        $backupScript | Should -Match '\$gitExecutable\s*=\s*\$gitCommand\.Source'
-        $backupScript | Should -Match '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree'
+        $backupScript | Should -Match 'function\s+Get-GitRepositoryRootOrThrow'
+        $backupScript | Should -Match '&\s+\$gitExecutable\s+-C\s+\$repositoryRoot\s+rev-parse\s+--is-inside-work-tree'
         $backupScript | Should -Match 'E_BACKUP_GIT_NOT_REPOSITORY'
+        $backupScript | Should -Match 'E_BACKUP_GIT_TREE_DIRTY_PREFLIGHT'
+        $backupScript | Should -Match 'E_BACKUP_GIT_SCOPE_VIOLATION'
         $backupScript | Should -Match 'E_BACKUP_GIT_ADD_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_DIFF_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_RESTAGE_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT'
         $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_TREE_DIRTY_POSTPUSH'
         $backupScript | Should -Match 'Backup git availability diagnostics:'
         $backupScript | Should -Match 'Backup git preflight diagnostics:'
         $backupScript | Should -Match 'Backup git staging diagnostics:'
-        $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main'
+        $backupScript | Should -Match 'Assert-BackupGitTreeCleanPreflight\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot[\s\S]*?git\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?foreach\s*\(\$step\s+in\s+\$applicableSteps\)'
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+push\s+origin\s+main'
-        $backupScript | Should -Match 'W_BACKUP_GIT_PULL_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX'
         $backupScript | Should -Match 'W_BACKUP_GIT_ADD_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'Write-Host\s+"INFO_BACKUP_FORMATTER_BOUNDARY:[^"]*pre-commit run --all-files'
         $backupScript | Should -Match 'E_BACKUP_STEP_SELECTION_INVALID'
         $backupScript | Should -Match 'Assert-ApplicableBackupStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
+        $backupScript | Should -Match 'Get-BackupManagedPathspecs'
+        $backupScript | Should -Match 'Assert-BackupManagedPathspecs\s+-ManagedPathspecs\s+\$managedPathspecs'
+        $backupScript | Should -Match 'E_BACKUP_GIT_SCOPE_PATHSPEC_EMPTY'
+        $backupScript | Should -Match 'E_BACKUP_GIT_SCOPE_PATHSPEC_INVALID'
+        $backupScript | Should -Match '\$outsideManagedPathspec\s*=\s*@\("\."\)'
+        $backupScript | Should -Match '"\:\(exclude\)\$managedPathspec"'
+        $backupScript | Should -Match '\$gitAddArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"add",\s*"--"\)'
+        $backupScript | Should -Not -Match 'git\s+add\s+--all'
+        $backupScript | Should -Not -Match 'RelativeScriptPath\s*=\s*"Utils/FormatPowershellScripts\.ps1"'
         $backupScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
-        # git pull --ff-only must appear BEFORE git add --all: staging before pull causes pull to fail
-        # with "local changes would be overwritten" when staged changes overlap with remote changes
-        $backupScript | Should -Match '\$gitExecutable\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?\$gitExecutable\s+add\s+--all' -Because "git pull --ff-only must execute before git add --all; staging before pull causes pull to fail if remote changed the same files"
-        # git pull --ff-only must also appear BEFORE git commit
-        $backupScript | Should -Match '\$gitExecutable\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?\$gitExecutable\s+commit' -Because "git pull --ff-only must execute before git commit; committing first causes --ff-only to fail when origin/main has advanced"
+        # git pull --ff-only must appear before staging/commit to avoid local-vs-remote divergence.
+        $backupScript | Should -Match '\$gitExecutable\s+-C\s+\$repositoryRoot\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?\$gitAddArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"add",\s*"--"\)' -Because "git pull --ff-only must execute before staging managed backup outputs"
+        $backupScript | Should -Match '\$gitExecutable\s+-C\s+\$repositoryRoot\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?\$gitExecutable\s+-C\s+\$repositoryRoot\s+commit\s+-m\s+\$commitMessage' -Because "git pull --ff-only must execute before git commit; committing first causes --ff-only to fail when origin/main has advanced"
+        $backupScript | Should -Match 'while\s*\(\s*-not\s+\$commitSucceeded\s+-and\s+\$commitAttempt\s+-lt\s+\$maxCommitAttempts\s*\)'
+        $backupScript | Should -Match 'files were modified by this hook\|modified by this hook\|hook\.\+modified'
     }
 
     It "uses platform-aware backup step metadata and skip diagnostics" {
@@ -1551,12 +1567,13 @@ Describe "Backup script safety conventions" {
         $updateScript | Should -Match '\$scriptsDirectory\s*=\s*\(Resolve-Path\s+-LiteralPath\s+\$PSScriptRoot'
         $updateScript | Should -Match 'Push-Location\s+-LiteralPath\s+\$scriptsDirectory'
         $updateScript | Should -Match 'function\s+Get-ApplicableUpdateSteps'
-        $updateScript | Should -Match 'SupportedPlatforms\s*=\s*@\("All"\)'
         $updateScript | Should -Match 'SupportedPlatforms\s*=\s*@\("Windows"\)'
         $updateScript | Should -Match 'W_UPDATE_STEP_SKIPPED_PLATFORM'
         $updateScript | Should -Match 'E_UPDATE_STEP_SELECTION_INVALID'
         $updateScript | Should -Match 'Assert-ApplicableUpdateStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
         $updateScript | Should -Match 'Update platform diagnostics:'
+        $updateScript | Should -Match 'Write-Host\s+"INFO_UPDATE_FORMATTER_BOUNDARY:[^"]*pre-commit run --all-files'
+        $updateScript | Should -Not -Match 'RelativeScriptPath\s*=\s*"Utils/FormatPowershellScripts\.ps1"'
         $updateScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
         $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
     }
