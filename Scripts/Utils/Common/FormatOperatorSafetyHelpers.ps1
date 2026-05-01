@@ -39,6 +39,49 @@ function ConvertTo-PortableFormatOperatorPath {
     return ($PathValue -replace '[\\/]+', '/')
 }
 
+function Get-FormatOperatorContinuationCommaToken {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [System.Management.Automation.Language.Token[]]$Tokens,
+
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [System.Management.Automation.Language.Ast]$RightExpression
+    )
+
+    if ($null -eq $RightExpression) {
+        return $null
+    }
+
+    $rightExpressionEndOffset = $RightExpression.Extent.EndOffset
+    $rightExpressionEndLine = $RightExpression.Extent.EndLineNumber
+
+    foreach ($token in @($Tokens)) {
+        if ($token.Extent.StartOffset -lt $rightExpressionEndOffset) {
+            continue
+        }
+
+        if ($token.Kind -eq [System.Management.Automation.Language.TokenKind]::NewLine -or
+            $token.Kind -eq [System.Management.Automation.Language.TokenKind]::LineContinuation -or
+            $token.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment) {
+            continue
+        }
+
+        if ($token.Kind -ne [System.Management.Automation.Language.TokenKind]::Comma) {
+            return $null
+        }
+
+        if ($token.Extent.StartLineNumber -ne $rightExpressionEndLine) {
+            return $null
+        }
+
+        return $token
+    }
+
+    return $null
+}
+
 function Get-FormatOperatorContinuationViolations {
     param(
         [Parameter(Mandatory = $true)]
@@ -99,7 +142,14 @@ function Get-FormatOperatorContinuationViolations {
                 }
 
                 $rightExpression = $formatExpression.Right
-                if (-not ($rightExpression -is [System.Management.Automation.Language.VariableExpressionAst])) {
+                if ($null -eq $rightExpression) {
+                    continue
+                }
+
+                # ArrayLiteralAst indicates PowerShell already bound comma-separated values to -f.
+                # The under-binding risk is the opposite case: first argument binds alone and the
+                # trailing comma continues in an outer invocation context.
+                if ($rightExpression -is [System.Management.Automation.Language.ArrayLiteralAst]) {
                     continue
                 }
 
@@ -109,27 +159,26 @@ function Get-FormatOperatorContinuationViolations {
                     continue
                 }
 
-                $lineIndex = $rightExpressionStartLine - 1
-                if ($lineIndex -lt 0 -or $lineIndex -ge $scriptLines.Count) {
+                $continuationCommaToken = Get-FormatOperatorContinuationCommaToken -Tokens $tokens -RightExpression $rightExpression
+                if ($null -eq $continuationCommaToken) {
                     continue
                 }
 
-                $rightExpressionVariableName = $rightExpression.VariablePath.UserPath
-                if ([string]::IsNullOrWhiteSpace($rightExpressionVariableName)) {
+                $continuationLineNumber = $continuationCommaToken.Extent.StartLineNumber
+                $continuationLineIndex = $continuationLineNumber - 1
+                if ($continuationLineIndex -lt 0 -or $continuationLineIndex -ge $scriptLines.Count) {
                     continue
                 }
 
-                $rightExpressionLine = $scriptLines[$lineIndex]
-                $continuationPattern = '^\s*\$' + [regex]::Escape($rightExpressionVariableName) + '\s*,\s*(#.*)?$'
-                if ($rightExpressionLine -notmatch $continuationPattern) {
-                    continue
-                }
+                $rightExpressionLine = $scriptLines[$continuationLineIndex]
 
                 $relativePath = ConvertTo-PortableFormatOperatorPath -PathValue ([System.IO.Path]::GetRelativePath($resolvedRootPath, $scriptFile.FullName))
                 $violationList.Add([pscustomobject]@{
                         Path                = $relativePath
                         Line                = $rightExpressionStartLine
+                        ContinuationLine    = $continuationLineNumber
                         PlaceholderMaxIndex = $placeholderMaxIndex
+                        RightOperandAstType = $rightExpression.GetType().Name
                         Snippet             = $rightExpressionLine.Trim()
                     }) | Out-Null
             }
@@ -168,10 +217,12 @@ function Assert-NoFormatOperatorContinuationViolations {
     }
 
     $previewLines = @($violations | Select-Object -First 20 | ForEach-Object {
-            "- {0}:{1}; placeholderMaxIndex={2}; line='{3}'" -f @(
+            "- {0}:{1}; continuationLine={2}; placeholderMaxIndex={3}; rightOperandAstType={4}; line='{5}'" -f @(
                 $_.Path
                 $_.Line
+                $_.ContinuationLine
                 $_.PlaceholderMaxIndex
+                $_.RightOperandAstType
                 $_.Snippet
             )
         })

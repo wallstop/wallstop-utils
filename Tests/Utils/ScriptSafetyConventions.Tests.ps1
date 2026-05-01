@@ -1880,7 +1880,7 @@ Describe "GitHub API resilience conventions" {
         $targetFunction.Count | Should -Be 1 -Because "Get-UnresolvedReviewThreads should exist so GraphQL variable-map contracts can be validated"
         $functionBody = $targetFunction[0].Body.Extent.Text
 
-        $variablesMatch = [regex]::Match($functionBody,'(?ms)\$variables\s*=\s*@\{(?<body>.*?)^\s*\}')
+        $variablesMatch = [regex]::Match($functionBody, '(?ms)\$variables\s*=\s*@\{(?<body>.*?)^\s*\}')
         $variablesMatch.Success | Should -BeTrue -Because "Get-UnresolvedReviewThreads should define a variables hashtable"
         $variablesBody = $variablesMatch.Groups["body"].Value
 
@@ -2532,7 +2532,7 @@ Describe "Utility configuration safety conventions" {
         )
     }
 
-    It "detects multiline -f continuation violations in fixture scripts" {
+    It "detects multiline -f continuation violations across right-operand expression kinds in fixture scripts" {
         $helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/FormatOperatorSafetyHelpers.ps1"
         . $helperPath
 
@@ -2540,9 +2540,12 @@ Describe "Utility configuration safety conventions" {
         [void](New-Item -ItemType Directory -Path $fixtureRoot -Force)
         $fixtureRoot = Resolve-CanonicalTempRoot -Path $fixtureRoot
         $fixtureScriptsPath = Join-Path -Path $fixtureRoot -ChildPath "Scripts"
-        $fixtureFilePath = Join-Path -Path $fixtureScriptsPath -ChildPath "Violation.ps1"
-
-        $fixtureContent = @'
+        $fixtureDefinitions = @(
+            [pscustomobject]@{
+                FileName        = "VariableViolation.ps1"
+                Snippet         = '$first,'
+                ExpectedAstType = "VariableExpressionAst"
+                Content         = @'
 $list = New-Object System.Collections.Generic.List[string]
 $list.Add(
     "value {0} {1}" -f
@@ -2550,18 +2553,213 @@ $list.Add(
     $second
 ) | Out-Null
 '@
+            },
+            [pscustomobject]@{
+                FileName = "LiteralViolation.ps1"
+                Snippet  = '1,'
+                Content  = @'
+$list = New-Object System.Collections.Generic.List[string]
+$list.Add(
+    "value {0} {1}" -f
+    1,
+    $second
+) | Out-Null
+'@
+            },
+            [pscustomobject]@{
+                FileName = "UnaryViolation.ps1"
+                Snippet  = '-$first,'
+                Content  = @'
+$list = New-Object System.Collections.Generic.List[string]
+$list.Add(
+    "value {0} {1}" -f
+    -$first,
+    $second
+) | Out-Null
+'@
+            },
+            [pscustomobject]@{
+                FileName = "ParenthesizedViolation.ps1"
+                Snippet  = '($first),'
+                Content  = @'
+$list = New-Object System.Collections.Generic.List[string]
+$list.Add(
+    "value {0} {1}" -f
+    ($first),
+    $second
+) | Out-Null
+'@
+            },
+            [pscustomobject]@{
+                FileName = "MemberViolation.ps1"
+                Snippet  = '$item.Name,'
+                Content  = @'
+$list = New-Object System.Collections.Generic.List[string]
+$list.Add(
+    "value {0} {1}" -f
+    $item.Name,
+    $second
+) | Out-Null
+'@
+            },
+            [pscustomobject]@{
+                FileName = "IndexViolation.ps1"
+                Snippet  = '$items[0],'
+                Content  = @'
+$list = New-Object System.Collections.Generic.List[string]
+$list.Add(
+    "value {0} {1}" -f
+    $items[0],
+    $second
+) | Out-Null
+'@
+            },
+            [pscustomobject]@{
+                FileName = "SubExpressionViolation.ps1"
+                Snippet  = '$(Get-Date),'
+                Content  = @'
+$list = New-Object System.Collections.Generic.List[string]
+$list.Add(
+    "value {0} {1}" -f
+    $(Get-Date),
+    $second
+) | Out-Null
+'@
+            },
+            [pscustomobject]@{
+                FileName = "MultiLineRightOperandViolation.ps1"
+                Snippet  = '),'
+                Content  = @'
+$list = New-Object System.Collections.Generic.List[string]
+$list.Add(
+    "value {0} {1}" -f
+    (
+        $first + "x"
+    ),
+    $second
+) | Out-Null
+'@
+            }
+        )
 
         try {
             [void](New-Item -ItemType Directory -Path $fixtureScriptsPath -Force)
-            [System.IO.File]::WriteAllText($fixtureFilePath, $fixtureContent, [System.Text.UTF8Encoding]::new($false))
+            foreach ($fixtureDefinition in @($fixtureDefinitions)) {
+                $fixtureFilePath = Join-Path -Path $fixtureScriptsPath -ChildPath $fixtureDefinition.FileName
+                [System.IO.File]::WriteAllText($fixtureFilePath, $fixtureDefinition.Content, [System.Text.UTF8Encoding]::new($false))
+            }
 
             $violations = @(Get-FormatOperatorContinuationViolations -RootPath $fixtureRoot -RelativeRoots @("Scripts"))
-            $violations.Count | Should -Be 1
-            $violations[0].Path | Should -Be "Scripts/Violation.ps1"
-            $violations[0].Path | Should -Not -Match '\\'
-            $violations[0].Line | Should -Be 4
-            $violations[0].PlaceholderMaxIndex | Should -Be 1
-            $violations[0].Snippet | Should -Be '$first,'
+            $violations.Count | Should -Be $fixtureDefinitions.Count
+
+            foreach ($fixtureDefinition in @($fixtureDefinitions)) {
+                $expectedPath = "Scripts/{0}" -f $fixtureDefinition.FileName
+                $matchedViolations = @($violations | Where-Object { $_.Path -eq $expectedPath })
+
+                $matchedViolations.Count | Should -Be 1
+                $matchedViolations[0].Path | Should -Not -Match '\\'
+                $matchedViolations[0].Line | Should -Be 4
+                $matchedViolations[0].PlaceholderMaxIndex | Should -Be 1
+                $matchedViolations[0].RightOperandAstType | Should -Not -BeNullOrEmpty
+                if ($fixtureDefinition.PSObject.Properties.Name -contains "ExpectedAstType") {
+                    $matchedViolations[0].RightOperandAstType | Should -Be $fixtureDefinition.ExpectedAstType
+                }
+                $matchedViolations[0].Snippet | Should -Be $fixtureDefinition.Snippet
+            }
+        }
+        finally {
+            if (Test-Path -Path $fixtureRoot -PathType Container) {
+                Remove-Item -Path $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "does not flag safe multiline -f formatting patterns in fixture scripts" {
+        $helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/FormatOperatorSafetyHelpers.ps1"
+        . $helperPath
+
+        $fixtureRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("format-operator-safe-{0}" -f ([guid]::NewGuid().ToString("N")))
+        [void](New-Item -ItemType Directory -Path $fixtureRoot -Force)
+        $fixtureRoot = Resolve-CanonicalTempRoot -Path $fixtureRoot
+        $fixtureScriptsPath = Join-Path -Path $fixtureRoot -ChildPath "Scripts"
+        $fixtureDefinitions = @(
+            [pscustomobject]@{
+                FileName = "SingleLineSafe.ps1"
+                Content  = @'
+$result = "value {0} {1}" -f $first, $second
+'@
+            },
+            [pscustomobject]@{
+                FileName = "ArrayLiteralContinuationSafe.ps1"
+                Content  = @'
+$result = (
+    "value {0} {1}" -f
+    $first,
+    $second
+)
+'@
+            },
+            [pscustomobject]@{
+                FileName = "ArraySafe.ps1"
+                Content  = @'
+$result = "value {0} {1}" -f
+    @($first, $second)
+'@
+            },
+            [pscustomobject]@{
+                FileName = "SinglePlaceholderSafe.ps1"
+                Content  = @'
+$result = "value {0}" -f
+    $first,
+    $second
+'@
+            },
+            [pscustomobject]@{
+                FileName = "NoCommaSafe.ps1"
+                Content  = @'
+$result = "value {0} {1}" -f
+    $first
+'@
+            }
+        )
+
+        try {
+            [void](New-Item -ItemType Directory -Path $fixtureScriptsPath -Force)
+            foreach ($fixtureDefinition in @($fixtureDefinitions)) {
+                $fixtureFilePath = Join-Path -Path $fixtureScriptsPath -ChildPath $fixtureDefinition.FileName
+                [System.IO.File]::WriteAllText($fixtureFilePath, $fixtureDefinition.Content, [System.Text.UTF8Encoding]::new($false))
+            }
+
+            $violations = @(Get-FormatOperatorContinuationViolations -RootPath $fixtureRoot -RelativeRoots @("Scripts"))
+            $violationPreview = @($violations | ForEach-Object {
+                    "{0}:{1} ({2})" -f $_.Path, $_.Line, $_.Snippet
+                })
+
+            $violations.Count | Should -Be 0 -Because (
+                "Safe multiline '-f' patterns should not be flagged. Violations: {0}" -f ($violationPreview -join '; ')
+            )
+
+            $arrayLiteralFixturePath = Join-Path -Path $fixtureScriptsPath -ChildPath "ArrayLiteralContinuationSafe.ps1"
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($arrayLiteralFixturePath, [ref]$tokens, [ref]$parseErrors)
+            @($parseErrors).Count | Should -Be 0
+            $formatExpressions = @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.BinaryExpressionAst] -and
+                        $node.Operator -eq [System.Management.Automation.Language.TokenKind]::Format
+                    }, $true))
+            $formatExpressions.Count | Should -Be 1
+            $formatExpressions[0].Right.GetType().Name | Should -Be "ArrayLiteralAst"
+
+            $first = "alpha"
+            $second = "beta"
+            $safeResult = (
+                "value {0} {1}" -f
+                $first,
+                $second
+            )
+            $safeResult | Should -Be "value alpha beta"
         }
         finally {
             if (Test-Path -Path $fixtureRoot -PathType Container) {
