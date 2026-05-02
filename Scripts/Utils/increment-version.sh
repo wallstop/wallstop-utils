@@ -430,10 +430,10 @@ main() {
   fi
 
   local lock_dir=""
+  trap 'release_lock_dir "$lock_dir"' EXIT
   if ! lock_dir=$(acquire_lock_dir "$package_json_path"); then
     exit 1
   fi
-  trap 'release_lock_dir "$lock_dir"' EXIT
 
   echo "Found package.json at: $package_json_path"
 
@@ -611,8 +611,32 @@ PY
       exit 1
     fi
 
-    if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
-      branch=$(git rev-parse --abbrev-ref HEAD)
+    package_json_dir="$(dirname "$package_json_path")"
+    if git -C "$package_json_dir" rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+      repo_root_output=""
+      if repo_root_output="$(git -C "$package_json_dir" rev-parse --show-toplevel 2>&1)"; then
+        :
+      else
+        repo_root_exit=$?
+        repo_root_preview="$(get_output_preview "$repo_root_output")"
+        echo -e "${RED}E_INCREMENT_VERSION_GIT_REPOSITORY_ROOT_FAILED: Unable to resolve repository root (exitCode=$repo_root_exit; outputPreview='$repo_root_preview').${NC}" >&2
+        exit "$repo_root_exit"
+      fi
+
+      repo_root="${repo_root_output//$'\n'/}"
+      repo_root="${repo_root//$'\r'/}"
+
+      branch_output=""
+      if branch_output="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>&1)"; then
+        branch="${branch_output//$'\n'/}"
+        branch="${branch//$'\r'/}"
+      else
+        branch_exit=$?
+        branch_preview="$(get_output_preview "$branch_output")"
+        echo -e "${RED}E_INCREMENT_VERSION_GIT_BRANCH_DETECTION_FAILED: Unable to determine current branch (exitCode=$branch_exit; repositoryRoot='$repo_root'; outputPreview='$branch_preview').${NC}" >&2
+        exit "$branch_exit"
+      fi
+
       primary_branches=(master main)
       allow_branch=false
       for b in "${primary_branches[@]}"; do
@@ -622,19 +646,6 @@ PY
         echo -e "${RED}E_INCREMENT_VERSION_BRANCH_RESTRICTED: On branch '$branch'. Version bumps with --commit/--run-hooks/--push require main/master or --allow-non-main-branch.${NC}" >&2
         exit 1
       else
-        repo_root_output=""
-        if repo_root_output="$(git rev-parse --show-toplevel 2>&1)"; then
-          :
-        else
-          repo_root_exit=$?
-          repo_root_preview="$(get_output_preview "$repo_root_output")"
-          echo -e "${RED}E_INCREMENT_VERSION_GIT_REPOSITORY_ROOT_FAILED: Unable to resolve repository root (exitCode=$repo_root_exit; outputPreview='$repo_root_preview').${NC}" >&2
-          exit "$repo_root_exit"
-        fi
-
-        repo_root="${repo_root_output//$'\n'/}"
-        repo_root="${repo_root//$'\r'/}"
-
         package_json_relative="$package_json_path"
         if [[ "$package_json_relative" == "$repo_root/"* ]]; then
           package_json_relative="${package_json_relative#"$repo_root"/}"
@@ -650,15 +661,25 @@ PY
           managed_paths+=("$lock_relative")
         fi
 
-        if ! git fetch --prune; then
-          echo -e "${YELLOW}Warning:${NC} W_INCREMENT_VERSION_GIT_FETCH_FAILED: Unable to fetch remote refs; continuing without pre-pull sync." >&2
+        if git_fetch_output="$(git -C "$repo_root" fetch --prune 2>&1)"; then
+          :
+        else
+          fetch_exit=$?
+          fetch_preview="$(get_output_preview "$git_fetch_output")"
+          echo -e "${YELLOW}Warning:${NC} W_INCREMENT_VERSION_GIT_FETCH_FAILED: Unable to fetch remote refs (exitCode=$fetch_exit; repositoryRoot='$repo_root'; outputPreview='$fetch_preview'); continuing without pre-pull sync." >&2
         fi
         # Safe fast-forward pull only when clean and behind
-        if [ -d "$(git rev-parse --git-dir 2> /dev/null)" ]; then
-          if [ ! -f "$(git rev-parse --git-dir)/MERGE_HEAD" ] && [ ! -d "$(git rev-parse --git-dir)/rebase-apply" ] && [ ! -d "$(git rev-parse --git-dir)/rebase-merge" ]; then
+        git_dir=""
+        if git_dir_output="$(git -C "$repo_root" rev-parse --absolute-git-dir 2> /dev/null)"; then
+          git_dir="${git_dir_output//$'\n'/}"
+          git_dir="${git_dir//$'\r'/}"
+        fi
+
+        if [[ -n "$git_dir" && -d "$git_dir" ]]; then
+          if [[ ! -f "$git_dir/MERGE_HEAD" && ! -d "$git_dir/rebase-apply" && ! -d "$git_dir/rebase-merge" ]]; then
             if git -C "$repo_root" diff --no-ext-diff --quiet --exit-code; then
               counts=""
-              if counts=$(git rev-list --left-right --count '@{u}...HEAD' 2> /dev/null); then
+              if counts=$(git -C "$repo_root" rev-list --left-right --count '@{u}...HEAD' 2> /dev/null); then
                 :
               else
                 counts=""

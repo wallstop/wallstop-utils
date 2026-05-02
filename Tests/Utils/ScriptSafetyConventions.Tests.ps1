@@ -1036,17 +1036,9 @@ Describe "Shell quality conventions" {
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_PULL_FAILED'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_ADD_FAILED'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_PUSH_FAILED'
-        $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main'
-        $backupContent | Should -Match 'assert_backup_managed_scope_clean\s+"\$REPO_ROOT"\s+"\$BACKUP_MANAGED_PATH"[\s\S]*?assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main'
-        $backupContent | Should -Match 'BACKUP_DIR="\$REPO_ROOT/Config/Mac"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+add\s+--\s+"\$BACKUP_MANAGED_PATH"'
-        $backupContent | Should -Match 'if\s+pull_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main\s+2>&1\)";\s+then'
-        $backupContent | Should -Match 'if\s+add_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+add\s+--\s+"\$BACKUP_MANAGED_PATH"\s+2>&1\)";\s+then'
         $backupContent | Should -Match 'outputPreview='
-        $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+diff\s+--cached\s+--quiet\s+--exit-code'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_STAGED_DIFF_FAILED'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_COMMIT_FAILED'
-        $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main'
-        $backupContent | Should -Match 'if\s+push_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main\s+2>&1\)";\s+then'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+push\s+(?:--force|-f)\b'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+commit\s+-m\s+"Backup for \$current_date"\s*\|\|'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+rev-parse\s+--abbrev-ref\s+HEAD[^\n]*\|\|\s*true'
@@ -1057,12 +1049,39 @@ Describe "Shell quality conventions" {
         $gitPreflightIndex = $backupContent.IndexOf('command -v git', [System.StringComparison]::Ordinal)
         $brewPreflightIndex = $backupContent.IndexOf('command -v brew', [System.StringComparison]::Ordinal)
         $brewUpdateIndex = $backupContent.IndexOf('brew update', [System.StringComparison]::Ordinal)
+        $pullCommandIndex = $backupContent.IndexOf('git -C "$REPO_ROOT" pull --ff-only origin main', [System.StringComparison]::Ordinal)
+        $addCommandIndex = $backupContent.IndexOf('git -C "$REPO_ROOT" add -- "$BACKUP_MANAGED_PATH"', [System.StringComparison]::Ordinal)
+        $pushCommandIndex = $backupContent.IndexOf('git -C "$REPO_ROOT" push origin main', [System.StringComparison]::Ordinal)
+        $backupDirIndex = $backupContent.IndexOf('BACKUP_DIR="$REPO_ROOT/Config/Mac"', [System.StringComparison]::Ordinal)
+        $stagedDiffIndex = $backupContent.IndexOf('git -C "$REPO_ROOT" diff --cached --quiet --exit-code', [System.StringComparison]::Ordinal)
 
         $gitPreflightIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must preflight git before side effects.'
         $brewPreflightIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must preflight brew before side effects.'
         $brewUpdateIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must run brew update in normal flow.'
+        $pullCommandIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must run git pull --ff-only in managed git flow.'
+        $addCommandIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must stage only managed pathspecs.'
+        $pushCommandIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must push on success path.'
+        $backupDirIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must derive Config/Mac backup destination before staging.'
+        $stagedDiffIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must check staged diff before commit.'
         $gitPreflightIndex | Should -BeLessThan $brewUpdateIndex -Because 'git preflight must happen before brew side effects.'
         $brewPreflightIndex | Should -BeLessThan $brewUpdateIndex -Because 'brew preflight must happen before brew side effects.'
+
+        $scopeGuardBeforePullIndex = $backupContent.LastIndexOf('assert_backup_managed_scope_clean "$REPO_ROOT" "$BACKUP_MANAGED_PATH"', $pullCommandIndex, [System.StringComparison]::Ordinal)
+        $branchGuardBeforePullIndex = $backupContent.LastIndexOf('assert_backup_git_branch "$REPO_ROOT" "main"', $pullCommandIndex, [System.StringComparison]::Ordinal)
+        $scopeGuardBeforeAddIndex = $backupContent.LastIndexOf('assert_backup_managed_scope_clean "$REPO_ROOT" "$BACKUP_MANAGED_PATH"', $addCommandIndex, [System.StringComparison]::Ordinal)
+        $branchGuardBeforePushIndex = $backupContent.LastIndexOf('assert_backup_git_branch "$REPO_ROOT" "main"', $pushCommandIndex, [System.StringComparison]::Ordinal)
+
+        $scopeGuardBeforePullIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must validate managed scope before pulling.'
+        $branchGuardBeforePullIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must validate branch before pulling.'
+        $scopeGuardBeforeAddIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must validate managed scope before staging.'
+        $branchGuardBeforePushIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must validate branch before pushing.'
+
+        $scopeGuardBeforePullIndex | Should -BeLessThan $pullCommandIndex -Because 'scope validation must run before git pull.'
+        $branchGuardBeforePullIndex | Should -BeLessThan $pullCommandIndex -Because 'branch validation must run before git pull.'
+        $backupDirIndex | Should -BeLessThan $addCommandIndex -Because 'backup directory setup must happen before git add.'
+        $scopeGuardBeforeAddIndex | Should -BeLessThan $addCommandIndex -Because 'scope validation must run before git add.'
+        $stagedDiffIndex | Should -BeGreaterThan $addCommandIndex -Because 'staged diff inspection must occur after git add.'
+        $branchGuardBeforePushIndex | Should -BeLessThan $pushCommandIndex -Because 'branch validation must run before git push.'
     }
 
     It "avoids parse-ls backup selection pattern in restore_brew" {
@@ -1116,6 +1135,7 @@ Describe "Shell quality conventions" {
         $incrementContent | Should -Match 'ALLOW_NON_MAIN'
         $incrementContent | Should -Match 'stage_increment_managed_paths\(\)'
         $incrementContent | Should -Match 'assert_increment_staged_scope\(\)'
+        $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_BRANCH_DETECTION_FAILED'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_SCOPE_VIOLATION'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_SCOPE_PATHSPEC_EMPTY'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_REPOSITORY_ROOT_FAILED'
@@ -1126,13 +1146,41 @@ Describe "Shell quality conventions" {
         $incrementContent | Should -Not -Match 'git\s+commit\s+-m\s+"\$msg"(?:\s+--no-verify)?\s+\|\|\s+true'
         $incrementContent | Should -Not -Match 'git\s+push\s+-u\s+origin\s+"\$branch"\s+\|\|\s+true'
         $incrementContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+push\s+(?:--force|-f)\b'
-        $incrementContent | Should -Match 'if\s+git_pull_output="\$\(git\s+-C\s+"\$repo_root"\s+pull\s+--ff-only\s+2>&1\)";\s+then'
+        $incrementContent | Should -Not -Match '(?m)^\s*if\s+git\s+rev-parse\s+--is-inside-work-tree\b'
+        $incrementContent | Should -Not -Match '(?m)^\s*if\s+repo_root_output="\$\(git\s+rev-parse\s+--show-toplevel'
+        $incrementContent | Should -Not -Match '(?m)^\s*branch=\$\(git\s+rev-parse\s+--abbrev-ref\s+HEAD\)'
+        $incrementContent | Should -Not -Match '(?m)^\s*if\s+!\s+git\s+fetch\s+--prune;\s+then\s*$'
+        $incrementContent | Should -Not -Match '(?m)^\s*if\s+!\s+git\s+-C\s+"\$repo_root"\s+fetch\s+--prune;\s+then\s*$'
+        $incrementContent | Should -Not -Match '(?m)^\s*if\s+counts=\$\(git\s+rev-list\s+--left-right\s+--count'
+        $incrementContent | Should -Match 'if\s+git_fetch_output="\$\(git\s+-C\s+"\$repo_root"\s+fetch\s+--prune\s+2>&1\)";\s+then'
+        $incrementContent | Should -Match 'W_INCREMENT_VERSION_GIT_FETCH_FAILED'
         $incrementContent | Should -Match 'stage_increment_managed_paths\s+"\$repo_root"\s+"\$\{managed_paths\[@\]\}"'
-        $incrementContent | Should -Match 'git\s+-C\s+"\$repo_root"\s+diff\s+--no-ext-diff\s+--quiet\s+--exit-code'
-        $incrementContent | Should -Match 'git\s+-C\s+"\$repo_root"\s+diff\s+--cached\s+--quiet\s+--exit-code'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_COMMIT_FAILED'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_PUSH_FAILED'
+
+        $repoCheckIndex = $incrementContent.IndexOf('git -C "$package_json_dir" rev-parse --is-inside-work-tree', [System.StringComparison]::Ordinal)
+        $repoRootIndex = $incrementContent.IndexOf('git -C "$package_json_dir" rev-parse --show-toplevel', [System.StringComparison]::Ordinal)
+        $branchDetectIndex = $incrementContent.IndexOf('git -C "$repo_root" rev-parse --abbrev-ref HEAD', [System.StringComparison]::Ordinal)
+        $fetchIndex = $incrementContent.IndexOf('git -C "$repo_root" fetch --prune', [System.StringComparison]::Ordinal)
+        $gitDirProbeIndex = $incrementContent.IndexOf('git -C "$repo_root" rev-parse --absolute-git-dir', [System.StringComparison]::Ordinal)
+        $revListIndex = $incrementContent.IndexOf('git -C "$repo_root" rev-list --left-right --count', [System.StringComparison]::Ordinal)
+        $pullIndex = $incrementContent.IndexOf('git -C "$repo_root" pull --ff-only', [System.StringComparison]::Ordinal)
+
+        $repoCheckIndex | Should -BeGreaterThan -1 -Because 'increment-version must validate git worktree against package.json directory context.'
+        $repoRootIndex | Should -BeGreaterThan -1 -Because 'increment-version must resolve repository root before git mutations.'
+        $branchDetectIndex | Should -BeGreaterThan -1 -Because 'increment-version must detect branch in resolved repository context.'
+        $fetchIndex | Should -BeGreaterThan -1 -Because 'increment-version must fetch in resolved repository context.'
+        $gitDirProbeIndex | Should -BeGreaterThan -1 -Because 'increment-version must inspect merge/rebase state in resolved repository context.'
+        $revListIndex | Should -BeGreaterThan -1 -Because 'increment-version must compute ahead/behind in resolved repository context.'
+        $pullIndex | Should -BeGreaterThan -1 -Because 'increment-version must pull in resolved repository context.'
+
+        $repoCheckIndex | Should -BeLessThan $repoRootIndex -Because 'worktree preflight should run before repository root resolution handling.'
+        $repoRootIndex | Should -BeLessThan $branchDetectIndex -Because 'repository root must be resolved before branch detection.'
+        $repoRootIndex | Should -BeLessThan $fetchIndex -Because 'repository root must be resolved before fetch.'
+        $fetchIndex | Should -BeLessThan $gitDirProbeIndex -Because 'fetch should happen before merge/rebase probe and pull decision.'
+        $gitDirProbeIndex | Should -BeLessThan $revListIndex -Because 'git-dir probe must precede upstream divergence calculation.'
+        $revListIndex | Should -BeLessThan $pullIndex -Because 'ahead/behind calculation must happen before pull decision.'
     }
 
     It "uses a lock directory in increment-version to avoid concurrent writes" {
@@ -1143,6 +1191,13 @@ Describe "Shell quality conventions" {
         $incrementContent | Should -Match 'function\s+acquire_lock_dir|acquire_lock_dir\s*\(\)'
         $incrementContent | Should -Match 'mkdir\s+"\$lock_dir"'
         $incrementContent | Should -Match 'trap\s+''release_lock_dir\s+"\$lock_dir"''\s+EXIT'
+
+        $lockTrapIndex = $incrementContent.IndexOf('trap ''release_lock_dir "$lock_dir"'' EXIT', [System.StringComparison]::Ordinal)
+        $lockAcquireIndex = $incrementContent.IndexOf('if ! lock_dir=$(acquire_lock_dir "$package_json_path"); then', [System.StringComparison]::Ordinal)
+
+        $lockTrapIndex | Should -BeGreaterThan -1 -Because 'increment-version must install lock cleanup trap.'
+        $lockAcquireIndex | Should -BeGreaterThan -1 -Because 'increment-version must attempt lock acquisition before mutation.'
+        $lockTrapIndex | Should -BeLessThan $lockAcquireIndex -Because 'lock cleanup trap must be registered before lock acquisition to prevent stale locks on interruption.'
     }
 
     It "keeps prerelease IFS changes scoped in increment-version" {
