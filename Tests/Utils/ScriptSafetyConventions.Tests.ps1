@@ -980,6 +980,31 @@ Describe "Shell quality conventions" {
         }
     }
 
+    It "avoids negation-based exit-code capture antipatterns in shell scripts" {
+        $shellFiles = @(
+            Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts') -Filter '*.sh' -File -Recurse -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-commit') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-push') -ErrorAction Stop
+        )
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        $negatedCommandSubstitutionCapturePattern = '(?m)^\s*if\s+!\s+[A-Za-z_][A-Za-z0-9_]*="\$\([^\n]*\)";\s+then\s*$\n^\s*[A-Za-z_][A-Za-z0-9_]*=\$\?\s*$'
+        $negatedExitPropagationPattern = '(?m)^\s*if\s+!\s+[^\n;]+;\s+then\s*$\n^\s*(?:return|exit)\s+\$\?\s*$'
+
+        foreach ($shellFile in $shellFiles) {
+            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $shellFile.FullName)
+            $content = (Get-Content -Path $shellFile.FullName -Raw) -replace "`r", ''
+            if ($content -match $negatedCommandSubstitutionCapturePattern -or $content -match $negatedExitPropagationPattern) {
+                $violations.Add($relativePath) | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Shell scripts must not propagate `$? from negated conditions. Violations: {0}" -f ($violations -join ', ')
+        )
+    }
+
     It "keeps Home-directory glob loops quoted in Backup.sh" {
         $backupPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/Backup.sh'
         # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
@@ -1014,14 +1039,14 @@ Describe "Shell quality conventions" {
         $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main'
         $backupContent | Should -Match 'assert_backup_managed_scope_clean\s+"\$REPO_ROOT"\s+"\$BACKUP_MANAGED_PATH"[\s\S]*?assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main'
         $backupContent | Should -Match 'BACKUP_DIR="\$REPO_ROOT/Config/Mac"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+add\s+--\s+"\$BACKUP_MANAGED_PATH"'
-        $backupContent | Should -Match 'if\s+!\s+pull_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main\s+2>&1\)";\s+then'
-        $backupContent | Should -Match 'if\s+!\s+add_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+add\s+--\s+"\$BACKUP_MANAGED_PATH"\s+2>&1\)";\s+then'
+        $backupContent | Should -Match 'if\s+pull_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main\s+2>&1\)";\s+then'
+        $backupContent | Should -Match 'if\s+add_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+add\s+--\s+"\$BACKUP_MANAGED_PATH"\s+2>&1\)";\s+then'
         $backupContent | Should -Match 'outputPreview='
         $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+diff\s+--cached\s+--quiet\s+--exit-code'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_STAGED_DIFF_FAILED'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_COMMIT_FAILED'
         $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main'
-        $backupContent | Should -Match 'if\s+!\s+push_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main\s+2>&1\)";\s+then'
+        $backupContent | Should -Match 'if\s+push_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main\s+2>&1\)";\s+then'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+push\s+(?:--force|-f)\b'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+commit\s+-m\s+"Backup for \$current_date"\s*\|\|'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+rev-parse\s+--abbrev-ref\s+HEAD[^\n]*\|\|\s*true'
@@ -1101,10 +1126,10 @@ Describe "Shell quality conventions" {
         $incrementContent | Should -Not -Match 'git\s+commit\s+-m\s+"\$msg"(?:\s+--no-verify)?\s+\|\|\s+true'
         $incrementContent | Should -Not -Match 'git\s+push\s+-u\s+origin\s+"\$branch"\s+\|\|\s+true'
         $incrementContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+push\s+(?:--force|-f)\b'
-        # Allow either direct negation or captured-output guards for ff-only pull.
-        $incrementContent | Should -Match 'if\s+!\s+(?:git\s+pull\s+--ff-only|git_pull_output="\$\(git\s+-C\s+"\$repo_root"\s+pull\s+--ff-only\s+2>&1\)")'
+        $incrementContent | Should -Match 'if\s+git_pull_output="\$\(git\s+-C\s+"\$repo_root"\s+pull\s+--ff-only\s+2>&1\)";\s+then'
         $incrementContent | Should -Match 'stage_increment_managed_paths\s+"\$repo_root"\s+"\$\{managed_paths\[@\]\}"'
-        $incrementContent | Should -Match 'git\s+(?:-C\s+"\$repo_root"\s+)?diff\s+--cached\s+--quiet\s+--exit-code'
+        $incrementContent | Should -Match 'git\s+-C\s+"\$repo_root"\s+diff\s+--no-ext-diff\s+--quiet\s+--exit-code'
+        $incrementContent | Should -Match 'git\s+-C\s+"\$repo_root"\s+diff\s+--cached\s+--quiet\s+--exit-code'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_COMMIT_FAILED'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_PUSH_FAILED'
@@ -3118,6 +3143,7 @@ $result = "value {0} {1}" -f
         $contextContent | Should -Match 'command -v git'
         $contextContent | Should -Match 'git diff --cached --quiet --exit-code'
         $contextContent | Should -Match 'do not use `git add\|commit\|pull\|push'
+        $contextContent | Should -Match 'avoid negated command-substitution exit capture'
         $contextContent | Should -Match 'E_\*_GIT_\*'
     }
 

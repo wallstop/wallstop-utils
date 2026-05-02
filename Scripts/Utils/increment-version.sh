@@ -358,7 +358,9 @@ stage_increment_managed_paths() {
     return 1
   fi
 
-  if ! add_output="$(git -C "$repo_root" add -- "${managed_paths[@]}" 2>&1)"; then
+  if add_output="$(git -C "$repo_root" add -- "${managed_paths[@]}" 2>&1)"; then
+    :
+  else
     add_exit=$?
     add_preview="$(get_output_preview "$add_output")"
     echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage managed version files (repositoryRoot='$repo_root'; managedPaths='${managed_paths[*]}'; outputPreview='$add_preview').${NC}" >&2
@@ -387,7 +389,9 @@ assert_increment_staged_scope() {
     scope_args+=(":(exclude)$managed_path")
   done
 
-  if ! staged_scope_output="$(git -C "$repo_root" "${scope_args[@]}" 2>&1)"; then
+  if staged_scope_output="$(git -C "$repo_root" "${scope_args[@]}" 2>&1)"; then
+    :
+  else
     staged_scope_exit=$?
     staged_scope_preview="$(get_output_preview "$staged_scope_output")"
     echo -e "${RED}E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED: Unable to inspect staged scope (exitCode=$staged_scope_exit; repositoryRoot='$repo_root'; outputPreview='$staged_scope_preview').${NC}" >&2
@@ -619,7 +623,9 @@ PY
         exit 1
       else
         repo_root_output=""
-        if ! repo_root_output="$(git rev-parse --show-toplevel 2>&1)"; then
+        if repo_root_output="$(git rev-parse --show-toplevel 2>&1)"; then
+          :
+        else
           repo_root_exit=$?
           repo_root_preview="$(get_output_preview "$repo_root_output")"
           echo -e "${RED}E_INCREMENT_VERSION_GIT_REPOSITORY_ROOT_FAILED: Unable to resolve repository root (exitCode=$repo_root_exit; outputPreview='$repo_root_preview').${NC}" >&2
@@ -650,15 +656,19 @@ PY
         # Safe fast-forward pull only when clean and behind
         if [ -d "$(git rev-parse --git-dir 2> /dev/null)" ]; then
           if [ ! -f "$(git rev-parse --git-dir)/MERGE_HEAD" ] && [ ! -d "$(git rev-parse --git-dir)/rebase-apply" ] && [ ! -d "$(git rev-parse --git-dir)/rebase-merge" ]; then
-            if git diff --no-ext-diff --quiet --exit-code; then
+            if git -C "$repo_root" diff --no-ext-diff --quiet --exit-code; then
               counts=""
-              if ! counts=$(git rev-list --left-right --count '@{u}...HEAD' 2> /dev/null); then
+              if counts=$(git rev-list --left-right --count '@{u}...HEAD' 2> /dev/null); then
+                :
+              else
                 counts=""
               fi
               behind=$(echo "$counts" | awk '{print $1}')
               ahead=$(echo "$counts" | awk '{print $2}')
               if [ -n "$behind" ] && [ "${behind:-0}" -gt 0 ] && [ "${ahead:-0}" -eq 0 ]; then
-                if ! git_pull_output="$(git -C "$repo_root" pull --ff-only 2>&1)"; then
+                if git_pull_output="$(git -C "$repo_root" pull --ff-only 2>&1)"; then
+                  :
+                else
                   git_pull_exit=$?
                   git_pull_preview="$(get_output_preview "$git_pull_output")"
                   echo -e "${RED}E_INCREMENT_VERSION_GIT_PULL_FAILED: Fast-forward pull failed (exitCode=$git_pull_exit; repositoryRoot='$repo_root'; outputPreview='$git_pull_preview'). Resolve branch divergence before continuing.${NC}" >&2
@@ -669,19 +679,28 @@ PY
           fi
         fi
 
-        if ! assert_increment_staged_scope "$repo_root" "${managed_paths[@]}"; then
-          exit $?
+        if assert_increment_staged_scope "$repo_root" "${managed_paths[@]}"; then
+          :
+        else
+          scope_exit=$?
+          exit "$scope_exit"
         fi
 
-        if ! stage_increment_managed_paths "$repo_root" "${managed_paths[@]}"; then
-          exit $?
+        if stage_increment_managed_paths "$repo_root" "${managed_paths[@]}"; then
+          :
+        else
+          stage_exit=$?
+          exit "$stage_exit"
         fi
 
         if [[ "$RUN_HOOKS" == "true" ]]; then
           if command -v pre-commit > /dev/null 2>&1; then
             pre-commit run -a || true
-            if ! stage_increment_managed_paths "$repo_root" "${managed_paths[@]}"; then
-              exit 1
+            if stage_increment_managed_paths "$repo_root" "${managed_paths[@]}"; then
+              :
+            else
+              restage_exit=$?
+              exit "$restage_exit"
             fi
           else
             if command -v npm > /dev/null 2>&1; then
@@ -694,14 +713,20 @@ PY
               dotnet tool restore || true
               dotnet tool run csharpier format || true
             fi
-            if ! stage_increment_managed_paths "$repo_root" "${managed_paths[@]}"; then
-              exit 1
+            if stage_increment_managed_paths "$repo_root" "${managed_paths[@]}"; then
+              :
+            else
+              restage_exit=$?
+              exit "$restage_exit"
             fi
           fi
         fi
 
-        if ! assert_increment_staged_scope "$repo_root" "${managed_paths[@]}"; then
-          exit $?
+        if assert_increment_staged_scope "$repo_root" "${managed_paths[@]}"; then
+          :
+        else
+          scope_exit=$?
+          exit "$scope_exit"
         fi
 
         msg="chore(version): bump to $new_version"

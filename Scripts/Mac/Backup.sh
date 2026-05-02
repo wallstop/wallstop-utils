@@ -51,12 +51,15 @@ assert_backup_git_branch() {
   local current_branch
   local branch_output
   local branch_exit
+  local branch_preview
 
-  if ! branch_output="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>&1)"; then
+  if branch_output="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>&1)"; then
+    :
+  else
     branch_exit=$?
     branch_preview="$(get_output_preview "$branch_output")"
     echo "E_BACKUP_GIT_BRANCH_DETECTION_FAILED: Unable to determine current branch (exitCode=$branch_exit; repositoryRoot='$repo_root'; outputPreview='$branch_preview')." >&2
-    return 1
+    return "$branch_exit"
   fi
 
   current_branch="${branch_output//$'\n'/}"
@@ -71,6 +74,8 @@ assert_backup_git_branch() {
     echo "E_BACKUP_GIT_BRANCH_MISMATCH: current branch is '$current_branch' but backup requires '$expected_branch' (repositoryRoot='$repo_root')." >&2
     return 1
   fi
+
+  return 0
 }
 
 assert_backup_managed_scope_clean() {
@@ -81,11 +86,13 @@ assert_backup_managed_scope_clean() {
   local outside_preview
   local status_exit
 
-  if ! outside_status_output="$(git -C "$repo_root" status --porcelain=v1 --untracked-files=all -- . ":(exclude)$managed_path" 2>&1)"; then
+  if outside_status_output="$(git -C "$repo_root" status --porcelain=v1 --untracked-files=all -- . ":(exclude)$managed_path" 2>&1)"; then
+    :
+  else
     status_exit=$?
     outside_preview="$(get_output_preview "$outside_status_output")"
     echo "E_BACKUP_GIT_STATUS_FAILED: Unable to inspect out-of-scope repository changes (exitCode=$status_exit; repositoryRoot='$repo_root'; pathspec='.:(exclude)$managed_path'; outputPreview='$outside_preview')." >&2
-    return 1
+    return "$status_exit"
   fi
 
   if [[ -n "$outside_status_output" ]]; then
@@ -94,11 +101,15 @@ assert_backup_managed_scope_clean() {
     echo "E_BACKUP_GIT_SCOPE_VIOLATION: Backup run produced out-of-scope repository changes outside managed path '$managed_path' (repositoryRoot='$repo_root'; outOfScopeCount=$outside_count; outputPreview='$outside_preview')." >&2
     return 1
   fi
+
+  return 0
 }
 
 assert_backup_managed_scope_clean "$REPO_ROOT" "$BACKUP_MANAGED_PATH"
 assert_backup_git_branch "$REPO_ROOT" "main"
-if ! pull_output="$(git -C "$REPO_ROOT" pull --ff-only origin main 2>&1)"; then
+if pull_output="$(git -C "$REPO_ROOT" pull --ff-only origin main 2>&1)"; then
+  :
+else
   pull_exit=$?
   pull_preview="$(get_output_preview "$pull_output")"
   echo "E_BACKUP_MAC_GIT_PULL_FAILED: git pull --ff-only origin main exited with code $pull_exit (repositoryRoot='$REPO_ROOT'; outputPreview='$pull_preview')." >&2
@@ -158,7 +169,9 @@ assert_backup_managed_scope_clean "$REPO_ROOT" "$BACKUP_MANAGED_PATH"
 
 current_date=$(date)
 assert_backup_git_branch "$REPO_ROOT" "main"
-if ! add_output="$(git -C "$REPO_ROOT" add -- "$BACKUP_MANAGED_PATH" 2>&1)"; then
+if add_output="$(git -C "$REPO_ROOT" add -- "$BACKUP_MANAGED_PATH" 2>&1)"; then
+  :
+else
   add_exit=$?
   add_preview="$(get_output_preview "$add_output")"
   echo "E_BACKUP_MAC_GIT_ADD_FAILED: git add -- '$BACKUP_MANAGED_PATH' exited with code $add_exit (repositoryRoot='$REPO_ROOT'; outputPreview='$add_preview')." >&2
@@ -175,7 +188,9 @@ else
     exit "$staged_diff_exit"
   fi
 
-  if ! commit_output="$(git -C "$REPO_ROOT" commit -m "Backup for $current_date" 2>&1)"; then
+  if commit_output="$(git -C "$REPO_ROOT" commit -m "Backup for $current_date" 2>&1)"; then
+    :
+  else
     commit_exit=$?
     commit_preview="$(get_output_preview "$commit_output")"
     echo "E_BACKUP_MAC_GIT_COMMIT_FAILED: git commit exited with code $commit_exit (repositoryRoot='$REPO_ROOT'; outputPreview='$commit_preview')." >&2
@@ -183,7 +198,9 @@ else
   fi
 
   assert_backup_git_branch "$REPO_ROOT" "main"
-  if ! push_output="$(git -C "$REPO_ROOT" push origin main 2>&1)"; then
+  if push_output="$(git -C "$REPO_ROOT" push origin main 2>&1)"; then
+    :
+  else
     push_exit=$?
     push_preview="$(get_output_preview "$push_output")"
     echo "E_BACKUP_MAC_GIT_PUSH_FAILED: git push origin main exited with code $push_exit (repositoryRoot='$REPO_ROOT'; outputPreview='$push_preview')." >&2
