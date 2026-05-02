@@ -324,6 +324,86 @@ release_lock_dir() {
   fi
 }
 
+get_output_preview() {
+  local raw_output="${1-}"
+  local max_chars="${2:-240}"
+  local normalized
+
+  normalized="${raw_output//$'\r'/ }"
+  normalized="${normalized//$'\n'/ | }"
+  normalized="$(printf '%s' "$normalized" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+
+  if [[ -z "$normalized" ]]; then
+    printf '(none)'
+    return
+  fi
+
+  if ((${#normalized} > max_chars)); then
+    printf '%s…' "${normalized:0:max_chars}"
+  else
+    printf '%s' "$normalized"
+  fi
+}
+
+stage_increment_managed_paths() {
+  local repo_root="$1"
+  shift
+  local managed_paths=("$@")
+  local add_output
+  local add_exit
+  local add_preview
+
+  if [[ ${#managed_paths[@]} -eq 0 ]]; then
+    echo -e "${RED}E_INCREMENT_VERSION_GIT_SCOPE_PATHSPEC_EMPTY: Managed path list must not be empty before staging.${NC}" >&2
+    return 1
+  fi
+
+  if ! add_output="$(git -C "$repo_root" add -- "${managed_paths[@]}" 2>&1)"; then
+    add_exit=$?
+    add_preview="$(get_output_preview "$add_output")"
+    echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage managed version files (repositoryRoot='$repo_root'; managedPaths='${managed_paths[*]}'; outputPreview='$add_preview').${NC}" >&2
+    return "$add_exit"
+  fi
+
+  return 0
+}
+
+assert_increment_staged_scope() {
+  local repo_root="$1"
+  shift
+  local managed_paths=("$@")
+  local staged_scope_output
+  local staged_scope_exit
+  local staged_scope_preview
+  local outside_count
+  local -a scope_args=(diff --cached --name-only -- .)
+
+  if [[ ${#managed_paths[@]} -eq 0 ]]; then
+    echo -e "${RED}E_INCREMENT_VERSION_GIT_SCOPE_PATHSPEC_EMPTY: Managed path list must not be empty for scope validation.${NC}" >&2
+    return 1
+  fi
+
+  for managed_path in "${managed_paths[@]}"; do
+    scope_args+=(":(exclude)$managed_path")
+  done
+
+  if ! staged_scope_output="$(git -C "$repo_root" "${scope_args[@]}" 2>&1)"; then
+    staged_scope_exit=$?
+    staged_scope_preview="$(get_output_preview "$staged_scope_output")"
+    echo -e "${RED}E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED: Unable to inspect staged scope (exitCode=$staged_scope_exit; repositoryRoot='$repo_root'; outputPreview='$staged_scope_preview').${NC}" >&2
+    return "$staged_scope_exit"
+  fi
+
+  if [[ -n "$staged_scope_output" ]]; then
+    outside_count="$(printf '%s\n' "$staged_scope_output" | awk 'NF { count++ } END { print count + 0 }')"
+    staged_scope_preview="$(get_output_preview "$staged_scope_output")"
+    echo -e "${RED}E_INCREMENT_VERSION_GIT_SCOPE_VIOLATION: Staged changes include files outside managed version scope (repositoryRoot='$repo_root'; managedPaths='${managed_paths[*]}'; outOfScopeCount=$outside_count; outputPreview='$staged_scope_preview').${NC}" >&2
+    return 1
+  fi
+
+  return 0
+}
+
 # Main script logic
 main() {
   parse_args "$@"
@@ -538,6 +618,32 @@ PY
         echo -e "${RED}E_INCREMENT_VERSION_BRANCH_RESTRICTED: On branch '$branch'. Version bumps with --commit/--run-hooks/--push require main/master or --allow-non-main-branch.${NC}" >&2
         exit 1
       else
+        repo_root_output=""
+        if ! repo_root_output="$(git rev-parse --show-toplevel 2>&1)"; then
+          repo_root_exit=$?
+          repo_root_preview="$(get_output_preview "$repo_root_output")"
+          echo -e "${RED}E_INCREMENT_VERSION_GIT_REPOSITORY_ROOT_FAILED: Unable to resolve repository root (exitCode=$repo_root_exit; outputPreview='$repo_root_preview').${NC}" >&2
+          exit "$repo_root_exit"
+        fi
+
+        repo_root="${repo_root_output//$'\n'/}"
+        repo_root="${repo_root//$'\r'/}"
+
+        package_json_relative="$package_json_path"
+        if [[ "$package_json_relative" == "$repo_root/"* ]]; then
+          package_json_relative="${package_json_relative#"$repo_root"/}"
+        fi
+
+        lock_path="$(dirname "$package_json_path")/package-lock.json"
+        managed_paths=("$package_json_relative")
+        if [[ -f "$lock_path" ]]; then
+          lock_relative="$lock_path"
+          if [[ "$lock_relative" == "$repo_root/"* ]]; then
+            lock_relative="${lock_relative#"$repo_root"/}"
+          fi
+          managed_paths+=("$lock_relative")
+        fi
+
         if ! git fetch --prune; then
           echo -e "${YELLOW}Warning:${NC} W_INCREMENT_VERSION_GIT_FETCH_FAILED: Unable to fetch remote refs; continuing without pre-pull sync." >&2
         fi
@@ -552,30 +658,29 @@ PY
               behind=$(echo "$counts" | awk '{print $1}')
               ahead=$(echo "$counts" | awk '{print $2}')
               if [ -n "$behind" ] && [ "${behind:-0}" -gt 0 ] && [ "${ahead:-0}" -eq 0 ]; then
-                if ! git pull --ff-only; then
-                  echo -e "${RED}E_INCREMENT_VERSION_GIT_PULL_FAILED: Fast-forward pull failed. Resolve branch divergence before continuing.${NC}" >&2
-                  exit 1
+                if ! git_pull_output="$(git -C "$repo_root" pull --ff-only 2>&1)"; then
+                  git_pull_exit=$?
+                  git_pull_preview="$(get_output_preview "$git_pull_output")"
+                  echo -e "${RED}E_INCREMENT_VERSION_GIT_PULL_FAILED: Fast-forward pull failed (exitCode=$git_pull_exit; repositoryRoot='$repo_root'; outputPreview='$git_pull_preview'). Resolve branch divergence before continuing.${NC}" >&2
+                  exit "$git_pull_exit"
                 fi
               fi
             fi
           fi
         fi
-        if ! git add -- "$package_json_path"; then
-          echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage '$package_json_path'.${NC}" >&2
-          exit 1
+
+        if ! assert_increment_staged_scope "$repo_root" "${managed_paths[@]}"; then
+          exit $?
         fi
-        lock_path="$(dirname "$package_json_path")/package-lock.json"
-        if [[ -f "$lock_path" ]]; then
-          if ! git add -- "$lock_path"; then
-            echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage '$lock_path'.${NC}" >&2
-            exit 1
-          fi
+
+        if ! stage_increment_managed_paths "$repo_root" "${managed_paths[@]}"; then
+          exit $?
         fi
+
         if [[ "$RUN_HOOKS" == "true" ]]; then
           if command -v pre-commit > /dev/null 2>&1; then
             pre-commit run -a || true
-            if ! git add -A; then
-              echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage hook updates after pre-commit run.${NC}" >&2
+            if ! stage_increment_managed_paths "$repo_root" "${managed_paths[@]}"; then
               exit 1
             fi
           else
@@ -589,47 +694,55 @@ PY
               dotnet tool restore || true
               dotnet tool run csharpier format || true
             fi
-            if ! git add -A; then
-              echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage formatter updates.${NC}" >&2
+            if ! stage_increment_managed_paths "$repo_root" "${managed_paths[@]}"; then
               exit 1
             fi
           fi
         fi
+
+        if ! assert_increment_staged_scope "$repo_root" "${managed_paths[@]}"; then
+          exit $?
+        fi
+
         msg="chore(version): bump to $new_version"
-        if git diff --cached --quiet --exit-code; then
+        if staged_diff_output="$(git -C "$repo_root" diff --cached --quiet --exit-code 2>&1)"; then
           echo -e "${YELLOW}Note:${NC} No staged changes to commit."
         else
           staged_diff_exit=$?
           if [[ $staged_diff_exit -ne 1 ]]; then
-            echo -e "${RED}E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED: Unable to inspect staged changes (exitCode=$staged_diff_exit).${NC}" >&2
-            exit 1
+            staged_diff_preview="$(get_output_preview "$staged_diff_output")"
+            echo -e "${RED}E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED: Unable to inspect staged changes (exitCode=$staged_diff_exit; repositoryRoot='$repo_root'; outputPreview='$staged_diff_preview').${NC}" >&2
+            exit "$staged_diff_exit"
           fi
 
           if [[ "$NO_VERIFY" == "true" ]]; then
-            if git commit -m "$msg" --no-verify; then
+            if git_commit_output="$(git -C "$repo_root" commit -m "$msg" --no-verify 2>&1)"; then
               :
             else
               commit_exit=$?
-              echo -e "${RED}E_INCREMENT_VERSION_GIT_COMMIT_FAILED: git commit --no-verify exited with code $commit_exit.${NC}" >&2
-              exit 1
+              commit_preview="$(get_output_preview "$git_commit_output")"
+              echo -e "${RED}E_INCREMENT_VERSION_GIT_COMMIT_FAILED: git commit --no-verify exited with code $commit_exit (repositoryRoot='$repo_root'; outputPreview='$commit_preview').${NC}" >&2
+              exit "$commit_exit"
             fi
           else
-            if git commit -m "$msg"; then
+            if git_commit_output="$(git -C "$repo_root" commit -m "$msg" 2>&1)"; then
               :
             else
               commit_exit=$?
-              echo -e "${RED}E_INCREMENT_VERSION_GIT_COMMIT_FAILED: git commit exited with code $commit_exit.${NC}" >&2
-              exit 1
+              commit_preview="$(get_output_preview "$git_commit_output")"
+              echo -e "${RED}E_INCREMENT_VERSION_GIT_COMMIT_FAILED: git commit exited with code $commit_exit (repositoryRoot='$repo_root'; outputPreview='$commit_preview').${NC}" >&2
+              exit "$commit_exit"
             fi
           fi
         fi
         if [[ "$PUSH" == "true" ]]; then
-          if git push -u origin "$branch"; then
+          if git_push_output="$(git -C "$repo_root" push -u origin "$branch" 2>&1)"; then
             :
           else
             push_exit=$?
-            echo -e "${RED}E_INCREMENT_VERSION_GIT_PUSH_FAILED: git push exited with code $push_exit for branch '$branch'.${NC}" >&2
-            exit 1
+            push_preview="$(get_output_preview "$git_push_output")"
+            echo -e "${RED}E_INCREMENT_VERSION_GIT_PUSH_FAILED: git push exited with code $push_exit for branch '$branch' (repositoryRoot='$repo_root'; outputPreview='$push_preview').${NC}" >&2
+            exit "$push_exit"
           fi
         fi
       fi

@@ -432,10 +432,16 @@ try {
     Write-Host "Git tree is clean before backup mutations." -ForegroundColor Green
 
     # Pull before backup mutations so backup never starts from an out-of-date branch.
-    & $gitExecutable -C $repositoryRoot pull --ff-only origin main
+    $gitPullPreflightOutput = @(& $gitExecutable -C $repositoryRoot pull --ff-only origin main 2>&1)
     $gitPullPreflightExitCode = Get-LastExitCodeOrDefault
     if ($gitPullPreflightExitCode -ne 0) {
-        throw ("E_BACKUP_GIT_PULL_FAILED: git pull --ff-only origin main exited with code {0}." -f $gitPullPreflightExitCode)
+        $gitPullPreflightPreview = Get-OutputPreview -OutputLines $gitPullPreflightOutput
+        throw (
+            "E_BACKUP_GIT_PULL_FAILED: git pull --ff-only origin main exited with code {0} (repositoryRoot='{1}'; outputPreview={2})." -f
+            $gitPullPreflightExitCode,
+            $repositoryRoot,
+            $gitPullPreflightPreview
+        )
     }
 
     Write-Host "Git preflight completed. Starting backup steps..." -ForegroundColor Green
@@ -512,10 +518,17 @@ try {
     if (-not $hasGitFailure) {
         $gitAddArgs = @("-C", $repositoryRoot, "add", "--")
         $gitAddArgs += $managedPathspecs
-        & $gitExecutable @gitAddArgs
+        $gitAddOutput = @(& $gitExecutable @gitAddArgs 2>&1)
         $gitAddExitCode = Get-LastExitCodeOrDefault
         if ($gitAddExitCode -ne 0) {
-            Write-Warning ("E_BACKUP_GIT_ADD_FAILED: git add managed pathspecs exited with code {0}." -f $gitAddExitCode)
+            $gitAddPreview = Get-OutputPreview -OutputLines $gitAddOutput
+            Write-Warning (
+                "E_BACKUP_GIT_ADD_FAILED: git add managed pathspecs exited with code {0} (repositoryRoot='{1}'; pathspec={2}; outputPreview={3})." -f
+                $gitAddExitCode,
+                $repositoryRoot,
+                (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs),
+                $gitAddPreview
+            )
             $hasGitFailure = $true
         }
     }
@@ -615,13 +628,17 @@ try {
 
                 $restageArgs = @("-C", $repositoryRoot, "add", "--")
                 $restageArgs += $managedPathspecs
-                & $gitExecutable @restageArgs
+                $restageOutput = @(& $gitExecutable @restageArgs 2>&1)
                 $restageExitCode = Get-LastExitCodeOrDefault
                 if ($restageExitCode -ne 0) {
+                    $restagePreview = Get-OutputPreview -OutputLines $restageOutput
                     Write-Warning (
-                        "E_BACKUP_GIT_RESTAGE_FAILED: git add managed pathspecs for commit retry exited with code {0} on attempt {1}." -f
+                        "E_BACKUP_GIT_RESTAGE_FAILED: git add managed pathspecs for commit retry exited with code {0} on attempt {1} (repositoryRoot='{2}'; pathspec={3}; outputPreview={4})." -f
                         $restageExitCode,
-                        $commitAttempt
+                        $commitAttempt,
+                        $repositoryRoot,
+                        (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs),
+                        $restagePreview
                     )
                     $hasGitFailure = $true
                     break
@@ -666,10 +683,16 @@ try {
 
     if (-not $hasGitFailure) {
         Assert-BackupGitBranchOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ExpectedBranch "main"
-        & $gitExecutable -C $repositoryRoot push origin main
+        $gitPushOutput = @(& $gitExecutable -C $repositoryRoot push origin main 2>&1)
         $gitPushExitCode = Get-LastExitCodeOrDefault
         if ($gitPushExitCode -ne 0) {
-            Write-Warning ("E_BACKUP_GIT_PUSH_FAILED: git push origin main exited with code {0}." -f $gitPushExitCode)
+            $gitPushPreview = Get-OutputPreview -OutputLines $gitPushOutput
+            Write-Warning (
+                "E_BACKUP_GIT_PUSH_FAILED: git push origin main exited with code {0} (repositoryRoot='{1}'; outputPreview={2})." -f
+                $gitPushExitCode,
+                $repositoryRoot,
+                $gitPushPreview
+            )
             $hasGitFailure = $true
         }
     }

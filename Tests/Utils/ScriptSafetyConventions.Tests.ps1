@@ -552,6 +552,19 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Not -Match 'id:\s+llm-harness-validation' -Because 'LLM harness checks should run once via the orchestrator to avoid duplicate execution'
     }
 
+    It "routes shell safety conventions through the precommit orchestrator" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = Get-Content -Path $validatorPath -Raw
+
+        $validatorContent | Should -Match '\$shellSafetyTriggerPattern\s*='
+        $validatorContent | Should -Match 'Scripts/.+\.sh'
+        $validatorContent | Should -Match '\.githooks/\(pre-commit\|pre-push\)'
+        $validatorContent | Should -Match 'ScriptSafetyConventions\.Tests\.ps1'
+        $validatorContent | Should -Match '\$runShellSafetySuite\s*=\s*-not\s+\$runUtilsTests\s+-and'
+        $validatorContent | Should -Match 'Running Tests/Utils/ScriptSafetyConventions\.Tests\.ps1 Pester suite in isolated process'
+        $validatorContent | Should -Match 'PreCommitScriptSafety'
+    }
+
     It "scopes deterministic JSON formatting away from snapshot dumps" {
         $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
 
@@ -977,7 +990,7 @@ Describe "Shell quality conventions" {
         $backupContent | Should -Match '(?m)^\s*for\s+file\s+in\s+"\$HOME"/\*\.sh;\s+do\s*$'
     }
 
-    It "guards Backup.sh pull/push with explicit branch assertions" {
+    It "guards Backup.sh git mutations with explicit branch, scope, and diagnostics checks" {
         $backupPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/Backup.sh'
         # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
         $backupContent = (Get-Content -Path $backupPath -Raw) -replace "`r", ''
@@ -987,24 +1000,31 @@ Describe "Shell quality conventions" {
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_NOT_AVAILABLE'
         $backupContent | Should -Match 'E_BACKUP_MAC_BREW_NOT_AVAILABLE'
         $backupContent | Should -Match 'assert_backup_git_branch\(\)'
+        $backupContent | Should -Match 'assert_backup_managed_scope_clean\(\)'
+        $backupContent | Should -Match 'get_output_preview\(\)'
+        $backupContent | Should -Match 'readonly\s+BACKUP_MANAGED_PATH="Config/"'
         $backupContent | Should -Match 'E_BACKUP_GIT_BRANCH_DETECTION_FAILED'
         $backupContent | Should -Match 'E_BACKUP_GIT_DETACHED_HEAD'
         $backupContent | Should -Match 'E_BACKUP_GIT_BRANCH_MISMATCH'
+        $backupContent | Should -Match 'E_BACKUP_GIT_STATUS_FAILED'
+        $backupContent | Should -Match 'E_BACKUP_GIT_SCOPE_VIOLATION'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_PULL_FAILED'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_ADD_FAILED'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_PUSH_FAILED'
         $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main'
-        $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+add\s+--all'
-        $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+commit\s+-m\s+"Backup for \$current_date"'
-        $backupContent | Should -Match 'current_date=\$\(date\)[\s\S]*?assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+add\s+--all'
+        $backupContent | Should -Match 'assert_backup_managed_scope_clean\s+"\$REPO_ROOT"\s+"\$BACKUP_MANAGED_PATH"[\s\S]*?assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main'
+        $backupContent | Should -Match 'BACKUP_DIR="\$REPO_ROOT/Config/Mac"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+add\s+--\s+"\$BACKUP_MANAGED_PATH"'
+        $backupContent | Should -Match 'if\s+!\s+pull_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main\s+2>&1\)";\s+then'
+        $backupContent | Should -Match 'if\s+!\s+add_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+add\s+--\s+"\$BACKUP_MANAGED_PATH"\s+2>&1\)";\s+then'
+        $backupContent | Should -Match 'outputPreview='
         $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+diff\s+--cached\s+--quiet\s+--exit-code'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_STAGED_DIFF_FAILED'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_COMMIT_FAILED'
         $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main'
-        $backupContent | Should -Match 'if\s+git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main;\s+then'
-        $backupContent | Should -Match 'if\s+git\s+-C\s+"\$REPO_ROOT"\s+add\s+--all;\s+then'
-        $backupContent | Should -Match 'if\s+git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main;\s+then'
+        $backupContent | Should -Match 'if\s+!\s+push_output="\$\(git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main\s+2>&1\)";\s+then'
+        $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+push\s+(?:--force|-f)\b'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+commit\s+-m\s+"Backup for \$current_date"\s*\|\|'
+        $backupContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+rev-parse\s+--abbrev-ref\s+HEAD[^\n]*\|\|\s*true'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+add\s+--all\s*$'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+pull\s+origin\s+main\s*$'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+push\s+origin\s+main\s*$'
@@ -1069,13 +1089,22 @@ Describe "Shell quality conventions" {
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_BRANCH_RESTRICTED'
         $incrementContent | Should -Match 'ALLOW_NON_MAIN'
+        $incrementContent | Should -Match 'stage_increment_managed_paths\(\)'
+        $incrementContent | Should -Match 'assert_increment_staged_scope\(\)'
+        $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_SCOPE_VIOLATION'
+        $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_SCOPE_PATHSPEC_EMPTY'
+        $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_REPOSITORY_ROOT_FAILED'
+        $incrementContent | Should -Match 'outputPreview='
         $incrementContent | Should -Not -Match 'git\s+pull\s+--ff-only\s+\|\|\s+true'
+        $incrementContent | Should -Not -Match 'git\s+add\s+-A'
         $incrementContent | Should -Not -Match 'git\s+add\s+--\s+"\$package_json_path"\s+\|\|\s+true'
         $incrementContent | Should -Not -Match 'git\s+commit\s+-m\s+"\$msg"(?:\s+--no-verify)?\s+\|\|\s+true'
         $incrementContent | Should -Not -Match 'git\s+push\s+-u\s+origin\s+"\$branch"\s+\|\|\s+true'
-        $incrementContent | Should -Match 'if\s+!\s+git\s+pull\s+--ff-only'
-        $incrementContent | Should -Match 'if\s+!\s+git\s+add\s+--\s+"\$package_json_path"'
-        $incrementContent | Should -Match 'git\s+diff\s+--cached\s+--quiet\s+--exit-code'
+        $incrementContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+push\s+(?:--force|-f)\b'
+        # Allow either direct negation or captured-output guards for ff-only pull.
+        $incrementContent | Should -Match 'if\s+!\s+(?:git\s+pull\s+--ff-only|git_pull_output="\$\(git\s+-C\s+"\$repo_root"\s+pull\s+--ff-only\s+2>&1\)")'
+        $incrementContent | Should -Match 'stage_increment_managed_paths\s+"\$repo_root"\s+"\$\{managed_paths\[@\]\}"'
+        $incrementContent | Should -Match 'git\s+(?:-C\s+"\$repo_root"\s+)?diff\s+--cached\s+--quiet\s+--exit-code'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_COMMIT_FAILED'
         $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_PUSH_FAILED'
@@ -1561,6 +1590,16 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT'
         $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED:[\s\S]*repositoryRoot=' -Because 'Backup pull failures must include repositoryRoot for actionable diagnostics.'
+        $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED:[\s\S]*outputPreview=' -Because 'Backup pull failures must include outputPreview for actionable diagnostics.'
+        $backupScript | Should -Match 'E_BACKUP_GIT_ADD_FAILED:[\s\S]*repositoryRoot=' -Because 'Backup add failures must include repositoryRoot for actionable diagnostics.'
+        $backupScript | Should -Match 'E_BACKUP_GIT_ADD_FAILED:[\s\S]*pathspec=' -Because 'Backup add failures must include managed pathspec diagnostics.'
+        $backupScript | Should -Match 'E_BACKUP_GIT_ADD_FAILED:[\s\S]*outputPreview=' -Because 'Backup add failures must include outputPreview for actionable diagnostics.'
+        $backupScript | Should -Match 'E_BACKUP_GIT_RESTAGE_FAILED:[\s\S]*repositoryRoot=' -Because 'Backup restage failures must include repositoryRoot for actionable diagnostics.'
+        $backupScript | Should -Match 'E_BACKUP_GIT_RESTAGE_FAILED:[\s\S]*pathspec=' -Because 'Backup restage failures must include managed pathspec diagnostics.'
+        $backupScript | Should -Match 'E_BACKUP_GIT_RESTAGE_FAILED:[\s\S]*outputPreview=' -Because 'Backup restage failures must include outputPreview for actionable diagnostics.'
+        $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED:[\s\S]*repositoryRoot=' -Because 'Backup push failures must include repositoryRoot for actionable diagnostics.'
+        $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED:[\s\S]*outputPreview=' -Because 'Backup push failures must include outputPreview for actionable diagnostics.'
         $backupScript | Should -Match 'E_BACKUP_GIT_TREE_DIRTY_POSTPUSH'
         $backupScript | Should -Match 'Backup git availability diagnostics:'
         $backupScript | Should -Match 'Backup git preflight diagnostics:'
@@ -1592,6 +1631,7 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match '"\:\(exclude\)\$managedPathspec"'
         $backupScript | Should -Match '\$gitAddArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"add",\s*"--"\)'
         $backupScript | Should -Not -Match 'git\s+add\s+--all'
+        $backupScript | Should -Not -Match 'git\s+push\s+(?:--force|-f)\b'
         $backupScript | Should -Not -Match 'RelativeScriptPath\s*=\s*"Utils/FormatPowershellScripts\.ps1"'
         $backupScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
         # git pull --ff-only must appear before staging/commit to avoid local-vs-remote divergence.
