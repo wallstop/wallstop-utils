@@ -28,6 +28,13 @@ if (-not (Test-Path -Path $formatSafetyHelpersPath -PathType Leaf)) {
 
 .$formatSafetyHelpersPath
 
+$diagnosticsHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/DiagnosticsHelpers.ps1"
+if (-not (Test-Path -Path $diagnosticsHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_DIAGNOSTICS_HELPER_MISSING: diagnostics helper file not found at '$diagnosticsHelpersPath'."
+}
+
+.$diagnosticsHelpersPath
+
 if ($PreflightOnly -and $WatchCi) {
     throw "E_VALIDATION_ARG_CONFLICT: -PreflightOnly cannot be combined with -WatchCi."
 }
@@ -68,13 +75,34 @@ function Get-GitExecutableOrThrow {
 function Get-StatusSnapshot {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$GitExecutable
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $false)]
+        [string]$RepositoryRoot = ""
     )
 
-    $statusLines = @(& $GitExecutable status --porcelain=v1 --untracked-files=all)
+    if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+        $repositoryRootArgs = @("rev-parse", "--show-toplevel")
+        $repositoryRootOutput = @(& $GitExecutable @repositoryRootArgs 2>$null)
+        $repositoryRootExit = $LASTEXITCODE
+        if ($repositoryRootExit -ne 0 -or $repositoryRootOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$repositoryRootOutput[0])) {
+            $repositoryRootDiagnostics = @(& $GitExecutable @repositoryRootArgs 2>&1)
+            $repositoryRootPreview = Get-OutputPreview -OutputLines $repositoryRootDiagnostics
+            $workingDirectory = (Get-Location).Path
+            throw "E_VALIDATION_GIT_NOT_REPOSITORY: unable to determine repository root for status snapshot (exitCode=$repositoryRootExit; workingDirectory='$workingDirectory'; outputPreview=$repositoryRootPreview)."
+        }
+
+        $RepositoryRoot = (Resolve-Path -LiteralPath ([string]$repositoryRootOutput[0]).Trim() -ErrorAction Stop).Path
+    }
+
+    $statusArgs = @("-C", $RepositoryRoot, "status", "--porcelain=v1", "--untracked-files=all")
+    $statusLines = @(& $GitExecutable @statusArgs 2>$null)
     $statusExit = $LASTEXITCODE
     if ($statusExit -ne 0) {
-        throw "E_VALIDATION_GIT_STATUS_FAILED: unable to read git status snapshot (exitCode=$statusExit)."
+        $statusDiagnostics = @(& $GitExecutable @statusArgs 2>&1)
+        $statusPreview = Get-OutputPreview -OutputLines $statusDiagnostics
+        $workingDirectory = (Get-Location).Path
+        throw "E_VALIDATION_GIT_STATUS_FAILED: unable to read git status snapshot (exitCode=$statusExit; repositoryRoot='$RepositoryRoot'; workingDirectory='$workingDirectory'; outputPreview=$statusPreview)."
     }
 
     $invariantCultureName = [System.Globalization.CultureInfo]::InvariantCulture.Name
@@ -128,7 +156,7 @@ try {
     }
 
     $gitExecutable = Get-GitExecutableOrThrow
-    $statusBeforeValidation = Get-StatusSnapshot -gitExecutable $gitExecutable
+    $statusBeforeValidation = Get-StatusSnapshot -gitExecutable $gitExecutable -RepositoryRoot $repoRoot
 
     Invoke-NativeCommand -Label "pre-commit stage (all files)" -FailureCode "E_VALIDATION_PRECOMMIT_FAILED" -Remediation "Fix hook findings, then rerun this command." -ScriptBlock {
         pre-commit run --hook-stage pre-commit --all-files --show-diff-on-failure --color always
@@ -155,7 +183,7 @@ try {
     & $llmHarnessScript -RootPath $repoRoot
 
     Write-Host "[validation] workspace drift assertion"
-    $statusAfterValidation = Get-StatusSnapshot -gitExecutable $gitExecutable
+    $statusAfterValidation = Get-StatusSnapshot -gitExecutable $gitExecutable -RepositoryRoot $repoRoot
     $beforeCount = if ($null -eq $statusBeforeValidation) { "<null>" } else { [string](@($statusBeforeValidation).Count) }
     $afterCount = if ($null -eq $statusAfterValidation) { "<null>" } else { [string](@($statusAfterValidation).Count) }
     Write-Verbose "Workspace drift snapshots: before=$beforeCount after=$afterCount"

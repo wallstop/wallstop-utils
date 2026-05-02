@@ -101,7 +101,9 @@ _install_ripgrep() {
 
   _log "Installing ripgrep via apt-get..."
   local install_output
-  if ! install_output="$(sudo apt-get install -y --no-install-recommends ripgrep 2>&1)"; then
+  if install_output="$(sudo apt-get install -y --no-install-recommends ripgrep 2>&1)"; then
+    :
+  else
     _warn "apt-get install ripgrep failed: ${install_output}"
     return 1
   fi
@@ -128,7 +130,9 @@ _ensure_apt_index_updated() {
 
   _log "Refreshing apt package index..."
   local update_output
-  if ! update_output="$(sudo apt-get update -qq 2>&1)"; then
+  if update_output="$(sudo apt-get update -qq 2>&1)"; then
+    :
+  else
     _warn "apt-get update failed: ${update_output}"
     return 1
   fi
@@ -168,7 +172,9 @@ _install_via_apt_pipx() {
 
   _log "Strategy 2: installing pipx via apt-get..."
   local install_output
-  if ! install_output="$(sudo apt-get install -y --no-install-recommends pipx 2>&1)"; then
+  if install_output="$(sudo apt-get install -y --no-install-recommends pipx 2>&1)"; then
+    :
+  else
     _warn "Strategy 2 failed to install pipx: ${install_output}"
     return 1
   fi
@@ -194,7 +200,9 @@ _install_via_venv() {
         _warn "Strategy 3 skipped apt fallback: apt package index refresh failed."
       else
         local install_output
-        if ! install_output="$(sudo apt-get install -y --no-install-recommends python3-venv 2>&1)"; then
+        if install_output="$(sudo apt-get install -y --no-install-recommends python3-venv 2>&1)"; then
+          :
+        else
           _warn "Strategy 3 could not install python3-venv: ${install_output}"
         fi
       fi

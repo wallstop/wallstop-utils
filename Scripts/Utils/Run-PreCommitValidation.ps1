@@ -32,6 +32,13 @@ if (-not (Test-Path -Path $formatSafetyHelpersPath -PathType Leaf)) {
 
 .$formatSafetyHelpersPath
 
+$diagnosticsHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/DiagnosticsHelpers.ps1"
+if (-not (Test-Path -Path $diagnosticsHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Diagnostics helper file not found at '$diagnosticsHelpersPath'."
+}
+
+.$diagnosticsHelpersPath
+
 $llmWrapperHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/LlmWrapperContractHelpers.ps1"
 if (-not (Test-Path -Path $llmWrapperHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: LLM wrapper helper file not found at '$llmWrapperHelpersPath'."
@@ -84,68 +91,6 @@ function Get-PwshExecutableOrThrow {
 
     Write-Verbose ("Pre-commit validation pwsh diagnostics: pwshPath='{0}'" -f $pwshCommand.Source)
     return $pwshCommand.Source
-}
-
-function Get-OutputPreview {
-    param(
-        [Parameter(Mandatory = $false)]
-        [string[]]$OutputLines = @(),
-
-        [Parameter(Mandatory = $false)]
-        [ValidateRange(2, 200)]
-        [int]$MaxPreviewLines = 12
-    )
-
-    $normalizedLines = @($OutputLines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($normalizedLines.Count -eq 0) {
-        return "(no output)"
-    }
-
-    $formatPreviewLine = {
-        param([string]$Line)
-
-        $trimmed = $Line.Trim()
-        if ($trimmed.Length -gt 240) {
-            return "$($trimmed.Substring(0, 240))..."
-        }
-
-        return $trimmed
-    }
-
-    if ($normalizedLines.Count -le $MaxPreviewLines) {
-        $previewLines = @($normalizedLines | ForEach-Object {
-                & $formatPreviewLine $_
-            })
-        return ($previewLines -join " | ")
-    }
-
-    $headCount = [int][math]::Ceiling($MaxPreviewLines / 2)
-    $tailCount = $MaxPreviewLines - $headCount
-    if ($tailCount -lt 1) {
-        $tailCount = 1
-        $headCount = [math]::Max($MaxPreviewLines - $tailCount, 1)
-    }
-
-    $headPreview = @($normalizedLines | Select-Object -First $headCount | ForEach-Object {
-            $trimmed = $_.Trim()
-            if ($trimmed.Length -gt 240) {
-                return "$($trimmed.Substring(0, 240))..."
-            }
-
-            return $trimmed
-        })
-
-    $tailPreview = @($normalizedLines | Select-Object -Last $tailCount | ForEach-Object {
-            & $formatPreviewLine $_
-        })
-
-    $omittedCount = [math]::Max($normalizedLines.Count - ($headCount + $tailCount), 0)
-    return (
-        "head: {0} | ... ({1} omitted line(s)) ... | tail: {2}" -f
-        ($headPreview -join " | "),
-        $omittedCount,
-        ($tailPreview -join " | ")
-    )
 }
 
 function Get-FirstRootErrorCode {
@@ -785,7 +730,7 @@ function Invoke-PesterQualityGateInIsolatedProcess {
         if ($process.ExitCode -ne 0) {
             $rootCode = Get-FirstRootErrorCode -OutputLines $combinedLines
             $redactedCombinedLines = @(Convert-ToRedactedOutputLines -OutputLines $combinedLines)
-            $preview = Get-OutputPreview -OutputLines $redactedCombinedLines -MaxPreviewLines 4
+            $preview = Get-OutputPreview -OutputLines $redactedCombinedLines -MaxPreviewLines 4 -FilterBlankLines -HeadTailWhenTruncated -PerLineMaxCharacters 240
             $artifactLogPath = "(artifact-unavailable)"
 
             try {
@@ -867,6 +812,7 @@ try {
     $utilsTestPattern = '^(Scripts/Utils|Tests/Utils)/.+\.ps1$'
     $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
     $scriptPattern = '^Scripts/Utils/.+\.ps1$'
+    $shellSafetyTriggerPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push)|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1)$'
 
     $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
     $llmHarnessPatternSource = 'wrapper-contract'
@@ -888,6 +834,7 @@ try {
     $utilsTestFiles = @($stagedFiles | Where-Object { $_ -match $utilsTestPattern })
     $githubTestFiles = @($stagedFiles | Where-Object { $_ -match $githubTestPattern })
     $scriptFiles = @($stagedFiles | Where-Object { $_ -match $scriptPattern })
+    $shellSafetyFiles = @($stagedFiles | Where-Object { $_ -match $shellSafetyTriggerPattern })
     $llmHarnessFiles = @($stagedFiles | Where-Object { $_ -match $llmHarnessPattern })
 
     $analyzerTargets = @()
@@ -917,18 +864,21 @@ try {
 
     $runUtilsTests = $All -or $utilsTestFiles.Count -gt 0
     $runGitHubTests = $All -or $githubTestFiles.Count -gt 0
+    $runShellSafetySuite = -not $runUtilsTests -and ($All -or $shellSafetyFiles.Count -gt 0)
     $runAnalyzer = $analyzerTargets.Count -gt 0
     $runFormatOperatorSafetyCheck = $All -or $scriptFiles.Count -gt 0 -or $utilsTestFiles.Count -gt 0 -or $githubTestFiles.Count -gt 0
     $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
     $analyzerTargetsText = if ($analyzerTargets.Count -gt 0) { $analyzerTargets -join ', ' } else { '(none)' }
+    $shellSafetyMatchedFilesText = if ($shellSafetyFiles.Count -gt 0) { $shellSafetyFiles -join ', ' } else { '(none)' }
     $llmHarnessMatchedFilesText = if ($llmHarnessFiles.Count -gt 0) { $llmHarnessFiles -join ', ' } else { '(none)' }
 
     Write-Verbose (
-        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runAnalyzer={4}; analyzerTargetCount={5}; runLlmHarnessValidation={6}" -f
+        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runShellSafetySuite={4}; runAnalyzer={5}; analyzerTargetCount={6}; runLlmHarnessValidation={7}" -f
         $All.IsPresent,
         $stagedFiles.Count,
         $runUtilsTests,
         $runGitHubTests,
+        $runShellSafetySuite,
         $runAnalyzer,
         $analyzerTargets.Count,
         $runLlmHarnessValidation
@@ -943,9 +893,18 @@ try {
         Write-Verbose ("Skipping LLM harness validation: allMode={0}; source={1}; matchedCount={2}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count)
     }
 
-    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
+    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellSafetySuite -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
         Write-Verbose "No staged files requiring utility validation; skipping validation."
         return
+    }
+
+    if ($runShellSafetySuite) {
+        Write-Verbose (
+            "Shell safety trigger diagnostics: allMode={0}; matchedCount={1}; matchedFiles={2}" -f
+            $All.IsPresent,
+            $shellSafetyFiles.Count,
+            $shellSafetyMatchedFilesText
+        )
     }
 
     if ($runFormatOperatorSafetyCheck) {
@@ -959,14 +918,14 @@ try {
         Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts", "Tests") -ErrorCode "E_PRECOMMIT_FORMAT_OPERATOR_BINDING" -ContextLabel "Pre-commit PowerShell format-operator safety"
     }
 
-    $requiresPesterModule = $runUtilsTests -or $runGitHubTests
+    $requiresPesterModule = $runUtilsTests -or $runGitHubTests -or $runShellSafetySuite
     $requiresScriptAnalyzerModule = (-not $SkipAnalyzer) -and $runAnalyzer
     if ($requiresPesterModule -or $requiresScriptAnalyzerModule) {
         Write-Host "Running PowerShell module prerequisite validation..."
         Assert-PreCommitPowerShellModuleAvailability -RequirePester:$requiresPesterModule -RequireScriptAnalyzer:$requiresScriptAnalyzerModule
     }
 
-    if ($runUtilsTests -or $runGitHubTests) {
+    if ($runUtilsTests -or $runGitHubTests -or $runShellSafetySuite) {
         $pesterGateScriptPath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
         if (-not (Test-Path -Path $pesterGateScriptPath -PathType Leaf)) {
             throw "E_CONFIG_ERROR: Pester quality gate script is missing at '$pesterGateScriptPath'."
@@ -988,6 +947,11 @@ try {
     if ($runGitHubTests) {
         Write-Host "Running Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1 Pester suite in isolated process..."
         Invoke-PesterQualityGateInIsolatedProcess -RepoRoot $repoRoot -TestPath (Join-Path -Path $repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1") -SuiteLabel "PreCommitGitHub" -OutputVerbosity $PesterOutputVerbosity -TimeoutSeconds $PesterTimeoutSeconds
+    }
+
+    if ($runShellSafetySuite) {
+        Write-Host "Running Tests/Utils/ScriptSafetyConventions.Tests.ps1 Pester suite in isolated process..."
+        Invoke-PesterQualityGateInIsolatedProcess -RepoRoot $repoRoot -TestPath (Join-Path -Path $repoRoot -ChildPath "Tests/Utils/ScriptSafetyConventions.Tests.ps1") -SuiteLabel "PreCommitScriptSafety" -OutputVerbosity $PesterOutputVerbosity -TimeoutSeconds $PesterTimeoutSeconds
     }
 
     if (-not $SkipAnalyzer -and $runAnalyzer) {

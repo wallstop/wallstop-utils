@@ -16,6 +16,14 @@ Always propagate fallback exit status so failures cannot be hidden.
 
 In pre-commit mode, keep ScriptAnalyzer scope staged-file targeted for `Scripts/Utils/*.ps1`; reserve full-repo analyzer scans for explicit `-All` flows (pre-push/full validation).
 
+## Backup/Update Formatter Boundary
+
+Do not run `Scripts/Utils/FormatPowershellScripts.ps1` inside `Scripts/Backup.ps1` or `Scripts/Update.ps1`.
+
+Formatting ownership belongs to pre-commit hooks and explicit quality commands, not backup/update orchestration.
+
+When commit hooks autofix files (`files were modified by this hook`), backup orchestration may restage managed backup paths and retry commit in a bounded loop.
+
 ## Timeout-Guarded Hook Execution
 
 Keep hook wrappers bounded so stalled commands cannot lock editor-hosted workflows.

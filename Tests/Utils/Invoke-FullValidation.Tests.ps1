@@ -25,6 +25,7 @@ Describe "Invoke-FullValidation workflow contract" {
         "E_VALIDATION_ARG_CONFLICT"
         "E_VALIDATION_POWERSHELL_MODULES_MISSING"
         "E_VALIDATION_MODULE_HELPER_MISSING"
+        "E_VALIDATION_DIAGNOSTICS_HELPER_MISSING"
         "E_VALIDATION_STATUS_BEFORE_NULL"
         "E_VALIDATION_STATUS_AFTER_NULL"
     )
@@ -33,6 +34,13 @@ Describe "Invoke-FullValidation workflow contract" {
         @{ Name = "snapshot helper"; Pattern = 'Get-StatusSnapshot' }
         @{ Name = "snapshot sorting"; Pattern = 'function\s+Get-StatusSnapshot\b[\s\S]*?Sort-Object' }
         @{ Name = "non-enumerating snapshot return"; Pattern = 'function\s+Get-StatusSnapshot\b[\s\S]*?Write-Output\s+-NoEnumerate\s+\(\s*\[string\[\]\]\s*\$sortedStatusLines\s*\)' }
+        @{ Name = "status args contract"; Pattern = 'statusArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all"\)' }
+        @{ Name = "status snapshot call passes repository root (before)"; Pattern = 'Get-StatusSnapshot\s+-gitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repoRoot' }
+        @{ Name = "status snapshot call passes repository root (after)"; Pattern = 'Get-StatusSnapshot\s+-gitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repoRoot' }
+        @{ Name = "status root fallback failure code"; Pattern = 'E_VALIDATION_GIT_NOT_REPOSITORY' }
+        @{ Name = "status failure repository diagnostics"; Pattern = 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*repositoryRoot=' }
+        @{ Name = "status failure working-directory diagnostics"; Pattern = 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*workingDirectory=' }
+        @{ Name = "status failure output preview"; Pattern = 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*outputPreview=' }
         @{ Name = "before snapshot null guard"; Pattern = 'if\s*\(\s*\$null\s*-eq\s*\$statusBeforeValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_BEFORE_NULL' }
         @{ Name = "after snapshot null guard"; Pattern = 'if\s*\(\s*\$null\s*-eq\s*\$statusAfterValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_AFTER_NULL' }
         @{ Name = "verbose snapshot diagnostics"; Pattern = 'Write-Verbose\s+".*before=\$beforeCount.*after=\$afterCount' }
@@ -67,6 +75,11 @@ Describe "Invoke-FullValidation workflow contract" {
         $script:validationScript | Should -Match 'Invoke-ScriptAnalyzer'
         $script:validationScript | Should -Match 'Invoke-Formatter'
         $script:validationScript | Should -Match 'Invoke-Pester'
+    }
+
+    It "reuses shared diagnostics helper for output previews" {
+        $script:validationScript | Should -Match 'Common/DiagnosticsHelpers\.ps1'
+        $script:validationScript | Should -Not -Match 'function\s+Get-OutputPreview'
     }
 
     It "supports lightweight preflight-only mode" {
