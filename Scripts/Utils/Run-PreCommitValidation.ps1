@@ -812,7 +812,7 @@ try {
     $utilsTestPattern = '^(Scripts/Utils|Tests/Utils)/.+\.ps1$'
     $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
     $scriptPattern = '^Scripts/Utils/.+\.ps1$'
-    $shellSafetyTriggerPattern = '^(Scripts/.+\.sh|\.githooks/(pre-commit|pre-push)|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1)$'
+    $shellSafetyTriggerPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push)|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1)$'
 
     $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
     $llmHarnessPatternSource = 'wrapper-contract'
