@@ -40,6 +40,13 @@ All front-end wrapper files must point here and should not duplicate policy text
 22. Machine-readable PowerShell output contracts must keep stable key casing and shape: for `-OutputFormat json` payloads, output record keys must stay consistently lower-camel unless explicitly versioned, and JSON serialization must preserve array shape for singleton results (`ConvertTo-Json -AsArray`). Keep both behavioral coverage and policy-level convention checks for these contracts.
 23. Backup orchestrators that perform remote git mutation (`pull`/`push`) must assert branch context before each remote operation: reject detached HEAD (`E_BACKUP_GIT_DETACHED_HEAD`) and reject unexpected branch targets (`E_BACKUP_GIT_BRANCH_MISMATCH`) with explicit diagnostics instead of relying on implicit current-branch behavior.
 24. Quality/status diagnostics that emit `repositoryRoot=...` must derive that value from an explicit git-root context (`git rev-parse --show-toplevel` or a validated caller-provided root) rather than `(Get-Location).Path`; include `workingDirectory=...` separately when helpful for triage.
+25. Shell scripts that mutate git state (for example `Scripts/Mac/Backup.sh` and `Scripts/Utils/increment-version.sh`) must fail fast and avoid blanket suppression for mutating git commands:
+
+- preflight `git` with `command -v git >/dev/null 2>&1` before the first git side effect;
+- when branch policy restricts git mutations (for example non-main branch without an override flag), emit a stable `E_*_BRANCH_RESTRICTED` diagnostic and exit non-zero rather than silently skipping commit/push;
+- do not use `git add|commit|pull|push ... || true` or `... || echo ...` for control flow;
+- treat the `nothing to commit` case by checking staged diff state first (`git diff --cached --quiet --exit-code`) and suppress only that case;
+- emit stable `E_*_GIT_*` diagnostics for staged diff, commit, pull, and push failures so policy tests can detect regressions.
 
 ## Working Agreement For Agents
 

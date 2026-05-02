@@ -522,6 +522,11 @@ PY
   fi
   # Post-update git integration to avoid PR conflicts with pre-commit/CI
   if [[ "$UPDATED" == "true" && ("$COMMIT_CHANGES" == "true" || "$RUN_HOOKS" == "true" || "$PUSH" == "true") ]]; then
+    if ! command -v git > /dev/null 2>&1; then
+      echo -e "${RED}E_INCREMENT_VERSION_GIT_NOT_AVAILABLE: git is required when --commit, --run-hooks, or --push is requested.${NC}" >&2
+      exit 1
+    fi
+
     if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
       branch=$(git rev-parse --abbrev-ref HEAD)
       primary_branches=(master main)
@@ -530,31 +535,49 @@ PY
         if [[ "$branch" == "$b" ]]; then allow_branch=true; fi
       done
       if [[ "$ALLOW_NON_MAIN" != "true" && "$allow_branch" != "true" ]]; then
-        echo -e "${YELLOW}Note:${NC} On branch '$branch'. Version bumps are restricted to main/master by default. Use --allow-non-main-branch to override." >&2
+        echo -e "${RED}E_INCREMENT_VERSION_BRANCH_RESTRICTED: On branch '$branch'. Version bumps with --commit/--run-hooks/--push require main/master or --allow-non-main-branch.${NC}" >&2
+        exit 1
       else
-        git fetch --prune || true
+        if ! git fetch --prune; then
+          echo -e "${YELLOW}Warning:${NC} W_INCREMENT_VERSION_GIT_FETCH_FAILED: Unable to fetch remote refs; continuing without pre-pull sync." >&2
+        fi
         # Safe fast-forward pull only when clean and behind
         if [ -d "$(git rev-parse --git-dir 2> /dev/null)" ]; then
           if [ ! -f "$(git rev-parse --git-dir)/MERGE_HEAD" ] && [ ! -d "$(git rev-parse --git-dir)/rebase-apply" ] && [ ! -d "$(git rev-parse --git-dir)/rebase-merge" ]; then
             if git diff --no-ext-diff --quiet --exit-code; then
-              counts=$(git rev-list --left-right --count '@{u}...HEAD' 2> /dev/null || true)
+              counts=""
+              if ! counts=$(git rev-list --left-right --count '@{u}...HEAD' 2> /dev/null); then
+                counts=""
+              fi
               behind=$(echo "$counts" | awk '{print $1}')
               ahead=$(echo "$counts" | awk '{print $2}')
               if [ -n "$behind" ] && [ "${behind:-0}" -gt 0 ] && [ "${ahead:-0}" -eq 0 ]; then
-                git pull --ff-only || true
+                if ! git pull --ff-only; then
+                  echo -e "${RED}E_INCREMENT_VERSION_GIT_PULL_FAILED: Fast-forward pull failed. Resolve branch divergence before continuing.${NC}" >&2
+                  exit 1
+                fi
               fi
             fi
           fi
         fi
-        git add -- "$package_json_path" || true
+        if ! git add -- "$package_json_path"; then
+          echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage '$package_json_path'.${NC}" >&2
+          exit 1
+        fi
         lock_path="$(dirname "$package_json_path")/package-lock.json"
         if [[ -f "$lock_path" ]]; then
-          git add -- "$lock_path"
+          if ! git add -- "$lock_path"; then
+            echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage '$lock_path'.${NC}" >&2
+            exit 1
+          fi
         fi
         if [[ "$RUN_HOOKS" == "true" ]]; then
           if command -v pre-commit > /dev/null 2>&1; then
             pre-commit run -a || true
-            git add -A || true
+            if ! git add -A; then
+              echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage hook updates after pre-commit run.${NC}" >&2
+              exit 1
+            fi
           else
             if command -v npm > /dev/null 2>&1; then
               npm run format:json --silent || true
@@ -566,21 +589,48 @@ PY
               dotnet tool restore || true
               dotnet tool run csharpier format || true
             fi
-            git add -A || true
+            if ! git add -A; then
+              echo -e "${RED}E_INCREMENT_VERSION_GIT_ADD_FAILED: Unable to stage formatter updates.${NC}" >&2
+              exit 1
+            fi
           fi
         fi
         msg="chore(version): bump to $new_version"
-        if [[ "$NO_VERIFY" == "true" ]]; then
-          git commit -m "$msg" --no-verify || true
+        if git diff --cached --quiet --exit-code; then
+          echo -e "${YELLOW}Note:${NC} No staged changes to commit."
         else
-          if ! git commit -m "$msg"; then
-            echo "Commit failed; retrying after restage with --no-verify..."
-            git add -A || true
-            git commit -m "$msg" --no-verify || true
+          staged_diff_exit=$?
+          if [[ $staged_diff_exit -ne 1 ]]; then
+            echo -e "${RED}E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED: Unable to inspect staged changes (exitCode=$staged_diff_exit).${NC}" >&2
+            exit 1
+          fi
+
+          if [[ "$NO_VERIFY" == "true" ]]; then
+            if git commit -m "$msg" --no-verify; then
+              :
+            else
+              commit_exit=$?
+              echo -e "${RED}E_INCREMENT_VERSION_GIT_COMMIT_FAILED: git commit --no-verify exited with code $commit_exit.${NC}" >&2
+              exit 1
+            fi
+          else
+            if git commit -m "$msg"; then
+              :
+            else
+              commit_exit=$?
+              echo -e "${RED}E_INCREMENT_VERSION_GIT_COMMIT_FAILED: git commit exited with code $commit_exit.${NC}" >&2
+              exit 1
+            fi
           fi
         fi
         if [[ "$PUSH" == "true" ]]; then
-          git push -u origin "$branch" || true
+          if git push -u origin "$branch"; then
+            :
+          else
+            push_exit=$?
+            echo -e "${RED}E_INCREMENT_VERSION_GIT_PUSH_FAILED: git push exited with code $push_exit for branch '$branch'.${NC}" >&2
+            exit 1
+          fi
         fi
       fi
     else

@@ -983,19 +983,41 @@ Describe "Shell quality conventions" {
         $backupContent = (Get-Content -Path $backupPath -Raw) -replace "`r", ''
 
         $backupContent | Should -Match 'command\s+-v\s+git'
+        $backupContent | Should -Match 'command\s+-v\s+brew'
         $backupContent | Should -Match 'E_BACKUP_MAC_GIT_NOT_AVAILABLE'
+        $backupContent | Should -Match 'E_BACKUP_MAC_BREW_NOT_AVAILABLE'
         $backupContent | Should -Match 'assert_backup_git_branch\(\)'
         $backupContent | Should -Match 'E_BACKUP_GIT_BRANCH_DETECTION_FAILED'
         $backupContent | Should -Match 'E_BACKUP_GIT_DETACHED_HEAD'
         $backupContent | Should -Match 'E_BACKUP_GIT_BRANCH_MISMATCH'
+        $backupContent | Should -Match 'E_BACKUP_MAC_GIT_PULL_FAILED'
+        $backupContent | Should -Match 'E_BACKUP_MAC_GIT_ADD_FAILED'
+        $backupContent | Should -Match 'E_BACKUP_MAC_GIT_PUSH_FAILED'
         $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main'
         $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+add\s+--all'
         $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+commit\s+-m\s+"Backup for \$current_date"'
         $backupContent | Should -Match 'current_date=\$\(date\)[\s\S]*?assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+add\s+--all'
+        $backupContent | Should -Match 'git\s+-C\s+"\$REPO_ROOT"\s+diff\s+--cached\s+--quiet\s+--exit-code'
+        $backupContent | Should -Match 'E_BACKUP_MAC_GIT_STAGED_DIFF_FAILED'
+        $backupContent | Should -Match 'E_BACKUP_MAC_GIT_COMMIT_FAILED'
         $backupContent | Should -Match 'assert_backup_git_branch\s+"\$REPO_ROOT"\s+"main"[\s\S]*?git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main'
+        $backupContent | Should -Match 'if\s+git\s+-C\s+"\$REPO_ROOT"\s+pull\s+--ff-only\s+origin\s+main;\s+then'
+        $backupContent | Should -Match 'if\s+git\s+-C\s+"\$REPO_ROOT"\s+add\s+--all;\s+then'
+        $backupContent | Should -Match 'if\s+git\s+-C\s+"\$REPO_ROOT"\s+push\s+origin\s+main;\s+then'
+        $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+commit\s+-m\s+"Backup for \$current_date"\s*\|\|'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+add\s+--all\s*$'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+pull\s+origin\s+main\s*$'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+push\s+origin\s+main\s*$'
+
+        $gitPreflightIndex = $backupContent.IndexOf('command -v git', [System.StringComparison]::Ordinal)
+        $brewPreflightIndex = $backupContent.IndexOf('command -v brew', [System.StringComparison]::Ordinal)
+        $brewUpdateIndex = $backupContent.IndexOf('brew update', [System.StringComparison]::Ordinal)
+
+        $gitPreflightIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must preflight git before side effects.'
+        $brewPreflightIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must preflight brew before side effects.'
+        $brewUpdateIndex | Should -BeGreaterThan -1 -Because 'Backup.sh must run brew update in normal flow.'
+        $gitPreflightIndex | Should -BeLessThan $brewUpdateIndex -Because 'git preflight must happen before brew side effects.'
+        $brewPreflightIndex | Should -BeLessThan $brewUpdateIndex -Because 'brew preflight must happen before brew side effects.'
     }
 
     It "avoids parse-ls backup selection pattern in restore_brew" {
@@ -1036,6 +1058,27 @@ Describe "Shell quality conventions" {
 
         $incrementContent | Should -Not -Match '\[\[\s+-f\s+"\$lock_path"\s+\]\]\s+&&\s+git\s+add\s+--\s+"\$lock_path"\s+\|\|\s+true'
         $incrementContent | Should -Match '(?m)^\s*if\s+\[\[\s+-f\s+"\$lock_path"\s+\]\];\s+then\s*$'
+    }
+
+    It "hardens increment-version git mutation commands with explicit failure handling" {
+        $incrementPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/increment-version.sh'
+        # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
+        $incrementContent = (Get-Content -Path $incrementPath -Raw) -replace "`r", ''
+
+        $incrementContent | Should -Match 'command\s+-v\s+git'
+        $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'
+        $incrementContent | Should -Match 'E_INCREMENT_VERSION_BRANCH_RESTRICTED'
+        $incrementContent | Should -Match 'ALLOW_NON_MAIN'
+        $incrementContent | Should -Not -Match 'git\s+pull\s+--ff-only\s+\|\|\s+true'
+        $incrementContent | Should -Not -Match 'git\s+add\s+--\s+"\$package_json_path"\s+\|\|\s+true'
+        $incrementContent | Should -Not -Match 'git\s+commit\s+-m\s+"\$msg"(?:\s+--no-verify)?\s+\|\|\s+true'
+        $incrementContent | Should -Not -Match 'git\s+push\s+-u\s+origin\s+"\$branch"\s+\|\|\s+true'
+        $incrementContent | Should -Match 'if\s+!\s+git\s+pull\s+--ff-only'
+        $incrementContent | Should -Match 'if\s+!\s+git\s+add\s+--\s+"\$package_json_path"'
+        $incrementContent | Should -Match 'git\s+diff\s+--cached\s+--quiet\s+--exit-code'
+        $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED'
+        $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_COMMIT_FAILED'
+        $incrementContent | Should -Match 'E_INCREMENT_VERSION_GIT_PUSH_FAILED'
     }
 
     It "uses a lock directory in increment-version to avoid concurrent writes" {
@@ -3025,6 +3068,17 @@ $result = "value {0} {1}" -f
         $skillDetailContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'do not run direct `Invoke-Pester` terminal commands'
+    }
+
+    It "documents shell git mutation fail-fast contract in context" {
+        $contextPath = Join-Path -Path $script:repoRoot -ChildPath '.llm/context.md'
+        $contextContent = Get-Content -Path $contextPath -Raw
+
+        $contextContent | Should -Match 'Shell scripts that mutate git state'
+        $contextContent | Should -Match 'command -v git'
+        $contextContent | Should -Match 'git diff --cached --quiet --exit-code'
+        $contextContent | Should -Match 'do not use `git add\|commit\|pull\|push'
+        $contextContent | Should -Match 'E_\*_GIT_\*'
     }
 
     It "keeps Run-PreCommitValidation LLM harness telemetry low-noise" {
