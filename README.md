@@ -182,7 +182,7 @@ Current utility:
 
 ## Script Quality Platform
 
-This repository uses a pre-commit-first quality platform for shell, PowerShell, Lua, JSON/YAML, GitHub workflows, and OS-specific script validation.
+This repository uses targeted agent validation first, with pre-commit and CI as last-resort parity gates for shell, PowerShell, Lua, JSON/YAML, GitHub workflows, and OS-specific script validation.
 
 ### Local quality gate
 

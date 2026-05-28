@@ -72,6 +72,8 @@ Use the first failing gate as the active remediation target.
 - `E_PRECOMMIT_VALIDATION_MODULES_MISSING`: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1` before running commit hooks, then rerun preflight and hooks in the same shell session.
 - `E_TEST_FAILURE`: isolated Pester suite failed; use `W_TEST_FAILURE_OUTPUT_PREVIEW` for compact head/tail context and `W_TEST_FAILURE_ARTIFACT` (`logPath` under temp root) for bounded, redacted stdout/stderr and failure metadata (`suite`, `exitCode`, `rootCode`).
 - `E_TEST_TIMEOUT` or `E_TEST_CAPTURE_*`: isolated Pester subprocess exceeded runtime or stream-capture bounds; treat as execution-path instability and remediate before rerunning.
+- `E_AHK_STATIC_VALIDATION_FAILED`, `E_AHK_REQUIRES_V2_*`, or `E_AHK_V1_SYNTAX_DETECTED`: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1 -TargetFiles <paths> -Fix`; if v1 syntax remains, migrate the script to AHK v2 and rerun the targeted command before hooks.
+- `E_PRECOMMIT_WINDOWS_LANGUAGE_RESTAGE_REQUIRED`: a staged AHK/batch target differs from the repaired working tree; stage the repaired target files and rerun pre-commit validation.
 - `E_VALIDATION_CI_FAILED`: fix failing workflow checks, rerun with `-WatchCi`.
 - `E_VALIDATION_PR_MISSING`: open a PR, then rerun with `-WatchCi`.
 - `E_CONFIG_ERROR` from PowerShell hooks: install or update required modules using the command in the diagnostic, then rerun in the same session.

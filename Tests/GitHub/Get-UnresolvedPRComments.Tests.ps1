@@ -682,6 +682,117 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record.url | Should -Be "https://github.com/org/repo/pull/77"
     }
 
+    It "uses original start line when current startLine is unavailable" {
+        $thread = [pscustomobject]@{
+            id                = "THREAD_ORIGINAL_START"
+            isResolved        = $false
+            path              = "src/range.ts"
+            startLine         = $null
+            line              = 47
+            originalStartLine = 37
+            originalLine      = 52
+            comments          = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = "Range comment" })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+
+        $record.lineStart | Should -Be 37
+        $record.lineEnd | Should -Be 52
+
+        $text = Format-UnresolvedThreadsAsText -Records @($record)
+        $text | Should -Match "\(src/range\.ts\) 37-52"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = @($json | ConvertFrom-Json -Depth 8)
+        $parsed[0].lineStart | Should -Be 37
+        $parsed[0].lineEnd | Should -Be 52
+    }
+
+    It "uses original start and current line from generic dictionary threads" {
+        $thread = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+        $thread.Add("id", "THREAD_GENERIC_DICTIONARY")
+        $thread.Add("isResolved", $false)
+        $thread.Add("path", "src/generic-dictionary.ts")
+        $thread.Add("startLine", $null)
+        $thread.Add("line", 47)
+        $thread.Add("originalStartLine", 37)
+        $thread.Add("originalLine", 42)
+        $thread.Add("comments", [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = "Generic dictionary range comment" })
+            })
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+
+        $record.path | Should -Be "src/generic-dictionary.ts"
+        $record.lineStart | Should -Be 37
+        $record.lineEnd | Should -Be 47
+    }
+
+    It "uses original end line when current end line is unavailable" {
+        $thread = [pscustomobject]@{
+            id                = "THREAD_ORIGINAL_END"
+            isResolved        = $false
+            path              = "src/current-start-original-end.ts"
+            startLine         = 5
+            line              = $null
+            originalStartLine = $null
+            originalLine      = 8
+            comments          = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = "Mixed range comment" })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+
+        $record.lineStart | Should -Be 5
+        $record.lineEnd | Should -Be 8
+    }
+
+    It "uses original range when current range fields are unavailable" {
+        $thread = [pscustomobject]@{
+            id                = "THREAD_ORIGINAL_ONLY"
+            isResolved        = $false
+            path              = "src/deleted.ts"
+            startLine         = $null
+            line              = $null
+            originalStartLine = 5
+            originalLine      = 8
+            comments          = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = "Deleted-side range comment" })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+
+        $record.lineStart | Should -Be 5
+        $record.lineEnd | Should -Be 8
+    }
+
+    It "keeps end unknown when only start metadata is available" {
+        $thread = [pscustomobject]@{
+            id                = "THREAD_START_ONLY"
+            isResolved        = $false
+            path              = "src/start-only.ts"
+            startLine         = 15
+            line              = $null
+            originalStartLine = 12
+            originalLine      = $null
+            comments          = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = "Start-only range comment" })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+
+        $record.lineStart | Should -Be 12
+        $record.lineEnd | Should -BeNullOrEmpty
+
+        $text = Format-UnresolvedThreadsAsText -Records @($record)
+        $text | Should -Match "\(src/start-only\.ts\) 12-\?"
+    }
+
     It "throws when comments nodes is not array-wrapped" {
         $thread = [pscustomobject]@{
             id         = "THREAD_SINGLE"
@@ -1452,6 +1563,10 @@ Describe "Get-UnresolvedReviewThreads" {
         ($variableNames -ccontains "PrNumber") | Should -BeFalse
         ($variableNames -ccontains "First") | Should -BeFalse
         ($variableNames -ccontains "After") | Should -BeFalse
+
+        $capturedBody.query | Should -Match "(?m)^\s+originalStartLine\s*$"
+        $capturedBody.query | Should -Match "(?m)^\s+originalLine\s*$"
+        $capturedBody.query | Should -Not -Match "(?m)^\s+diffSide\s*$"
     }
 
     It "fails before request dispatch when GraphQL variable validation fails" {

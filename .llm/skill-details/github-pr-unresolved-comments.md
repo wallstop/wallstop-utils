@@ -22,6 +22,14 @@ Keep diagnostics explicit and maintain coverage for URI safety, retries, and hos
 - Keep a static policy guard in `Tests/Utils/ScriptSafetyConventions.Tests.ps1` that asserts the unresolved-comments script keeps lowercase GraphQL variable keys and invokes the runtime variable-map assertion.
 - In PR URL and interactive flows, recoverable token-auth failures should attempt one anonymous retry before prompting login so public-repo access remains resilient when cached tokens expire.
 
+## Review Thread Range Rendering
+
+Preserve this utility's displayed range contract for review-thread locations:
+
+- Combine current/original GitHub line metadata (`startLine`, `line`, `originalStartLine`, `originalLine`) using the script's min-start/max-end fallback behavior; avoid unused GraphQL fields.
+- Keep regressions for mixed current/original fallback cases, including original-start/current-end and original-start/larger-original-end ranges.
+- In thread/comment conversion paths, use the script's property-access helper so `[pscustomobject]` responses and dictionary-backed fixtures both work.
+
 ## Clipboard Fallback And Strict Mode
 
 Keep clipboard behavior deterministic and non-breaking:

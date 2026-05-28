@@ -565,6 +565,21 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'PreCommitScriptSafety'
     }
 
+    It "routes staged Windows language checks through the precommit orchestrator" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = Get-Content -Path $validatorPath -Raw
+
+        $validatorContent | Should -Match '\$windowsLanguagePattern\s*='
+        $validatorContent | Should -Match 'Scripts/AutoHotKey/.+\\\.ahk'
+        $validatorContent | Should -Match 'Config/\\\.config/.+\\\.ahk'
+        $validatorContent | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
+        $validatorContent | Should -Match '-TargetFiles\s+\$windowsLanguageFiles'
+        $validatorContent | Should -Not -Match '-TargetFiles\s+\$windowsLanguageFiles\s+-Fix'
+        $validatorContent | Should -Match 'E_PRECOMMIT_WINDOWS_LANGUAGE_RESTAGE_REQUIRED'
+        $validatorContent | Should -Match 'git diff[\s\S]*--name-only'
+        $validatorContent | Should -Match 'Running Windows language static validation'
+    }
+
     It "scopes deterministic JSON formatting away from snapshot dumps" {
         $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
 
@@ -598,7 +613,7 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Match 'id:\s+check-json[\s\S]*exclude:\s+''\^Config/\(PowerToys/\|\\\.config/\)'''
     }
 
-    It "keeps git hooks pre-commit-first with fallback guidance" {
+    It "keeps git hooks last-resort with fallback guidance" {
         $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
 
@@ -752,9 +767,11 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
         $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
 
-        $windowsChecks | Should -Match '\[string\]\$TargetFiles'
+        $windowsChecks | Should -Match '\[string\[\]\]\$TargetFiles'
         $windowsChecks | Should -Match '\[switch\]\$RequireAutoHotkey'
+        $windowsChecks | Should -Match '\[switch\]\$Fix'
         $windowsChecks | Should -Match 'Resolve-RequestedTargetFilePaths'
+        $windowsChecks | Should -Match 'Test-AutoHotkeyRequiresV2Directive'
         $windowsChecks | Should -Match 'Invoke-AutoHotkeyValidationCommand'
         $windowsChecks | Should -Match '/iLib'
         $windowsChecks | Should -Match 'running in targeted mode'
@@ -771,10 +788,14 @@ Describe "Cross-language quality platform conventions" {
         # v1 syntax detection function must exist
         $windowsChecks | Should -Match 'function\s+Test-IsAutoHotkeyV1Script'
         $windowsChecks | Should -Match 'E_AHK_V1_SYNTAX_DETECTED'
+        $windowsChecks | Should -Match 'E_AHK_REQUIRES_V2_MISSING'
+        $windowsChecks | Should -Match 'E_AHK_REQUIRES_V2_NOT_TOP_LEVEL'
+        $windowsChecks | Should -Match 'E_AHK_STATIC_VALIDATION_FAILED'
         # Validator must guard against treating empty-output ambiguous exit codes as definitive failures
         $windowsChecks | Should -Match '\$hasActualOutput'
         # Detection must be wired into the per-file loop
         $windowsChecks | Should -Match 'Test-IsAutoHotkeyV1Script\s+-Content'
+        $windowsChecks | Should -Match 'E_AHK_STATIC_VALIDATION_FAILED[\s\S]*\$ahkExecutable\s*=\s*Get-AutoHotkeyExecutablePath' -Because 'Runtime probing should happen only after dependency-free static validation has completed.'
     }
 
     It "keeps data-driven unit coverage for AutoHotkey capability probing" {
@@ -791,6 +812,11 @@ Describe "Cross-language quality platform conventions" {
         # v1 detection tests must be present
         $windowsChecksTests | Should -Match 'Test-IsAutoHotkeyV1Script'
         $windowsChecksTests | Should -Match '#NoEnv directive'
+        # Static #Requires tests and fix tests must be present
+        $windowsChecksTests | Should -Match 'Test-AutoHotkeyRequiresV2Directive'
+        $windowsChecksTests | Should -Match 'E_AHK_REQUIRES_V2_NOT_TOP_LEVEL'
+        $windowsChecksTests | Should -Match 'auto-fixes missing #Requires'
+        $windowsChecksTests | Should -Match 'snapshot drift'
         # Policy test for all repo AHK scripts requiring v2 must be present
         $windowsChecksTests | Should -Match '#Requires AutoHotkey v2'
     }
@@ -834,7 +860,8 @@ Describe "Cross-language quality platform conventions" {
 
         foreach ($file in $ahkFiles) {
             $content = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
-            $content | Should -Match '(?ms)\A(?:\xEF\xBB\xBF)?(?:[ \t]*;[^\r\n]*\r?\n|[ \t]*\r?\n)*[ \t]*#Requires\s+AutoHotkey\s+v2(?:\.\d+)?\b' -Because "$($file.Name) must declare #Requires AutoHotkey v2 (or v2.x) at the top with only optional leading blank/comment lines"
+            $relativePath = ([System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)).Replace([System.IO.Path]::DirectorySeparatorChar, '/').Replace([System.IO.Path]::AltDirectorySeparatorChar, '/')
+            $content | Should -Match '(?ms)\A(?:\xEF\xBB\xBF)?(?:[ \t]*;[^\r\n]*\r?\n|[ \t]*\r?\n)*[ \t]*#Requires\s+AutoHotkey\s+v2(?:\.\d+)?\b' -Because "$relativePath must declare #Requires AutoHotkey v2 (or v2.x) at the top with only optional leading blank/comment lines"
         }
     }
 
@@ -911,7 +938,29 @@ Describe "Quality script executable guardrails" {
         }
 
         $macChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh'
-        $output = @(& $bash.Source -n $macChecksPath 2>&1)
+        $bashPathArgument = $macChecksPath
+        if ($IsWindows) {
+            $cygpath = Get-Command -Name cygpath -ErrorAction SilentlyContinue
+            if ($null -ne $cygpath) {
+                $convertedPath = @(& $cygpath.Source -u $macChecksPath 2>$null | Select-Object -First 1)
+                if ($global:LASTEXITCODE -eq 0 -and $convertedPath.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($convertedPath[0])) {
+                    $bashPathArgument = [string]$convertedPath[0]
+                }
+            }
+            elseif (Get-Command -Name wsl.exe -ErrorAction SilentlyContinue) {
+                $convertedPath = @(& wsl.exe wslpath -a $macChecksPath 2>$null | Select-Object -First 1)
+                if ($global:LASTEXITCODE -eq 0 -and $convertedPath.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($convertedPath[0])) {
+                    $bashPathArgument = [string]$convertedPath[0]
+                }
+            }
+
+            if ($bashPathArgument -eq $macChecksPath) {
+                Set-ItResult -Skipped -Because "bash is available, but no Windows-to-bash path converter is available"
+                return
+            }
+        }
+
+        $output = @(& $bash.Source -n $bashPathArgument 2>&1)
 
         $global:LASTEXITCODE | Should -Be 0 -Because (
             "bash -n failed for macOS helper: {0}" -f ($output -join '; ')
@@ -3781,12 +3830,40 @@ Describe "GitHub output and clipboard conventions" {
 
     It "keeps truncation conditional instead of unconditional in record conversion" {
         $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
-        $content = Get-Content -Path $scriptPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$parseErrors)
 
-        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*\[switch\]\$Truncate'
-        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*if\s*\(\$Truncate\.IsPresent\)'
-        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*Normalize-CommentText\s+-Text\s+\$top\.body\s+-MaxLength\s+500'
-        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*Normalize-CommentText\s+-Text\s+\$top\.body\s+-DisableTruncation'
+        @($parseErrors).Count | Should -Be 0 -Because (
+            "Get-UnresolvedPRComments.ps1 must parse cleanly before checking truncation policy."
+        )
+
+        $targetFunction = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $node.Name -eq "Convert-ReviewThreadToOutputRecord"
+                }, $true) | Select-Object -First 1)
+
+        $targetFunction | Should -Not -BeNullOrEmpty
+        $parameterNames = @($targetFunction.Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+        ($parameterNames -ccontains "Truncate") | Should -BeTrue
+
+        $topLevelCommentTruncation = @($targetFunction.Body.FindAll({
+                    param($node)
+                    if (-not ($node -is [System.Management.Automation.Language.IfStatementAst])) {
+                        return $false
+                    }
+
+                    $text = $node.Extent.Text
+                    return $text -match '\$Truncate\.IsPresent' -and
+                    $text -match 'Normalize-CommentText' -and
+                    $text -match '-MaxLength\s+500' -and
+                    $text -match '-DisableTruncation'
+                }, $true) | Select-Object -First 1)
+
+        $topLevelCommentTruncation | Should -Not -BeNullOrEmpty -Because (
+            "Top-level review comments must be truncated only when the Truncate switch is present."
+        )
     }
 
     It "keeps clipboard copy non-fatal and output additive" {

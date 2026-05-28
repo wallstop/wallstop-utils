@@ -813,6 +813,7 @@ try {
     $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
     $scriptPattern = '^Scripts/Utils/.+\.ps1$'
     $shellSafetyTriggerPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push)|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1)$'
+    $windowsLanguagePattern = '^(Scripts/AutoHotKey/.+\.ahk|Config/\.config/.+\.ahk|Scripts/.+\.bat)$'
 
     $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
     $llmHarnessPatternSource = 'wrapper-contract'
@@ -835,6 +836,7 @@ try {
     $githubTestFiles = @($stagedFiles | Where-Object { $_ -match $githubTestPattern })
     $scriptFiles = @($stagedFiles | Where-Object { $_ -match $scriptPattern })
     $shellSafetyFiles = @($stagedFiles | Where-Object { $_ -match $shellSafetyTriggerPattern })
+    $windowsLanguageFiles = @($stagedFiles | Where-Object { $_ -match $windowsLanguagePattern })
     $llmHarnessFiles = @($stagedFiles | Where-Object { $_ -match $llmHarnessPattern })
 
     $analyzerTargets = @()
@@ -865,20 +867,23 @@ try {
     $runUtilsTests = $All -or $utilsTestFiles.Count -gt 0
     $runGitHubTests = $All -or $githubTestFiles.Count -gt 0
     $runShellSafetySuite = -not $runUtilsTests -and ($All -or $shellSafetyFiles.Count -gt 0)
+    $runWindowsLanguageChecks = $All -or $windowsLanguageFiles.Count -gt 0
     $runAnalyzer = $analyzerTargets.Count -gt 0
     $runFormatOperatorSafetyCheck = $All -or $scriptFiles.Count -gt 0 -or $utilsTestFiles.Count -gt 0 -or $githubTestFiles.Count -gt 0
     $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
     $analyzerTargetsText = if ($analyzerTargets.Count -gt 0) { $analyzerTargets -join ', ' } else { '(none)' }
     $shellSafetyMatchedFilesText = if ($shellSafetyFiles.Count -gt 0) { $shellSafetyFiles -join ', ' } else { '(none)' }
+    $windowsLanguageMatchedFilesText = if ($windowsLanguageFiles.Count -gt 0) { $windowsLanguageFiles -join ', ' } else { '(none)' }
     $llmHarnessMatchedFilesText = if ($llmHarnessFiles.Count -gt 0) { $llmHarnessFiles -join ', ' } else { '(none)' }
 
     Write-Verbose (
-        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runShellSafetySuite={4}; runAnalyzer={5}; analyzerTargetCount={6}; runLlmHarnessValidation={7}" -f
+        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runShellSafetySuite={4}; runWindowsLanguageChecks={5}; runAnalyzer={6}; analyzerTargetCount={7}; runLlmHarnessValidation={8}" -f
         $All.IsPresent,
         $stagedFiles.Count,
         $runUtilsTests,
         $runGitHubTests,
         $runShellSafetySuite,
+        $runWindowsLanguageChecks,
         $runAnalyzer,
         $analyzerTargets.Count,
         $runLlmHarnessValidation
@@ -893,9 +898,37 @@ try {
         Write-Verbose ("Skipping LLM harness validation: allMode={0}; source={1}; matchedCount={2}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count)
     }
 
-    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellSafetySuite -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
+    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellSafetySuite -and -not $runWindowsLanguageChecks -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
         Write-Verbose "No staged files requiring utility validation; skipping validation."
         return
+    }
+
+    if ($runWindowsLanguageChecks) {
+        Write-Verbose (
+            "Windows language trigger diagnostics: allMode={0}; matchedCount={1}; matchedFiles={2}" -f
+            $All.IsPresent,
+            $windowsLanguageFiles.Count,
+            $windowsLanguageMatchedFilesText
+        )
+
+        if (-not $All) {
+            $windowsLanguageDiffArgs = @("diff", "--name-only", "--") + @($windowsLanguageFiles)
+            $unstagedWindowsLanguageDiffOutput = @(& $gitExecutable @windowsLanguageDiffArgs 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                $diffErrorText = if ($unstagedWindowsLanguageDiffOutput.Count -gt 0) { $unstagedWindowsLanguageDiffOutput -join ' ' } else { '(no output)' }
+                throw "E_CONFIG_ERROR: Failed to check unstaged Windows language drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+            }
+
+            $unstagedWindowsLanguageFiles = @(
+                $unstagedWindowsLanguageDiffOutput |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    Sort-Object -Unique
+            )
+            if ($unstagedWindowsLanguageFiles.Count -gt 0) {
+                $unstagedWindowsLanguageText = $unstagedWindowsLanguageFiles -join ', '
+                throw "E_PRECOMMIT_WINDOWS_LANGUAGE_RESTAGE_REQUIRED: Staged Windows language files have unstaged working-tree changes: $unstagedWindowsLanguageText. Run 'pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1 -TargetFiles <paths> -Fix', stage the updated files, then rerun pre-commit validation."
+            }
+        }
     }
 
     if ($runShellSafetySuite) {
@@ -916,6 +949,21 @@ try {
             $githubTestFiles.Count
         )
         Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts", "Tests") -ErrorCode "E_PRECOMMIT_FORMAT_OPERATOR_BINDING" -ContextLabel "Pre-commit PowerShell format-operator safety"
+    }
+
+    if ($runWindowsLanguageChecks) {
+        $windowsLanguageScriptPath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
+        if (-not (Test-Path -Path $windowsLanguageScriptPath -PathType Leaf)) {
+            throw "E_CONFIG_ERROR: Windows language checker is missing at '$windowsLanguageScriptPath'."
+        }
+
+        Write-Host "Running Windows language static validation..."
+        if ($All) {
+            & $windowsLanguageScriptPath
+        }
+        else {
+            & $windowsLanguageScriptPath -TargetFiles $windowsLanguageFiles
+        }
     }
 
     $requiresPesterModule = $runUtilsTests -or $runGitHubTests -or $runShellSafetySuite

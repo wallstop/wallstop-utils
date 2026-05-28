@@ -98,6 +98,16 @@ Describe "Test-IsAutoHotkeyV1Script" {
             Expected = $true
         },
         @{
+            Case     = "MsgBox comma command"
+            Content  = "MsgBox, ok"
+            Expected = $true
+        },
+        @{
+            Case     = "WinMinimize comma command"
+            Content  = "WinMinimize, ahk_id %activeWin%"
+            Expected = $true
+        },
+        @{
             Case     = "clean v2 script with Requires"
             Content  = "#Requires AutoHotkey v2.0`nSetWorkingDir(A_ScriptDir)"
             Expected = $false
@@ -121,6 +131,54 @@ Describe "Test-IsAutoHotkeyV1Script" {
 
         $null = $Case
         (Test-IsAutoHotkeyV1Script -Content $Content) | Should -Be $Expected
+    }
+}
+
+Describe "Test-AutoHotkeyRequiresV2Directive" {
+    It "classifies #Requires placement and version: <Case>" -TestCases @(
+        @{
+            Case              = "v2 at first line"
+            Content           = "#Requires AutoHotkey v2`nMsgBox('ok')"
+            ExpectedIsValid   = $true
+            ExpectedErrorCode = ""
+        },
+        @{
+            Case              = "BOM comments and blank lines before v2.0"
+            Content           = "$([char]0xfeff); comment`n`n#Requires AutoHotkey v2.0`nMsgBox('ok')"
+            ExpectedIsValid   = $true
+            ExpectedErrorCode = ""
+        },
+        @{
+            Case              = "missing directive"
+            Content           = "MsgBox('ok')"
+            ExpectedIsValid   = $false
+            ExpectedErrorCode = "E_AHK_REQUIRES_V2_MISSING"
+        },
+        @{
+            Case              = "v1 directive"
+            Content           = "#Requires AutoHotkey v1.1`nMsgBox, ok"
+            ExpectedIsValid   = $false
+            ExpectedErrorCode = "E_AHK_REQUIRES_V2_MISSING"
+        },
+        @{
+            Case              = "v2 directive after code"
+            Content           = "MsgBox('ok')`n#Requires AutoHotkey v2.0"
+            ExpectedIsValid   = $false
+            ExpectedErrorCode = "E_AHK_REQUIRES_V2_NOT_TOP_LEVEL"
+        }
+    ) {
+        param(
+            [string]$Case,
+            [string]$Content,
+            [bool]$ExpectedIsValid,
+            [string]$ExpectedErrorCode
+        )
+
+        $null = $Case
+        $result = Test-AutoHotkeyRequiresV2Directive -Content $Content
+
+        $result.IsValid | Should -Be $ExpectedIsValid
+        $result.ErrorCode | Should -Be $ExpectedErrorCode
     }
 }
 
@@ -435,6 +493,82 @@ Describe "Diagnostic helpers" {
 }
 
 Describe "Test-AutoHotkeyScripts control flow" {
+    It "fails missing #Requires static violations before runtime discovery" {
+        $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo-static-missing-requires")
+        $scriptsRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"
+        New-Item -Path $scriptsRoot -ItemType Directory -Force | Out-Null
+
+        $fileA = Join-Path -Path $scriptsRoot -ChildPath "a.ahk"
+        Set-Content -Path $fileA -Value "MsgBox('ok')" -NoNewline
+
+        Mock -CommandName Get-AutoHotkeyExecutablePath -MockWith { throw "runtime discovery should not run when static validation fails" }
+
+        {
+            Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA)
+        } | Should -Throw "*E_AHK_REQUIRES_V2_MISSING*"
+
+        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 0 -Exactly
+    }
+
+    It "fails v1 syntax static violations before runtime discovery" {
+        $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo-static-v1")
+        $scriptsRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"
+        New-Item -Path $scriptsRoot -ItemType Directory -Force | Out-Null
+
+        $fileA = Join-Path -Path $scriptsRoot -ChildPath "a.ahk"
+        Set-Content -Path $fileA -Value "#Requires AutoHotkey v2.0`n#Persistent" -NoNewline
+
+        Mock -CommandName Get-AutoHotkeyExecutablePath -MockWith { throw "runtime discovery should not run when static validation fails" }
+
+        {
+            Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA)
+        } | Should -Throw "*E_AHK_V1_SYNTAX_DETECTED*"
+
+        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 0 -Exactly
+    }
+
+    It "auto-fixes missing #Requires when content has no v1 markers" {
+        $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo-static-fix-requires")
+        $scriptsRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"
+        New-Item -Path $scriptsRoot -ItemType Directory -Force | Out-Null
+
+        $fileA = Join-Path -Path $scriptsRoot -ChildPath "a.ahk"
+        Set-Content -Path $fileA -Value "MsgBox('ok')" -NoNewline
+
+        Mock -CommandName Get-AutoHotkeyExecutablePath -MockWith { $null }
+
+        {
+            Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA) -Fix
+        } | Should -Not -Throw
+
+        $updatedContent = Get-Content -Path $fileA -Raw
+        $updatedContent | Should -Match '^#Requires\s+AutoHotkey\s+v2\.0\b'
+        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 1 -Exactly
+    }
+
+    It "auto-repairs managed Config/.config snapshot drift from same-named v2 source" {
+        $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo-static-fix-snapshot")
+        $configRoot = Join-Path -Path $repoRoot -ChildPath "Config/.config"
+        $sourceRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"
+        New-Item -Path $configRoot -ItemType Directory -Force | Out-Null
+        New-Item -Path $sourceRoot -ItemType Directory -Force | Out-Null
+
+        $configFile = Join-Path -Path $configRoot -ChildPath "window-control.ahk"
+        $sourceFile = Join-Path -Path $sourceRoot -ChildPath "window-control.ahk"
+        $sourceContent = "#Requires AutoHotkey v2.0`nMsgBox('ok')"
+        Set-Content -Path $configFile -Value "WinGet, activeWin, ID, A" -NoNewline
+        Set-Content -Path $sourceFile -Value $sourceContent -NoNewline
+
+        Mock -CommandName Get-AutoHotkeyExecutablePath -MockWith { $null }
+
+        {
+            Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($configFile) -Fix
+        } | Should -Not -Throw
+
+        (Get-Content -Path $configFile -Raw) | Should -Be $sourceContent
+        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 1 -Exactly
+    }
+
     It "preserves collected validation failures when a later file reports unsupported mode" {
         $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo")
         $scriptsRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"

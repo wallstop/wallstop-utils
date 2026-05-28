@@ -9,6 +9,8 @@ Lightweight skill card for Windows fast-lane and deep-lane quality contracts.
 ## Core concepts
 
 - [Fast-lane scope and runtime budget](../skill-details/windows-language-validation.md#fast-lane-scope-and-runtime-budget)
+- [Static AutoHotkey v2 gate and safe fixes](../skill-details/windows-language-validation.md#static-autohotkey-v2-gate-and-safe-fixes)
 - [AutoHotkey runtime probing and output capture](../skill-details/windows-language-validation.md#autohotkey-runtime-probing-and-output-capture)
 - [Nightly deep-lane coverage](../skill-details/windows-language-validation.md#nightly-deep-lane-coverage)
 - Quick check: `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1`
+- Targeted agent fix: `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1 -TargetFiles <paths> -Fix`

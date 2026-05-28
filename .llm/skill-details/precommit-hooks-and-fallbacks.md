@@ -2,11 +2,11 @@
 
 This expanded guide supports the lightweight skill stub in `.llm/skills/precommit-hooks-and-fallbacks.md`.
 
-## Pre-Commit-First Wrapper Behavior
+## Last-Resort Hook Behavior
 
-Keep local hook wrappers pre-commit-first while preserving deterministic fallback behavior.
+Keep local hook wrappers as last-resort gates while preserving deterministic fallback behavior.
 
-Use pre-commit as the default execution path for pre-commit and pre-push stages.
+During agentic work, run targeted validators and safe fixers before invoking hooks. When hook wrappers do run, use pre-commit as the default execution path for pre-commit and pre-push stages.
 
 ## Deterministic Fallback Path
 
@@ -15,6 +15,8 @@ Keep a fallback PowerShell validation path for environments where pre-commit is 
 Always propagate fallback exit status so failures cannot be hidden.
 
 In pre-commit mode, keep ScriptAnalyzer scope staged-file targeted for `Scripts/Utils/*.ps1`; reserve full-repo analyzer scans for explicit `-All` flows (pre-push/full validation).
+
+Hook-side validation must not hide stale staged content by mutating only the working tree. If a staged target has unstaged repair drift, fail with an explicit restage-required diagnostic instead of passing.
 
 ## Backup/Update Formatter Boundary
 
@@ -51,10 +53,11 @@ Track executable bit changes for hook wrapper scripts and keep trailing newline 
 ## Workflow
 
 1. Agentic early parity command: `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly`.
-2. Use pre-commit if available for pre-commit and pre-push stages.
-3. Keep fallback PowerShell validation path available.
-4. Ensure fallback path propagates exit status.
-5. Use the full-validation wrapper for major session-close checks.
+2. Run targeted validators/safe fixers for edited domains before hooks.
+3. Use pre-commit if available for pre-commit and pre-push stages.
+4. Keep fallback PowerShell validation path available.
+5. Ensure fallback path propagates exit status.
+6. Use the full-validation wrapper for major session-close checks.
 
 ## References
 

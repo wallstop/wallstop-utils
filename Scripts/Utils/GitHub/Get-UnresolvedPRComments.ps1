@@ -834,6 +834,164 @@ function Normalize-CommentText {
     return ($singleLine.Substring(0, $MaxLength) + " [...]")
 }
 
+function Get-ObjectPropertyValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $InputObject,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$NoEnumerate
+    )
+
+    if ($null -eq $InputObject) {
+        return $null
+    }
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        $dictionary = [System.Collections.IDictionary]$InputObject
+
+        foreach ($key in $dictionary.Keys) {
+            if ([string]$key -ceq $Name) {
+                $value = $dictionary[$key]
+                if ($NoEnumerate.IsPresent) {
+                    Microsoft.PowerShell.Utility\Write-Output -NoEnumerate $value
+                    return
+                }
+
+                return $value
+            }
+        }
+
+        foreach ($key in $dictionary.Keys) {
+            if ([string]$key -ieq $Name) {
+                $value = $dictionary[$key]
+                if ($NoEnumerate.IsPresent) {
+                    Microsoft.PowerShell.Utility\Write-Output -NoEnumerate $value
+                    return
+                }
+
+                return $value
+            }
+        }
+
+        return $null
+    }
+
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    if ($NoEnumerate.IsPresent) {
+        Microsoft.PowerShell.Utility\Write-Output -NoEnumerate $property.Value
+        return
+    }
+
+    return $property.Value
+}
+
+function Get-FirstIntegerPropertyValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $InputObject,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Names
+    )
+
+    foreach ($name in $Names) {
+        $value = Get-ObjectPropertyValue -InputObject $InputObject -Name $name
+        if ($null -ne $value) {
+            return [int]$value
+        }
+    }
+
+    return $null
+}
+
+function Resolve-ReviewThreadLineRange {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Thread
+    )
+
+    $currentStart = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("startLine")
+    $currentEnd = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("line")
+    $originalStart = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("originalStartLine")
+    $originalEnd = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("originalLine")
+
+    $startValues = New-Object System.Collections.Generic.List[int]
+    if ($null -ne $currentStart) {
+        $startValues.Add($currentStart) | Out-Null
+    }
+    if ($null -ne $originalStart) {
+        $startValues.Add($originalStart) | Out-Null
+    }
+
+    $endValues = New-Object System.Collections.Generic.List[int]
+    if ($null -ne $currentEnd) {
+        $endValues.Add($currentEnd) | Out-Null
+    }
+    if ($null -ne $originalEnd) {
+        $endValues.Add($originalEnd) | Out-Null
+    }
+
+    if ($startValues.Count -gt 0) {
+        $start = $startValues[0]
+        foreach ($value in $startValues) {
+            if ($value -lt $start) {
+                $start = $value
+            }
+        }
+
+        $end = $null
+        if ($endValues.Count -gt 0) {
+            $end = $endValues[0]
+            foreach ($value in $endValues) {
+                if ($value -gt $end) {
+                    $end = $value
+                }
+            }
+
+            if ($end -lt $start) {
+                $end = $start
+            }
+        }
+
+        return [pscustomobject]@{
+            Start = $start
+            End   = $end
+        }
+    }
+
+    if ($endValues.Count -gt 0) {
+        $end = $endValues[0]
+        foreach ($value in $endValues) {
+            if ($value -gt $end) {
+                $end = $value
+            }
+        }
+
+        return [pscustomobject]@{
+            Start = $end
+            End   = $end
+        }
+    }
+
+    return [pscustomobject]@{
+        Start = $null
+        End   = $null
+    }
+}
+
 function Get-ClipboardCommand {
     [OutputType([string])]
     [CmdletBinding()]
@@ -1588,19 +1746,22 @@ function Convert-ReviewThreadToOutputRecord {
         [switch]$Truncate
     )
 
-    if ($Thread.isResolved) {
+    $isResolved = Get-ObjectPropertyValue -InputObject $Thread -Name "isResolved"
+    if ($isResolved) {
         return $null
     }
 
-    if ($null -eq $Thread.comments -or $null -eq $Thread.comments.nodes) {
+    $threadComments = Get-ObjectPropertyValue -InputObject $Thread -Name "comments"
+    $commentNodes = Get-ObjectPropertyValue -InputObject $threadComments -Name "nodes" -NoEnumerate
+    if ($null -eq $threadComments -or $null -eq $commentNodes) {
         return $null
     }
 
-    if ($Thread.comments.nodes -isnot [System.Array]) {
+    if ($commentNodes -isnot [System.Array]) {
         throw "E_MALFORMED_RESPONSE: Review thread comments.nodes must be an array."
     }
 
-    $comments = $Thread.comments.nodes
+    $comments = $commentNodes
     $commentCount = Get-SafeCount -InputObject $comments
     if ($commentCount -eq 0) {
         return $null
@@ -1609,36 +1770,42 @@ function Convert-ReviewThreadToOutputRecord {
     $top = $comments[0]
     $latestReply = if ($commentCount -gt 1) { $comments[$commentCount - 1] } else { $null }
 
-    if ($null -ne $top.body -and $top.body -isnot [string]) {
-        $topBodyType = $top.body.GetType().FullName
+    $topBody = Get-ObjectPropertyValue -InputObject $top -Name "body"
+    if ($null -ne $topBody -and $topBody -isnot [string]) {
+        $topBodyType = $topBody.GetType().FullName
         throw "E_MALFORMED_RESPONSE: Review thread top-level comment body must be a string (received '$topBodyType')."
     }
 
-    if ($null -ne $latestReply -and $null -ne $latestReply.body -and $latestReply.body -isnot [string]) {
-        $replyBodyType = $latestReply.body.GetType().FullName
+    $latestReplyBody = Get-ObjectPropertyValue -InputObject $latestReply -Name "body"
+    if ($null -ne $latestReply -and $null -ne $latestReplyBody -and $latestReplyBody -isnot [string]) {
+        $replyBodyType = $latestReplyBody.GetType().FullName
         throw "E_MALFORMED_RESPONSE: Review thread latest reply body must be a string (received '$replyBodyType')."
     }
 
-    $lineStart = if ($null -ne $Thread.startLine) { [int]$Thread.startLine } elseif ($null -ne $Thread.Line) { [int]$Thread.Line } else { $null }
-    $lineEnd = if ($null -ne $Thread.Line) { [int]$Thread.Line } elseif ($null -ne $lineStart) { [int]$lineStart } else { $null }
+    $lineRange = Resolve-ReviewThreadLineRange -Thread $Thread
+    $lineStart = $lineRange.Start
+    $lineEnd = $lineRange.End
 
-    $safePath = if ([string]::IsNullOrWhiteSpace($Thread.Path)) { "<conversation>" } else { ($Thread.Path -replace "\\", "/") }
+    $threadPath = Get-ObjectPropertyValue -InputObject $Thread -Name "path"
+    $safePath = if ([string]::IsNullOrWhiteSpace($threadPath)) { "<conversation>" } else { ([string]$threadPath -replace "\\", "/") }
     $topLevelComment = if ($Truncate.IsPresent) {
-        Normalize-CommentText -Text $top.body -MaxLength 500
+        Normalize-CommentText -Text $topBody -MaxLength 500
     }
     else {
-        Normalize-CommentText -Text $top.body -DisableTruncation
+        Normalize-CommentText -Text $topBody -DisableTruncation
     }
 
     $latestReplySummary = if ($null -eq $latestReply) {
         $null
     }
     elseif ($Truncate.IsPresent) {
-        Normalize-CommentText -Text $latestReply.body -MaxLength 300
+        Normalize-CommentText -Text $latestReplyBody -MaxLength 300
     }
     else {
-        Normalize-CommentText -Text $latestReply.body -DisableTruncation
+        Normalize-CommentText -Text $latestReplyBody -DisableTruncation
     }
+
+    $threadId = Get-ObjectPropertyValue -InputObject $Thread -Name "id"
 
     return [pscustomobject]@{
         path               = $safePath
@@ -1646,7 +1813,7 @@ function Convert-ReviewThreadToOutputRecord {
         lineEnd            = $lineEnd
         topLevelComment    = $topLevelComment
         latestReplySummary = $latestReplySummary
-        threadId           = [string]$Thread.id
+        threadId           = [string]$threadId
         prNumber           = $PrNumber
         owner              = $Owner
         repo               = $Repo
@@ -1863,6 +2030,8 @@ query GetReviewThreads(
           path
           startLine
           line
+          originalStartLine
+          originalLine
           comments(first: 100) {
             nodes {
               body
