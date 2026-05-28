@@ -4,7 +4,7 @@ This folder contains quality helper scripts used by local hooks and CI:
 
 - `Format-PowerShellFiles.ps1`: deterministic PowerShell formatting for staged or selected files.
 - `Install-PowerShellQualityModules.ps1`: explicit host-shell bootstrap for required PowerShell quality modules (`Pester`, `PSScriptAnalyzer`) used by hooks and validation workflows.
-- `Invoke-WindowsLanguageChecks.ps1`: Windows-only checks for AutoHotkey (runtime probing with `/validate`, then `/iLib` fallback) and best-effort batch smoke validation. AutoHotkey process execution uses `System.Diagnostics.Process` with `ArgumentList.Add()` for reliable stdout/stderr capture across all platforms, avoiding `Start-Process -ArgumentList` which mangles special characters on Windows.
+- `Invoke-WindowsLanguageChecks.ps1`: cross-platform PowerShell checks for AutoHotkey and batch targets. A dependency-free static AutoHotkey gate enforces top-level `#Requires AutoHotkey v2`, detects common v1 syntax, and supports safe `-Fix` recovery before optional runtime probing with `/validate` then `/iLib` fallback. AutoHotkey process execution uses `System.Diagnostics.Process` with `ArgumentList.Add()` for reliable stdout/stderr capture across all platforms, avoiding `Start-Process -ArgumentList` which mangles special characters on Windows.
 
 Batch smoke checks intentionally remain heuristic, but they now apply uniformly to both single-line and multi-line `.bat` files.
 
@@ -20,6 +20,7 @@ Windows CI operating model:
 
 - PR fast lane: Windows language validation runs only when `*.ahk` or `*.bat` targets change.
 - AutoHotkey policy scope: CI validates `.ahk` files in both `Scripts/AutoHotKey/` and `Config/.config/`; keep both roots on AutoHotkey v2 (`#Requires AutoHotkey v2`).
+- Local agent workflow: run `Invoke-WindowsLanguageChecks.ps1 -TargetFiles <paths> -Fix` before hooks for edited `.ahk`/`.bat` files; hook-side validation remains non-mutating and reports stale staged files as restage-required.
 - PR budget: targeted Windows checks must complete within 180 seconds; CI fails fast on budget breach.
 - Runtime source: PR lane must use the cached portable AutoHotkey runtime and must not depend on heavyweight package-manager installs.
 - Nightly deep lane: full-repository Windows validation runs on schedule (and optional manual dispatch) to preserve comprehensive coverage.
@@ -30,7 +31,9 @@ Windows lane triage playbook:
 
 - `W_GIT_BASELINE_UNAVAILABLE`: baseline commit could not be resolved; review event context and fetch history.
 - `E_AHK_RUNTIME_UNAVAILABLE`: portable AutoHotkey runtime was not set up correctly in CI.
+- `E_AHK_STATIC_VALIDATION_FAILED`, `E_AHK_REQUIRES_V2_*`, `E_AHK_V1_SYNTAX_DETECTED`: static AHK v2 policy failed before runtime probing; run the targeted `-Fix` workflow where safe, otherwise migrate to AHK v2.
 - `E_AHK_UNAVAILABLE` / `E_AHK_VALIDATE_UNAVAILABLE`: AutoHotkey execution contract failed under required mode (includes switch-probing diagnostics and a runtime/capture hint when probe attempts return empty output).
+- `E_PRECOMMIT_WINDOWS_LANGUAGE_RESTAGE_REQUIRED`: staged AHK/batch content differs from repaired working-tree content; stage the repaired files and rerun validation.
 - `E_CI_TIME_BUDGET`: PR lane exceeded 180-second runtime budget; investigate cache misses, download regressions, or broadened file scope.
 
 Shell quality enforcement model:

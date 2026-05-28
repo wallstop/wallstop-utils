@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$TargetFiles = "",
+    [string[]]$TargetFiles = @(),
     [switch]$RequireAutoHotkey,
+    [switch]$Fix,
     [switch]$NoInvokeMain
 )
 
@@ -77,6 +78,7 @@ function Test-IsAutoHotkeyV1Script {
         '(?m)^\s*WinGetPos\s*,\s*\w',# v1: WinGetPos, X, Y, W, H, Win
         '(?m)^\s*MouseGetPos\s*,\s*\w',# v1: MouseGetPos, X, Y
         '(?m)^\s*MouseMove\s*,\s*\S',# v1: MouseMove, X, Y, Speed
+        '(?m)^\s*(MsgBox|Send|Run|RunWait|Click|Sleep|WinClose|WinMove|WinMinimize|WinMaximize|WinRestore)\s*,',# v1 command syntax: Command, Arg
         '(?m)^\s*IfWinExist\s*,',# v1: IfWinExist, Win
         '(?m)^\s*WinActivate\s*,',# v1: WinActivate, Win
         '(?m)^\s*WinWaitActive\s*,',# v1: WinWaitActive, Win
@@ -90,6 +92,179 @@ function Test-IsAutoHotkeyV1Script {
         }
     }
     return $false
+}
+
+function Test-AutoHotkeyRequiresV2Directive {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Content
+    )
+
+    $normalized = $Content -replace "`r", ""
+    if ($normalized.Length -gt 0 -and $normalized[0] -eq [char]0xfeff) {
+        $normalized = $normalized.Substring(1)
+    }
+
+    $lines = @($normalized -split "`n")
+    $lineIndex = 0
+    while ($lineIndex -lt $lines.Count) {
+        $trimmed = $lines[$lineIndex].TrimStart()
+        if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith(';')) {
+            $lineIndex += 1
+            continue
+        }
+
+        break
+    }
+
+    if ($lineIndex -lt $lines.Count) {
+        $firstCodeLine = $lines[$lineIndex]
+        if ($firstCodeLine -match '^\s*#Requires\s+AutoHotkey\s+v2(?:\.\d+)?\b') {
+            return [pscustomobject]@{
+                IsValid = $true
+                ErrorCode = ""
+                Message = ""
+            }
+        }
+
+        if ($normalized -match '(?im)^\s*#Requires\s+AutoHotkey\s+v2(?:\.\d+)?\b') {
+            return [pscustomobject]@{
+                IsValid = $false
+                ErrorCode = "E_AHK_REQUIRES_V2_NOT_TOP_LEVEL"
+                Message = "#Requires AutoHotkey v2 (or v2.x) must be the first non-comment, non-blank line."
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        IsValid = $false
+        ErrorCode = "E_AHK_REQUIRES_V2_MISSING"
+        Message = "Script must declare #Requires AutoHotkey v2 (or v2.x) at the top with only optional leading blank/comment lines."
+    }
+}
+
+function Add-AutoHotkeyRequiresV2Directive {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Content
+    )
+
+    $normalized = $Content -replace "`r", ""
+    if ($normalized.Length -gt 0 -and $normalized[0] -eq [char]0xfeff) {
+        $normalized = $normalized.Substring(1)
+    }
+
+    if ([string]::IsNullOrEmpty($normalized)) {
+        return "#Requires AutoHotkey v2.0`n"
+    }
+
+    return "#Requires AutoHotkey v2.0`n`n$normalized"
+}
+
+function Write-Utf8NoBomFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Content
+    )
+
+    [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
+}
+
+function ConvertTo-RepositoryRelativePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    return ([System.IO.Path]::GetRelativePath($RepoRoot, $Path)).Replace([System.IO.Path]::DirectorySeparatorChar, '/').Replace([System.IO.Path]::AltDirectorySeparatorChar, '/')
+}
+
+function Test-IsPathUnderDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DirectoryPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $DirectoryPath -PathType Container)) {
+        return $false
+    }
+
+    $resolvedDirectory = (Resolve-Path -LiteralPath $DirectoryPath -ErrorAction Stop).Path
+    $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    $relative = [System.IO.Path]::GetRelativePath($resolvedDirectory, $resolvedPath)
+    if ([string]::IsNullOrWhiteSpace($relative)) {
+        return $true
+    }
+
+    return (-not [System.IO.Path]::IsPathRooted($relative)) -and
+    $relative -ne '..' -and
+    -not $relative.StartsWith("..$([System.IO.Path]::DirectorySeparatorChar)") -and
+    -not $relative.StartsWith("..$([System.IO.Path]::AltDirectorySeparatorChar)")
+}
+
+function Repair-AutoHotkeyStaticViolation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$File,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Content,
+
+        [Parameter(Mandatory = $true)]
+        [object]$RequiresResult,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$HasV1Syntax
+    )
+
+    $configRoot = Join-Path -Path $RepoRoot -ChildPath "Config/.config"
+    $scriptSourceRoot = Join-Path -Path $RepoRoot -ChildPath "Scripts/AutoHotKey"
+
+    if ($HasV1Syntax -and (Test-IsPathUnderDirectory -DirectoryPath $configRoot -Path $File.FullName)) {
+        $relativeConfigPath = [System.IO.Path]::GetRelativePath($configRoot, $File.FullName)
+        $sourceCandidate = Join-Path -Path $scriptSourceRoot -ChildPath $relativeConfigPath
+        if (Test-Path -LiteralPath $sourceCandidate -PathType Leaf) {
+            $sourceContent = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $sourceCandidate).Path, [System.Text.Encoding]::UTF8)
+            $sourceRequiresResult = Test-AutoHotkeyRequiresV2Directive -Content $sourceContent
+            if ($sourceRequiresResult.IsValid -and -not (Test-IsAutoHotkeyV1Script -Content $sourceContent)) {
+                Write-Utf8NoBomFile -Path $File.FullName -Content $sourceContent
+                return [pscustomobject]@{
+                    Fixed = $true
+                    Strategy = "snapshot-source-refresh"
+                }
+            }
+        }
+    }
+
+    if ((-not $HasV1Syntax) -and (-not $RequiresResult.IsValid) -and $RequiresResult.ErrorCode -eq "E_AHK_REQUIRES_V2_MISSING") {
+        $updatedContent = Add-AutoHotkeyRequiresV2Directive -Content $Content
+        Write-Utf8NoBomFile -Path $File.FullName -Content $updatedContent
+        return [pscustomobject]@{
+            Fixed = $true
+            Strategy = "insert-requires-v2"
+        }
+    }
+
+    return [pscustomobject]@{
+        Fixed = $false
+        Strategy = "manual-migration-required"
+    }
 }
 
 function Convert-CapturedTextToLines {
@@ -407,45 +582,48 @@ function Resolve-RequestedTargetFilePaths {
         [string]$RepoRoot,
 
         [Parameter(Mandatory = $false)]
-        [string]$TargetFiles
+        [string[]]$TargetFiles = @()
     )
 
-    if ([string]::IsNullOrWhiteSpace($TargetFiles)) {
+    $targetFileInputs = @($TargetFiles | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($targetFileInputs.Count -eq 0) {
         return ,@()
     }
 
     $requested = New-Object System.Collections.Generic.List[string]
-    $candidates = @($TargetFiles -split "(`r`n|`n|`r|;)")
-    foreach ($candidateRaw in $candidates) {
-        $candidate = $candidateRaw.Trim()
-        if ([string]::IsNullOrWhiteSpace($candidate)) {
-            continue
-        }
-
-        $resolvedPath = $null
-        if ([System.IO.Path]::IsPathRooted($candidate)) {
-            if (Test-Path -Path $candidate -PathType Leaf) {
-                $resolvedPath = (Resolve-Path -Path $candidate -ErrorAction Stop).Path
+    foreach ($targetFileInput in $targetFileInputs) {
+        $candidates = @($targetFileInput -split "(`r`n|`n|`r|;)")
+        foreach ($candidateRaw in $candidates) {
+            $candidate = $candidateRaw.Trim()
+            if ([string]::IsNullOrWhiteSpace($candidate)) {
+                continue
             }
-        }
-        else {
-            $relativePath = $candidate.Replace('/',[System.IO.Path]::DirectorySeparatorChar).Replace('\\',[System.IO.Path]::DirectorySeparatorChar)
-            $absoluteCandidate = Join-Path -Path $RepoRoot -ChildPath $relativePath
-            if (Test-Path -Path $absoluteCandidate -PathType Leaf) {
-                $resolvedPath = (Resolve-Path -Path $absoluteCandidate -ErrorAction Stop).Path
+
+            $resolvedPath = $null
+            if ([System.IO.Path]::IsPathRooted($candidate)) {
+                if (Test-Path -Path $candidate -PathType Leaf) {
+                    $resolvedPath = (Resolve-Path -Path $candidate -ErrorAction Stop).Path
+                }
             }
-        }
+            else {
+                $relativePath = $candidate.Replace('/',[System.IO.Path]::DirectorySeparatorChar).Replace('\\',[System.IO.Path]::DirectorySeparatorChar)
+                $absoluteCandidate = Join-Path -Path $RepoRoot -ChildPath $relativePath
+                if (Test-Path -Path $absoluteCandidate -PathType Leaf) {
+                    $resolvedPath = (Resolve-Path -Path $absoluteCandidate -ErrorAction Stop).Path
+                }
+            }
 
-        if ([string]::IsNullOrWhiteSpace($resolvedPath)) {
-            continue
-        }
+            if ([string]::IsNullOrWhiteSpace($resolvedPath)) {
+                continue
+            }
 
-        $extension = [System.IO.Path]::GetExtension($resolvedPath).ToLowerInvariant()
-        if ($extension -ne ".ahk" -and $extension -ne ".bat") {
-            continue
-        }
+            $extension = [System.IO.Path]::GetExtension($resolvedPath).ToLowerInvariant()
+            if ($extension -ne ".ahk" -and $extension -ne ".bat") {
+                continue
+            }
 
-        $requested.Add($resolvedPath) | Out-Null
+            $requested.Add($resolvedPath) | Out-Null
+        }
     }
 
     if ($requested.Count -eq 0) {
@@ -467,7 +645,10 @@ function Test-AutoHotkeyScripts {
         [switch]$UseTargetedScope,
 
         [Parameter(Mandatory = $false)]
-        [switch]$RequireAutoHotkey
+        [switch]$RequireAutoHotkey,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Fix
     )
 
     $ahkFiles = New-Object System.Collections.Generic.List[System.IO.FileInfo]
@@ -504,6 +685,38 @@ function Test-AutoHotkeyScripts {
         return
     }
 
+    Write-Verbose "AutoHotkey checks: running dependency-free static validation for $($ahkFiles.Count) file(s)."
+    $staticFailures = New-Object System.Collections.Generic.List[string]
+    foreach ($file in $ahkFiles) {
+        $relative = ConvertTo-RepositoryRelativePath -RepoRoot $RepoRoot -Path $file.FullName
+        $fileContent = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
+        $requiresResult = Test-AutoHotkeyRequiresV2Directive -Content $fileContent
+        $hasV1Syntax = Test-IsAutoHotkeyV1Script -Content $fileContent
+
+        if ((-not $requiresResult.IsValid) -or $hasV1Syntax) {
+            if ($Fix) {
+                $repairResult = Repair-AutoHotkeyStaticViolation -RepoRoot $RepoRoot -File $file -Content $fileContent -RequiresResult $requiresResult -HasV1Syntax $hasV1Syntax
+                if ($repairResult.Fixed) {
+                    Write-Host "Auto-repaired AutoHotkey static violation: $relative ($($repairResult.Strategy))."
+                    $fileContent = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
+                    $requiresResult = Test-AutoHotkeyRequiresV2Directive -Content $fileContent
+                    $hasV1Syntax = Test-IsAutoHotkeyV1Script -Content $fileContent
+                }
+            }
+
+            if (-not $requiresResult.IsValid) {
+                $staticFailures.Add("$relative :: $($requiresResult.ErrorCode): $($requiresResult.Message)") | Out-Null
+            }
+            if ($hasV1Syntax) {
+                $staticFailures.Add("$relative :: E_AHK_V1_SYNTAX_DETECTED: Script uses AHK v1 syntax. Migrate to AHK v2 (https://www.autohotkey.com/docs/v2/).") | Out-Null
+            }
+        }
+    }
+
+    if ($staticFailures.Count -gt 0) {
+        throw "E_AHK_STATIC_VALIDATION_FAILED: AutoHotkey static validation failed for: $($staticFailures -join '; ')"
+    }
+
     $ahkExecutable = Get-AutoHotkeyExecutablePath
     if ([string]::IsNullOrWhiteSpace($ahkExecutable)) {
         if ($RequireAutoHotkey) {
@@ -520,13 +733,7 @@ function Test-AutoHotkeyScripts {
     $unsupportedMessage = ""
 
     foreach ($file in $ahkFiles) {
-        $relative = [System.IO.Path]::GetRelativePath($RepoRoot,$file.FullName)
-
-        $fileContent = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
-        if (Test-IsAutoHotkeyV1Script -Content $fileContent) {
-            $failures.Add("$relative :: E_AHK_V1_SYNTAX_DETECTED: Script uses AHK v1 syntax. Migrate to AHK v2 (https://www.autohotkey.com/docs/v2/).") | Out-Null
-            continue
-        }
+        $relative = ConvertTo-RepositoryRelativePath -RepoRoot $RepoRoot -Path $file.FullName
 
         $validationResult = Invoke-AutoHotkeyValidationCommand -Executable $ahkExecutable -ScriptPath $file.FullName
         $attemptDiagnostics = Get-AutoHotkeyAttemptDiagnostics -Attempts @($validationResult.Attempts)
@@ -652,15 +859,18 @@ function Test-BatchScriptsStaticSmoke {
 function Invoke-Main {
     param(
         [Parameter(Mandatory = $false)]
-        [string]$TargetFiles = "",
+        [string[]]$TargetFiles = @(),
 
         [Parameter(Mandatory = $false)]
-        [switch]$RequireAutoHotkey
+        [switch]$RequireAutoHotkey,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Fix
     )
 
     $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
     $requestedTargetFilePaths = Resolve-RequestedTargetFilePaths -RepoRoot $repoRoot -TargetFiles $TargetFiles
-    $targetedModeRequested = -not [string]::IsNullOrWhiteSpace($TargetFiles)
+    $targetedModeRequested = @($TargetFiles | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0
 
     if ($targetedModeRequested) {
         Write-Verbose "Windows language checks: targeted mode requested via TargetFiles input."
@@ -673,12 +883,12 @@ function Invoke-Main {
         Write-Verbose "Windows language checks: targeted mode resolved zero existing .ahk/.bat files; skipping targeted checks without full-repo fallback."
     }
 
-    Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths -UseTargetedScope:$targetedModeRequested -RequireAutoHotkey:$RequireAutoHotkey
+    Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths -UseTargetedScope:$targetedModeRequested -RequireAutoHotkey:$RequireAutoHotkey -Fix:$Fix
     Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot -RequestedTargetFilePaths $requestedTargetFilePaths -UseTargetedScope:$targetedModeRequested
 
     Write-Host "Windows language checks passed."
 }
 
 if (-not $NoInvokeMain) {
-    Invoke-Main -TargetFiles $TargetFiles -RequireAutoHotkey:$RequireAutoHotkey
+    Invoke-Main -TargetFiles $TargetFiles -RequireAutoHotkey:$RequireAutoHotkey -Fix:$Fix
 }
