@@ -44,6 +44,12 @@ Legacy compact text mode (opt-in truncation):
 pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https://github.com/owner/repo/pull/123" -Truncate
 ```
 
+Preserve raw Markdown/HTML comment markup instead of default cleanup:
+
+```powershell
+pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https://github.com/owner/repo/pull/123" -KeepMarkup
+```
+
 Copy output to clipboard and still print it to stdout:
 
 ```powershell
@@ -75,6 +81,10 @@ Latest reply summary: <text or (none)>
 ## Output Behavior
 
 - Default behavior is full (untruncated) comment and latest reply text.
+- Default rendering strips bot metadata and visual chrome from comment text, including HTML comments,
+  image embeds, HTML tags, Cursor/Bugbot action buttons, Bugbot footers, and link URLs.
+- `-KeepMarkup` preserves comment markup for debugging or archival workflows. Whitespace is still
+  normalized to single-line output, and embedded bot locations are still parsed for range rendering.
 - `-Truncate` restores legacy compact output limits:
   - top-level comments: 500 characters
   - latest replies: 300 characters
@@ -157,6 +167,12 @@ pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 `
 
 ## Line Range Edge Cases
 
+- Cursor/Bugbot comments that include embedded `LOCATIONS` metadata use the first matching embedded
+  location for displayed `path`, `lineStart`, and `lineEnd` so the text header points at the real
+  diagnostic range instead of the nearest GitHub review anchor.
+- JSON records preserve the current GitHub review anchor when available, falling back to original
+  GitHub line metadata, in `githubPath`, `githubLineStart`, and `githubLineEnd`. They also expose
+  the selected source as `locationSource` and include parsed `embeddedLocations` when present.
 - If both `startLine` and `line` are missing in a thread, output uses `?-?` for the range.
 - Single-line comments are rendered as `N-N`.
 

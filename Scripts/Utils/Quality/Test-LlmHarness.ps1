@@ -45,7 +45,7 @@ function ConvertTo-MarkdownAnchor {
     )
 
     $normalizedHeading = [regex]::Replace($HeadingText,'\[([^\]]+)\]\([^\)]+\)','$1')
-    $normalizedHeading = [regex]::Replace($normalizedHeading,'<[^>]+>','')
+    $normalizedHeading = [regex]::Replace($normalizedHeading,'</?[A-Za-z][^>]*>','')
     $normalizedHeading = $normalizedHeading -replace '`',''
     $normalizedHeading = $normalizedHeading.ToLowerInvariant()
     $normalizedHeading = [regex]::Replace($normalizedHeading,'[^a-z0-9 _-]','')

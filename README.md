@@ -177,6 +177,7 @@ These utilities do not modify backup/restore behavior.
 Current utility:
 
 - `Get-UnresolvedPRComments.ps1`: read unresolved PR review threads from GitHub and render plain-text or JSON output.
+  - Cleans noisy bot comment markup by default and uses embedded Cursor/Bugbot locations when available.
   - Supports clipboard export with `-Copy` and strict failure mode via `-CopyStrict`.
   - Supports writing output to UTF-8 files with `-OutputPath` while still emitting stdout.
 
@@ -189,8 +190,19 @@ This repository uses targeted agent validation first, with pre-commit and CI as 
 Local hooks are wrapper scripts in `.githooks/` that execute `pre-commit` when available.
 Default local behavior is:
 
-- `pre-commit` hook: staged-file checks and auto-fixes where applicable (including deterministic PowerShell formatting and `shellcheck`/`shfmt` for changed shell targets)
+- `pre-commit` hook: staged-file checks and auto-fixes where applicable (including deterministic PowerShell formatting, `shellcheck`/`shfmt` for changed shell targets, and pinned native StyLua/actionlint checks)
 - `pre-push` hook: runs `Scripts/Utils/Quality/Invoke-FullValidation.ps1` when `pwsh` is available (full pre-commit + pre-push + harness + drift checks), with legacy fallback when `pre-commit` is unavailable
+
+Shell `shfmt` and `shellcheck` hooks use repo-managed PowerShell wrappers instead of Python-packaged hook environments. `Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1` downloads pinned upstream release assets into ignored `.tools/shell-quality`, verifies SHA256 and tool versions, and reuses the same executables on Linux, macOS, and Windows hosts.
+
+Compiled native tools that publish release binaries follow the same contract. `Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1` manages pinned StyLua and actionlint assets in ignored `.tools/native-quality`, verifies SHA256 before extraction/use, validates tool versions, and handles Windows ARM64 only with explicit manifest-backed fallback when upstream does not publish a native asset. The pre-commit wrapper also auto-cleans and pre-warms hook environments once when pre-commit cache or nodeenv-style setup failures are detected.
+
+Hook troubleshooting is intentionally automated first:
+
+- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` bound hook runtime; values must be integers of at least 30 seconds.
+- `WALLSTOP_NATIVE_TOOL_DOWNLOAD_TIMEOUT_SECONDS` overrides the native binary download timeout when a slow network needs more than the default 300 seconds.
+- `.tools/shell-quality` and `.tools/native-quality` are ignored caches. Delete them only when deliberately forcing a fresh verified download; normal version/hash drift repairs itself.
+- If pre-commit reports environment installation corruption, run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1 -InstallHooksOnly` to trigger the same clean + `install-hooks` repair path used by preflight.
 
 Enable hooks:
 
@@ -267,6 +279,13 @@ Host-shell preflight (recommended before first commit/push from a new shell cont
 pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly
 ```
 
+The preflight also repairs missing shell formatter/linter binaries, native StyLua/actionlint binaries, and pre-commit hook environments automatically. If you need to pre-warm only those repo-managed binaries, run:
+
+```powershell
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All -EnsureOnly
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1 -Tool All -EnsureOnly
+```
+
 Windows host note:
 
 - Run these commands from `pwsh` (PowerShell 7+), not from legacy Windows PowerShell.
@@ -329,6 +348,12 @@ Local debt cleanup commands:
 ```bash
 pre-commit run --all-files --hook-stage pre-commit shellcheck
 pre-commit run --all-files --hook-stage pre-commit shfmt
+```
+
+Equivalent direct PowerShell entrypoint:
+
+```powershell
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All -Fix <paths>
 ```
 
 ### AppleScript migration path
