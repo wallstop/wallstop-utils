@@ -28,6 +28,9 @@ BeforeAll {
         "Scripts/Utils/Quality/Assert-CleanGitTree.ps1",
         "Scripts/Utils/Quality/Format-PowerShellFiles.ps1",
         "Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1",
+        "Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1",
+        "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1",
+        "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1",
         "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1",
         "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
     )
@@ -35,8 +38,10 @@ BeforeAll {
         ".pre-commit-config.yaml",
         ".editorconfig",
         ".psscriptanalyzer.format.psd1",
+        ".psscriptanalyzer.psd1",
         ".shellcheckrc",
-        ".stylua.toml"
+        ".stylua.toml",
+        "Scripts/Utils/Quality/native-quality-tools.json"
     )
     $script:shellConventionScripts = @(
         "Scripts/Mac/Backup.sh",
@@ -295,7 +300,12 @@ Describe "Scope safety conventions" {
         $convertRecordFunctionMatch.Success | Should -BeTrue -Because "Convert-ReviewThreadToOutputRecord must exist so output key casing can be validated"
         $convertRecordFunctionBody = $convertRecordFunctionMatch.Groups["body"].Value
 
-        $lowerPathMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*path\s*=\s*\$safePath\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerPathMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*path\s*=\s*\$outputLocation\.Path\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerLocationSourceMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*locationSource\s*=\s*\$outputLocation\.Source\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerGitHubPathMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubPath\s*=\s*\$safePath\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerGitHubLineStartMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineStart\s*=\s*\$githubAnchor\.Start\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerGitHubLineEndMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineEnd\s*=\s*\$githubAnchor\.End\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerEmbeddedLocationsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*embeddedLocations\s*=\s*@\(\$embeddedLocations\)\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*owner\s*=\s*\$Owner\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*repo\s*=\s*\$Repo\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         # Lowercase checks enforce exact contract values; uppercase checks intentionally
@@ -305,6 +315,11 @@ Describe "Scope safety conventions" {
         $upperRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Repo\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
 
         $lowerPathMatches.Count | Should -Be 1
+        $lowerLocationSourceMatches.Count | Should -Be 1
+        $lowerGitHubPathMatches.Count | Should -Be 1
+        $lowerGitHubLineStartMatches.Count | Should -Be 1
+        $lowerGitHubLineEndMatches.Count | Should -Be 1
+        $lowerEmbeddedLocationsMatches.Count | Should -Be 1
         $lowerOwnerMatches.Count | Should -Be 1
         $lowerRepoMatches.Count | Should -Be 1
         $upperPathMatches.Count | Should -Be 0
@@ -400,6 +415,12 @@ Describe "CI scope expansion" {
 
         $workflow | Should -Match 'Scripts/\*\*'
         $workflow | Should -Match 'Tests/\*\*'
+        $workflow | Should -Match '\.githooks/pre-commit'
+        $workflow | Should -Match '\.githooks/pre-push'
+        $workflow | Should -Match '\.editorconfig'
+        $workflow | Should -Match '\.psscriptanalyzer\.format\.psd1'
+        $workflow | Should -Match '\.shellcheckrc'
+        $workflow | Should -Match '\.stylua\.toml'
     }
 
     It "runs ScriptAnalyzer against all scripts" {
@@ -524,10 +545,11 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
 
         $preCommitConfig | Should -Match 'repo:\s+https://github\.com/pre-commit/pre-commit-hooks'
-        $preCommitConfig | Should -Match 'repo:\s+https://github\.com/scop/pre-commit-shfmt'
-        $preCommitConfig | Should -Match 'repo:\s+https://github\.com/shellcheck-py/shellcheck-py'
-        $preCommitConfig | Should -Match 'repo:\s+https://github\.com/JohnnyMorganz/StyLua'
-        $preCommitConfig | Should -Match 'repo:\s+https://github\.com/rhysd/actionlint'
+        $preCommitConfig | Should -Not -Match 'repo:\s+https://github\.com/scop/pre-commit-shfmt'
+        $preCommitConfig | Should -Not -Match 'repo:\s+https://github\.com/shellcheck-py/shellcheck-py'
+        $preCommitConfig | Should -Not -Match 'shfmt[-_]py|shfmt-binary'
+        $preCommitConfig | Should -Not -Match 'repo:\s+https://github\.com/JohnnyMorganz/StyLua'
+        $preCommitConfig | Should -Not -Match 'repo:\s+https://github\.com/rhysd/actionlint'
         $preCommitConfig | Should -Match 'rev:\s+v\d+\.\d+\.\d+'
 
         $preCommitConfig | Should -Match 'id:\s+check-json'
@@ -538,6 +560,16 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Match 'id:\s+shfmt'
         $preCommitConfig | Should -Match 'id:\s+stylua'
         $preCommitConfig | Should -Match 'id:\s+actionlint'
+
+        $preCommitConfig | Should -Match 'id:\s+shfmt[\s\S]*entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Quality/Invoke-ShellQualityChecks\.ps1\s+-Tool\s+shfmt\s+-Fix'
+        $preCommitConfig | Should -Match 'id:\s+shellcheck[\s\S]*entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Quality/Invoke-ShellQualityChecks\.ps1\s+-Tool\s+shellcheck'
+        $preCommitConfig | Should -Match 'id:\s+stylua[\s\S]*entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Quality/Invoke-NativeQualityChecks\.ps1\s+-Tool\s+stylua\s+-Fix'
+        $preCommitConfig | Should -Match 'id:\s+actionlint[\s\S]*entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Quality/Invoke-NativeQualityChecks\.ps1\s+-Tool\s+actionlint'
+        $preCommitConfig | Should -Match 'id:\s+shfmt[\s\S]*language:\s+system'
+        $preCommitConfig | Should -Match 'id:\s+shellcheck[\s\S]*language:\s+system'
+        $preCommitConfig | Should -Match 'id:\s+stylua[\s\S]*language:\s+system'
+        $preCommitConfig | Should -Match 'id:\s+actionlint[\s\S]*language:\s+system'
+        $preCommitConfig | Should -Not -Match '(?m)^\s*entry:\s+(shfmt|shellcheck|stylua|actionlint)\b' -Because 'native hooks must resolve repo-managed pinned tools instead of relying on PATH.'
 
         $preCommitConfig | Should -Match 'id:\s+powershell-format[\s\S]*stages:\s+\[pre-commit\]'
         $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
@@ -557,8 +589,18 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent = Get-Content -Path $validatorPath -Raw
 
         $validatorContent | Should -Match '\$shellSafetyTriggerPattern\s*='
+        $validatorContent | Should -Match '\$shellQualityPattern\s*='
         $validatorContent | Should -Match 'Scripts/.+\.sh'
+        $validatorContent | Should -Match '\.devcontainer/.+\.sh'
         $validatorContent | Should -Match '\.githooks/\(pre-commit\|pre-push\)'
+        $validatorContent | Should -Match 'Invoke-ShellQualityChecks\.ps1'
+        $validatorContent | Should -Match 'E_PRECOMMIT_SHELL_QUALITY_RESTAGE_REQUIRED'
+        $validatorContent | Should -Match 'Compare-Object\s+-ReferenceObject\s+\$preShellQualityDiffOutput\s+-DifferenceObject\s+\$formattedShellQualityFiles'
+        $validatorContent | Should -Match '\$_\.SideIndicator\s+-eq\s+''=>'''
+        $validatorContent | Should -Match '\$preShellQualityDirtyFileHashes\s*='
+        $validatorContent | Should -Match 'Get-FileContentHashOrMissing\s+-Path\s+\$targetPath'
+        $validatorContent | Should -Match 'Get-FileHash\s+-LiteralPath\s+\$Path\s+-Algorithm\s+SHA256'
+        $validatorContent | Should -Match '\$allModeFormatterModifiedDirtyFiles'
         $validatorContent | Should -Match 'ScriptSafetyConventions\.Tests\.ps1'
         $validatorContent | Should -Match '\$runShellSafetySuite\s*=\s*-not\s+\$runUtilsTests\s+-and'
         $validatorContent | Should -Match 'Running Tests/Utils/ScriptSafetyConventions\.Tests\.ps1 Pester suite in isolated process'
@@ -578,6 +620,19 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'E_PRECOMMIT_WINDOWS_LANGUAGE_RESTAGE_REQUIRED'
         $validatorContent | Should -Match 'git diff[\s\S]*--name-only'
         $validatorContent | Should -Match 'Running Windows language static validation'
+    }
+
+    It "routes native Lua and workflow checks through the precommit orchestrator" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = Get-Content -Path $validatorPath -Raw
+
+        $validatorContent | Should -Match '\$nativeQualityPattern\s*='
+        $validatorContent | Should -Match 'Config/Wezterm/wezterm\\\.lua'
+        $validatorContent | Should -Match '\\.github/workflows/.+\\\.\(yml\|yaml\)'
+        $validatorContent | Should -Match 'Invoke-NativeQualityChecks\.ps1'
+        $validatorContent | Should -Match '-Tool\s+All\s+-Fix\s+@nativeQualityFiles'
+        $validatorContent | Should -Match 'E_PRECOMMIT_NATIVE_QUALITY_RESTAGE_REQUIRED'
+        $validatorContent | Should -Match 'Running Lua and GitHub workflow native quality validation'
     }
 
     It "scopes deterministic JSON formatting away from snapshot dumps" {
@@ -618,12 +673,15 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
 
         $preCommitHook | Should -Match 'pre-commit run --hook-stage pre-commit'
+        $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit'
         $preCommitHook | Should -Match 'Run-PreCommitValidation\.ps1'
         $preCommitHook | Should -Match 'pipx install pre-commit'
         $preCommitHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $preCommitHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
         $preCommitHook | Should -Match 'run_with_timeout'
         $preCommitHook | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
+        $preCommitHook | Should -Match 'E_HOOK_TIMEOUT_CONFIG'
+        $preCommitHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt 30 \]\]'
 
         $prePushHook | Should -Match 'pre-commit run --hook-stage pre-push --all-files'
         $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -All'
@@ -655,6 +713,97 @@ Describe "Cross-language quality platform conventions" {
 
         $preCommitHook | Should -Match '~/.bashrc or ~/.zshrc'
         $prePushHook | Should -Match '~/.bashrc or ~/.zshrc'
+    }
+
+    It "bootstraps pinned shell tools during validation preflight" {
+        $fullValidation = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw
+        $shellQualityScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1'
+        $shellQualityScript = Get-Content -Path $shellQualityScriptPath -Raw
+        $shellToolManifestPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/shell-quality-tools.json'
+        $shellToolManifest = Get-Content -Path $shellToolManifestPath -Raw | ConvertFrom-Json
+
+        $fullValidation | Should -Match 'Assert-ShellQualityToolAvailability'
+        $fullValidation | Should -Match 'Invoke-ShellQualityChecks\.ps1'
+        $fullValidation | Should -Match '-Tool\s+All\s+-EnsureOnly'
+
+        $shellQualityScript | Should -Match '\.tools/shell-quality'
+        $shellQualityScript | Should -Match 'Invoke-WebRequest'
+        $shellQualityScript | Should -Match 'Get-FileHash'
+        $shellQualityScript | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
+        $shellQualityScript | Should -Match 'ArgumentList\.Add'
+        $shellQualityScript | Should -Match 'W_SHELL_TOOL_PLATFORM_FALLBACK'
+        $shellQualityScript | Should -Match 'E_SHELL_TOOL_HASH_MISMATCH'
+        $shellQualityScript | Should -Match 'E_SHELL_TOOL_PLATFORM_UNSUPPORTED'
+        $shellQualityScript | Should -Match 'E_SHELL_QUALITY_TARGET_OUTSIDE_REPOSITORY'
+        $shellQualityScript | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
+
+        $shellToolManifest.tools.shfmt.version | Should -Be '3.13.0'
+        $shellToolManifest.tools.shellcheck.version | Should -Be '0.11.0'
+        foreach ($toolName in @('shfmt', 'shellcheck')) {
+            $tool = $shellToolManifest.tools.$toolName
+            $tool.repository | Should -Not -BeNullOrEmpty
+            $tool.releaseTag | Should -Match '^v\d+\.\d+\.\d+'
+
+            $actualAssetKeys = @($tool.assets.PSObject.Properties.Name | Sort-Object)
+            $expectedAssetKeys = @('darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'windows-x64')
+            $actualAssetKeys | Should -Be $expectedAssetKeys
+
+            foreach ($assetProperty in @($tool.assets.PSObject.Properties)) {
+                $asset = $assetProperty.Value
+                $asset.assetName | Should -Not -BeNullOrEmpty
+                $asset.kind | Should -Match '^(executable|zip|tar\.gz)$'
+                $asset.sha256 | Should -Match '^[a-f0-9]{64}$'
+            }
+        }
+    }
+
+    It "bootstraps pinned native tools during validation preflight" {
+        $fullValidation = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw
+        $nativeQualityScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1'
+        $nativeQualityScript = Get-Content -Path $nativeQualityScriptPath -Raw
+        $nativeToolManifestPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/native-quality-tools.json'
+        $nativeToolManifest = Get-Content -Path $nativeToolManifestPath -Raw | ConvertFrom-Json
+
+        $fullValidation | Should -Match 'Assert-NativeQualityToolAvailability'
+        $fullValidation | Should -Match 'Invoke-NativeQualityChecks\.ps1'
+        $fullValidation | Should -Match '-Tool\s+All\s+-EnsureOnly'
+
+        $nativeQualityScript | Should -Match '\.tools/native-quality'
+        $nativeQualityScript | Should -Match 'Invoke-WebRequest'
+        $nativeQualityScript | Should -Match 'Get-FileHash'
+        $nativeQualityScript | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
+        $nativeQualityScript | Should -Match 'ArgumentList\.Add'
+        $nativeQualityScript | Should -Match 'W_NATIVE_TOOL_PLATFORM_FALLBACK'
+        $nativeQualityScript | Should -Match 'E_NATIVE_TOOL_HASH_MISMATCH'
+        $nativeQualityScript | Should -Match 'E_NATIVE_TOOL_PLATFORM_UNSUPPORTED'
+        $nativeQualityScript | Should -Match 'E_NATIVE_QUALITY_TARGET_OUTSIDE_REPOSITORY'
+        $nativeQualityScript | Should -Match 'WALLSTOP_NATIVE_TOOL_DOWNLOAD_TIMEOUT_SECONDS'
+        $nativeQualityScript | Should -Match 'E_NATIVE_TOOL_TIMEOUT_CONFIG'
+        $nativeQualityScript | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
+
+        $nativeToolManifest.tools.stylua.version | Should -Be '2.5.2'
+        $nativeToolManifest.tools.actionlint.version | Should -Be '1.7.12'
+    }
+
+    It "auto-recovers pre-commit hook environment corruption before falling back to manual triage" {
+        $recoveryScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1'
+        $recoveryScript = Get-Content -Path $recoveryScriptPath -Raw
+        $fullValidation = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw
+
+        $recoveryScript | Should -Match 'Test-PreCommitEnvironmentFailure'
+        $recoveryScript | Should -Match 'pre-commit"\s+-ErrorAction\s+SilentlyContinue'
+        $recoveryScript | Should -Match 'pre-commit clean|@\("clean"\)'
+        $recoveryScript | Should -Match 'install-hooks'
+        $recoveryScript | Should -Match 'W_PRECOMMIT_ENV_AUTO_REPAIR'
+        $recoveryScript | Should -Match 'E_PRECOMMIT_ENV_AUTO_REPAIR_FAILED'
+        $recoveryScript | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
+
+        $fullValidation | Should -Match 'Assert-PreCommitHookEnvironmentAvailability'
+        $fullValidation | Should -Match 'Invoke-PreCommitWithRecovery\.ps1'
+        $fullValidation | Should -Match '-InstallHooksOnly'
+        $fullValidation | Should -Match 'E_VALIDATION_PRECOMMIT_ENV_PREFLIGHT_FAILED'
+        $fullValidation | Should -Match '-HookStage\s+pre-commit\s+-AllFiles'
+        $fullValidation | Should -Match '-HookStage\s+pre-push\s+-AllFiles'
     }
 
     It "explicitly propagates pwsh fallback exit status in git hooks" {
@@ -718,6 +867,7 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Not -Match 'failed_hook_ids.*sed\s+-n\s+''s.*hook\s+id'
         $workflow | Should -Match 'failed_hook_ids[\s\S]*exit code[\s\S]*[1-9]'
         $workflow | Should -Match 'Run shell hooks on changed files'
+        $workflow | Should -Match '\.devcontainer/\.\*\\\.sh'
         $workflow | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
         $workflow | Should -Match 'Invoke-MacOSLanguageChecks\.sh'
         $workflow | Should -Match 'Assert-CleanGitTree\.ps1'
@@ -919,7 +1069,8 @@ Describe "Quality script executable guardrails" {
 
         $preCommitConfig | Should -Match 'id:\s+shellcheck'
         $preCommitConfig | Should -Match 'id:\s+shfmt'
-        $preCommitConfig | Should -Match 'files:\s+''\^\(Scripts/\.\*\\\.sh\|\\\.githooks/\(pre-commit\|pre-push\)\)\$'''
+        $preCommitConfig | Should -Match 'Invoke-ShellQualityChecks\.ps1'
+        $preCommitConfig | Should -Match 'files:\s+''\^\(Scripts/\.\*\\\.sh\|\\\.devcontainer/\.\*\\\.sh\|\\\.githooks/\(pre-commit\|pre-push\)\)\$'''
         $macChecks | Should -Not -Match '(?m)^\s*local\s+-n\b'
     }
 
@@ -3818,13 +3969,15 @@ Describe "Retry test determinism conventions" {
 }
 
 Describe "GitHub output and clipboard conventions" {
-    It "keeps Copy and Truncate parameters in the PR unresolved comments script" {
+    It "keeps Copy, Truncate, and KeepMarkup parameters in the PR unresolved comments script" {
         $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $scriptPath -Raw
 
         $content | Should -Match '\[switch\]\$Truncate'
+        $content | Should -Match '\[switch\]\$KeepMarkup'
         $content | Should -Match '\[switch\]\$Copy'
         $content | Should -Match '\.PARAMETER\s+Truncate'
+        $content | Should -Match '\.PARAMETER\s+KeepMarkup'
         $content | Should -Match '\.PARAMETER\s+Copy'
     }
 
@@ -3864,6 +4017,48 @@ Describe "GitHub output and clipboard conventions" {
         $topLevelCommentTruncation | Should -Not -BeNullOrEmpty -Because (
             "Top-level review comments must be truncated only when the Truncate switch is present."
         )
+    }
+
+    It "keeps bot markup cleanup and embedded location contracts for unresolved comments" {
+        $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $scriptPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$parseErrors)
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+
+        @($parseErrors).Count | Should -Be 0 -Because (
+            "Get-UnresolvedPRComments.ps1 must parse cleanly before checking bot cleanup policy."
+        )
+
+        $content | Should -Match 'function\s+Get-EmbeddedCommentLocations'
+        $content | Should -Match 'function\s+Resolve-OutputCommentLocation'
+        $content | Should -Match 'function\s+Remove-MarkupFromCommentText'
+        $content | Should -Match 'Additional Locations'
+        $content | Should -Match 'Cursor Bugbot'
+        $content | Should -Match 'cursor\\\.com/\(\?:open\|agents\)'
+        $content | Should -Match 'function\s+Normalize-CommentText[\s\S]*Remove-MarkupFromCommentText'
+        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*Get-EmbeddedCommentLocations'
+        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*Resolve-OutputCommentLocation'
+        $content | Should -Match 'locationSource\s*=\s*\$outputLocation\.Source'
+        $content | Should -Match 'githubLineStart\s*=\s*\$githubAnchor\.Start'
+        $content | Should -Match 'embeddedLocations\s*=\s*@\(\$embeddedLocations\)'
+
+        $normalizeFunction = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $node.Name -eq "Normalize-CommentText"
+                }, $true) | Select-Object -First 1)
+        $normalizeFunction | Should -Not -BeNullOrEmpty
+        $normalizeText = $normalizeFunction[0].Extent.Text
+        $normalizeText | Should -Match '\$cleanedText\s*=\s*if\s*\(\$KeepMarkup\.IsPresent\)\s*\{\s*\$Text\s*\}\s*else\s*\{\s*Remove-MarkupFromCommentText\s+-Text\s+\$Text\s*\}'
+
+        $testsContent | Should -Match 'Describe\s+"Normalize-CommentText"'
+        $testsContent | Should -Match 'Describe\s+"Get-EmbeddedCommentLocations"'
+        $testsContent | Should -Match 'extracts Cursor Bugbot LOCATIONS ranges in order'
+        $testsContent | Should -Match 'uses embedded Cursor Bugbot locations for rendered output and strips bot chrome'
+        $testsContent | Should -Match 'preserves markup with KeepMarkup while still using embedded locations'
     }
 
     It "keeps clipboard copy non-fatal and output additive" {

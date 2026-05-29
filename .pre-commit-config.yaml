@@ -21,28 +21,6 @@ repos:
         args: [--autofix, --no-sort-keys, --indent, "2"]
         files: '^(Config/Komorebi/(komorebi|komorebi\.bar)\.json|Config/WindowsTerminal/settings\.json|Config/scoopfile\.json)$'
 
-  - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.13.1-1
-    hooks:
-      - id: shfmt
-        args: [-w, -i, "2", -ci, -sr]
-        files: '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$'
-        stages: [pre-commit]
-
-  - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.11.0.1
-    hooks:
-      - id: shellcheck
-        files: '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$'
-        stages: [pre-commit]
-
-  - repo: https://github.com/JohnnyMorganz/StyLua
-    rev: v2.5.2
-    hooks:
-      - id: stylua
-        args: [--config-path, .stylua.toml]
-        files: '^Config/Wezterm/wezterm\.lua$'
-
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: v3.1.0
     hooks:
@@ -51,14 +29,40 @@ repos:
         types_or: [yaml]
         files: '^(\.github/workflows/.*\.(yml|yaml)|Config/Komorebi/applications\.yaml)$'
 
-  - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.12
-    hooks:
-      - id: actionlint
-        files: '^\.github/workflows/.*\.(yml|yaml)$'
-
   - repo: local
     hooks:
+      - id: stylua
+        name: stylua
+        entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1 -Tool stylua -Fix
+        language: system
+        files: '^Config/Wezterm/wezterm\.lua$'
+        pass_filenames: true
+        require_serial: true
+        stages: [pre-commit]
+      - id: actionlint
+        name: actionlint
+        entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1 -Tool actionlint
+        language: system
+        files: '^\.github/workflows/.*\.(yml|yaml)$'
+        pass_filenames: true
+        require_serial: true
+        stages: [pre-commit]
+      - id: shfmt
+        name: shfmt
+        entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool shfmt -Fix
+        language: system
+        files: '^(Scripts/.*\.sh|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push))$'
+        pass_filenames: true
+        require_serial: true
+        stages: [pre-commit]
+      - id: shellcheck
+        name: shellcheck
+        entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool shellcheck
+        language: system
+        files: '^(Scripts/.*\.sh|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push))$'
+        pass_filenames: true
+        require_serial: true
+        stages: [pre-commit]
       - id: powershell-format
         name: powershell-format
         entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Format-PowerShellFiles.ps1

@@ -7,7 +7,7 @@ param(
     [switch]$PreflightOnly,
 
     [Parameter(Mandatory = $false)]
-    [ValidateRange(30,7200)]
+    [ValidateRange(30, 7200)]
     [int]$CiWatchTimeoutSeconds = 1800
 )
 
@@ -115,20 +115,20 @@ function Get-StatusSnapshot {
 function Assert-PowerShellQualityModuleAvailability {
     $moduleRequirements = @(
         [pscustomobject]@{
-            ModuleName = "Pester"
-            MinimumVersion = [version]"5.5.0"
-            CommandNames = @("Invoke-Pester")
-            InstallCommand = "pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester"
+            ModuleName      = "Pester"
+            MinimumVersion  = [version]"5.5.0"
+            CommandNames    = @("Invoke-Pester")
+            InstallCommand  = "pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester"
             AdditionalNotes = @(
                 "Manual fallback: Install-Module Pester -Repository PSGallery -Scope CurrentUser -MinimumVersion 5.5.0 -Force"
                 "Windows note: built-in Windows PowerShell ships Pester 3.4.0, which is incompatible with this suite."
             )
         },
         [pscustomobject]@{
-            ModuleName = "PSScriptAnalyzer"
-            MinimumVersion = [version]"1.21.0"
-            CommandNames = @("Invoke-ScriptAnalyzer","Invoke-Formatter")
-            InstallCommand = "pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules PSScriptAnalyzer"
+            ModuleName      = "PSScriptAnalyzer"
+            MinimumVersion  = [version]"1.21.0"
+            CommandNames    = @("Invoke-ScriptAnalyzer", "Invoke-Formatter")
+            InstallCommand  = "pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules PSScriptAnalyzer"
             AdditionalNotes = @("Manual fallback: Install-Module PSScriptAnalyzer -Repository PSGallery -Scope CurrentUser -MinimumVersion 1.21.0 -Force")
         }
     )
@@ -136,12 +136,42 @@ function Assert-PowerShellQualityModuleAvailability {
     Assert-ModuleCommandRequirements -Requirements $moduleRequirements -ErrorCode "E_VALIDATION_POWERSHELL_MODULES_MISSING" -ContextLabel "PowerShell quality module prerequisites"
 }
 
+function Assert-ShellQualityToolAvailability {
+    $shellQualityScript = Join-Path -Path $PSScriptRoot -ChildPath "Invoke-ShellQualityChecks.ps1"
+    if (-not (Test-Path -LiteralPath $shellQualityScript -PathType Leaf)) {
+        throw "E_VALIDATION_SHELL_TOOL_SCRIPT_MISSING: shell quality tool resolver not found at '$shellQualityScript'."
+    }
+
+    & $shellQualityScript -Tool All -EnsureOnly
+}
+
+function Assert-NativeQualityToolAvailability {
+    $nativeQualityScript = Join-Path -Path $PSScriptRoot -ChildPath "Invoke-NativeQualityChecks.ps1"
+    if (-not (Test-Path -LiteralPath $nativeQualityScript -PathType Leaf)) {
+        throw "E_VALIDATION_NATIVE_TOOL_SCRIPT_MISSING: native quality tool resolver not found at '$nativeQualityScript'."
+    }
+
+    & $nativeQualityScript -Tool All -EnsureOnly
+}
+
+function Assert-PreCommitHookEnvironmentAvailability {
+    $preCommitRecoveryScript = Join-Path -Path $PSScriptRoot -ChildPath "Invoke-PreCommitWithRecovery.ps1"
+    if (-not (Test-Path -LiteralPath $preCommitRecoveryScript -PathType Leaf)) {
+        throw "E_VALIDATION_PRECOMMIT_RECOVERY_SCRIPT_MISSING: pre-commit recovery wrapper not found at '$preCommitRecoveryScript'."
+    }
+
+    pwsh -NoLogo -NoProfile -File $preCommitRecoveryScript -InstallHooksOnly
+    if ($LASTEXITCODE -ne 0) {
+        throw "E_VALIDATION_PRECOMMIT_ENV_PREFLIGHT_FAILED: pre-commit hook environment preflight failed (exitCode=$LASTEXITCODE)."
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
 Push-Location -LiteralPath $repoRoot
 
 try {
     Write-Host "[validation] PowerShell format-operator binding safety check"
-    Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts","Tests") -ErrorCode "E_VALIDATION_FORMAT_OPERATOR_BINDING" -ContextLabel "PowerShell format-operator safety"
+    Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts", "Tests") -ErrorCode "E_VALIDATION_FORMAT_OPERATOR_BINDING" -ContextLabel "PowerShell format-operator safety"
 
     if (-not (Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue)) {
         throw "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install pre-commit; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=$HOME/.local/bin:$PATH and persist that export in ~/.bashrc or ~/.zshrc), then run 'pre-commit install --hook-type pre-commit --hook-type pre-push'."
@@ -149,6 +179,15 @@ try {
 
     Write-Host "[validation] PowerShell module prerequisite check"
     Assert-PowerShellQualityModuleAvailability
+
+    Write-Host "[validation] shell quality tool prerequisite check"
+    Assert-ShellQualityToolAvailability
+
+    Write-Host "[validation] native quality tool prerequisite check"
+    Assert-NativeQualityToolAvailability
+
+    Write-Host "[validation] pre-commit hook environment preflight"
+    Assert-PreCommitHookEnvironmentAvailability
 
     if ($PreflightOnly) {
         Write-Host "Validation preflight passed."
@@ -158,12 +197,14 @@ try {
     $gitExecutable = Get-GitExecutableOrThrow
     $statusBeforeValidation = Get-StatusSnapshot -gitExecutable $gitExecutable -RepositoryRoot $repoRoot
 
+    $preCommitRecoveryScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1"
+
     Invoke-NativeCommand -Label "pre-commit stage (all files)" -FailureCode "E_VALIDATION_PRECOMMIT_FAILED" -Remediation "Fix hook findings, then rerun this command." -ScriptBlock {
-        pre-commit run --hook-stage pre-commit --all-files --show-diff-on-failure --color always
+        pwsh -NoLogo -NoProfile -File $preCommitRecoveryScript -HookStage pre-commit -AllFiles
     }
 
     Invoke-NativeCommand -Label "pre-push stage (all files)" -FailureCode "E_VALIDATION_PREPUSH_FAILED" -Remediation "Fix failing tests/lint/policy checks, then rerun this command." -ScriptBlock {
-        pre-commit run --hook-stage pre-push --all-files --show-diff-on-failure --color always
+        pwsh -NoLogo -NoProfile -File $preCommitRecoveryScript -HookStage pre-push -AllFiles
     }
 
     $skillsIndexScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1"

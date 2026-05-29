@@ -9,6 +9,7 @@ This contract defines how AI-generated shell changes must be produced and valida
 - Suppress narrowly: only inline suppressions for unavoidable cases, with nearby reason comments.
 - Preserve behavior: use smallest possible patches and avoid unrelated refactors.
 - Preserve CI lane contracts: keep PR fast-lane checks lightweight and nightly deep-lane checks comprehensive.
+- Keep shell tooling repo-managed: `shfmt` and `shellcheck` must run through `Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1` with pinned SHA256-verified assets from `Scripts/Utils/Quality/shell-quality-tools.json`, not external Python hook packages or ambient PATH tools.
 
 ## CI invariants
 
@@ -23,11 +24,12 @@ This contract defines how AI-generated shell changes must be produced and valida
 
 1. Reproduce: run the failing hook(s) and collect exact findings.
 2. Patch minimally: implement targeted fixes for reported codes.
-3. Format: run `shfmt` on touched shell files.
-4. Re-lint: run `shellcheck` on touched files (or all files when needed).
-5. Validate policy tests: run safety convention tests covering workflow and helper-script contracts.
-6. Re-run hooks: verify `pre-commit` hooks pass.
-7. Re-check CI runtime assumptions: verify Windows PR-lane timing and scope contracts are still true.
+3. Bootstrap shell tools: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All -EnsureOnly` or the full validation preflight.
+4. Format: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool shfmt -Fix <paths>` on touched shell files.
+5. Re-lint: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool shellcheck <paths>` on touched files (or all files when needed).
+6. Validate policy tests: run safety convention tests covering workflow and helper-script contracts.
+7. Re-run hooks: verify `pre-commit` hooks pass.
+8. Re-check CI runtime assumptions: verify Windows PR-lane timing and scope contracts are still true.
 
 ## Major-change session-close loop
 

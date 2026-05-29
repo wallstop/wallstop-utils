@@ -5,6 +5,13 @@ on:
     paths:
       - "Scripts/**"
       - "Tests/**"
+      - ".pre-commit-config.yaml"
+      - ".githooks/pre-commit"
+      - ".githooks/pre-push"
+      - ".editorconfig"
+      - ".psscriptanalyzer.format.psd1"
+      - ".shellcheckrc"
+      - ".stylua.toml"
       - ".psscriptanalyzer.psd1"
       - ".github/workflows/github-pr-summarizer-quality.yml"
   push:
@@ -12,6 +19,13 @@ on:
     paths:
       - "Scripts/**"
       - "Tests/**"
+      - ".pre-commit-config.yaml"
+      - ".githooks/pre-commit"
+      - ".githooks/pre-push"
+      - ".editorconfig"
+      - ".psscriptanalyzer.format.psd1"
+      - ".shellcheckrc"
+      - ".stylua.toml"
       - ".psscriptanalyzer.psd1"
       - ".github/workflows/github-pr-summarizer-quality.yml"
 

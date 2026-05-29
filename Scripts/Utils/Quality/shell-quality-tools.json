@@ -1,0 +1,72 @@
+{
+  "tools": {
+    "shfmt": {
+      "version": "3.13.0",
+      "releaseTag": "v3.13.0",
+      "repository": "mvdan/sh",
+      "versionPattern": "v3.13.0",
+      "executableBaseName": "shfmt",
+      "assets": {
+        "darwin-arm64": {
+          "assetName": "shfmt_v3.13.0_darwin_arm64",
+          "sha256": "650970603b5946dc6041836ddcfa7a19d99b5da885e4687f64575508e99cf718",
+          "kind": "executable"
+        },
+        "darwin-x64": {
+          "assetName": "shfmt_v3.13.0_darwin_amd64",
+          "sha256": "b6890a0009abf71d36d7c536ad56e3132c547ceb77cd5d5ee62b3469ab4e9417",
+          "kind": "executable"
+        },
+        "linux-arm64": {
+          "assetName": "shfmt_v3.13.0_linux_arm64",
+          "sha256": "2091a31afd47742051a77bf7cfd175533ab07e924c20ef3151cd108fa1cab5b0",
+          "kind": "executable"
+        },
+        "linux-x64": {
+          "assetName": "shfmt_v3.13.0_linux_amd64",
+          "sha256": "70aa99784703a8d6569bbf0b1e43e1a91906a4166bf1a79de42050a6d0de7551",
+          "kind": "executable"
+        },
+        "windows-x64": {
+          "assetName": "shfmt_v3.13.0_windows_amd64.exe",
+          "sha256": "62241aaf6b0ca236f8625d8892784b73fa67ad40bc677a1ad1a64ae395f6a7d5",
+          "kind": "executable"
+        }
+      }
+    },
+    "shellcheck": {
+      "version": "0.11.0",
+      "releaseTag": "v0.11.0",
+      "repository": "koalaman/shellcheck",
+      "versionPattern": "version:\\s*0\\.11\\.0",
+      "executableBaseName": "shellcheck",
+      "assets": {
+        "darwin-arm64": {
+          "assetName": "shellcheck-v0.11.0.darwin.aarch64.tar.gz",
+          "sha256": "339b930feb1ea764467013cc1f72d09cd6b869ebf1013296ba9055ab2ffbd26f",
+          "kind": "tar.gz"
+        },
+        "darwin-x64": {
+          "assetName": "shellcheck-v0.11.0.darwin.x86_64.tar.gz",
+          "sha256": "c2c15e08df0e8fbc374c335b230a7ee958c313fa5714817a59aa59f1aa594f51",
+          "kind": "tar.gz"
+        },
+        "linux-arm64": {
+          "assetName": "shellcheck-v0.11.0.linux.aarch64.tar.gz",
+          "sha256": "68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc",
+          "kind": "tar.gz"
+        },
+        "linux-x64": {
+          "assetName": "shellcheck-v0.11.0.linux.x86_64.tar.gz",
+          "sha256": "b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6",
+          "kind": "tar.gz"
+        },
+        "windows-x64": {
+          "assetName": "shellcheck-v0.11.0.zip",
+          "sha256": "8a4e35ab0b331c85d73567b12f2a444df187f483e5079ceffa6bda1faa2e740e",
+          "kind": "zip"
+        }
+      }
+    }
+  }
+}

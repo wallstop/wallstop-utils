@@ -8,11 +8,17 @@ Keep local hook wrappers as last-resort gates while preserving deterministic fal
 
 During agentic work, run targeted validators and safe fixers before invoking hooks. When hook wrappers do run, use pre-commit as the default execution path for pre-commit and pre-push stages.
 
+Shell formatter/linter hooks must stay repo-managed. Use local `shellcheck` and `shfmt` hook IDs that invoke `Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1`; do not use external Python-packaged shell hook repositories such as `pre-commit-shfmt` or `shellcheck-py`, and do not rely on PATH-only `shfmt`/`shellcheck` entries.
+
+Compiled native hooks that publish release assets must also stay repo-managed. Use local `stylua` and `actionlint` hook IDs that invoke `Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1`; do not use remote pre-commit Rust/Go hook repositories for these tools because they compile during hook execution and can fail on host linker/toolchain drift.
+
 ## Deterministic Fallback Path
 
 Keep a fallback PowerShell validation path for environments where pre-commit is unavailable.
 
 Always propagate fallback exit status so failures cannot be hidden.
+
+Fallback validation must run staged shell targets through `Invoke-ShellQualityChecks.ps1 -Tool All -Fix` with restage-required diagnostics when formatting changes files. It must skip an empty target set instead of widening to a full-repo shell scan in non-`-All` mode.
 
 In pre-commit mode, keep ScriptAnalyzer scope staged-file targeted for `Scripts/Utils/*.ps1`; reserve full-repo analyzer scans for explicit `-All` flows (pre-push/full validation).
 
@@ -39,6 +45,14 @@ Keep hook wrappers bounded so stalled commands cannot lock editor-hosted workflo
   - `WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS`
 - For Copilot/agent ad-hoc tests, do not run direct `Invoke-Pester` terminal commands. Use timeout-bounded `Invoke-PesterQualityGate.ps1` with `-OutputVerbosity None` and a narrow `-TestPath` scope.
 
+## Pinned Native Hook Tools
+
+Native tool wrappers must download only manifest-pinned upstream release assets into ignored `.tools/native-quality`, verify SHA256 before extraction or execution, reject unsafe archive entries, probe the expected version, and use explicit platform keys. Windows ARM64 may fall back to Windows x64 only when upstream lacks an ARM64 asset and the fallback is encoded in resolver diagnostics.
+
+Run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1 -Tool All -EnsureOnly` to pre-warm StyLua/actionlint without running checks. `Invoke-FullValidation.ps1 -PreflightOnly` must call this automatically before hooks.
+
+When pre-commit itself reports cache/environment installation failures, route through `Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1`; it cleans hook environments, runs `pre-commit install-hooks`, and retries once before failing with stable `E_PRECOMMIT_*` diagnostics.
+
 ## Failure Artifact Diagnostics
 
 When isolated Pester runs fail in `Run-PreCommitValidation.ps1`, keep throw messages compact and triage through warnings:
@@ -53,11 +67,12 @@ Track executable bit changes for hook wrapper scripts and keep trailing newline 
 ## Workflow
 
 1. Agentic early parity command: `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly`.
-2. Run targeted validators/safe fixers for edited domains before hooks.
-3. Use pre-commit if available for pre-commit and pre-push stages.
-4. Keep fallback PowerShell validation path available.
-5. Ensure fallback path propagates exit status.
-6. Use the full-validation wrapper for major session-close checks.
+2. Confirm shell/native tools are ready via preflight, or directly with `Invoke-ShellQualityChecks.ps1 -Tool All -EnsureOnly` and `Invoke-NativeQualityChecks.ps1 -Tool All -EnsureOnly`.
+3. Run targeted validators/safe fixers for edited domains before hooks.
+4. Use pre-commit if available for pre-commit and pre-push stages.
+5. Keep fallback PowerShell validation path available.
+6. Ensure fallback path propagates exit status.
+7. Use the full-validation wrapper for major session-close checks.
 
 ## References
 

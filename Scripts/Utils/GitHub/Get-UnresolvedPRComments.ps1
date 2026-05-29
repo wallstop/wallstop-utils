@@ -60,6 +60,11 @@ If set, wait until rate-limit reset when 429/403 rate-limit is encountered.
 If set, truncate thread comments for compact terminal readability using legacy limits
 (500 for top-level comments, 300 for latest replies). By default comments are not truncated.
 
+.PARAMETER KeepMarkup
+If set, preserve markup in comment bodies. By default, bot metadata, HTML tags,
+image embeds, and link URLs are stripped from rendered comment text. Embedded
+bot locations are still parsed and can still drive the rendered range.
+
 .PARAMETER Copy
 If set, copy the rendered output to clipboard in addition to writing to stdout.
 Clipboard copy failures are non-fatal and emit a warning.
@@ -109,6 +114,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [switch]$Truncate,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$KeepMarkup,
 
     [Parameter(Mandatory = $false)]
     [switch]$Copy,
@@ -803,6 +811,239 @@ function Get-GitHubHeaders {
     return [hashtable]$headers
 }
 
+function ConvertTo-EmbeddedLocationPath {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Target
+    )
+
+    $candidate = $Target.Trim()
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        return $null
+    }
+
+    $parsedUri = $null
+    if ([System.Uri]::TryCreate($candidate, [System.UriKind]::Absolute, [ref]$parsedUri) -and
+        (($parsedUri.Scheme -eq "https") -or ($parsedUri.Scheme -eq "http"))) {
+        $absolutePath = [System.Uri]::UnescapeDataString($parsedUri.AbsolutePath.TrimStart("/"))
+        $segments = @($absolutePath -split "/" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $blobIndex = -1
+        for ($index = 0; $index -lt $segments.Count; $index++) {
+            if ($segments[$index] -ceq "blob") {
+                $blobIndex = $index
+                break
+            }
+        }
+
+        if ($blobIndex -ge 0 -and $segments.Count -gt ($blobIndex + 2)) {
+            $candidate = ($segments[($blobIndex + 2)..($segments.Count - 1)] -join "/")
+        }
+        else {
+            $candidate = $absolutePath
+        }
+    }
+    else {
+        $candidate = [System.Uri]::UnescapeDataString($candidate)
+    }
+
+    $normalizedPath = (($candidate -replace "\\", "/").Trim()).TrimStart("/")
+    if ([string]::IsNullOrWhiteSpace($normalizedPath)) {
+        return $null
+    }
+
+    return $normalizedPath
+}
+
+function Get-EmbeddedCommentLocations {
+    [OutputType([object[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return @() # array-unwrap-safe: callers always wrap with @()
+    }
+
+    $locations = New-Object System.Collections.Generic.List[object]
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $ignoreCase = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $blocks = [regex]::Matches($Text, '<!--\s*LOCATIONS\s+START\s+(?<payload>[\s\S]*?)\s+LOCATIONS\s+END\s*-->', $ignoreCase)
+
+    foreach ($block in $blocks) {
+        $payload = $block.Groups["payload"].Value
+        $locationMatches = [regex]::Matches($payload, '(?<target>\S+?)#L(?<start>\d+)(?:-L?(?<end>\d+))?')
+        foreach ($locationMatch in $locationMatches) {
+            $path = ConvertTo-EmbeddedLocationPath -Target $locationMatch.Groups["target"].Value
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                continue
+            }
+
+            $lineStart = 0
+            if (-not [int]::TryParse($locationMatch.Groups["start"].Value, [ref]$lineStart) -or $lineStart -lt 1) {
+                continue
+            }
+
+            $lineEnd = $lineStart
+            if ($locationMatch.Groups["end"].Success) {
+                $parsedEnd = 0
+                if ([int]::TryParse($locationMatch.Groups["end"].Value, [ref]$parsedEnd) -and $parsedEnd -ge 1) {
+                    $lineEnd = $parsedEnd
+                }
+            }
+
+            if ($lineEnd -lt $lineStart) {
+                Write-Verbose "W_EMBEDDED_LOCATION_RANGE_INVERTED: Embedded comment location '$path' has end line $lineEnd before start line $lineStart; clamping end to start."
+                $lineEnd = $lineStart
+            }
+
+            $key = "{0}|{1}|{2}" -f $path, $lineStart, $lineEnd
+            if (-not $seen.Add($key)) {
+                continue
+            }
+
+            $locations.Add([pscustomobject]@{
+                    path      = $path
+                    lineStart = $lineStart
+                    lineEnd   = $lineEnd
+                }) | Out-Null
+        }
+    }
+
+    return @($locations.ToArray())
+}
+
+function Resolve-OutputCommentLocation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DefaultPath,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $DefaultStart,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $DefaultEnd,
+
+        [Parameter(Mandatory = $false)]
+        [object[]]$EmbeddedLocations = @()
+    )
+
+    $locations = @($EmbeddedLocations)
+    if ((Get-SafeCount -InputObject $locations) -gt 0) {
+        $preferredLocation = $null
+        if (-not [string]::IsNullOrWhiteSpace($DefaultPath) -and $DefaultPath -ne "<conversation>") {
+            foreach ($location in $locations) {
+                if ([string]$location.path -ceq $DefaultPath) {
+                    $preferredLocation = $location
+                    break
+                }
+            }
+
+            if ($null -eq $preferredLocation) {
+                foreach ($location in $locations) {
+                    if ([string]$location.path -ieq $DefaultPath) {
+                        $preferredLocation = $location
+                        break
+                    }
+                }
+            }
+        }
+
+        if ($null -eq $preferredLocation) {
+            Write-Verbose "W_EMBEDDED_LOCATION_PATH_MISMATCH: No embedded location path matched '$DefaultPath'; using first embedded location '$($locations[0].path)'."
+            $preferredLocation = $locations[0]
+        }
+
+        return [pscustomobject]@{
+            Path   = [string]$preferredLocation.path
+            Start  = [int]$preferredLocation.lineStart
+            End    = [int]$preferredLocation.lineEnd
+            Source = "embedded"
+        }
+    }
+
+    return [pscustomobject]@{
+        Path   = $DefaultPath
+        Start  = $DefaultStart
+        End    = $DefaultEnd
+        Source = "github"
+    }
+}
+
+function Remove-HtmlBlocksContainingText {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Text,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ElementName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$MarkerPattern
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $Text
+    }
+
+    $ignoreCase = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $escapedElementName = [regex]::Escape($ElementName)
+    $blockPattern = "<$escapedElementName\b[^>]*>[\s\S]*?</$escapedElementName>"
+    $matches = [regex]::Matches($Text, $blockPattern, $ignoreCase)
+    if ($matches.Count -eq 0) {
+        return $Text
+    }
+
+    $builder = [System.Text.StringBuilder]::new($Text)
+    for ($index = $matches.Count - 1; $index -ge 0; $index--) {
+        $match = $matches[$index]
+        if (-not [regex]::IsMatch($match.Value, $MarkerPattern, $ignoreCase)) {
+            continue
+        }
+
+        $builder.Remove($match.Index, $match.Length).Insert($match.Index, " ") | Out-Null
+    }
+
+    return $builder.ToString()
+}
+
+function Remove-MarkupFromCommentText {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $Text
+    }
+
+    $ignoreCase = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $cleaned = $Text
+    $cleaned = [regex]::Replace($cleaned, '<details\b[^>]*>\s*<summary\b[^>]*>\s*Additional Locations[\s\S]*?</details>', ' ', $ignoreCase)
+    $cleaned = Remove-HtmlBlocksContainingText -Text $cleaned -ElementName "div" -MarkerPattern 'cursor\.com/(?:open|agents)|fix-in-(?:cursor|web)'
+    $cleaned = Remove-HtmlBlocksContainingText -Text $cleaned -ElementName "sup" -MarkerPattern 'Reviewed by\s+\[?Cursor Bugbot|cursor\.com/bugbot'
+    $cleaned = [regex]::Replace($cleaned, '<!--[\s\S]*?-->', ' ')
+    $cleaned = $cleaned -replace '!\[[^\]]*\]\([^)]*\)', ' '
+    $cleaned = $cleaned -replace '(?<!!)\[([^\]]+)\]\([^)]*\)', '$1'
+    $cleaned = $cleaned -replace '<[^>]+>', ' '
+    $cleaned = $cleaned -replace '&nbsp;', ' '
+
+    return $cleaned
+}
+
 function Normalize-CommentText {
     [CmdletBinding()]
     param(
@@ -815,14 +1056,22 @@ function Normalize-CommentText {
         [int]$MaxLength = 500,
 
         [Parameter(Mandatory = $false)]
-        [switch]$DisableTruncation
+        [switch]$DisableTruncation,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$KeepMarkup
     )
 
     if ([string]::IsNullOrWhiteSpace($Text)) {
         return "(none)"
     }
 
-    $singleLine = (($Text -replace "\r\n", " ") -replace "\n", " " -replace "\r", " ").Trim()
+    $cleanedText = if ($KeepMarkup.IsPresent) { $Text } else { Remove-MarkupFromCommentText -Text $Text }
+    if ([string]::IsNullOrWhiteSpace($cleanedText)) {
+        return "(none)"
+    }
+
+    $singleLine = ($cleanedText -replace "\s+", " ").Trim()
     if ($DisableTruncation.IsPresent) {
         return $singleLine
     }
@@ -832,6 +1081,54 @@ function Normalize-CommentText {
     }
 
     return ($singleLine.Substring(0, $MaxLength) + " [...]")
+}
+
+function Resolve-ReviewThreadGitHubAnchor {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Thread
+    )
+
+    $currentStart = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("startLine")
+    $currentEnd = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("line")
+    $originalStart = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("originalStartLine")
+    $originalEnd = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("originalLine")
+
+    $start = if ($null -ne $currentStart) {
+        $currentStart
+    }
+    elseif ($null -ne $currentEnd) {
+        $currentEnd
+    }
+    elseif ($null -ne $originalStart) {
+        $originalStart
+    }
+    else {
+        $originalEnd
+    }
+
+    $end = if ($null -ne $currentEnd) {
+        $currentEnd
+    }
+    elseif ($null -ne $currentStart) {
+        $currentStart
+    }
+    elseif ($null -ne $originalEnd) {
+        $originalEnd
+    }
+    else {
+        $originalStart
+    }
+
+    if ($null -ne $start -and $null -ne $end -and $end -lt $start) {
+        $end = $start
+    }
+
+    return [pscustomobject]@{
+        Start = $start
+        End   = $end
+    }
 }
 
 function Get-ObjectPropertyValue {
@@ -1743,7 +2040,10 @@ function Convert-ReviewThreadToOutputRecord {
         [string]$GitHubHost,
 
         [Parameter(Mandatory = $false)]
-        [switch]$Truncate
+        [switch]$Truncate,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$KeepMarkup
     )
 
     $isResolved = Get-ObjectPropertyValue -InputObject $Thread -Name "isResolved"
@@ -1785,32 +2085,40 @@ function Convert-ReviewThreadToOutputRecord {
     $lineRange = Resolve-ReviewThreadLineRange -Thread $Thread
     $lineStart = $lineRange.Start
     $lineEnd = $lineRange.End
+    $githubAnchor = Resolve-ReviewThreadGitHubAnchor -Thread $Thread
 
     $threadPath = Get-ObjectPropertyValue -InputObject $Thread -Name "path"
     $safePath = if ([string]::IsNullOrWhiteSpace($threadPath)) { "<conversation>" } else { ([string]$threadPath -replace "\\", "/") }
+    $embeddedLocations = @(Get-EmbeddedCommentLocations -Text $topBody)
+    $outputLocation = Resolve-OutputCommentLocation -DefaultPath $safePath -DefaultStart $lineStart -DefaultEnd $lineEnd -EmbeddedLocations $embeddedLocations
     $topLevelComment = if ($Truncate.IsPresent) {
-        Normalize-CommentText -Text $topBody -MaxLength 500
+        Normalize-CommentText -Text $topBody -MaxLength 500 -KeepMarkup:$KeepMarkup
     }
     else {
-        Normalize-CommentText -Text $topBody -DisableTruncation
+        Normalize-CommentText -Text $topBody -DisableTruncation -KeepMarkup:$KeepMarkup
     }
 
     $latestReplySummary = if ($null -eq $latestReply) {
         $null
     }
     elseif ($Truncate.IsPresent) {
-        Normalize-CommentText -Text $latestReplyBody -MaxLength 300
+        Normalize-CommentText -Text $latestReplyBody -MaxLength 300 -KeepMarkup:$KeepMarkup
     }
     else {
-        Normalize-CommentText -Text $latestReplyBody -DisableTruncation
+        Normalize-CommentText -Text $latestReplyBody -DisableTruncation -KeepMarkup:$KeepMarkup
     }
 
     $threadId = Get-ObjectPropertyValue -InputObject $Thread -Name "id"
 
     return [pscustomobject]@{
-        path               = $safePath
-        lineStart          = $lineStart
-        lineEnd            = $lineEnd
+        path               = $outputLocation.Path
+        lineStart          = $outputLocation.Start
+        lineEnd            = $outputLocation.End
+        locationSource     = $outputLocation.Source
+        githubPath         = $safePath
+        githubLineStart    = $githubAnchor.Start
+        githubLineEnd      = $githubAnchor.End
+        embeddedLocations  = @($embeddedLocations)
         topLevelComment    = $topLevelComment
         latestReplySummary = $latestReplySummary
         threadId           = [string]$threadId
@@ -2003,6 +2311,9 @@ function Get-UnresolvedReviewThreads {
         [switch]$Truncate,
 
         [Parameter(Mandatory = $false)]
+        [switch]$KeepMarkup,
+
+        [Parameter(Mandatory = $false)]
         [string[]]$AllowedGitHubHostsNormalized = @(),
 
         [Parameter(Mandatory = $false)]
@@ -2141,7 +2452,7 @@ query GetReviewThreads(
             }
 
             $seenThreadIds.Add([string]$thread.id) | Out-Null
-            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost -Truncate:$Truncate
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost -Truncate:$Truncate -KeepMarkup:$KeepMarkup
             if ($null -ne $record) {
                 $allRecords.Add($record)
             }
@@ -2352,7 +2663,7 @@ function Invoke-Main {
             Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
         }
 
-        $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
+        $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
     }
     catch {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
@@ -2371,7 +2682,7 @@ function Invoke-Main {
             Assert-IsHashtableLike -Value $headers -Name "Headers"
 
             try {
-                $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
+                $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
                 $anonymousRetrySucceeded = $true
             }
             catch {
@@ -2411,7 +2722,7 @@ function Invoke-Main {
                 Assert-IsHashtableLike -Value $headers -Name "Headers"
 
                 Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
-                $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
+                $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
             }
             else {
                 throw $message

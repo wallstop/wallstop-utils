@@ -12,8 +12,8 @@ BeforeAll {
 
 Describe "Invoke-FullValidation workflow contract" {
     $requiredValidationCommands = @(
-        @{ Name = "pre-commit stage all files"; Pattern = 'pre-commit\s+run\s+--hook-stage\s+pre-commit\s+--all-files' }
-        @{ Name = "pre-push stage all files"; Pattern = 'pre-commit\s+run\s+--hook-stage\s+pre-push\s+--all-files' }
+        @{ Name = "pre-commit stage all files"; Pattern = 'Invoke-PreCommitWithRecovery\.ps1[\s\S]*-HookStage\s+pre-commit\s+-AllFiles' }
+        @{ Name = "pre-push stage all files"; Pattern = 'Invoke-PreCommitWithRecovery\.ps1[\s\S]*-HookStage\s+pre-push\s+-AllFiles' }
     )
 
     $requiredFailureCodes = @(
@@ -26,6 +26,9 @@ Describe "Invoke-FullValidation workflow contract" {
         "E_VALIDATION_POWERSHELL_MODULES_MISSING"
         "E_VALIDATION_MODULE_HELPER_MISSING"
         "E_VALIDATION_DIAGNOSTICS_HELPER_MISSING"
+        "E_VALIDATION_NATIVE_TOOL_SCRIPT_MISSING"
+        "E_VALIDATION_PRECOMMIT_RECOVERY_SCRIPT_MISSING"
+        "E_VALIDATION_PRECOMMIT_ENV_PREFLIGHT_FAILED"
         "E_VALIDATION_STATUS_BEFORE_NULL"
         "E_VALIDATION_STATUS_AFTER_NULL"
     )
@@ -75,6 +78,15 @@ Describe "Invoke-FullValidation workflow contract" {
         $script:validationScript | Should -Match 'Invoke-ScriptAnalyzer'
         $script:validationScript | Should -Match 'Invoke-Formatter'
         $script:validationScript | Should -Match 'Invoke-Pester'
+    }
+
+    It "preflights pinned native tools and pre-commit hook environments before validation" {
+        $script:validationScript | Should -Match 'Assert-NativeQualityToolAvailability'
+        $script:validationScript | Should -Match 'Invoke-NativeQualityChecks\.ps1'
+        $script:validationScript | Should -Match 'native quality tool prerequisite check'
+        $script:validationScript | Should -Match 'Assert-PreCommitHookEnvironmentAvailability'
+        $script:validationScript | Should -Match 'Invoke-PreCommitWithRecovery\.ps1'
+        $script:validationScript | Should -Match 'pre-commit hook environment preflight'
     }
 
     It "reuses shared diagnostics helper for output previews" {

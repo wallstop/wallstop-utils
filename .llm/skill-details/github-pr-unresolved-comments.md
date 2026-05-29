@@ -26,9 +26,14 @@ Keep diagnostics explicit and maintain coverage for URI safety, retries, and hos
 
 Preserve this utility's displayed range contract for review-thread locations:
 
+- When a comment body contains Cursor/Bugbot `LOCATIONS` metadata, parse it before comment cleanup and use the first matching embedded location for displayed `path`/`lineStart`/`lineEnd`; preserve the current GitHub anchor when available, falling back to original metadata, in `githubPath`/`githubLineStart`/`githubLineEnd`, and expose `locationSource` plus `embeddedLocations` for JSON consumers.
 - Combine current/original GitHub line metadata (`startLine`, `line`, `originalStartLine`, `originalLine`) using the script's min-start/max-end fallback behavior; avoid unused GraphQL fields.
 - Keep regressions for mixed current/original fallback cases, including original-start/current-end and original-start/larger-original-end ranges.
 - In thread/comment conversion paths, use the script's property-access helper so `[pscustomobject]` responses and dictionary-backed fixtures both work.
+
+## Bot Comment Cleanup
+
+Rendered comments strip markup by default. Keep coverage that removes HTML comments, markdown images, link URLs, bare HTML tags, Cursor/Bugbot action-button blocks, Bugbot footers, and Additional Locations details while preserving the actual finding text. `-KeepMarkup` is the opt-out for raw archival/debug comment text; embedded-location parsing still runs for range rendering.
 
 ## Clipboard Fallback And Strict Mode
 
@@ -71,8 +76,9 @@ For PowerShell terminal usage, keep value discovery aids in the script parameter
 6. Retry recoverable auth failures anonymously once before interactive login prompts in PR URL/interactive flows.
 7. Keep non-global IP blocks and host allowlist checks active.
 8. Preserve copy fallback order and strict mode behavior.
-9. Preserve output-file write semantics and UTF-8 encoding.
-10. Keep PowerShell completion metadata aligned with supported parameter values.
+9. Preserve bot comment cleanup and embedded-location behavior with both behavioral and policy tests.
+10. Preserve output-file write semantics and UTF-8 encoding.
+11. Keep PowerShell completion metadata aligned with supported parameter values.
 
 ## References
 

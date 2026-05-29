@@ -93,6 +93,50 @@ function Get-PwshExecutableOrThrow {
     return $pwshCommand.Source
 }
 
+function Get-FileContentHashOrMissing {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return '(missing)'
+    }
+
+    try {
+        return [string](Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash
+    }
+    catch {
+        throw "E_CONFIG_ERROR: Failed to hash file '$Path'. $($_.Exception.Message)"
+    }
+}
+
+function Get-RelativeFileHashSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$RepoRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$RelativePaths = @()
+    )
+
+    $snapshot = @{}
+    $normalizedRelativePaths = @(
+        $RelativePaths |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique
+    )
+
+    foreach ($relativePath in $normalizedRelativePaths) {
+        $targetPath = Join-Path -Path $RepoRoot -ChildPath $relativePath
+        $snapshot[$relativePath] = Get-FileContentHashOrMissing -Path $targetPath
+    }
+
+    return $snapshot
+}
+
 function Get-FirstRootErrorCode {
     param(
         [Parameter(Mandatory = $false)]
@@ -796,9 +840,9 @@ $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Pa
 Push-Location -LiteralPath $repoRoot
 
 try {
+    $gitExecutable = Get-GitExecutableOrThrow
     $stagedFiles = @()
     if (-not $All) {
-        $gitExecutable = Get-GitExecutableOrThrow
         $stagedFileQuery = 'git diff --cached --name-only --diff-filter=ACMR'
         $stagedFileOutput = @(& $gitExecutable diff --cached --name-only --diff-filter=ACMR 2>&1)
         if ($LASTEXITCODE -ne 0) {
@@ -806,13 +850,15 @@ try {
             throw "E_CONFIG_ERROR: Failed to read staged files using '$stagedFileQuery' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"
         }
 
-        $stagedFiles = $stagedFileOutput
+        $stagedFiles = @($stagedFileOutput)
     }
 
     $utilsTestPattern = '^(Scripts/Utils|Tests/Utils)/.+\.ps1$'
     $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
     $scriptPattern = '^Scripts/Utils/.+\.ps1$'
+    $shellQualityPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push))$'
     $shellSafetyTriggerPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push)|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1)$'
+    $nativeQualityPattern = '^(Config/Wezterm/wezterm\.lua|\.github/workflows/.+\.(yml|yaml))$'
     $windowsLanguagePattern = '^(Scripts/AutoHotKey/.+\.ahk|Config/\.config/.+\.ahk|Scripts/.+\.bat)$'
 
     $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
@@ -835,6 +881,20 @@ try {
     $utilsTestFiles = @($stagedFiles | Where-Object { $_ -match $utilsTestPattern })
     $githubTestFiles = @($stagedFiles | Where-Object { $_ -match $githubTestPattern })
     $scriptFiles = @($stagedFiles | Where-Object { $_ -match $scriptPattern })
+    if ($All) {
+        $trackedFileOutput = @(& $gitExecutable ls-files 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            $gitErrorText = if ($trackedFileOutput.Count -gt 0) { $trackedFileOutput -join ' ' } else { '(no output)' }
+            throw "E_CONFIG_ERROR: Failed to read tracked files using 'git ls-files' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"
+        }
+
+        $shellQualityFiles = @($trackedFileOutput | Where-Object { $_ -match $shellQualityPattern })
+        $nativeQualityFiles = @($trackedFileOutput | Where-Object { $_ -match $nativeQualityPattern })
+    }
+    else {
+        $shellQualityFiles = @($stagedFiles | Where-Object { $_ -match $shellQualityPattern })
+        $nativeQualityFiles = @($stagedFiles | Where-Object { $_ -match $nativeQualityPattern })
+    }
     $shellSafetyFiles = @($stagedFiles | Where-Object { $_ -match $shellSafetyTriggerPattern })
     $windowsLanguageFiles = @($stagedFiles | Where-Object { $_ -match $windowsLanguagePattern })
     $llmHarnessFiles = @($stagedFiles | Where-Object { $_ -match $llmHarnessPattern })
@@ -866,22 +926,28 @@ try {
 
     $runUtilsTests = $All -or $utilsTestFiles.Count -gt 0
     $runGitHubTests = $All -or $githubTestFiles.Count -gt 0
+    $runShellQualityChecks = $All -or $shellQualityFiles.Count -gt 0
+    $runNativeQualityChecks = $All -or $nativeQualityFiles.Count -gt 0
     $runShellSafetySuite = -not $runUtilsTests -and ($All -or $shellSafetyFiles.Count -gt 0)
     $runWindowsLanguageChecks = $All -or $windowsLanguageFiles.Count -gt 0
     $runAnalyzer = $analyzerTargets.Count -gt 0
     $runFormatOperatorSafetyCheck = $All -or $scriptFiles.Count -gt 0 -or $utilsTestFiles.Count -gt 0 -or $githubTestFiles.Count -gt 0
     $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
     $analyzerTargetsText = if ($analyzerTargets.Count -gt 0) { $analyzerTargets -join ', ' } else { '(none)' }
+    $shellQualityMatchedFilesText = if ($shellQualityFiles.Count -gt 0) { $shellQualityFiles -join ', ' } else { '(none)' }
+    $nativeQualityMatchedFilesText = if ($nativeQualityFiles.Count -gt 0) { $nativeQualityFiles -join ', ' } else { '(none)' }
     $shellSafetyMatchedFilesText = if ($shellSafetyFiles.Count -gt 0) { $shellSafetyFiles -join ', ' } else { '(none)' }
     $windowsLanguageMatchedFilesText = if ($windowsLanguageFiles.Count -gt 0) { $windowsLanguageFiles -join ', ' } else { '(none)' }
     $llmHarnessMatchedFilesText = if ($llmHarnessFiles.Count -gt 0) { $llmHarnessFiles -join ', ' } else { '(none)' }
 
     Write-Verbose (
-        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runShellSafetySuite={4}; runWindowsLanguageChecks={5}; runAnalyzer={6}; analyzerTargetCount={7}; runLlmHarnessValidation={8}" -f
+        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runShellQualityChecks={4}; runNativeQualityChecks={5}; runShellSafetySuite={6}; runWindowsLanguageChecks={7}; runAnalyzer={8}; analyzerTargetCount={9}; runLlmHarnessValidation={10}" -f
         $All.IsPresent,
         $stagedFiles.Count,
         $runUtilsTests,
         $runGitHubTests,
+        $runShellQualityChecks,
+        $runNativeQualityChecks,
         $runShellSafetySuite,
         $runWindowsLanguageChecks,
         $runAnalyzer,
@@ -898,7 +964,7 @@ try {
         Write-Verbose ("Skipping LLM harness validation: allMode={0}; source={1}; matchedCount={2}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count)
     }
 
-    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellSafetySuite -and -not $runWindowsLanguageChecks -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
+    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellQualityChecks -and -not $runNativeQualityChecks -and -not $runShellSafetySuite -and -not $runWindowsLanguageChecks -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
         Write-Verbose "No staged files requiring utility validation; skipping validation."
         return
     }
@@ -938,6 +1004,173 @@ try {
             $shellSafetyFiles.Count,
             $shellSafetyMatchedFilesText
         )
+    }
+
+    if ($runShellQualityChecks) {
+        Write-Verbose (
+            "Shell quality trigger diagnostics: allMode={0}; matchedCount={1}; matchedFiles={2}" -f
+            $All.IsPresent,
+            $shellQualityFiles.Count,
+            $shellQualityMatchedFilesText
+        )
+
+        $shellQualityScriptPath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1"
+        if (-not (Test-Path -LiteralPath $shellQualityScriptPath -PathType Leaf)) {
+            throw "E_CONFIG_ERROR: Shell quality checker is missing at '$shellQualityScriptPath'."
+        }
+
+        if ($shellQualityFiles.Count -gt 0) {
+            $shellQualityDiffArgs = @("diff", "--name-only", "--") + @($shellQualityFiles)
+            $preShellQualityDiffOutput = @()
+            $preShellQualityDirtyFileHashes = @{}
+            if ($All) {
+                $preShellQualityDiffOutput = @(& $gitExecutable @shellQualityDiffArgs 2>&1)
+                if ($LASTEXITCODE -ne 0) {
+                    $diffErrorText = if ($preShellQualityDiffOutput.Count -gt 0) { $preShellQualityDiffOutput -join ' ' } else { '(no output)' }
+                    throw "E_CONFIG_ERROR: Failed to check pre-format shell quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+                }
+
+                $preShellQualityDiffOutput = @(
+                    $preShellQualityDiffOutput |
+                        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                        Sort-Object -Unique
+                )
+                $preShellQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preShellQualityDiffOutput
+            }
+            else {
+                $unstagedShellQualityDiffOutput = @(& $gitExecutable @shellQualityDiffArgs 2>&1)
+                if ($LASTEXITCODE -ne 0) {
+                    $diffErrorText = if ($unstagedShellQualityDiffOutput.Count -gt 0) { $unstagedShellQualityDiffOutput -join ' ' } else { '(no output)' }
+                    throw "E_CONFIG_ERROR: Failed to check unstaged shell quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+                }
+
+                $unstagedShellQualityFiles = @(
+                    $unstagedShellQualityDiffOutput |
+                        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                        Sort-Object -Unique
+                )
+                if ($unstagedShellQualityFiles.Count -gt 0) {
+                    $unstagedShellQualityText = $unstagedShellQualityFiles -join ', '
+                    throw "E_PRECOMMIT_SHELL_QUALITY_RESTAGE_REQUIRED: Staged shell files have unstaged working-tree changes: $unstagedShellQualityText. Run 'pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All -Fix <paths>', stage the updated files, then rerun pre-commit validation."
+                }
+            }
+
+            Write-Host "Running shell formatting and lint validation..."
+            & $shellQualityScriptPath -Tool All -Fix @shellQualityFiles
+
+            $postShellQualityDiffOutput = @(& $gitExecutable @shellQualityDiffArgs 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                $diffErrorText = if ($postShellQualityDiffOutput.Count -gt 0) { $postShellQualityDiffOutput -join ' ' } else { '(no output)' }
+                throw "E_CONFIG_ERROR: Failed to check post-format shell quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+            }
+
+            $formattedShellQualityFiles = @(
+                $postShellQualityDiffOutput |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    Sort-Object -Unique
+            )
+
+            $allModeFormatterModifiedDirtyFiles = @()
+            if ($All -and $preShellQualityDiffOutput.Count -gt 0) {
+                $postShellQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preShellQualityDiffOutput
+                $allModeFormatterModifiedDirtyFiles = @(
+                    foreach ($relativePath in $preShellQualityDiffOutput) {
+                        $beforeHash = [string]$preShellQualityDirtyFileHashes[$relativePath]
+                        $afterHash = [string]$postShellQualityDirtyFileHashes[$relativePath]
+                        if ($beforeHash -ne $afterHash) {
+                            $relativePath
+                        }
+                    }
+                )
+            }
+
+            if ($All) {
+                Write-Verbose (
+                    "Shell quality all-mode drift snapshots: beforeCount={0}; afterCount={1}; beforeFiles={2}; afterFiles={3}; preDirtyModifiedCount={4}" -f
+                    $preShellQualityDiffOutput.Count,
+                    $formattedShellQualityFiles.Count,
+                    ($(if ($preShellQualityDiffOutput.Count -gt 0) { $preShellQualityDiffOutput -join ', ' } else { '(none)' })),
+                    ($(if ($formattedShellQualityFiles.Count -gt 0) { $formattedShellQualityFiles -join ', ' } else { '(none)' })),
+                    $allModeFormatterModifiedDirtyFiles.Count
+                )
+            }
+
+            $shellFormatterChangedFiles = @(
+                if ($All) {
+                    $allModeNewlyDirtyFiles = @(
+                        Compare-Object -ReferenceObject $preShellQualityDiffOutput -DifferenceObject $formattedShellQualityFiles |
+                            Where-Object { $_.SideIndicator -eq '=>' } |
+                            ForEach-Object { [string]$_.InputObject }
+                    )
+
+                    $allModeNewlyDirtyFiles + $allModeFormatterModifiedDirtyFiles |
+                        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                        Sort-Object -Unique
+                }
+                else {
+                    $formattedShellQualityFiles
+                }
+            )
+
+            if ($shellFormatterChangedFiles.Count -gt 0) {
+                $formattedShellQualityText = $shellFormatterChangedFiles -join ', '
+                throw "E_PRECOMMIT_SHELL_QUALITY_RESTAGE_REQUIRED: Shell formatter updated file(s): $formattedShellQualityText. Stage the updated files, then rerun pre-commit validation."
+            }
+        }
+    }
+
+    if ($runNativeQualityChecks) {
+        Write-Verbose (
+            "Native quality trigger diagnostics: allMode={0}; matchedCount={1}; matchedFiles={2}" -f
+            $All.IsPresent,
+            $nativeQualityFiles.Count,
+            $nativeQualityMatchedFilesText
+        )
+
+        $nativeQualityScriptPath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1"
+        if (-not (Test-Path -LiteralPath $nativeQualityScriptPath -PathType Leaf)) {
+            throw "E_CONFIG_ERROR: Native quality checker is missing at '$nativeQualityScriptPath'."
+        }
+
+        if ($nativeQualityFiles.Count -gt 0) {
+            $nativeQualityDiffArgs = @("diff", "--name-only", "--") + @($nativeQualityFiles)
+            if (-not $All) {
+                $unstagedNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
+                if ($LASTEXITCODE -ne 0) {
+                    $diffErrorText = if ($unstagedNativeQualityDiffOutput.Count -gt 0) { $unstagedNativeQualityDiffOutput -join ' ' } else { '(no output)' }
+                    throw "E_CONFIG_ERROR: Failed to check unstaged native quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+                }
+
+                $unstagedNativeQualityFiles = @(
+                    $unstagedNativeQualityDiffOutput |
+                        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                        Sort-Object -Unique
+                )
+                if ($unstagedNativeQualityFiles.Count -gt 0) {
+                    $unstagedNativeQualityText = $unstagedNativeQualityFiles -join ', '
+                    throw "E_PRECOMMIT_NATIVE_QUALITY_RESTAGE_REQUIRED: Staged native quality files have unstaged working-tree changes: $unstagedNativeQualityText. Run 'pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1 -Tool All -Fix <paths>', stage the updated files, then rerun pre-commit validation."
+                }
+            }
+
+            Write-Host "Running Lua and GitHub workflow native quality validation..."
+            & $nativeQualityScriptPath -Tool All -Fix @nativeQualityFiles
+
+            $postNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                $diffErrorText = if ($postNativeQualityDiffOutput.Count -gt 0) { $postNativeQualityDiffOutput -join ' ' } else { '(no output)' }
+                throw "E_CONFIG_ERROR: Failed to check post-format native quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+            }
+
+            $formattedNativeQualityFiles = @(
+                $postNativeQualityDiffOutput |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    Sort-Object -Unique
+            )
+            if ($formattedNativeQualityFiles.Count -gt 0) {
+                $formattedNativeQualityText = $formattedNativeQualityFiles -join ', '
+                throw "E_PRECOMMIT_NATIVE_QUALITY_RESTAGE_REQUIRED: Native formatter updated file(s): $formattedNativeQualityText. Stage the updated files, then rerun pre-commit validation."
+            }
+        }
     }
 
     if ($runFormatOperatorSafetyCheck) {

@@ -124,7 +124,7 @@ _can_use_sudo_non_interactive() {
 }
 
 _ensure_apt_index_updated() {
-  if (( ${_apt_index_updated:-0} )); then
+  if ((${_apt_index_updated:-0})); then
     return 0
   fi
 
@@ -275,10 +275,22 @@ fi
 
 if command -v pre-commit > /dev/null 2>&1; then
   git config --local core.hooksPath .githooks || true
-  if pre-commit install --install-hooks --hook-type pre-commit --hook-type pre-push; then
-    _log "pre-commit hooks installed and hook environments pre-warmed."
+  if pre-commit install --hook-type pre-commit --hook-type pre-push; then
+    _log "pre-commit hooks installed."
   else
     _warn "pre-commit install returned non-zero; hooks may not be fully registered."
+  fi
+
+  if command -v pwsh > /dev/null 2>&1; then
+    if pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1 -InstallHooksOnly; then
+      _log "pre-commit hook environments pre-warmed."
+    else
+      _warn "pre-commit hook environment prewarm failed; validation preflight will retry later."
+    fi
+  elif pre-commit install-hooks; then
+    _log "pre-commit hook environments pre-warmed."
+  else
+    _warn "pre-commit install-hooks returned non-zero; validation preflight will retry later."
   fi
 else
   _warn "pre-commit not found after install step; git hooks not registered."

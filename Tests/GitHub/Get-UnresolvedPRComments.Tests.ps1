@@ -630,6 +630,104 @@ Describe "Write-RenderedOutputToFile" {
     }
 }
 
+Describe "Normalize-CommentText" {
+    It "strips comment markup by default for <Name>" -ForEach @(
+        @{
+            Name     = "HTML comments"
+            CaseText = "<!-- LOCATIONS START file.ps1#L93-L96 LOCATIONS END --> Found a potential issue."
+            Expected = "Found a potential issue."
+        },
+        @{
+            Name     = "Markdown images"
+            CaseText = "Look at this: ![screenshot](https://example.test/img.png) wow"
+            Expected = "Look at this: wow"
+        },
+        @{
+            Name     = "Markdown links"
+            CaseText = "See [the docs](https://example.test/docs) for details"
+            Expected = "See the docs for details"
+        },
+        @{
+            Name     = "HTML tags"
+            CaseText = "Hello<br>world<img src='x'/>"
+            Expected = "Hello world"
+        },
+        @{
+            Name     = "multiple HTML comments"
+            CaseText = "<!-- a --> text <!-- b --> more"
+            Expected = "text more"
+        },
+        @{
+            Name     = "Cursor metadata block"
+            CaseText = "<!-- LOCATIONS START scripts/test-llm-harness.ps1#L93-L96 scripts/test-llm-harness.ps1#L110-L118 LOCATIONS END -->`n`nPotential issue at line 96: [Read more](https://cursor.example/blog)"
+            Expected = "Potential issue at line 96: Read more"
+        },
+        @{
+            Name     = "user HTML before Cursor button block"
+            CaseText = '<div>Keep this context</div><div><a href="https://cursor.com/open?link=abc">Fix in Cursor</a></div> Actual finding.'
+            Expected = "Keep this context Actual finding."
+        }
+    ) {
+        param($Name, $CaseText, $Expected)
+
+        $normalized = Normalize-CommentText -Text $CaseText -DisableTruncation
+
+        $normalized | Should -BeExactly $Expected
+    }
+
+    It "returns none when stripping leaves no visible text" {
+        Normalize-CommentText -Text "![img](https://example.test/img.png)" -DisableTruncation | Should -Be "(none)"
+    }
+
+    It "preserves markup when KeepMarkup is set" {
+        $input = "See [the docs](https://example.test/docs) <em>now</em>"
+
+        $normalized = Normalize-CommentText -Text $input -DisableTruncation -KeepMarkup
+
+        $normalized | Should -BeExactly $input
+    }
+}
+
+Describe "Get-EmbeddedCommentLocations" {
+    It "extracts Cursor Bugbot LOCATIONS ranges in order" {
+        $body = "<!-- LOCATIONS START scripts/test-llm-harness.ps1#L93-L96 scripts/test-llm-harness.ps1#L110-L118 LOCATIONS END -->"
+
+        $locations = @(Get-EmbeddedCommentLocations -Text $body)
+
+        $locations.Count | Should -Be 2
+        $locations[0].path | Should -Be "scripts/test-llm-harness.ps1"
+        $locations[0].lineStart | Should -Be 93
+        $locations[0].lineEnd | Should -Be 96
+        $locations[1].path | Should -Be "scripts/test-llm-harness.ps1"
+        $locations[1].lineStart | Should -Be 110
+        $locations[1].lineEnd | Should -Be 118
+    }
+
+    It "normalizes GitHub blob URLs and single-line anchors" {
+        $body = "<!-- LOCATIONS START https://github.com/org/repo/blob/abc123/Scripts/Some%20File.ps1#L10 scripts/other.ps1#L20-L22 LOCATIONS END -->"
+
+        $locations = @(Get-EmbeddedCommentLocations -Text $body)
+
+        $locations.Count | Should -Be 2
+        $locations[0].path | Should -Be "Scripts/Some File.ps1"
+        $locations[0].lineStart | Should -Be 10
+        $locations[0].lineEnd | Should -Be 10
+        $locations[1].path | Should -Be "scripts/other.ps1"
+        $locations[1].lineStart | Should -Be 20
+        $locations[1].lineEnd | Should -Be 22
+    }
+
+    It "clamps inverted embedded ranges to the start line" {
+        $body = "<!-- LOCATIONS START scripts/test-llm-harness.ps1#L96-L93 LOCATIONS END -->"
+
+        $locations = @(Get-EmbeddedCommentLocations -Text $body)
+
+        $locations.Count | Should -Be 1
+        $locations[0].lineStart | Should -Be 96
+        $locations[0].lineEnd | Should -Be 96
+    }
+}
+
 Describe "Convert-ReviewThreadToOutputRecord" {
     It "returns null for resolved threads" {
         $thread = [pscustomobject]@{
@@ -666,20 +764,54 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $propertyNames = @($record.PSObject.Properties.Name)
 
         ($propertyNames -ccontains "path") | Should -BeTrue
+        ($propertyNames -ccontains "locationSource") | Should -BeTrue
+        ($propertyNames -ccontains "githubPath") | Should -BeTrue
+        ($propertyNames -ccontains "githubLineStart") | Should -BeTrue
+        ($propertyNames -ccontains "githubLineEnd") | Should -BeTrue
+        ($propertyNames -ccontains "embeddedLocations") | Should -BeTrue
         ($propertyNames -ccontains "owner") | Should -BeTrue
         ($propertyNames -ccontains "repo") | Should -BeTrue
         ($propertyNames -ccontains "Path") | Should -BeFalse
+        ($propertyNames -ccontains "GithubLineEnd") | Should -BeFalse
         ($propertyNames -ccontains "Owner") | Should -BeFalse
         ($propertyNames -ccontains "Repo") | Should -BeFalse
         $record.path | Should -Be "src/main.ts"
         $record.lineStart | Should -Be 10
         $record.lineEnd | Should -Be 12
+        $record.locationSource | Should -Be "github"
+        $record.githubPath | Should -Be "src/main.ts"
+        $record.githubLineStart | Should -Be 10
+        $record.githubLineEnd | Should -Be 12
+        @($record.embeddedLocations).Count | Should -Be 0
         $record.topLevelComment | Should -Be "Top level comment"
         $record.latestReplySummary | Should -Be "Reply summary"
         $record.threadId | Should -Be "THREAD_1"
         $record.owner | Should -Be "org"
         $record.repo | Should -Be "repo"
         $record.url | Should -Be "https://github.com/org/repo/pull/77"
+    }
+
+    It "preserves current GitHub anchor fields separately from merged display ranges" {
+        $thread = [pscustomobject]@{
+            id                = "THREAD_DIVERGED_ANCHOR"
+            isResolved        = $false
+            path              = "src/rebased.ts"
+            startLine         = 20
+            line              = 25
+            originalStartLine = 10
+            originalLine      = 15
+            comments          = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = "Rebased range comment" })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+
+        $record.locationSource | Should -Be "github"
+        $record.lineStart | Should -Be 10
+        $record.lineEnd | Should -Be 25
+        $record.githubLineStart | Should -Be 20
+        $record.githubLineEnd | Should -Be 25
     }
 
     It "uses original start line when current startLine is unavailable" {
@@ -856,6 +988,75 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record.latestReplySummary.Length | Should -Be 306
         $record.topLevelComment | Should -Match "\[\.\.\.\]$"
         $record.latestReplySummary | Should -Match "\[\.\.\.\]$"
+    }
+
+    It "uses embedded Cursor Bugbot locations for rendered output and strips bot chrome" {
+        $body = @'
+### BOM test never actually writes a BOM to file  **Low Severity**
+<!-- DESCRIPTION START --> The `New-TempFile` helper does not prepend the UTF-8 BOM preamble. <!-- DESCRIPTION END -->
+<!-- BUGBOT_BUG_ID: 9ba7cf02-5286-48f8-9b14-368e1013dd72 -->
+<!-- LOCATIONS START scripts/test-llm-harness.ps1#L93-L96 scripts/test-llm-harness.ps1#L110-L118 LOCATIONS END -->
+<details><summary>Additional Locations (1)</summary>
+
+- [`scripts/test-llm-harness.ps1#L110-L118`](https://github.com/org/repo/blob/sha/scripts/test-llm-harness.ps1#L110-L118)
+</details>
+<div><a href="https://cursor.com/open?link=abc"><picture><img alt="Fix in Cursor" width="115" src="https://cursor.com/assets/fix-in-cursor-dark.png"></picture></a></div>
+<sup>Reviewed by [Cursor Bugbot](https://cursor.com/bugbot) for commit abc. Configure [here](https://cursor.com/dashboard/bugbot).</sup>
+'@
+        $thread = [pscustomobject]@{
+            id                = "THREAD_CURSOR_BUGBOT"
+            isResolved        = $false
+            path              = "scripts/test-llm-harness.ps1"
+            startLine         = 96
+            line              = 96
+            originalStartLine = 96
+            originalLine      = 96
+            comments          = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+
+        $record.path | Should -Be "scripts/test-llm-harness.ps1"
+        $record.lineStart | Should -Be 93
+        $record.lineEnd | Should -Be 96
+        $record.locationSource | Should -Be "embedded"
+        $record.githubPath | Should -Be "scripts/test-llm-harness.ps1"
+        $record.githubLineStart | Should -Be 96
+        $record.githubLineEnd | Should -Be 96
+        @($record.embeddedLocations).Count | Should -Be 2
+        $record.embeddedLocations[1].lineStart | Should -Be 110
+        $record.embeddedLocations[1].lineEnd | Should -Be 118
+
+        $record.topLevelComment | Should -Match "BOM test never actually writes a BOM"
+        $record.topLevelComment | Should -Match "UTF-8 BOM preamble"
+        $record.topLevelComment | Should -Not -Match "LOCATIONS|BUGBOT_BUG_ID|Additional Locations|Fix in Cursor|Reviewed by|cursor\.com|https?://|<details|<div|<sup|!\["
+
+        $text = Format-UnresolvedThreadsAsText -Records @($record)
+        $text | Should -Match "\(scripts/test-llm-harness\.ps1\) 93-96"
+    }
+
+    It "preserves markup with KeepMarkup while still using embedded locations" {
+        $body = '<!-- LOCATIONS START scripts/test-llm-harness.ps1#L93-L96 LOCATIONS END --> Finding with [docs](https://example.test/docs).'
+        $thread = [pscustomobject]@{
+            id         = "THREAD_KEEP_MARKUP_EMBEDDED"
+            isResolved = $false
+            path       = "scripts/test-llm-harness.ps1"
+            startLine  = 96
+            line       = 96
+            comments   = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com" -KeepMarkup
+
+        $record.locationSource | Should -Be "embedded"
+        $record.lineStart | Should -Be 93
+        $record.lineEnd | Should -Be 96
+        $record.topLevelComment | Should -Match '<!-- LOCATIONS START'
+        $record.topLevelComment | Should -Match '\[docs\]\(https://example\.test/docs\)'
     }
 }
 

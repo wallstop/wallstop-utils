@@ -167,7 +167,7 @@ jobs:
           if [[ -z "$from_ref" ]]; then
             echo "No baseline commit available; running shell checks for tracked shell targets in HEAD."
             mapfile -t changed_shell_files < <(
-              git ls-files | grep -E '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$' || true
+              git ls-files | grep -E '^(Scripts/.*\.sh|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push))$' || true
             )
             if [[ ${#changed_shell_files[@]} -eq 0 ]]; then
               echo "No shell target files found; skipping shellcheck/shfmt."
@@ -179,7 +179,7 @@ jobs:
           fi
 
           mapfile -t changed_shell_files < <(
-            git diff --name-only "$from_ref" "$to_ref" | grep -E '^(Scripts/.*\.sh|\.githooks/(pre-commit|pre-push))$' || true
+            git diff --name-only "$from_ref" "$to_ref" | grep -E '^(Scripts/.*\.sh|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push))$' || true
           )
 
           if [[ ${#changed_shell_files[@]} -eq 0 ]]; then
@@ -260,6 +260,8 @@ jobs:
     timeout-minutes: 6
     env:
       AHK_RUNTIME_VERSION: "2.0.19"
+      AHK_RUNTIME_ZIP_SHA256: "4e0d0e65655066a646a210951320feaef0729a3597177131adaec4066bef5869"
+      AHK_RUNTIME_EXE_SHA256: "3880f9ec464dfe78c16bbd8b9f30560227154c292280337346a30c8fd92871fe"
 
     steps:
       - name: Checkout
@@ -363,11 +365,24 @@ jobs:
 
             Write-Host "Downloading AutoHotkey portable runtime from $downloadUrl"
             Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+
+            $expectedArchiveSha256 = $env:AHK_RUNTIME_ZIP_SHA256.ToLowerInvariant()
+            $actualArchiveSha256 = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualArchiveSha256 -ne $expectedArchiveSha256) {
+              throw "E_AHK_RUNTIME_HASH_MISMATCH: AutoHotkey archive hash mismatch. expected=$expectedArchiveSha256 actual=$actualArchiveSha256 archivePath=$archivePath"
+            }
+
             Expand-Archive -Path $archivePath -DestinationPath $installRoot -Force
           }
 
           if (-not (Test-Path -Path $exePath -PathType Leaf)) {
             throw "E_AHK_RUNTIME_UNAVAILABLE: Expected AutoHotkey64.exe at '$exePath' after setup."
+          }
+
+          $expectedExeSha256 = $env:AHK_RUNTIME_EXE_SHA256.ToLowerInvariant()
+          $actualExeSha256 = (Get-FileHash -Path $exePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualExeSha256 -ne $expectedExeSha256) {
+            throw "E_AHK_RUNTIME_HASH_MISMATCH: AutoHotkey executable hash mismatch. expected=$expectedExeSha256 actual=$actualExeSha256 exePath=$exePath"
           }
 
           $installRoot >> $env:GITHUB_PATH
@@ -403,6 +418,8 @@ jobs:
     timeout-minutes: 15
     env:
       AHK_RUNTIME_VERSION: "2.0.19"
+      AHK_RUNTIME_ZIP_SHA256: "4e0d0e65655066a646a210951320feaef0729a3597177131adaec4066bef5869"
+      AHK_RUNTIME_EXE_SHA256: "3880f9ec464dfe78c16bbd8b9f30560227154c292280337346a30c8fd92871fe"
 
     steps:
       - name: Checkout
@@ -431,11 +448,24 @@ jobs:
 
             Write-Host "Downloading AutoHotkey portable runtime from $downloadUrl"
             Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+
+            $expectedArchiveSha256 = $env:AHK_RUNTIME_ZIP_SHA256.ToLowerInvariant()
+            $actualArchiveSha256 = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualArchiveSha256 -ne $expectedArchiveSha256) {
+              throw "E_AHK_RUNTIME_HASH_MISMATCH: AutoHotkey archive hash mismatch. expected=$expectedArchiveSha256 actual=$actualArchiveSha256 archivePath=$archivePath"
+            }
+
             Expand-Archive -Path $archivePath -DestinationPath $installRoot -Force
           }
 
           if (-not (Test-Path -Path $exePath -PathType Leaf)) {
             throw "E_AHK_RUNTIME_UNAVAILABLE: Expected AutoHotkey64.exe at '$exePath' after setup."
+          }
+
+          $expectedExeSha256 = $env:AHK_RUNTIME_EXE_SHA256.ToLowerInvariant()
+          $actualExeSha256 = (Get-FileHash -Path $exePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualExeSha256 -ne $expectedExeSha256) {
+            throw "E_AHK_RUNTIME_HASH_MISMATCH: AutoHotkey executable hash mismatch. expected=$expectedExeSha256 actual=$actualExeSha256 exePath=$exePath"
           }
 
           $installRoot >> $env:GITHUB_PATH
