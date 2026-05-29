@@ -666,6 +666,16 @@ Describe "Normalize-CommentText" {
             Name     = "user HTML before Cursor button block"
             CaseText = '<div>Keep this context</div><div><a href="https://cursor.com/open?link=abc">Fix in Cursor</a></div> Actual finding.'
             Expected = "Keep this context Actual finding."
+        },
+        @{
+            Name     = "spaced comparison operators preserved"
+            CaseText = "Fail if value < threshold or count > limit here"
+            Expected = "Fail if value < threshold or count > limit here"
+        },
+        @{
+            Name     = "real tag stripped while spaced comparison span preserved"
+            CaseText = "<b>Note</b>: a < b and c > d"
+            Expected = "Note : a < b and c > d"
         }
     ) {
         param($Name, $CaseText, $Expected)

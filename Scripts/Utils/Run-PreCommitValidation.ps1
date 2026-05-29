@@ -1134,7 +1134,23 @@ try {
 
         if ($nativeQualityFiles.Count -gt 0) {
             $nativeQualityDiffArgs = @("diff", "--name-only", "--") + @($nativeQualityFiles)
-            if (-not $All) {
+            $preNativeQualityDiffOutput = @()
+            $preNativeQualityDirtyFileHashes = @{}
+            if ($All) {
+                $preNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
+                if ($LASTEXITCODE -ne 0) {
+                    $diffErrorText = if ($preNativeQualityDiffOutput.Count -gt 0) { $preNativeQualityDiffOutput -join ' ' } else { '(no output)' }
+                    throw "E_CONFIG_ERROR: Failed to check pre-format native quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+                }
+
+                $preNativeQualityDiffOutput = @(
+                    $preNativeQualityDiffOutput |
+                        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                        Sort-Object -Unique
+                )
+                $preNativeQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preNativeQualityDiffOutput
+            }
+            else {
                 $unstagedNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
                 if ($LASTEXITCODE -ne 0) {
                     $diffErrorText = if ($unstagedNativeQualityDiffOutput.Count -gt 0) { $unstagedNativeQualityDiffOutput -join ' ' } else { '(no output)' }
@@ -1166,8 +1182,51 @@ try {
                     Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
                     Sort-Object -Unique
             )
-            if ($formattedNativeQualityFiles.Count -gt 0) {
-                $formattedNativeQualityText = $formattedNativeQualityFiles -join ', '
+
+            $allModeFormatterModifiedDirtyFiles = @()
+            if ($All -and $preNativeQualityDiffOutput.Count -gt 0) {
+                $postNativeQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preNativeQualityDiffOutput
+                $allModeFormatterModifiedDirtyFiles = @(
+                    foreach ($relativePath in $preNativeQualityDiffOutput) {
+                        $beforeHash = [string]$preNativeQualityDirtyFileHashes[$relativePath]
+                        $afterHash = [string]$postNativeQualityDirtyFileHashes[$relativePath]
+                        if ($beforeHash -ne $afterHash) {
+                            $relativePath
+                        }
+                    }
+                )
+            }
+
+            if ($All) {
+                Write-Verbose (
+                    "Native quality all-mode drift snapshots: beforeCount={0}; afterCount={1}; beforeFiles={2}; afterFiles={3}; preDirtyModifiedCount={4}" -f
+                    $preNativeQualityDiffOutput.Count,
+                    $formattedNativeQualityFiles.Count,
+                    ($(if ($preNativeQualityDiffOutput.Count -gt 0) { $preNativeQualityDiffOutput -join ', ' } else { '(none)' })),
+                    ($(if ($formattedNativeQualityFiles.Count -gt 0) { $formattedNativeQualityFiles -join ', ' } else { '(none)' })),
+                    $allModeFormatterModifiedDirtyFiles.Count
+                )
+            }
+
+            $nativeFormatterChangedFiles = @(
+                if ($All) {
+                    $allModeNewlyDirtyFiles = @(
+                        Compare-Object -ReferenceObject $preNativeQualityDiffOutput -DifferenceObject $formattedNativeQualityFiles |
+                            Where-Object { $_.SideIndicator -eq '=>' } |
+                            ForEach-Object { [string]$_.InputObject }
+                    )
+
+                    $allModeNewlyDirtyFiles + $allModeFormatterModifiedDirtyFiles |
+                        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                        Sort-Object -Unique
+                }
+                else {
+                    $formattedNativeQualityFiles
+                }
+            )
+
+            if ($nativeFormatterChangedFiles.Count -gt 0) {
+                $formattedNativeQualityText = $nativeFormatterChangedFiles -join ', '
                 throw "E_PRECOMMIT_NATIVE_QUALITY_RESTAGE_REQUIRED: Native formatter updated file(s): $formattedNativeQualityText. Stage the updated files, then rerun pre-commit validation."
             }
         }

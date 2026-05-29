@@ -68,6 +68,36 @@ Describe "Invoke-NativeQualityChecks target scoping" {
             Should -Throw -ExpectedMessage "*E_NATIVE_QUALITY_TARGET_OUTSIDE_REPOSITORY*"
     }
 
+    It "rejects a case-variant repository-root target on case-sensitive filesystems" {
+        if ($IsWindows) {
+            Set-ItResult -Skipped -Because "Ordinal (case-sensitive) boundary rejection only applies on non-Windows filesystems."
+            return
+        }
+
+        # Upper-case the final segment of the repository root so an Ordinal comparison
+        # treats the candidate as outside the (lower/mixed-case) repository root. The
+        # boundary check fires before Test-Path, so the file need not exist.
+        $separator = [System.IO.Path]::DirectorySeparatorChar
+        $trimmedRoot = $script:repoRoot.TrimEnd($separator)
+        $parent = [System.IO.Path]::GetDirectoryName($trimmedRoot)
+        $leaf = [System.IO.Path]::GetFileName($trimmedRoot)
+        $caseVariantLeaf = $leaf.ToUpperInvariant()
+        if ($caseVariantLeaf -ceq $leaf) {
+            $caseVariantLeaf = $leaf.ToLowerInvariant()
+        }
+
+        if ([string]::IsNullOrWhiteSpace($parent) -or ($caseVariantLeaf -ceq $leaf)) {
+            Set-ItResult -Skipped -Because "Repository root leaf has no case to vary."
+            return
+        }
+
+        $caseVariantRoot = Join-Path -Path $parent -ChildPath $caseVariantLeaf
+        $caseVariantTarget = Join-Path -Path $caseVariantRoot -ChildPath "Config/Wezterm/wezterm.lua"
+
+        { Resolve-NativeQualityTargetFiles -RepositoryRoot $script:repoRoot -InputFiles @($caseVariantTarget) } |
+            Should -Throw -ExpectedMessage "*TARGET_OUTSIDE_REPOSITORY*"
+    }
+
     It "splits All-mode targets by native tool ownership" {
         $styluaPath = Join-Path -Path $script:repoRoot -ChildPath "Config/Wezterm/wezterm.lua"
         $workflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/script-quality.yml"

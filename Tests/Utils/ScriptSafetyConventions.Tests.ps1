@@ -25,6 +25,7 @@ BeforeAll {
     $script:preCommitHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-commit"
     $script:prePushHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-push"
     $script:qualityPowerShellScripts = @(
+        "Scripts/Utils/Common/QualityToolingHelpers.ps1",
         "Scripts/Utils/Quality/Assert-CleanGitTree.ps1",
         "Scripts/Utils/Quality/Format-PowerShellFiles.ps1",
         "Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1",
@@ -722,20 +723,30 @@ Describe "Cross-language quality platform conventions" {
         $shellToolManifestPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/shell-quality-tools.json'
         $shellToolManifest = Get-Content -Path $shellToolManifestPath -Raw | ConvertFrom-Json
 
+        $sharedHelper = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/QualityToolingHelpers.ps1') -Raw
+
         $fullValidation | Should -Match 'Assert-ShellQualityToolAvailability'
         $fullValidation | Should -Match 'Invoke-ShellQualityChecks\.ps1'
         $fullValidation | Should -Match '-Tool\s+All\s+-EnsureOnly'
 
+        # Shared tooling infrastructure is single-sourced in QualityToolingHelpers.ps1; the
+        # consumer script dot-sources it and emits stable diagnostics through context prefixes.
         $shellQualityScript | Should -Match '\.tools/shell-quality'
-        $shellQualityScript | Should -Match 'Invoke-WebRequest'
-        $shellQualityScript | Should -Match 'Get-FileHash'
-        $shellQualityScript | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $shellQualityScript | Should -Match 'ArgumentList\.Add'
-        $shellQualityScript | Should -Match 'W_SHELL_TOOL_PLATFORM_FALLBACK'
-        $shellQualityScript | Should -Match 'E_SHELL_TOOL_HASH_MISMATCH'
-        $shellQualityScript | Should -Match 'E_SHELL_TOOL_PLATFORM_UNSUPPORTED'
-        $shellQualityScript | Should -Match 'E_SHELL_QUALITY_TARGET_OUTSIDE_REPOSITORY'
+        $shellQualityScript | Should -Match 'QualityToolingHelpers\.ps1'
+        $shellQualityScript | Should -Match '"SHELL_TOOL"'
+        $shellQualityScript | Should -Match '"SHELL_QUALITY"'
+        $shellQualityScript | Should -Not -Match 'Invoke-WebRequest'
         $shellQualityScript | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
+
+        $sharedHelper | Should -Match 'Invoke-WebRequest'
+        $sharedHelper | Should -Match 'Get-FileHash'
+        $sharedHelper | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
+        $sharedHelper | Should -Match 'ArgumentList\.Add'
+        $sharedHelper | Should -Match 'W_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_FALLBACK'
+        $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_HASH_MISMATCH'
+        $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_UNSUPPORTED'
+        $sharedHelper | Should -Match 'E_\$\(\$Context\.TargetDiagnosticPrefix\)_TARGET_OUTSIDE_REPOSITORY'
+        $sharedHelper | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
 
         $shellToolManifest.tools.shfmt.version | Should -Be '3.13.0'
         $shellToolManifest.tools.shellcheck.version | Should -Be '0.11.0'
@@ -764,22 +775,31 @@ Describe "Cross-language quality platform conventions" {
         $nativeToolManifestPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/native-quality-tools.json'
         $nativeToolManifest = Get-Content -Path $nativeToolManifestPath -Raw | ConvertFrom-Json
 
+        $sharedHelper = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/QualityToolingHelpers.ps1') -Raw
+
         $fullValidation | Should -Match 'Assert-NativeQualityToolAvailability'
         $fullValidation | Should -Match 'Invoke-NativeQualityChecks\.ps1'
         $fullValidation | Should -Match '-Tool\s+All\s+-EnsureOnly'
 
+        # Shared tooling infrastructure is single-sourced in QualityToolingHelpers.ps1; the
+        # consumer script dot-sources it and emits stable diagnostics through context prefixes.
         $nativeQualityScript | Should -Match '\.tools/native-quality'
-        $nativeQualityScript | Should -Match 'Invoke-WebRequest'
-        $nativeQualityScript | Should -Match 'Get-FileHash'
-        $nativeQualityScript | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $nativeQualityScript | Should -Match 'ArgumentList\.Add'
-        $nativeQualityScript | Should -Match 'W_NATIVE_TOOL_PLATFORM_FALLBACK'
-        $nativeQualityScript | Should -Match 'E_NATIVE_TOOL_HASH_MISMATCH'
-        $nativeQualityScript | Should -Match 'E_NATIVE_TOOL_PLATFORM_UNSUPPORTED'
-        $nativeQualityScript | Should -Match 'E_NATIVE_QUALITY_TARGET_OUTSIDE_REPOSITORY'
+        $nativeQualityScript | Should -Match 'QualityToolingHelpers\.ps1'
+        $nativeQualityScript | Should -Match '"NATIVE_TOOL"'
+        $nativeQualityScript | Should -Match '"NATIVE_QUALITY"'
         $nativeQualityScript | Should -Match 'WALLSTOP_NATIVE_TOOL_DOWNLOAD_TIMEOUT_SECONDS'
         $nativeQualityScript | Should -Match 'E_NATIVE_TOOL_TIMEOUT_CONFIG'
+        $nativeQualityScript | Should -Not -Match 'Invoke-WebRequest'
         $nativeQualityScript | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
+
+        $sharedHelper | Should -Match 'Invoke-WebRequest'
+        $sharedHelper | Should -Match 'Get-FileHash'
+        $sharedHelper | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
+        $sharedHelper | Should -Match 'ArgumentList\.Add'
+        $sharedHelper | Should -Match 'W_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_FALLBACK'
+        $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_HASH_MISMATCH'
+        $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_UNSUPPORTED'
+        $sharedHelper | Should -Match 'E_\$\(\$Context\.TargetDiagnosticPrefix\)_TARGET_OUTSIDE_REPOSITORY'
 
         $nativeToolManifest.tools.stylua.version | Should -Be '2.5.2'
         $nativeToolManifest.tools.actionlint.version | Should -Be '1.7.12'
@@ -4143,5 +4163,75 @@ Describe "PowerShell return safety conventions" {
         $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Write-Output\s+-NoEnumerate\s+\(' -Because "Get-StatusSnapshot must use Write-Output -NoEnumerate to preserve empty git-status snapshots as a typed string[] without extra array wrapping."
         $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusBeforeValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_BEFORE_NULL' -Because "workspace drift comparison must guard null before-snapshot values with an explicit E_ code."
         $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusAfterValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_AFTER_NULL' -Because "workspace drift comparison must guard null after-snapshot values with an explicit E_ code."
+    }
+}
+
+Describe "Quality tooling shared-helper conventions" {
+    BeforeAll {
+        $script:sharedHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/QualityToolingHelpers.ps1"
+        $script:shellQualityPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1"
+        $script:nativeQualityPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1"
+        $script:qualityConsumerPaths = @($script:shellQualityPath, $script:nativeQualityPath)
+    }
+
+    It "ships the single-source shared helper module" {
+        Test-Path -LiteralPath $script:sharedHelperPath -PathType Leaf | Should -BeTrue -Because (
+            "Quality tooling infrastructure must live in a single shared helper at '$script:sharedHelperPath'."
+        )
+    }
+
+    It "dot-sources the shared helper from both quality scripts" {
+        foreach ($consumerPath in $script:qualityConsumerPaths) {
+            # Normalize to LF so multiline regex anchors work on all platforms.
+            $content = (Get-Content -Path $consumerPath -Raw) -replace "`r", ''
+            $content | Should -Match 'QualityToolingHelpers\.ps1' -Because (
+                "$consumerPath must dot-source the shared QualityToolingHelpers.ps1 module."
+            )
+        }
+    }
+
+    It "keeps web downloads out of the consumer scripts" {
+        # A consumer must not perform its own network download by any of these means;
+        # all downloads must be delegated to the shared helper. Word-bound the iwr alias
+        # so unrelated identifiers are not falsely matched.
+        $forbiddenDownloadPattern = '\bInvoke-WebRequest\b|\bInvoke-RestMethod\b|\biwr\b|System\.Net\.WebClient|System\.Net\.Http'
+        foreach ($consumerPath in $script:qualityConsumerPaths) {
+            $content = (Get-Content -Path $consumerPath -Raw) -replace "`r", ''
+            $content | Should -Not -Match $forbiddenDownloadPattern -Because (
+                "$consumerPath must delegate downloads to the shared helper, not perform its own network download (Invoke-WebRequest, Invoke-RestMethod, iwr, System.Net.WebClient, System.Net.Http)."
+            )
+        }
+    }
+
+    It "forbids unbounded WaitForExit() in consumer scripts" {
+        foreach ($consumerPath in $script:qualityConsumerPaths) {
+            $content = (Get-Content -Path $consumerPath -Raw) -replace "`r", ''
+            $content | Should -Not -Match 'WaitForExit\(\s*\)' -Because (
+                "$consumerPath must not call a bare no-arg WaitForExit(); bounded execution lives in the shared helper."
+            )
+        }
+    }
+
+    It "embeds bounded execution, retry, and OS-aware boundary fixes in the shared helper once" {
+        $content = (Get-Content -Path $script:sharedHelperPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'WaitForExit\(\s*\$TimeoutSeconds\s*\*\s*1000\s*\)' -Because (
+            "shared helper must bound subprocess execution with an explicit timeout argument."
+        )
+        $content | Should -Match 'for\s*\(\s*\$attempt\s*=\s*1;\s*\$attempt\s*-le\s*3;' -Because (
+            "shared helper download must retry up to three times with backoff."
+        )
+        $content | Should -Match 'Start-Sleep\s+-Seconds\s+\$backoffSeconds' -Because (
+            "shared helper download retry must apply backoff between attempts."
+        )
+        $content | Should -Match '\$IsWindows\s*\)\s*\{\s*\[System\.StringComparison\]::OrdinalIgnoreCase\s*\}' -Because (
+            "shared helper repository-boundary check must use OrdinalIgnoreCase only on Windows."
+        )
+        $content | Should -Match 'else\s*\{\s*\[System\.StringComparison\]::Ordinal\s*\}' -Because (
+            "shared helper repository-boundary check must use Ordinal comparison on Linux/macOS."
+        )
+        $content | Should -Match '\$sha256\s*-notmatch\s*''\^\[a-f0-9\]\{64\}\$''' -Because (
+            "shared helper asset resolution must validate sha256 format."
+        )
     }
 }

@@ -75,6 +75,36 @@ Describe "Invoke-ShellQualityChecks target scoping" {
     }
 }
 
+Describe "Invoke-ShellQualityChecks bounded process execution" {
+    It "kills a long-running child process when the timeout elapses" {
+        $pwshPath = $null
+        $pwshCommand = Get-Command -Name pwsh -ErrorAction SilentlyContinue
+        if ($null -ne $pwshCommand) {
+            $pwshPath = $pwshCommand.Source
+        }
+        else {
+            try {
+                $pwshPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            }
+            catch {
+                $pwshPath = $null
+            }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($pwshPath) -or -not (Test-Path -LiteralPath $pwshPath -PathType Leaf)) {
+            Set-ItResult -Skipped -Because "pwsh executable could not be resolved on this runner."
+            return
+        }
+
+        $elapsed = Measure-Command {
+            { Invoke-QualityToolingCapturedProcess -Context $script:ShellQualityContext -FilePath $pwshPath -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 30") -WorkingDirectory $script:repoRoot -TimeoutSeconds 2 } |
+                Should -Throw -ExpectedMessage "*E_SHELL_TOOL_PROCESS_TIMEOUT*"
+        }
+
+        $elapsed.TotalSeconds | Should -BeLessThan 25
+    }
+}
+
 Describe "Invoke-ShellQualityChecks archive path safety" {
     It "accepts ordinary relative archive entries" {
         Test-ShellQualityArchiveEntryPath -EntryPath "shellcheck-v0.11.0/shellcheck" | Should -BeTrue

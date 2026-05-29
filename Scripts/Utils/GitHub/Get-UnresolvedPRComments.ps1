@@ -1038,7 +1038,7 @@ function Remove-MarkupFromCommentText {
     $cleaned = [regex]::Replace($cleaned, '<!--[\s\S]*?-->', ' ')
     $cleaned = $cleaned -replace '!\[[^\]]*\]\([^)]*\)', ' '
     $cleaned = $cleaned -replace '(?<!!)\[([^\]]+)\]\([^)]*\)', '$1'
-    $cleaned = $cleaned -replace '<[^>]+>', ' '
+    $cleaned = $cleaned -replace '</?[A-Za-z][^>]*>', ' '
     $cleaned = $cleaned -replace '&nbsp;', ' '
 
     return $cleaned
