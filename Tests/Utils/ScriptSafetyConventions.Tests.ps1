@@ -10,6 +10,7 @@ BeforeAll {
     }
 
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
+    . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/CompatibilityHelpers.ps1")
     $script:migratedScripts = @(
         "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1",
         "Scripts/Utils/BackupDxMessaging.ps1",
@@ -202,7 +203,7 @@ Describe "Scope safety conventions" {
                 foreach ($scriptVariable in $scriptScopeVariables) {
                     $variableName = $scriptVariable.VariablePath.UserPath
                     if ($paramNames -contains $variableName) {
-                        $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                        $relative = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                         $violations.Add("${relative}:$($scriptVariable.Extent.StartLineNumber) variable '$variableName' from function '$($function.Name)' referenced at script scope") | Out-Null
                     }
                 }
@@ -327,7 +328,10 @@ Describe "Scope safety conventions" {
         $upperOwnerMatches.Count | Should -Be 0
         $upperRepoMatches.Count | Should -Be 0
 
-        $scriptContent | Should -Match 'function\s+Format-UnresolvedThreadsAsJson[\s\S]*ConvertTo-Json\s+-Depth\s+8\s+-AsArray'
+        # Array-stable singleton output is preserved via ConvertTo-JsonArrayCompat, the
+        # cross-version replacement for `ConvertTo-Json -AsArray` (absent on Windows
+        # PowerShell 5.1).
+        $scriptContent | Should -Match 'function\s+Format-UnresolvedThreadsAsJson[\s\S]*ConvertTo-JsonArrayCompat\s+-InputObject\s+\$Records\s+-Depth\s+8'
 
         $testsContent | Should -Match 'Format-UnresolvedThreadsAsJson'
         $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"path"\)\s+\|\s+Should\s+-BeTrue'
@@ -394,12 +398,17 @@ Describe "Scope safety conventions" {
         $content | Should -Not -Match 'function\s+Invoke-Main[\s\S]*IsNullOrWhiteSpace\(\$OutputPath\)[\s\S]*Write-RenderedOutputToFile'
     }
 
-    It "keeps PowerShell argument-completion metadata for unresolved PR comments" {
+    It "keeps PowerShell argument metadata cross-version safe for unresolved PR comments" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
 
-        $content | Should -Match '\[ArgumentCompletions\("github\.com"\)\]'
-        $content | Should -Match '\[ArgumentCompletions\("text",\s*"json"\)\]'
+        # OutputFormat must use [ValidateSet] (validation + completion, works on both
+        # Windows PowerShell 5.1 and PowerShell 7+) rather than the 7+-only
+        # [ArgumentCompletions] attribute.
+        $content | Should -Match '\[ValidateSet\("text",\s*"json"\)\]'
+        # [ArgumentCompletions] is a PowerShell 7+ attribute that fails to parse on
+        # Windows PowerShell 5.1 and must not be reintroduced.
+        $content | Should -Not -Match '\[ArgumentCompletions\('
     }
 
     It "keeps Increment-Version direct-run invocation guard" {
@@ -741,7 +750,11 @@ Describe "Cross-language quality platform conventions" {
         $sharedHelper | Should -Match 'Invoke-WebRequest'
         $sharedHelper | Should -Match 'Get-FileHash'
         $sharedHelper | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $sharedHelper | Should -Match 'ArgumentList\.Add'
+        # Argument passing must go through the portable shim (native ArgumentList on 7+,
+        # escaped .Arguments string on Windows PowerShell 5.1) rather than touching the
+        # .NET Core-only ArgumentList collection directly, which throws on 5.1.
+        $sharedHelper | Should -Match 'Set-PortableProcessArguments'
+        $sharedHelper | Should -Not -Match '\$\w+\.ArgumentList\.Add'
         $sharedHelper | Should -Match 'W_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_FALLBACK'
         $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_HASH_MISMATCH'
         $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_UNSUPPORTED'
@@ -795,7 +808,11 @@ Describe "Cross-language quality platform conventions" {
         $sharedHelper | Should -Match 'Invoke-WebRequest'
         $sharedHelper | Should -Match 'Get-FileHash'
         $sharedHelper | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $sharedHelper | Should -Match 'ArgumentList\.Add'
+        # Argument passing must go through the portable shim (native ArgumentList on 7+,
+        # escaped .Arguments string on Windows PowerShell 5.1) rather than touching the
+        # .NET Core-only ArgumentList collection directly, which throws on 5.1.
+        $sharedHelper | Should -Match 'Set-PortableProcessArguments'
+        $sharedHelper | Should -Not -Match '\$\w+\.ArgumentList\.Add'
         $sharedHelper | Should -Match 'W_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_FALLBACK'
         $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_HASH_MISMATCH'
         $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_UNSUPPORTED'
@@ -1000,12 +1017,15 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecksTests | Should -Match 'Arguments\s*='
     }
 
-    It "uses System.Diagnostics.Process with ArgumentList in Invoke-AutoHotkeyCommand and avoids LASTEXITCODE dependency" {
+    It "uses System.Diagnostics.Process with portable argument passing in Invoke-AutoHotkeyCommand and avoids LASTEXITCODE dependency" {
         $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
         $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
 
         $windowsChecks | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $windowsChecks | Should -Match 'ArgumentList\.Add'
+        # Portable argument passing (native ArgumentList on 7+, escaped .Arguments string on
+        # Windows PowerShell 5.1) instead of the .NET Core-only ArgumentList collection.
+        $windowsChecks | Should -Match 'Set-PortableProcessArguments'
+        $windowsChecks | Should -Not -Match '\$\w+\.ArgumentList\.Add'
         $windowsChecks | Should -Match 'RedirectStandardOutput'
         $windowsChecks | Should -Match 'RedirectStandardError'
         $windowsChecks | Should -Match 'E_AHK_PROCESS_EXECUTION_FAILED'
@@ -1030,7 +1050,7 @@ Describe "Cross-language quality platform conventions" {
 
         foreach ($file in $ahkFiles) {
             $content = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
-            $relativePath = ([System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)).Replace([System.IO.Path]::DirectorySeparatorChar, '/').Replace([System.IO.Path]::AltDirectorySeparatorChar, '/')
+            $relativePath = (Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $file.FullName).Replace([System.IO.Path]::DirectorySeparatorChar, '/').Replace([System.IO.Path]::AltDirectorySeparatorChar, '/')
             $content | Should -Match '(?ms)\A(?:\xEF\xBB\xBF)?(?:[ \t]*;[^\r\n]*\r?\n|[ \t]*\r?\n)*[ \t]*#Requires\s+AutoHotkey\s+v2(?:\.\d+)?\b' -Because "$relativePath must declare #Requires AutoHotkey v2 (or v2.x) at the top with only optional leading blank/comment lines"
         }
     }
@@ -1110,7 +1130,7 @@ Describe "Quality script executable guardrails" {
 
         $macChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh'
         $bashPathArgument = $macChecksPath
-        if ($IsWindows) {
+        if (Test-IsWindowsPlatform) {
             $cygpath = Get-Command -Name cygpath -ErrorAction SilentlyContinue
             if ($null -ne $cygpath) {
                 $convertedPath = @(& $cygpath.Source -u $macChecksPath 2>$null | Select-Object -First 1)
@@ -1180,7 +1200,7 @@ Describe "Quality config file conventions" {
         $hookPaths = @($script:preCommitHookPath, $script:prePushHookPath)
 
         foreach ($hookPath in $hookPaths) {
-            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $hookPath)
+            $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $hookPath
             $bytes = [System.IO.File]::ReadAllBytes($hookPath)
 
             $bytes.Length | Should -BeGreaterThan 0 -Because ("{0} should not be empty" -f $relativePath)
@@ -1213,7 +1233,7 @@ Describe "Shell quality conventions" {
         $negatedExitPropagationPattern = '(?m)^\s*if\s+!\s+[^\n;]+;\s+then\s*$\n^\s*(?:return|exit)\s+\$\?\s*$'
 
         foreach ($shellFile in $shellFiles) {
-            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $shellFile.FullName)
+            $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $shellFile.FullName
             $content = (Get-Content -Path $shellFile.FullName -Raw) -replace "`r", ''
             if ($content -match $negatedCommandSubstitutionCapturePattern -or $content -match $negatedExitPropagationPattern) {
                 $violations.Add($relativePath) | Out-Null
@@ -1484,7 +1504,7 @@ Describe "Shell quality conventions" {
                 }
 
                 if (-not $hasInlineReason -and -not $hasNeighborReason) {
-                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                     $violations.Add("${relativePath}:$($index + 1)") | Out-Null
                 }
             }
@@ -1508,7 +1528,7 @@ Describe "Directory restoration safety conventions" {
                 continue
             }
 
-            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+            $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
 
             # Per-occurrence check: split content on each Push-Location invocation.
             # Each part after index 0 is the content that follows one Push-Location call.
@@ -1590,7 +1610,7 @@ Describe "File stream safety conventions" {
         $powerShellScripts = @(Get-ChildItem -LiteralPath $scriptsRoot -Filter '*.ps1' -File -Recurse -ErrorAction Stop)
 
         foreach ($scriptFile in $powerShellScripts) {
-            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+            $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
             $content = (Get-Content -LiteralPath $scriptFile.FullName -Raw) -replace "`r", ''
             $openReadMatches = [regex]::Matches($content, '\[System\.IO\.File\]::OpenRead\s*\(')
 
@@ -1814,7 +1834,7 @@ Describe "Restore script safety conventions" {
         $powershellRestore | Should -Not -Match '(?-i)Microsoft\.Powershell_profile\.ps1'
         $powershellRestore | Should -Match '\$PROFILE\.CurrentUserCurrentHost'
         $powershellRestore | Should -Match '\$PROFILE\.CurrentUserAllHosts'
-        $powershellRestore | Should -Match 'if\s*\(\$IsWindows\)\s*\{[\s\S]*Join-Path\s+-Path\s+\$HOME\s+-ChildPath\s+''Documents''[\s\S]*Join-Path\s+-Path\s+\$documentsPath\s+-ChildPath\s+''WindowsPowerShell''' -Because 'Legacy Windows PowerShell paths should only be restored on Windows.'
+        $powershellRestore | Should -Match 'if\s*\(Test-IsWindowsPlatform\)\s*\{[\s\S]*Join-Path\s+-Path\s+\$HOME\s+-ChildPath\s+''Documents''[\s\S]*Join-Path\s+-Path\s+\$documentsPath\s+-ChildPath\s+''WindowsPowerShell''' -Because 'Legacy Windows PowerShell paths should only be restored on Windows (via the cross-version Test-IsWindowsPlatform helper).'
         $powershellRestore | Should -Not -Match '\$HOME\\Documents\\PowerShell'
         $powershellRestore | Should -Not -Match '\$HOME\\Documents\\Powershell'
         $powershellRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
@@ -1967,7 +1987,7 @@ Describe "Backup script safety conventions" {
 
             foreach ($scriptFile in $backupRestoreScripts) {
                 $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
-                $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                 $content | Should -Match 'Set-StrictMode\s+-Version\s+Latest' -Because (
                     '{0} is part of backup/restore flow and must declare strict mode.' -f $relativePath
                 )
@@ -2029,7 +2049,7 @@ Describe "Backup script safety conventions" {
         $powershellBackup | Should -Match 'Join-Path\s+-Path\s+\(Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Config"\)\s+-ChildPath\s+"Powershell"'
         $powershellBackup | Should -Match '\$PROFILE\.CurrentUserCurrentHost'
         $powershellBackup | Should -Match '\$PROFILE\.CurrentUserAllHosts'
-        $powershellBackup | Should -Match '\$pathComparer\s*=\s*if\s*\(\$IsWindows\)'
+        $powershellBackup | Should -Match '\$pathComparer\s*=\s*if\s*\(Test-IsWindowsPlatform\)'
         $powershellBackup | Should -Match 'HashSet\[string\]\(\$pathComparer\)'
         $powershellBackup | Should -Match 'W_POWERSHELL_BACKUP_PROFILE_MISSING\('
         $powershellBackup | Should -Match 'PowerShell backup profile discovery diagnostics:'
@@ -2065,7 +2085,7 @@ Describe "Backup script safety conventions" {
         $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_ROBOCOPY_FAILED'
         $powerToysBackup | Should -Match 'E_POWERTOYS_BACKUP_SOURCE_MISSING'
         $powerToysBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$backupFolder\s+-PathType\s+Container'
-        $powerToysBackup | Should -Match 'New-Item\s+-LiteralPath\s+\$backupFolder\s+-ItemType\s+Directory'
+        $powerToysBackup | Should -Match '\[System\.IO\.Directory\]::CreateDirectory\(\$backupFolder\)'
         $powerToysBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
         $powerToysBackup | Should -Match 'Remove-Item\s+-LiteralPath\s+\$backupEntry\.FullName'
         $powerToysBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
@@ -2141,7 +2161,7 @@ Describe "Backup script safety conventions" {
 
         $violations = New-Object System.Collections.Generic.List[string]
         foreach ($scriptFile in $scriptFiles) {
-            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+            $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
             $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
 
             if ($content -match $ForbiddenPattern) {
@@ -2190,7 +2210,7 @@ Describe "Path derivation safety conventions" {
             $lines = @(Get-Content -Path $scriptFile.FullName)
             for ($index = 0; $index -lt $lines.Count; $index++) {
                 if ($lines[$index] -match '\$[A-Za-z0-9_]+\s*=\s*"\$[A-Za-z0-9_]+[\\/]\.\.') {
-                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                     $violations.Add("${relativePath}:$($index + 1)") | Out-Null
                 }
             }
@@ -2237,12 +2257,14 @@ Describe "Path derivation safety conventions" {
         foreach ($testFile in $testFiles) {
             $content = (Get-Content -LiteralPath $testFile.FullName -Raw) -replace "`r", ''
             $usesGetTempPath = $content -match '\[System\.IO\.Path\]::GetTempPath\(\)'
-            $usesGetRelativePath = $content -match '\[System\.IO\.Path\]::GetRelativePath\('
+            # Cover both the native method and the cross-version Get-RelativePathCompat shim
+            # so files that migrated to the portable helper still fall under this policy.
+            $usesGetRelativePath = ($content -match '\[System\.IO\.Path\]::GetRelativePath\(') -or ($content -match '\bGet-RelativePathCompat\b')
             if ($usesGetTempPath -and $usesGetRelativePath) {
                 $definesHelper = $content -match 'function\s+Resolve-CanonicalTempRoot\s*\{'
                 $usesHelper = $content -match 'Resolve-CanonicalTempRoot\s+-Path\b'
                 if (-not ($definesHelper -and $usesHelper)) {
-                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $testFile.FullName)
+                    $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $testFile.FullName
                     $violations.Add($relativePath) | Out-Null
                 }
             }
@@ -2664,7 +2686,7 @@ Describe "Dependabot manifest coverage drift conventions" {
             $sampleFiles = @(
                 $foundFiles |
                     Select-Object -First 3 |
-                    ForEach-Object { [System.IO.Path]::GetRelativePath($script:repoRoot, $_.FullName) }
+                    ForEach-Object { Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $_.FullName }
             )
 
             $violations.Add(("{0} requires ecosystem '{1}' (matches={2}; example files: {3}; diagnostics: {4})" -f $mapping.Filter, $mapping.Ecosystem, $foundFiles.Count, ($sampleFiles -join '; '), $scanDiagnostics)) | Out-Null
@@ -2725,7 +2747,7 @@ Describe "JSON parsing conventions" {
             }
 
             if ($content -match '(?m)^[^#\r\n]*\bConvertFrom-Json\b(?!-)') {
-                $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                $relative = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                 $violations.Add($relative) | Out-Null
             }
         }
@@ -2916,7 +2938,7 @@ Describe "Utility configuration safety conventions" {
             foreach ($line in @(Get-Content -Path $scriptFile.FullName)) {
                 $lineNumber++
                 if ($line -match '^\s*function\s+Convert-CapturedTextToLines\b') {
-                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                     $portableRelativePath = $relativePath -replace '\\', '/'
                     $definitions.Add("${portableRelativePath}:$lineNumber") | Out-Null
                 }
@@ -2946,7 +2968,11 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'Test-IsLinkOrReparsePoint\s+-Item\s+\$resolvedArtifactDirectoryItem'
         $content | Should -Match '\[System\.IO\.FileAttributes\]::ReparsePoint'
         $content | Should -Match 'LinkType'
-        $content | Should -Match 'ResolveLinkTarget\(\$true\)'
+        # The canonical-path guard resolves symbolic links to their FINAL target through the
+        # portable Get-PortableLinkTarget shim (native ResolveLinkTarget($true) on 7+, the
+        # LinkTarget/Target ETS members on Windows PowerShell 5.1) rather than calling the
+        # .NET 6-only ResolveLinkTarget method directly, which throws on 5.1.
+        $content | Should -Match 'Get-PortableLinkTarget'
         $content | Should -Match 'isolated Pester failure artifact directory must not be a symbolic link or reparse point'
         $content | Should -Match 'Resolve-CanonicalPath\s+-Path\s+\$artifactDirectory'
         $content | Should -Match 'E_CONFIG_ERROR: isolated Pester failure artifact path must be outside repository root'
@@ -3288,8 +3314,8 @@ $result = "value {0} {1}" -f
 
         $content | Should -Match 'function\s+ConvertTo-PortableFormatOperatorPath\b'
         $content | Should -Match "function\s+ConvertTo-PortableFormatOperatorPath[\s\S]*?-replace\s+'\[\\\\/\]\+'\s*,\s*'/'"
-        $content | Should -Match 'relativeParsePath\s*=\s*ConvertTo-PortableFormatOperatorPath\s+-PathValue\s+\(\[System\.IO\.Path\]::GetRelativePath'
-        $content | Should -Match 'relativePath\s*=\s*ConvertTo-PortableFormatOperatorPath\s+-PathValue\s+\(\[System\.IO\.Path\]::GetRelativePath'
+        $content | Should -Match 'relativeParsePath\s*=\s*ConvertTo-PortableFormatOperatorPath\s+-PathValue\s+\(Get-RelativePathCompat\b'
+        $content | Should -Match 'relativePath\s*=\s*ConvertTo-PortableFormatOperatorPath\s+-PathValue\s+\(Get-RelativePathCompat\b'
     }
 
     It "emits verbose diagnostics for module path candidate handling in ModuleHelpers" {
@@ -3630,7 +3656,7 @@ $result = "value {0} {1}" -f
         foreach ($scriptFile in $utilsScripts) {
             $content = Get-Content -Path $scriptFile.FullName -Raw
             if ($content -match '(?im)^\s*Import-Module\s+~[/\\]' -or $content -match '(?im)^\s*Import-Module\s+\$env:USERPROFILE[/\\]') {
-                $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                $relative = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                 $violations.Add($relative) | Out-Null
             }
         }
@@ -3782,7 +3808,7 @@ Describe "PowerShell formatting conventions" {
                     }
 
                     if ($isInsideParamBlock) {
-                        $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                        $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $file.FullName
                         $violations.Add("${relativePath}:$lineNumber") | Out-Null
                     }
                 }
@@ -3817,7 +3843,7 @@ Describe "PowerShell formatting conventions" {
                 $lines = @(Get-Content -Path $file.FullName)
                 for ($index = 0; $index -lt $lines.Count; $index++) {
                     if ($lines[$index] -match '^(?: )*\t+') {
-                        $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                        $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $file.FullName
                         $violations.Add("${relativePath}:$($index + 1)") | Out-Null
                     }
                 }
@@ -3846,7 +3872,7 @@ Describe "Retry test determinism conventions" {
                 continue
             }
 
-            $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+            $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $file.FullName
             $errorSummary = ($fileParseErrors | ForEach-Object { $_.Message }) -join '; '
             $violations.Add(("{0}: {1}" -f $relativePath, $errorSummary)) | Out-Null
         }
@@ -3865,7 +3891,7 @@ Describe "Retry test determinism conventions" {
             $lines = @(Get-Content -Path $file.FullName)
             for ($index = 0; $index -lt $lines.Count; $index++) {
                 if ($lines[$index] -match '^\s+''@$' -or $lines[$index] -match '^\s+"@$') {
-                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                    $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $file.FullName
                     $violations.Add("${relativePath}:$($index + 1)") | Out-Null
                 }
             }
@@ -3918,7 +3944,7 @@ Describe "Retry test determinism conventions" {
                 } | Select-Object -First 1
 
                 if ($null -eq $describeScriptBlockExpression) {
-                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                    $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $file.FullName
                     $violations.Add("${relativePath}:$($describe.Extent.StartLineNumber):missing describe script block") | Out-Null
                     continue
                 }
@@ -3976,7 +4002,7 @@ Describe "Retry test determinism conventions" {
                         }, $true)).Count -gt 0
 
                 if (-not $hasDefaultSleepMock) {
-                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $file.FullName)
+                    $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $file.FullName
                     $violations.Add("${relativePath}:$($describe.Extent.StartLineNumber)") | Out-Null
                 }
             }
@@ -4109,7 +4135,7 @@ Describe "UTF-8 encoding conventions" {
             $lines = @(Get-Content -Path $scriptFile.FullName)
             for ($i = 0; $i -lt $lines.Count; $i++) {
                 if ($lines[$i] -match 'WriteAllText\(' -and $lines[$i] -match '\[System\.Text\.Encoding\]::UTF8') {
-                    $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $relative = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                     $violations.Add("${relative}:$($i + 1)") | Out-Null
                 }
             }
@@ -4144,7 +4170,7 @@ Describe "PowerShell return safety conventions" {
             $lines = @(Get-Content -Path $scriptFile.FullName)
             for ($i = 0; $i -lt $lines.Count; $i++) {
                 if ($lines[$i] -match '\breturn\s+@\(\)' -and $lines[$i] -notmatch '#\s*array-unwrap-safe') {
-                    $relative = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $relative = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                     $violations.Add("${relative}:$($i + 1)") | Out-Null
                 }
             }
@@ -4224,8 +4250,8 @@ Describe "Quality tooling shared-helper conventions" {
         $content | Should -Match 'Start-Sleep\s+-Seconds\s+\$backoffSeconds' -Because (
             "shared helper download retry must apply backoff between attempts."
         )
-        $content | Should -Match '\$IsWindows\s*\)\s*\{\s*\[System\.StringComparison\]::OrdinalIgnoreCase\s*\}' -Because (
-            "shared helper repository-boundary check must use OrdinalIgnoreCase only on Windows."
+        $content | Should -Match 'Test-IsWindowsPlatform\s*\)\s*\{\s*\[System\.StringComparison\]::OrdinalIgnoreCase\s*\}' -Because (
+            "shared helper repository-boundary check must use OrdinalIgnoreCase only on Windows (via the cross-version Test-IsWindowsPlatform helper)."
         )
         $content | Should -Match 'else\s*\{\s*\[System\.StringComparison\]::Ordinal\s*\}' -Because (
             "shared helper repository-boundary check must use Ordinal comparison on Linux/macOS."

@@ -5,6 +5,7 @@ BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..") -ErrorAction Stop).Path
     $script:shellQualityScriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1"
     . $script:shellQualityScriptPath -NoInvokeMain
+    . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/CompatibilityHelpers.ps1")
 }
 
 Describe "Invoke-ShellQualityChecks platform resolution" {
@@ -149,7 +150,7 @@ Describe "Invoke-ShellQualityChecks archive path safety" {
     }
 
     It "rejects extracted link-like executables before copying" {
-        if ($IsWindows) {
+        if (Test-IsWindowsPlatform) {
             Set-ItResult -Skipped -Because "Windows symlink creation requires host-specific privileges."
             return
         }

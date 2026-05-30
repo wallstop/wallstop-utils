@@ -23,6 +23,13 @@ param(
 
 $script:prefixReadFailures = 0
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_REMOVE_BOM_COMPAT_HELPERS_MISSING: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $compatibilityHelpersPath
+
 function Get-DefaultExclusionPatterns {
     return @(
         # Version control
@@ -178,7 +185,7 @@ function Test-IsPathUnderRoot {
     $normalizedPath = ((Resolve-TopLevelPathAlias -Path $path) -replace '\\', '/').TrimEnd('/')
     $normalizedRoot = ((Resolve-TopLevelPathAlias -Path $root) -replace '\\', '/').TrimEnd('/')
 
-    $comparison = if ($IsWindows) {
+    $comparison = if (Test-IsWindowsPlatform) {
         [System.StringComparison]::OrdinalIgnoreCase
     }
     else {
@@ -202,7 +209,7 @@ function Resolve-UnixPhysicalPath {
         [string]$path
     )
 
-    if ($IsWindows -or [string]::IsNullOrWhiteSpace($path)) {
+    if ((Test-IsWindowsPlatform) -or [string]::IsNullOrWhiteSpace($path)) {
         return $null
     }
 
@@ -280,7 +287,7 @@ function Resolve-TopLevelPathAlias {
 
     $fullPath = [System.IO.Path]::GetFullPath($path)
 
-    if ($IsWindows -or [string]::IsNullOrWhiteSpace($fullPath) -or -not $fullPath.StartsWith('/')) {
+    if ((Test-IsWindowsPlatform) -or [string]::IsNullOrWhiteSpace($fullPath) -or -not $fullPath.StartsWith('/')) {
         return $fullPath
     }
 
@@ -310,7 +317,7 @@ function Resolve-TopLevelPathAlias {
             $resolvedAliasTarget = $null
             if ($topLevelItem.PSObject.Methods.Name -contains "ResolveLinkTarget") {
                 try {
-                    $resolvedAliasTarget = $topLevelItem.ResolveLinkTarget($true)
+                    $resolvedAliasTarget = $topLevelItem.ResolveLinkTarget($true) # compat-core-member-ok: guarded by the PSObject.Methods probe above; Windows PowerShell 5.1 uses the LinkTarget/Target ETS branch below.
                 }
                 catch {
                     $resolvedAliasTarget = $null
@@ -322,10 +329,16 @@ function Resolve-TopLevelPathAlias {
                 $aliasResolutionSource = "ResolveLinkTarget"
             }
             else {
+                # Windows PowerShell 5.1 surfaces symlink targets through the LinkTarget/Target
+                # ETS members. This single-hop top-level-alias read is intentionally kept inline
+                # (it is a hardening invariant pinned by ScriptSafetyConventions.Tests.ps1) and
+                # is distinct from the chain-following Get-PortableLinkTarget used for full
+                # scan-root canonicalization. The .LinkTarget member access is .NET 6-only but
+                # is reached only after the PSObject.Properties capability check below.
                 $linkTargetProperty = $null
                 $linkTargetPropertyName = $null
                 if ($topLevelItem.PSObject.Properties.Name -contains "LinkTarget") {
-                    $linkTargetProperty = [string]$topLevelItem.LinkTarget
+                    $linkTargetProperty = [string]$topLevelItem.LinkTarget # compat-core-member-ok: guarded by the PSObject.Properties check above.
                     $linkTargetPropertyName = "LinkTarget"
                 }
                 elseif ($topLevelItem.PSObject.Properties.Name -contains "Target") {
@@ -377,7 +390,7 @@ function Resolve-TopLevelPathAlias {
                 # Unix-specific fallback: readlink resolves symlinks that
                 # .NET/PowerShell providers may not detect (for example macOS
                 # /var -> /private/var, where readlink returns relative target "private/var").
-                if (-not $IsWindows -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                if (-not (Test-IsWindowsPlatform) -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
                     try {
                         $readlinkOutput = (& readlink $topLevelSegment 2>$null)
                         if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($readlinkOutput)) {
@@ -400,7 +413,7 @@ function Resolve-TopLevelPathAlias {
                     }
                 }
 
-                if (-not $IsWindows -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                if (-not (Test-IsWindowsPlatform) -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
                     $physicalTopLevelPath = Resolve-UnixPhysicalPath -Path $topLevelSegment
                     if (-not [string]::IsNullOrWhiteSpace($physicalTopLevelPath)) {
                         $physicalTopLevelPath = [System.IO.Path]::GetFullPath($physicalTopLevelPath)
@@ -480,18 +493,13 @@ function Resolve-CanonicalFileSystemPath {
         $resolvedPath = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
         $resolvedItem = Get-Item -LiteralPath $resolvedPath -ErrorAction Stop
 
-        $resolvedLinkTarget = $null
-        if ($resolvedItem.PSObject.Methods.Name -contains "ResolveLinkTarget") {
-            try {
-                $resolvedLinkTarget = $resolvedItem.ResolveLinkTarget($true)
-            }
-            catch {
-                $resolvedLinkTarget = $null
-            }
-        }
-
-        $canonicalCandidate = if ($null -ne $resolvedLinkTarget) {
-            $resolvedLinkTarget.FullName
+        # Resolve a symlinked scan root to its final target so git-native discovery (which
+        # keys on the real worktree path) can scope correctly. Get-PortableLinkTarget uses the
+        # native ResolveLinkTarget on PowerShell 7+ and the LinkTarget/Target ETS members on
+        # Windows PowerShell 5.1, whose .NET Framework FileSystemInfo has no ResolveLinkTarget.
+        $resolvedLinkTargetPath = Get-PortableLinkTarget -Item $resolvedItem
+        $canonicalCandidate = if (-not [string]::IsNullOrWhiteSpace($resolvedLinkTargetPath)) {
+            $resolvedLinkTargetPath
         }
         else {
             $resolvedItem.FullName
@@ -704,7 +712,7 @@ function Resolve-ScannableFileDiscovery {
         $gitDiscoveryFailureReason = "git command not found on PATH"
     }
 
-    $comparison = if ($IsWindows) {
+    $comparison = if (Test-IsWindowsPlatform) {
         [System.StringComparison]::OrdinalIgnoreCase
     }
     else {
@@ -810,10 +818,7 @@ function Get-ScannableFiles {
         $canonicalGitRoot = Resolve-TopLevelPathAlias -Path $scanPlan.GitRoot
         $canonicalScanRoot = Resolve-TopLevelPathAlias -Path $scanPlan.ResolvedScanRoot
         try {
-            $scopeDiagnostics = [System.IO.Path]::GetRelativePath(
-                $canonicalGitRoot,
-                $canonicalScanRoot
-            )
+            $scopeDiagnostics = Get-RelativePathCompat -BasePath $canonicalGitRoot -TargetPath $canonicalScanRoot
         }
         catch {
             $scopeDiagnostics = $null

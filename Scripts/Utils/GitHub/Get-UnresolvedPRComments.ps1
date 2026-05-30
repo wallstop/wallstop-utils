@@ -85,7 +85,6 @@ param(
     [string]$Repo,
 
     [Parameter(Mandatory = $false)]
-    [ArgumentCompletions("github.com")]
     [string]$GitHubHost = "github.com",
 
     [Parameter(Mandatory = $false)]
@@ -98,7 +97,6 @@ param(
     [string]$Token,
 
     [Parameter(Mandatory = $false)]
-    [ArgumentCompletions("text", "json")]
     [ValidateSet("text", "json")]
     [string]$OutputFormat = "text",
 
@@ -154,6 +152,13 @@ if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
 }
 
 .$strictModeHelpersPath
+
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+.$compatibilityHelpersPath
 
 function Redact-SensitiveText {
     [CmdletBinding()]
@@ -1355,6 +1360,33 @@ function Get-ClipboardCommandPriority {
     return $deduplicated.ToArray()
 }
 
+function Set-ClipboardValue {
+    # Thin, mockable seam over Set-Clipboard. Tests mock THIS command — whose parameter set is
+    # identical across every PowerShell edition — instead of Set-Clipboard directly. Pester
+    # builds a mock's parameter metadata from the real command, and Set-Clipboard's -AsOSC52
+    # switch exists only on PowerShell 7.4+, so mocking Set-Clipboard with -AsOSC52 fails
+    # parameter binding under Windows PowerShell 5.1 ("A parameter cannot be found that matches
+    # parameter name 'AsOSC52'"). The -AsOSC52 branch here is reached only after a runtime
+    # capability check (Get-ClipboardCommandPriority) confirms the parameter exists.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '', Justification = 'Set-Clipboard -AsOSC52 is invoked only after Get-ClipboardCommandPriority confirms the parameter exists via a runtime Parameters.Keys check; Windows PowerShell 5.1 never selects the OSC52 strategy and falls back to plain Set-Clipboard / pbcopy / xclip / xsel / wl-copy.')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$AsOSC52
+    )
+
+    if ($AsOSC52) {
+        Set-Clipboard -Value $Value -AsOSC52
+    }
+    else {
+        Set-Clipboard -Value $Value
+    }
+}
+
 function Copy-ToClipboard {
     [OutputType([bool])]
     [CmdletBinding()]
@@ -1380,11 +1412,11 @@ function Copy-ToClipboard {
         try {
             switch ($clipboardCommand) {
                 "Set-Clipboard-AsOSC52" {
-                    Set-Clipboard -Value $valueToCopy -AsOSC52
+                    Set-ClipboardValue -Value $valueToCopy -AsOSC52
                     return $true
                 }
                 "Set-Clipboard" {
-                    Set-Clipboard -Value $valueToCopy
+                    Set-ClipboardValue -Value $valueToCopy
                     return $true
                 }
                 "pbcopy" {
@@ -1822,7 +1854,9 @@ function Validate-GitHubTokenForRepoAccess {
         }
 
         try {
-            $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $effectiveRequestTimeoutSeconds
+            # -UseBasicParsing avoids the Internet Explorer engine dependency on Windows
+            # PowerShell 5.1 (no-op on PowerShell 7+).
+            $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $effectiveRequestTimeoutSeconds -UseBasicParsing
             $repoMetadata = $null
             if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
                 $repoMetadata = ConvertFrom-JsonSingleObject -Json $response.Content -Context "Repository metadata response"
@@ -2170,7 +2204,7 @@ function Format-UnresolvedThreadsAsJson {
         [object[]]$Records
     )
 
-    return ($Records | ConvertTo-Json -Depth 8 -AsArray)
+    return (ConvertTo-JsonArrayCompat -InputObject $Records -Depth 8)
 }
 
 function Assert-GraphQLVariableMap {

@@ -14,7 +14,7 @@ try {
 
     $backupFolder = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Config") -ChildPath ".config"
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -LiteralPath $backupFolder -ItemType Directory -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($backupFolder) | Out-Null
     }
     else {
         $backupEntries = @(Get-ChildItem -LiteralPath $backupFolder -Force -ErrorAction Stop)

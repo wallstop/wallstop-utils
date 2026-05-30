@@ -9,6 +9,13 @@
 # stable diagnostic codes derived from $Context.DiagnosticPrefix and
 # $Context.TargetDiagnosticPrefix so the consuming scripts keep verbatim error strings.
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath 'CompatibilityHelpers.ps1'
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $compatibilityHelpersPath
+
 function New-QualityToolingContext {
     [CmdletBinding()]
     param(
@@ -100,15 +107,15 @@ function Get-QualityToolingOperatingSystemName {
         [pscustomobject]$Context
     )
 
-    if ($IsWindows) {
+    if (Test-IsWindowsPlatform) {
         return "windows"
     }
 
-    if ($IsMacOS) {
+    if (Test-IsMacOSPlatform) {
         return "darwin"
     }
 
-    if ($IsLinux) {
+    if (Test-IsLinuxPlatform) {
         return "linux"
     }
 
@@ -310,9 +317,10 @@ function Invoke-QualityToolingCapturedProcess {
     $processStartInfo.RedirectStandardOutput = $true
     $processStartInfo.RedirectStandardError = $true
 
-    foreach ($argument in @($ArgumentList)) {
-        [void]$processStartInfo.ArgumentList.Add($argument)
-    }
+    # ProcessStartInfo.ArgumentList is .NET Core-only; Set-PortableProcessArguments populates
+    # it on PowerShell 7+ and falls back to an equivalently escaped .Arguments string on
+    # Windows PowerShell 5.1 (.NET Framework), where ArgumentList does not exist.
+    Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $ArgumentList
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo
@@ -324,7 +332,7 @@ function Invoke-QualityToolingCapturedProcess {
         $exited = $process.WaitForExit($TimeoutSeconds * 1000)
         if (-not $exited) {
             try {
-                $process.Kill($true)
+                Stop-ProcessTreePortably -Process $process
             }
             catch {
                 Write-Verbose "Failed to kill timed-out process '$FilePath': $($_.Exception.Message)"
@@ -368,9 +376,8 @@ function Invoke-QualityToolingProcess {
     $processStartInfo.WorkingDirectory = $WorkingDirectory
     $processStartInfo.UseShellExecute = $false
 
-    foreach ($argument in @($ArgumentList)) {
-        [void]$processStartInfo.ArgumentList.Add($argument)
-    }
+    # ProcessStartInfo.ArgumentList is .NET Core-only; see Set-PortableProcessArguments.
+    Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $ArgumentList
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo
@@ -380,7 +387,7 @@ function Invoke-QualityToolingProcess {
         $exited = $process.WaitForExit($TimeoutSeconds * 1000)
         if (-not $exited) {
             try {
-                $process.Kill($true)
+                Stop-ProcessTreePortably -Process $process
             }
             catch {
                 Write-Verbose "Failed to kill timed-out process '$FilePath': $($_.Exception.Message)"
@@ -712,7 +719,7 @@ function Set-QualityToolingExecutableMode {
         [string]$ExecutablePath
     )
 
-    if ($IsWindows) {
+    if (Test-IsWindowsPlatform) {
         return
     }
 
@@ -774,7 +781,9 @@ function Invoke-QualityToolingDownload {
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
                 Write-Host "$($Context.LogPrefix) Downloading $($AssetSpec.ToolName) $($AssetSpec.Version) from $($AssetSpec.DownloadUrl)"
-                Invoke-WebRequest -Uri $AssetSpec.DownloadUrl -OutFile $DownloadPath -TimeoutSec $Context.DownloadTimeoutSeconds -ErrorAction Stop
+                # -UseBasicParsing avoids the Internet Explorer engine dependency on
+                # Windows PowerShell 5.1 (no-op on PowerShell 7+).
+                Invoke-WebRequest -Uri $AssetSpec.DownloadUrl -OutFile $DownloadPath -TimeoutSec $Context.DownloadTimeoutSeconds -UseBasicParsing -ErrorAction Stop
                 return
             }
             catch {
@@ -907,6 +916,7 @@ function Invoke-QualityToolingInstallLock {
 }
 
 function Resolve-QualityToolingToolExecutable {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '', Justification = 'RuntimeInformation.ProcessArchitecture is available on .NET Framework 4.7.1+, the floor on all supported Windows PowerShell 5.1 hosts.')]
     param(
         [Parameter(Mandatory = $true)]
         [pscustomobject]$Context,
@@ -972,7 +982,7 @@ function Resolve-QualityToolingTargetFiles {
     $targets = New-Object 'System.Collections.Generic.List[string]'
     $repositoryRootFullPath = [System.IO.Path]::GetFullPath($RepositoryRoot)
     $repositoryRootWithSeparator = $repositoryRootFullPath.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
-    $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $pathComparison = if (Test-IsWindowsPlatform) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
 
     foreach ($inputFile in @($InputFiles)) {
         if ([string]::IsNullOrWhiteSpace($inputFile)) {
@@ -1011,5 +1021,5 @@ function ConvertTo-QualityToolingRelativePath {
         [string]$Path
     )
 
-    return ([System.IO.Path]::GetRelativePath($RepositoryRoot, $Path) -replace '[\\/]+', '/')
+    return ((Get-RelativePathCompat -BasePath $RepositoryRoot -TargetPath $Path) -replace '[\\/]+', '/')
 }

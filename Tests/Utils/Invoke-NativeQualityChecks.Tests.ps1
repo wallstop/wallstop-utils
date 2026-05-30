@@ -5,6 +5,7 @@ BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..") -ErrorAction Stop).Path
     $script:nativeQualityScriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1"
     . $script:nativeQualityScriptPath -NoInvokeMain
+    . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/CompatibilityHelpers.ps1")
 }
 
 Describe "Invoke-NativeQualityChecks platform resolution" {
@@ -69,7 +70,7 @@ Describe "Invoke-NativeQualityChecks target scoping" {
     }
 
     It "rejects a case-variant repository-root target on case-sensitive filesystems" {
-        if ($IsWindows) {
+        if (Test-IsWindowsPlatform) {
             Set-ItResult -Skipped -Because "Ordinal (case-sensitive) boundary rejection only applies on non-Windows filesystems."
             return
         }

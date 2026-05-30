@@ -1,3 +1,10 @@
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath 'CompatibilityHelpers.ps1'
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $compatibilityHelpersPath
+
 function Get-FormatStringPlaceholderMaxIndex {
     param(
         [Parameter(Mandatory = $false)]
@@ -115,7 +122,7 @@ function Get-FormatOperatorContinuationViolations {
             $parseErrors = $null
             $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptFile.FullName, [ref]$tokens, [ref]$parseErrors)
             if ($null -ne $parseErrors -and @($parseErrors).Count -gt 0) {
-                $relativeParsePath = ConvertTo-PortableFormatOperatorPath -PathValue ([System.IO.Path]::GetRelativePath($resolvedRootPath, $scriptFile.FullName))
+                $relativeParsePath = ConvertTo-PortableFormatOperatorPath -PathValue (Get-RelativePathCompat -BasePath $resolvedRootPath -TargetPath $scriptFile.FullName)
                 $firstParseError = [string]$parseErrors[0]
                 Write-Verbose (
                     "Format-operator safety parse diagnostics: file='{0}'; parseErrorCount={1}; firstError='{2}'" -f
@@ -172,7 +179,7 @@ function Get-FormatOperatorContinuationViolations {
 
                 $rightExpressionLine = $scriptLines[$continuationLineIndex]
 
-                $relativePath = ConvertTo-PortableFormatOperatorPath -PathValue ([System.IO.Path]::GetRelativePath($resolvedRootPath, $scriptFile.FullName))
+                $relativePath = ConvertTo-PortableFormatOperatorPath -PathValue (Get-RelativePathCompat -BasePath $resolvedRootPath -TargetPath $scriptFile.FullName)
                 $violationList.Add([pscustomobject]@{
                         Path                = $relativePath
                         Line                = $rightExpressionStartLine

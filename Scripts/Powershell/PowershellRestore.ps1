@@ -1,6 +1,13 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath '../Utils/Common/CompatibilityHelpers.ps1'
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $compatibilityHelpersPath
+
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 Push-Location -LiteralPath $baseDirectory
@@ -74,7 +81,7 @@ try {
         return $defaultBackup
     }
 
-    $targetPathComparer = if ($IsWindows) {
+    $targetPathComparer = if (Test-IsWindowsPlatform) {
         [System.StringComparer]::OrdinalIgnoreCase
     }
     else {
@@ -102,7 +109,7 @@ try {
             })
     }
 
-    if ($IsWindows) {
+    if (Test-IsWindowsPlatform) {
         $documentsPath = Join-Path -Path $HOME -ChildPath 'Documents'
         $windowsPowerShellLegacyPath = Join-Path -Path $documentsPath -ChildPath 'WindowsPowerShell'
         $windowsPowerShellLegacyPath = Join-Path -Path $windowsPowerShellLegacyPath -ChildPath $profileLeafName
@@ -124,7 +131,7 @@ try {
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $backupFolder = Join-Path -Path $HOME -ChildPath 'PowerShell_Settings_Backup'
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -LiteralPath $backupFolder -ItemType Directory -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($backupFolder) | Out-Null
     }
 
     $profilesRestored = 0
@@ -141,7 +148,7 @@ try {
         $targetDirectory = Split-Path -Path $target.Path -Parent
         if (-not [string]::IsNullOrWhiteSpace($targetDirectory) -and -not (Test-Path -LiteralPath $targetDirectory -PathType Container)) {
             Write-Host "PowerShell profile directory not found at $targetDirectory, creating..."
-            New-Item -ItemType Directory -LiteralPath $targetDirectory -Force | Out-Null
+            [System.IO.Directory]::CreateDirectory($targetDirectory) | Out-Null
         }
 
         if (Test-Path -LiteralPath $target.Path -PathType Leaf) {

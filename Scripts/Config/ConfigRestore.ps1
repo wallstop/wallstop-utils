@@ -16,7 +16,7 @@ try {
 
     if (-not (Test-Path -LiteralPath $configDir -PathType Container)) {
         Write-Host ".config directory not found, creating it at: $configDir"
-        New-Item -LiteralPath $configDir -ItemType Directory -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($configDir) | Out-Null
     }
 
     $backupItems = @(Get-ChildItem -LiteralPath $backupDir -Force -ErrorAction Stop)

@@ -10,6 +10,13 @@ if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
 
 . $diagnosticsHelpersPath
 
+$compatibilityHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_BACKUP_COMPATIBILITY_HELPER_MISSING: compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+. $compatibilityHelpersPath
+
 function Get-LastExitCodeOrDefault {
     $lecValue = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
     if ($null -ne $lecValue) {
@@ -295,15 +302,15 @@ function Assert-BackupStepScriptsExist {
 }
 
 function Get-CurrentPlatformName {
-    if ($IsWindows) {
+    if (Test-IsWindowsPlatform) {
         return "Windows"
     }
 
-    if ($IsMacOS) {
+    if (Test-IsMacOSPlatform) {
         return "macOS"
     }
 
-    if ($IsLinux) {
+    if (Test-IsLinuxPlatform) {
         return "Linux"
     }
 

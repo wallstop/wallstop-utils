@@ -2,15 +2,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 function Get-CurrentPlatformName {
-    if ($IsWindows) {
+    if (Test-IsWindowsPlatform) {
         return "Windows"
     }
 
-    if ($IsMacOS) {
+    if (Test-IsMacOSPlatform) {
         return "macOS"
     }
 
-    if ($IsLinux) {
+    if (Test-IsLinuxPlatform) {
         return "Linux"
     }
 
@@ -81,6 +81,12 @@ function Assert-ApplicableUpdateStepsFlat {
 }
 
 $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
+$compatibilityHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_UPDATE_COMPATIBILITY_HELPER_MISSING: compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+. $compatibilityHelpersPath
 $steps = @(
     @{ Name = "StopKomorebi"; RelativeScriptPath = "Komorebi/StopKomorebi.ps1"; SupportedPlatforms = @("Windows") },
     @{ Name = "ScoopUpdate"; RelativeScriptPath = "Scoop/ScoopUpdate.ps1"; SupportedPlatforms = @("Windows") },

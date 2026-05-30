@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 BeforeAll {
+    . "$PSScriptRoot/../../Scripts/Utils/Common/CompatibilityHelpers.ps1"
     . "$PSScriptRoot/../../Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1" -NoRun
 }
 
@@ -291,48 +292,83 @@ Describe "Get-HeaderValue" {
         (Get-HeaderValue -Headers $headers -Key "X-RateLimit-Reset") | Should -BeNullOrEmpty
     }
 
-    It "returns all values from HttpHeaders via TryGetValues" {
-        $response = [System.Net.Http.HttpResponseMessage]::new()
-        try {
-            $response.Headers.Add("X-OAuth-Scopes", "repo")
-            $response.Headers.Add("X-OAuth-Scopes", "read:org")
-
-            $values = @(Get-HeaderValues -Headers $response.Headers -Key "X-OAuth-Scopes")
-            $values.Count | Should -Be 2
-            $values[0] | Should -Be "repo"
-            $values[1] | Should -Be "read:org"
-        }
-        finally {
-            $response.Dispose()
-        }
-    }
-
-    It "reads HttpHeaders values regardless of key casing" {
-        $response = [System.Net.Http.HttpResponseMessage]::new()
-        try {
-            $response.Headers.Add("X-OAuth-Scopes", "repo")
-
-            $values = @(Get-HeaderValues -Headers $response.Headers -Key "x-oauth-scopes")
-            $values.Count | Should -Be 1
-            $values[0] | Should -Be "repo"
-        }
-        finally {
-            $response.Dispose()
-        }
-    }
-
     It "normalizes array-valued hashtable entries to first scalar for Get-HeaderValue" {
         $headers = @{ "X-RateLimit-Reset" = @("123", "456") }
         (Get-HeaderValue -Headers $headers -Key "X-RateLimit-Reset") | Should -Be "123"
     }
+}
 
-    It "returns all array-valued hashtable entries for Get-HeaderValues" {
-        $headers = @{ "X-OAuth-Scopes" = @("repo", "read:org") }
-        $values = @(Get-HeaderValues -Headers $headers -Key "X-OAuth-Scopes")
+Describe "Get-HeaderValues" {
+    BeforeAll {
+        # System.Net.Http is auto-loaded on PowerShell 7+ but NOT on Windows PowerShell 5.1,
+        # where [System.Net.Http.HttpResponseMessage] would otherwise fail to resolve ("Unable
+        # to find type"). Load it explicitly so the real-HttpHeaders provider exercises
+        # production's TryGetValues branch on both editions.
+        Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
 
-        $values.Count | Should -Be 2
-        $values[0] | Should -Be "repo"
-        $values[1] | Should -Be "read:org"
+        function New-HeaderProvider {
+            # Builds a headers object of the requested backing kind. Returns the headers plus
+            # an optional disposable owner so HttpResponseMessage (whose Headers is a live view)
+            # can be released after the lookup.
+            param(
+                [Parameter(Mandatory = $true)]
+                [ValidateSet("HttpHeaders", "Hashtable", "GenericDictionary")]
+                [string]$Backing,
+
+                [Parameter(Mandatory = $true)]
+                [hashtable]$Entries
+            )
+
+            switch ($Backing) {
+                "HttpHeaders" {
+                    $response = [System.Net.Http.HttpResponseMessage]::new()
+                    foreach ($key in $Entries.Keys) {
+                        foreach ($value in @($Entries[$key])) {
+                            $response.Headers.Add($key, $value)
+                        }
+                    }
+                    return [pscustomobject]@{ Headers = $response.Headers; Disposable = $response }
+                }
+                "Hashtable" {
+                    return [pscustomobject]@{ Headers = $Entries; Disposable = $null }
+                }
+                "GenericDictionary" {
+                    $dictionary = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($key in $Entries.Keys) {
+                        $dictionary[$key] = [string]@($Entries[$key])[0]
+                    }
+                    return [pscustomobject]@{ Headers = $dictionary; Disposable = $null }
+                }
+            }
+        }
+    }
+
+    # Data-driven across every header backing production must accept: real HttpHeaders (via the
+    # TryGetValues branch), plain hashtables, and case-insensitive generic dictionaries (both
+    # via the ContainsKey branch). Adding a backing here adds a row, not a copy of the body.
+    It "reads <Case>" -ForEach @(
+        @{ Case = "multiple values from real HttpHeaders via TryGetValues"; Backing = "HttpHeaders";       Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
+        @{ Case = "real HttpHeaders regardless of key casing";              Backing = "HttpHeaders";       Entries = @{ "X-OAuth-Scopes" = @("repo") };             LookupKey = "x-oauth-scopes"; Expected = @("repo") }
+        @{ Case = "array-valued hashtable entries";                         Backing = "Hashtable";         Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
+        @{ Case = "case-insensitive generic dictionary entries";            Backing = "GenericDictionary"; Entries = @{ "X-OAuth-Scopes" = "repo" };                LookupKey = "x-oauth-scopes"; Expected = @("repo") }
+    ) {
+        param($Backing, $Entries, $LookupKey, $Expected)
+
+        if ($Backing -eq "HttpHeaders" -and -not ([System.Management.Automation.PSTypeName]'System.Net.Http.HttpResponseMessage').Type) {
+            Set-ItResult -Skipped -Because "System.Net.Http could not be loaded on this runner."
+            return
+        }
+
+        $provider = New-HeaderProvider -Backing $Backing -Entries $Entries
+        try {
+            $values = @(Get-HeaderValues -Headers $provider.Headers -Key $LookupKey)
+            ($values -join '|') | Should -BeExactly ($Expected -join '|') -Because "Get-HeaderValues should return the configured values for the $Backing backing."
+        }
+        finally {
+            if ($null -ne $provider.Disposable) {
+                $provider.Disposable.Dispose()
+            }
+        }
     }
 }
 
@@ -478,12 +514,12 @@ Describe "Get-ClipboardCommandPriority" {
 Describe "Copy-ToClipboard" {
     It "copies text using Set-Clipboard when available" {
         Mock Get-ClipboardCommandPriority { @("Set-Clipboard") }
-        Mock Set-Clipboard { }
+        Mock Set-ClipboardValue { }
 
         $copied = Copy-ToClipboard -Text "copy me"
 
         $copied | Should -BeTrue
-        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $Value -eq "copy me" }
+        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { $Value -eq "copy me" }
     }
 
     It "returns false and warns when clipboard command is unavailable" {
@@ -504,7 +540,7 @@ Describe "Copy-ToClipboard" {
         $secret = "ghp_" + ("a" * 36)
         $script:lastWarningMessage = $null
         Mock Get-ClipboardCommandPriority { @("Set-Clipboard") }
-        Mock Set-Clipboard { throw "copy failure token=$secret" }
+        Mock Set-ClipboardValue { throw "copy failure token=$secret" }
         Mock Write-Warning {
             param($Message)
             $script:lastWarningMessage = $Message
@@ -521,7 +557,7 @@ Describe "Copy-ToClipboard" {
     It "falls back to Set-Clipboard when OSC52 attempt fails" {
         $script:clipboardAttemptOrder = @()
         Mock Get-ClipboardCommandPriority { @("Set-Clipboard-AsOSC52", "Set-Clipboard") }
-        Mock Set-Clipboard {
+        Mock Set-ClipboardValue {
             param(
                 [string]$Value,
                 [switch]$AsOSC52
@@ -539,19 +575,19 @@ Describe "Copy-ToClipboard" {
 
         $copied | Should -BeTrue
         (($script:clipboardAttemptOrder) -join ",") | Should -Be "Set-Clipboard-AsOSC52,Set-Clipboard" -Because "clipboard fallback should preserve OSC52-first attempt order and then recover with plain Set-Clipboard"
-        Assert-MockCalled Set-Clipboard -Times 2 -Scope It
-        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent }
-        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { -not $AsOSC52.IsPresent }
+        Assert-MockCalled Set-ClipboardValue -Times 2 -Scope It
+        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent }
+        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { -not $AsOSC52.IsPresent }
     }
 
     It "uses Set-Clipboard -AsOSC52 when OSC52 strategy is selected" {
         Mock Get-ClipboardCommandPriority { @("Set-Clipboard-AsOSC52") }
-        Mock Set-Clipboard { }
+        Mock Set-ClipboardValue { }
 
         $copied = Copy-ToClipboard -Text "copy me"
 
         $copied | Should -BeTrue
-        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent -and $Value -eq "copy me" }
+        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent -and $Value -eq "copy me" }
     }
 
     It "falls back across native clipboard tools in priority order" {
@@ -610,6 +646,36 @@ Describe "Copy-ToClipboard" {
             Remove-Item -Path Function:xclip -ErrorAction SilentlyContinue
             Remove-Item -Path Function:xsel -ErrorAction SilentlyContinue
         }
+    }
+}
+
+Describe "Set-ClipboardValue" {
+    # The seam exists so Copy-ToClipboard's clipboard tests can mock a command with an
+    # edition-stable parameter set; these tests assert the seam itself routes to Set-Clipboard
+    # correctly (the branch selection that Copy-ToClipboard's mocks otherwise stub out).
+    It "calls Set-Clipboard without -AsOSC52 by default" {
+        Mock Set-Clipboard { }
+
+        Set-ClipboardValue -Value "plain copy"
+
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { -not $AsOSC52.IsPresent -and $Value -eq "plain copy" }
+    }
+
+    It "routes -AsOSC52 through to Set-Clipboard when the parameter exists on this edition" {
+        $setClipboard = Get-Command Set-Clipboard -ErrorAction SilentlyContinue
+        if ($null -eq $setClipboard -or -not $setClipboard.Parameters.ContainsKey('AsOSC52')) {
+            # On Windows PowerShell 5.1 Set-Clipboard has no -AsOSC52, and production never
+            # selects the OSC52 strategy there (Get-ClipboardCommandPriority gates on the same
+            # capability check), so the branch is unreachable and not worth a brittle shim.
+            Set-ItResult -Skipped -Because "Set-Clipboard -AsOSC52 is unavailable on this edition (Windows PowerShell 5.1)."
+            return
+        }
+
+        Mock Set-Clipboard { }
+
+        Set-ClipboardValue -Value "osc52 copy" -AsOSC52
+
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent -and $Value -eq "osc52 copy" }
     }
 }
 
@@ -847,7 +913,7 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $text | Should -Match "\(src/range\.ts\) 37-52"
 
         $json = Format-UnresolvedThreadsAsJson -Records @($record)
-        $parsed = @($json | ConvertFrom-Json -Depth 8)
+        $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
         $parsed[0].lineStart | Should -Be 37
         $parsed[0].lineEnd | Should -Be 52
     }
@@ -1140,7 +1206,7 @@ Describe "Format-UnresolvedThreadsAsJson" {
         $json = Format-UnresolvedThreadsAsJson -Records $records
         $json | Should -Match '^\s*\['
 
-        $parsed = @($json | ConvertFrom-Json -Depth 8)
+        $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
         $parsed.Count | Should -Be 1
         $propertyNames = @($parsed[0].PSObject.Properties.Name)
 
@@ -1730,7 +1796,7 @@ Describe "Get-UnresolvedReviewThreads" {
             }
         }
 
-        $records = Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 100 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $records = @(Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 100 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
 
         $records.Count | Should -Be 2
         ($records | Select-Object -ExpandProperty threadId) | Should -Contain "T1"
@@ -1922,7 +1988,7 @@ Describe "Get-UnresolvedReviewThreads" {
             }
         }
 
-        $records = Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $records = @(Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
         $records.Count | Should -Be 1
         $records[0].topLevelComment.Length | Should -Be 600
         $records[0].latestReplySummary.Length | Should -Be 400
@@ -1949,7 +2015,7 @@ Describe "Get-UnresolvedReviewThreads" {
             }
         }
 
-        $records = Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -Truncate
+        $records = @(Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -Truncate)
         $records.Count | Should -Be 1
         $records[0].topLevelComment | Should -Match "\[\.\.\.\]$"
         $records[0].latestReplySummary | Should -Match "\[\.\.\.\]$"

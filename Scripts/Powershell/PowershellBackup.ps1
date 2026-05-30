@@ -1,6 +1,13 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath '../Utils/Common/CompatibilityHelpers.ps1'
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $compatibilityHelpersPath
+
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 $backupFolder = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Config") -ChildPath "Powershell"
@@ -8,7 +15,7 @@ Push-Location -LiteralPath $baseDirectory
 
 try {
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -LiteralPath $backupFolder -ItemType Directory | Out-Null
+        [System.IO.Directory]::CreateDirectory($backupFolder) | Out-Null
     }
 
     $profilesBackedUp = 0
@@ -23,7 +30,7 @@ try {
             Path = $PROFILE.CurrentUserAllHosts
         })
 
-    if ($IsWindows) {
+    if (Test-IsWindowsPlatform) {
         $documentsPath = Join-Path -Path $HOME -ChildPath "Documents"
         [void]$candidateProfiles.Add([pscustomobject]@{
                 Name = "WindowsPowerShellFallback"
@@ -31,7 +38,7 @@ try {
             })
     }
 
-    $pathComparer = if ($IsWindows) {
+    $pathComparer = if (Test-IsWindowsPlatform) {
         [System.StringComparer]::OrdinalIgnoreCase
     }
     else {

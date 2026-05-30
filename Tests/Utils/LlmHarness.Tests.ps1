@@ -17,6 +17,21 @@ BeforeAll {
 
     . $wrapperHelperPath
 
+    $script:compatibilityHelperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/CompatibilityHelpers.ps1'
+    if (-not (Test-Path -Path $script:compatibilityHelperPath -PathType Leaf)) {
+        throw "E_CONFIG_ERROR: Compatibility helper file not found at '$script:compatibilityHelperPath'."
+    }
+
+    # Helper: copy the index updater into a temp tree along with the Common helpers it
+    # dot-sources, so the copied script can resolve '../Common/CompatibilityHelpers.ps1'.
+    $script:CopyUpdaterToTemp = {
+        param([string]$TempUpdaterPath)
+        Copy-Item -Path $script:indexUpdaterPath -Destination $TempUpdaterPath -Force
+        $tempCommonDir = Join-Path -Path (Split-Path -Path (Split-Path -Path $TempUpdaterPath -Parent) -Parent) -ChildPath 'Common'
+        [System.IO.Directory]::CreateDirectory($tempCommonDir) | Out-Null
+        Copy-Item -Path $script:compatibilityHelperPath -Destination (Join-Path -Path $tempCommonDir -ChildPath 'CompatibilityHelpers.ps1') -Force
+    }
+
     # Helper: remove temp directories reliably on Windows where file handles may linger.
     $script:RemoveTempRoot = {
         param([string]$Path)
@@ -219,7 +234,7 @@ Describe "LLM harness automation" {
             )
 
             $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
-            Copy-Item -Path $script:indexUpdaterPath -Destination $tempUpdaterPath -Force
+            & $script:CopyUpdaterToTemp $tempUpdaterPath
             & $tempUpdaterPath -RootPath $tempRoot
 
             $validationFailure = $null
@@ -315,7 +330,7 @@ Describe "LLM harness automation" {
             )
 
             $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
-            Copy-Item -Path $script:indexUpdaterPath -Destination $tempUpdaterPath -Force
+            & $script:CopyUpdaterToTemp $tempUpdaterPath
             & $tempUpdaterPath -RootPath $tempRoot
 
             $generatedIndex = ([System.IO.File]::ReadAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), [System.Text.Encoding]::UTF8)) -replace "`r", ''
@@ -371,7 +386,7 @@ Describe "LLM harness automation" {
             )
 
             $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
-            Copy-Item -Path $script:indexUpdaterPath -Destination $tempUpdaterPath -Force
+            & $script:CopyUpdaterToTemp $tempUpdaterPath
             & $tempUpdaterPath -RootPath $tempRoot
 
             $validationFailure = $null
@@ -431,7 +446,7 @@ Describe "LLM harness automation" {
             )
 
             $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
-            Copy-Item -Path $script:indexUpdaterPath -Destination $tempUpdaterPath -Force
+            & $script:CopyUpdaterToTemp $tempUpdaterPath
             & $tempUpdaterPath -RootPath $tempRoot
 
             { & $script:validatorPath -RootPath $tempRoot } | Should -Not -Throw
@@ -482,7 +497,7 @@ Describe "LLM harness automation" {
             )
 
             $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
-            Copy-Item -Path $script:indexUpdaterPath -Destination $tempUpdaterPath -Force
+            & $script:CopyUpdaterToTemp $tempUpdaterPath
             & $tempUpdaterPath -RootPath $tempRoot
 
             { & $script:validatorPath -RootPath $tempRoot } | Should -Not -Throw
@@ -533,7 +548,7 @@ Describe "LLM harness automation" {
             )
 
             $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
-            Copy-Item -Path $script:indexUpdaterPath -Destination $tempUpdaterPath -Force
+            & $script:CopyUpdaterToTemp $tempUpdaterPath
             & $tempUpdaterPath -RootPath $tempRoot
 
             $validationFailure = $null
