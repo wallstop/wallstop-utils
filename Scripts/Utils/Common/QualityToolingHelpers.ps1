@@ -317,9 +317,10 @@ function Invoke-QualityToolingCapturedProcess {
     $processStartInfo.RedirectStandardOutput = $true
     $processStartInfo.RedirectStandardError = $true
 
-    foreach ($argument in @($ArgumentList)) {
-        [void]$processStartInfo.ArgumentList.Add($argument)
-    }
+    # ProcessStartInfo.ArgumentList is .NET Core-only; Set-PortableProcessArguments populates
+    # it on PowerShell 7+ and falls back to an equivalently escaped .Arguments string on
+    # Windows PowerShell 5.1 (.NET Framework), where ArgumentList does not exist.
+    Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $ArgumentList
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo
@@ -331,7 +332,7 @@ function Invoke-QualityToolingCapturedProcess {
         $exited = $process.WaitForExit($TimeoutSeconds * 1000)
         if (-not $exited) {
             try {
-                $process.Kill($true)
+                Stop-ProcessTreePortably -Process $process
             }
             catch {
                 Write-Verbose "Failed to kill timed-out process '$FilePath': $($_.Exception.Message)"
@@ -375,9 +376,8 @@ function Invoke-QualityToolingProcess {
     $processStartInfo.WorkingDirectory = $WorkingDirectory
     $processStartInfo.UseShellExecute = $false
 
-    foreach ($argument in @($ArgumentList)) {
-        [void]$processStartInfo.ArgumentList.Add($argument)
-    }
+    # ProcessStartInfo.ArgumentList is .NET Core-only; see Set-PortableProcessArguments.
+    Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $ArgumentList
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo
@@ -387,7 +387,7 @@ function Invoke-QualityToolingProcess {
         $exited = $process.WaitForExit($TimeoutSeconds * 1000)
         if (-not $exited) {
             try {
-                $process.Kill($true)
+                Stop-ProcessTreePortably -Process $process
             }
             catch {
                 Write-Verbose "Failed to kill timed-out process '$FilePath': $($_.Exception.Message)"

@@ -25,6 +25,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_PRECOMMIT_RECOVERY_PREREQ_MISSING: Compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+. $compatibilityHelpersPath
+
 function Get-PreCommitExecutableOrThrow {
     $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
     if ($null -eq $preCommitCommand) {
@@ -54,9 +60,8 @@ function Invoke-PreCommitCapturedCommand {
     $processStartInfo.RedirectStandardOutput = $true
     $processStartInfo.RedirectStandardError = $true
 
-    foreach ($argument in @($Arguments)) {
-        [void]$processStartInfo.ArgumentList.Add($argument)
-    }
+    # ProcessStartInfo.ArgumentList is .NET Core-only; see Set-PortableProcessArguments.
+    Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $Arguments
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo
@@ -67,7 +72,7 @@ function Invoke-PreCommitCapturedCommand {
         $exited = $process.WaitForExit($CommandTimeoutSeconds * 1000)
         if (-not $exited) {
             try {
-                $process.Kill($true)
+                Stop-ProcessTreePortably -Process $process
             }
             catch {
                 Write-Verbose "Pre-commit recovery cleanup diagnostics: failed to kill timed-out process: $($_.Exception.Message)"

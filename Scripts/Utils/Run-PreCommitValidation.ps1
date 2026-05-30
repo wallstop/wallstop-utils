@@ -224,18 +224,22 @@ function Resolve-CanonicalPath {
 
         $candidateItem = Get-Item -LiteralPath $candidatePath -Force
         if (Test-IsLinkOrReparsePoint -Item $candidateItem) {
+            # Get-PortableLinkTarget resolves the final link target portably: it uses the
+            # native FileSystemInfo.ResolveLinkTarget($true) on PowerShell 7+ and the
+            # LinkTarget/Target ETS members on Windows PowerShell 5.1, whose .NET Framework
+            # FileSystemInfo has no ResolveLinkTarget method.
             try {
-                $linkTargetItem = $candidateItem.ResolveLinkTarget($true)
+                $linkTargetPath = Get-PortableLinkTarget -Item $candidateItem
             }
             catch {
                 throw "E_CONFIG_ERROR: unable to resolve symbolic link or reparse point '$candidatePath': $($_.Exception.Message)"
             }
 
-            if ($null -eq $linkTargetItem) {
+            if ([string]::IsNullOrWhiteSpace($linkTargetPath)) {
                 throw "E_CONFIG_ERROR: symbolic link or reparse point '$candidatePath' has no resolvable target."
             }
 
-            $currentPath = [System.IO.Path]::GetFullPath($linkTargetItem.FullName)
+            $currentPath = [System.IO.Path]::GetFullPath($linkTargetPath)
             continue
         }
 
@@ -674,21 +678,22 @@ function Invoke-PesterQualityGateInIsolatedProcess {
         $modulePathEntryCount = @($env:PSModulePath -split [regex]::Escape([string]$pathSeparator) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
         Write-Verbose ("Isolated Pester environment diagnostics: inheritedModulePathEntryCount={0}" -f $modulePathEntryCount)
 
-        foreach ($argument in @(
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-File",
-                $pesterGateScriptPath,
-                "-TestPath",
-                $TestPath,
-                "-DiagnosticsPrefix",
-                $SuiteLabel,
-                "-OutputVerbosity",
-                $OutputVerbosity
-            )) {
-            [void]$startInfo.ArgumentList.Add($argument)
-        }
+        # ProcessStartInfo.ArgumentList is .NET Core-only; Set-PortableProcessArguments uses it
+        # on PowerShell 7+ and an equivalently escaped .Arguments string on Windows PowerShell
+        # 5.1, whose .NET Framework ProcessStartInfo has no ArgumentList property.
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @(
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            $pesterGateScriptPath,
+            "-TestPath",
+            $TestPath,
+            "-DiagnosticsPrefix",
+            $SuiteLabel,
+            "-OutputVerbosity",
+            $OutputVerbosity
+        )
 
         $process = [System.Diagnostics.Process]::new()
         $process.StartInfo = $startInfo

@@ -2,6 +2,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 BeforeAll {
+    function Resolve-CanonicalTempRoot {
+        param([string]$Path)
+
+        # Match FileInfo.FullName canonicalization so path comparisons are stable under
+        # symlink aliases (for example /var vs /private/var on macOS); see .llm/context.md
+        # "Test Temp Directory Canonicalization".
+        $resolvedItem = Get-Item -LiteralPath $Path -ErrorAction Stop
+        return $resolvedItem.FullName
+    }
+
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     $script:helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1"
     . $script:helperPath
@@ -159,5 +169,250 @@ Describe "ConvertFrom-JsonCompat" {
 
     It "honors -Depth without throwing" {
         { '{"a":{"b":{"c":1}}}' | ConvertFrom-JsonCompat -Depth 5 } | Should -Not -Throw
+    }
+}
+
+Describe "ConvertTo-ProcessArgumentString" {
+    # Expected strings are computed by hand from the .NET Core PasteArguments algorithm so the
+    # exact rendered command line is documented and locked. The round-trip test below proves
+    # the strings actually parse back to the original argument vector.
+    It "renders <Case> exactly" -ForEach @(
+        @{ Case = "no arguments";              Arguments = @();                       Expected = "" }
+        @{ Case = "single empty argument";     Arguments = @("");                     Expected = '""' }
+        @{ Case = "simple token";              Arguments = @("simple");               Expected = "simple" }
+        @{ Case = "two tokens";                Arguments = @("a", "b");               Expected = "a b" }
+        @{ Case = "embedded space";            Arguments = @("has space");            Expected = '"has space"' }
+        @{ Case = "literal backslashes";       Arguments = @("C:\path\file");         Expected = "C:\path\file" }
+        @{ Case = "trailing backslash, no ws"; Arguments = @("trailing\");            Expected = "trailing\" }
+        @{ Case = "trailing backslash, ws";    Arguments = @("with space\");          Expected = '"with space\\"' }
+        @{ Case = "embedded quote";            Arguments = @('quote"inside');         Expected = '"quote\"inside"' }
+        @{ Case = "empty then value";          Arguments = @("", "value");            Expected = '"" value' }
+    ) {
+        param($Arguments, $Expected)
+        (ConvertTo-ProcessArgumentString -ArgumentList $Arguments) | Should -BeExactly $Expected
+    }
+
+    It "treats a null argument list as empty" {
+        (ConvertTo-ProcessArgumentString -ArgumentList $null) | Should -BeExactly ""
+    }
+}
+
+Describe "Set-PortableProcessArguments" {
+    BeforeAll {
+        $script:hostPwsh = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        # A tiny echo script: emit each received argument on its own line behind a marker so
+        # empty arguments and surrounding whitespace survive the round-trip unambiguously.
+        $script:echoScript = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("compat-echo-{0}.ps1" -f ([System.Guid]::NewGuid().ToString("N")))
+        Set-Content -LiteralPath $script:echoScript -Value '$args | ForEach-Object { [Console]::Out.WriteLine("ARG:" + $_) }' -Encoding utf8
+
+        function Invoke-ArgumentRoundTrip {
+            param(
+                [string[]]$Arguments,
+                [switch]$ForceFallback
+            )
+
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $script:hostPwsh
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardOutput = $true
+            $launchArguments = @("-NoLogo", "-NoProfile", "-File", $script:echoScript) + $Arguments
+            Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList $launchArguments -ForceFallback:$ForceFallback
+
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            try {
+                [void]$process.Start()
+                $stdout = $process.StandardOutput.ReadToEnd()
+                [void]$process.WaitForExit(30000)
+            }
+            finally {
+                $process.Dispose()
+            }
+
+            $observed = @(($stdout -split "`r?`n") |
+                    Where-Object { $_.StartsWith("ARG:") } |
+                    ForEach-Object { $_.Substring(4) })
+            return , $observed
+        }
+    }
+
+    AfterAll {
+        if ($script:echoScript -and (Test-Path -LiteralPath $script:echoScript)) {
+            Remove-Item -LiteralPath $script:echoScript -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "round-trips <Case> via the native ArgumentList path" -ForEach @(
+        @{ Case = "plain";            Arguments = @("plain") }
+        @{ Case = "embedded space";   Arguments = @("with space") }
+        @{ Case = "two tokens";       Arguments = @("two", "args") }
+        @{ Case = "embedded quote";   Arguments = @('embedded"quote') }
+        @{ Case = "trailing slash";   Arguments = @("trailing\") }
+        @{ Case = "backslash run";    Arguments = @("back\\slash\\\\path") }
+        @{ Case = "quote and space";  Arguments = @('quote" and space') }
+        @{ Case = "empty argument";   Arguments = @("alpha", "", "omega") }
+    ) {
+        param($Arguments)
+        (Invoke-ArgumentRoundTrip -Arguments $Arguments) | Should -Be $Arguments
+    }
+
+    It "round-trips <Case> via the Windows PowerShell 5.1 (.Arguments string) fallback" -ForEach @(
+        @{ Case = "plain";            Arguments = @("plain") }
+        @{ Case = "embedded space";   Arguments = @("with space") }
+        @{ Case = "two tokens";       Arguments = @("two", "args") }
+        @{ Case = "embedded quote";   Arguments = @('embedded"quote') }
+        @{ Case = "trailing slash";   Arguments = @("trailing\") }
+        @{ Case = "backslash run";    Arguments = @("back\\slash\\\\path") }
+        @{ Case = "quote and space";  Arguments = @('quote" and space') }
+        @{ Case = "empty argument";   Arguments = @("alpha", "", "omega") }
+    ) {
+        param($Arguments)
+        # The forced fallback proves ConvertTo-ProcessArgumentString escapes exactly as the
+        # native ArgumentList does: both paths must yield identical child argv.
+        (Invoke-ArgumentRoundTrip -Arguments $Arguments -ForceFallback) | Should -Be $Arguments
+    }
+
+    It "selects the native ArgumentList collection on PowerShell 7+" {
+        if ($PSVersionTable.PSEdition -ne 'Core') {
+            Set-ItResult -Skipped -Because "ArgumentList is only present on PowerShell 7+ / .NET Core."
+            return
+        }
+
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("alpha", "beta")
+        $startInfo.ArgumentList.Count | Should -Be 2
+        $startInfo.Arguments | Should -BeNullOrEmpty
+    }
+
+    It "writes the escaped string to .Arguments under the forced fallback" {
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("a", "b c") -ForceFallback
+        $startInfo.Arguments | Should -BeExactly 'a "b c"'
+    }
+}
+
+Describe "Get-PortableLinkTarget" {
+    BeforeAll {
+        $script:linkRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("compat-link-{0}" -f ([System.Guid]::NewGuid().ToString("N")))
+        New-Item -ItemType Directory -Path $script:linkRoot -Force | Out-Null
+        # Canonicalize so GetFullPath comparisons below are stable under macOS /var aliasing.
+        $script:linkRoot = Resolve-CanonicalTempRoot -Path $script:linkRoot
+
+        $script:realTarget = Join-Path -Path $script:linkRoot -ChildPath "real"
+        New-Item -ItemType Directory -Path $script:realTarget -Force | Out-Null
+
+        # Symbolic-link creation can require privilege (notably on Windows without Developer
+        # Mode). Probe once and skip the link scenarios cleanly when it is unavailable.
+        $script:directLink = Join-Path -Path $script:linkRoot -ChildPath "direct"
+        $script:chainLink = Join-Path -Path $script:linkRoot -ChildPath "chain"
+        $script:symlinksAvailable = $false
+        try {
+            New-Item -ItemType SymbolicLink -Path $script:directLink -Target $script:realTarget -ErrorAction Stop | Out-Null
+            New-Item -ItemType SymbolicLink -Path $script:chainLink -Target $script:directLink -ErrorAction Stop | Out-Null
+            $script:symlinksAvailable = $true
+        }
+        catch {
+            $script:symlinksAvailable = $false
+        }
+    }
+
+    AfterAll {
+        if ($script:linkRoot -and (Test-Path -LiteralPath $script:linkRoot)) {
+            Remove-Item -LiteralPath $script:linkRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns `$null for a non-link directory" {
+        $item = Get-Item -LiteralPath $script:realTarget -Force
+        Get-PortableLinkTarget -Item $item | Should -BeNullOrEmpty
+    }
+
+    It "resolves a direct symbolic link to its final target" {
+        if (-not $script:symlinksAvailable) { Set-ItResult -Skipped -Because "symbolic links are unavailable on this runner"; return }
+        $item = Get-Item -LiteralPath $script:directLink -Force
+        $resolved = Get-PortableLinkTarget -Item $item
+        [System.IO.Path]::GetFullPath($resolved) | Should -Be ([System.IO.Path]::GetFullPath($script:realTarget))
+    }
+
+    It "follows a symbolic-link chain to its final target" {
+        if (-not $script:symlinksAvailable) { Set-ItResult -Skipped -Because "symbolic links are unavailable on this runner"; return }
+        $item = Get-Item -LiteralPath $script:chainLink -Force
+        $resolved = Get-PortableLinkTarget -Item $item
+        [System.IO.Path]::GetFullPath($resolved) | Should -Be ([System.IO.Path]::GetFullPath($script:realTarget))
+    }
+
+    It "matches the native method under the forced 5.1 (ETS) fallback for <Case>" -ForEach @(
+        @{ Case = "direct link" }
+        @{ Case = "chain link" }
+    ) {
+        param($Case)
+        if (-not $script:symlinksAvailable) { Set-ItResult -Skipped -Because "symbolic links are unavailable on this runner"; return }
+
+        $linkPath = if ($Case -eq "direct link") { $script:directLink } else { $script:chainLink }
+        $item = Get-Item -LiteralPath $linkPath -Force
+        $native = Get-PortableLinkTarget -Item $item
+        $fallback = Get-PortableLinkTarget -Item $item -ForceFallback
+        [System.IO.Path]::GetFullPath($fallback) | Should -Be ([System.IO.Path]::GetFullPath($native)) -Because "the 5.1 ETS fallback must resolve to the same final target as the native ResolveLinkTarget."
+    }
+
+    It "terminates (does not loop) on a symbolic-link cycle under the 5.1 fallback" {
+        $cycleA = Join-Path -Path $script:linkRoot -ChildPath "cycle-a"
+        $cycleB = Join-Path -Path $script:linkRoot -ChildPath "cycle-b"
+        $cycleCreated = $false
+        try {
+            # Dangling targets are permitted at creation time on POSIX, forming a 2-node cycle.
+            New-Item -ItemType SymbolicLink -Path $cycleA -Target $cycleB -ErrorAction Stop | Out-Null
+            New-Item -ItemType SymbolicLink -Path $cycleB -Target $cycleA -ErrorAction Stop | Out-Null
+            $cycleCreated = $true
+        }
+        catch {
+            $cycleCreated = $false
+        }
+        if (-not $cycleCreated) { Set-ItResult -Skipped -Because "symbolic-link cycles cannot be created on this runner"; return }
+
+        $item = Get-Item -LiteralPath $cycleA -Force
+        # The visited-target set (plus the MaxDepth bound) must break the cycle rather than hang,
+        # and return $null to match the native ResolveLinkTarget($true) "unresolved" outcome.
+        $cycleResult = $null
+        { $cycleResult = Get-PortableLinkTarget -Item $item -ForceFallback } | Should -Not -Throw
+        $cycleResult | Should -BeNullOrEmpty -Because "a symbolic-link cycle is unresolvable, mirroring native ResolveLinkTarget."
+    }
+}
+
+Describe "Stop-ProcessTreePortably" {
+    BeforeAll {
+        $script:killHostPwsh = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+
+        function Start-LongRunningProcess {
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $script:killHostPwsh
+            $startInfo.UseShellExecute = $false
+            Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-NoLogo", "-NoProfile", "-Command", "Start-Sleep -Seconds 120")
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            [void]$process.Start()
+            return $process
+        }
+    }
+
+    It "terminates a running process via <Case>" -ForEach @(
+        @{ Case = "the native tree-kill path"; ForceFallback = $false }
+        @{ Case = "the Windows PowerShell 5.1 parameterless-Kill fallback"; ForceFallback = $true }
+    ) {
+        param($ForceFallback)
+
+        $process = Start-LongRunningProcess
+        try {
+            $process.HasExited | Should -BeFalse -Because "the sleep process should still be running before we kill it."
+            Stop-ProcessTreePortably -Process $process -ForceFallback:$ForceFallback
+            $process.WaitForExit(20000) | Should -BeTrue -Because "the process must be terminated by Stop-ProcessTreePortably."
+            $process.HasExited | Should -BeTrue
+        }
+        finally {
+            if (-not $process.HasExited) {
+                $process.Kill()
+            }
+            $process.Dispose()
+        }
     }
 }

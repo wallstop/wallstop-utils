@@ -310,8 +310,11 @@ function Invoke-AutoHotkeyCommand {
 
     # Process-level capture is more reliable than call-operator redirection for GUI-subsystem
     # binaries (such as AutoHotkey64.exe on CI), and keeps behavior consistent cross-platform.
-    # Uses System.Diagnostics.Process with ArgumentList.Add() on all platforms to avoid
-    # Start-Process -ArgumentList mangling of special characters (curly braces, double quotes).
+    # Argument passing goes through Set-PortableProcessArguments so special characters (curly
+    # braces, double quotes) are escaped exactly as .NET Core's ArgumentList would, without the
+    # Start-Process -ArgumentList mangling: it uses the native ArgumentList collection on
+    # PowerShell 7+ and an equivalently escaped .Arguments string on Windows PowerShell 5.1,
+    # whose .NET Framework ProcessStartInfo has no ArgumentList property.
     $process = $null
     $stdoutLines = @()
     $stderrLines = @()
@@ -327,9 +330,7 @@ function Invoke-AutoHotkeyCommand {
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true
 
-        foreach ($argument in $Arguments) {
-            [void]$startInfo.ArgumentList.Add($argument)
-        }
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList $Arguments
 
         $process = [System.Diagnostics.Process]::new()
         $process.StartInfo = $startInfo

@@ -750,7 +750,11 @@ Describe "Cross-language quality platform conventions" {
         $sharedHelper | Should -Match 'Invoke-WebRequest'
         $sharedHelper | Should -Match 'Get-FileHash'
         $sharedHelper | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $sharedHelper | Should -Match 'ArgumentList\.Add'
+        # Argument passing must go through the portable shim (native ArgumentList on 7+,
+        # escaped .Arguments string on Windows PowerShell 5.1) rather than touching the
+        # .NET Core-only ArgumentList collection directly, which throws on 5.1.
+        $sharedHelper | Should -Match 'Set-PortableProcessArguments'
+        $sharedHelper | Should -Not -Match '\$\w+\.ArgumentList\.Add'
         $sharedHelper | Should -Match 'W_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_FALLBACK'
         $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_HASH_MISMATCH'
         $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_UNSUPPORTED'
@@ -804,7 +808,11 @@ Describe "Cross-language quality platform conventions" {
         $sharedHelper | Should -Match 'Invoke-WebRequest'
         $sharedHelper | Should -Match 'Get-FileHash'
         $sharedHelper | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $sharedHelper | Should -Match 'ArgumentList\.Add'
+        # Argument passing must go through the portable shim (native ArgumentList on 7+,
+        # escaped .Arguments string on Windows PowerShell 5.1) rather than touching the
+        # .NET Core-only ArgumentList collection directly, which throws on 5.1.
+        $sharedHelper | Should -Match 'Set-PortableProcessArguments'
+        $sharedHelper | Should -Not -Match '\$\w+\.ArgumentList\.Add'
         $sharedHelper | Should -Match 'W_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_FALLBACK'
         $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_HASH_MISMATCH'
         $sharedHelper | Should -Match 'E_\$\(\$Context\.DiagnosticPrefix\)_PLATFORM_UNSUPPORTED'
@@ -1009,12 +1017,15 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecksTests | Should -Match 'Arguments\s*='
     }
 
-    It "uses System.Diagnostics.Process with ArgumentList in Invoke-AutoHotkeyCommand and avoids LASTEXITCODE dependency" {
+    It "uses System.Diagnostics.Process with portable argument passing in Invoke-AutoHotkeyCommand and avoids LASTEXITCODE dependency" {
         $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
         $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
 
         $windowsChecks | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $windowsChecks | Should -Match 'ArgumentList\.Add'
+        # Portable argument passing (native ArgumentList on 7+, escaped .Arguments string on
+        # Windows PowerShell 5.1) instead of the .NET Core-only ArgumentList collection.
+        $windowsChecks | Should -Match 'Set-PortableProcessArguments'
+        $windowsChecks | Should -Not -Match '\$\w+\.ArgumentList\.Add'
         $windowsChecks | Should -Match 'RedirectStandardOutput'
         $windowsChecks | Should -Match 'RedirectStandardError'
         $windowsChecks | Should -Match 'E_AHK_PROCESS_EXECUTION_FAILED'
@@ -2957,7 +2968,11 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'Test-IsLinkOrReparsePoint\s+-Item\s+\$resolvedArtifactDirectoryItem'
         $content | Should -Match '\[System\.IO\.FileAttributes\]::ReparsePoint'
         $content | Should -Match 'LinkType'
-        $content | Should -Match 'ResolveLinkTarget\(\$true\)'
+        # The canonical-path guard resolves symbolic links to their FINAL target through the
+        # portable Get-PortableLinkTarget shim (native ResolveLinkTarget($true) on 7+, the
+        # LinkTarget/Target ETS members on Windows PowerShell 5.1) rather than calling the
+        # .NET 6-only ResolveLinkTarget method directly, which throws on 5.1.
+        $content | Should -Match 'Get-PortableLinkTarget'
         $content | Should -Match 'isolated Pester failure artifact directory must not be a symbolic link or reparse point'
         $content | Should -Match 'Resolve-CanonicalPath\s+-Path\s+\$artifactDirectory'
         $content | Should -Match 'E_CONFIG_ERROR: isolated Pester failure artifact path must be outside repository root'

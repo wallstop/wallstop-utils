@@ -317,7 +317,7 @@ function Resolve-TopLevelPathAlias {
             $resolvedAliasTarget = $null
             if ($topLevelItem.PSObject.Methods.Name -contains "ResolveLinkTarget") {
                 try {
-                    $resolvedAliasTarget = $topLevelItem.ResolveLinkTarget($true)
+                    $resolvedAliasTarget = $topLevelItem.ResolveLinkTarget($true) # compat-core-member-ok: guarded by the PSObject.Methods probe above; Windows PowerShell 5.1 uses the LinkTarget/Target ETS branch below.
                 }
                 catch {
                     $resolvedAliasTarget = $null
@@ -329,10 +329,16 @@ function Resolve-TopLevelPathAlias {
                 $aliasResolutionSource = "ResolveLinkTarget"
             }
             else {
+                # Windows PowerShell 5.1 surfaces symlink targets through the LinkTarget/Target
+                # ETS members. This single-hop top-level-alias read is intentionally kept inline
+                # (it is a hardening invariant pinned by ScriptSafetyConventions.Tests.ps1) and
+                # is distinct from the chain-following Get-PortableLinkTarget used for full
+                # scan-root canonicalization. The .LinkTarget member access is .NET 6-only but
+                # is reached only after the PSObject.Properties capability check below.
                 $linkTargetProperty = $null
                 $linkTargetPropertyName = $null
                 if ($topLevelItem.PSObject.Properties.Name -contains "LinkTarget") {
-                    $linkTargetProperty = [string]$topLevelItem.LinkTarget
+                    $linkTargetProperty = [string]$topLevelItem.LinkTarget # compat-core-member-ok: guarded by the PSObject.Properties check above.
                     $linkTargetPropertyName = "LinkTarget"
                 }
                 elseif ($topLevelItem.PSObject.Properties.Name -contains "Target") {
@@ -487,18 +493,13 @@ function Resolve-CanonicalFileSystemPath {
         $resolvedPath = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
         $resolvedItem = Get-Item -LiteralPath $resolvedPath -ErrorAction Stop
 
-        $resolvedLinkTarget = $null
-        if ($resolvedItem.PSObject.Methods.Name -contains "ResolveLinkTarget") {
-            try {
-                $resolvedLinkTarget = $resolvedItem.ResolveLinkTarget($true)
-            }
-            catch {
-                $resolvedLinkTarget = $null
-            }
-        }
-
-        $canonicalCandidate = if ($null -ne $resolvedLinkTarget) {
-            $resolvedLinkTarget.FullName
+        # Resolve a symlinked scan root to its final target so git-native discovery (which
+        # keys on the real worktree path) can scope correctly. Get-PortableLinkTarget uses the
+        # native ResolveLinkTarget on PowerShell 7+ and the LinkTarget/Target ETS members on
+        # Windows PowerShell 5.1, whose .NET Framework FileSystemInfo has no ResolveLinkTarget.
+        $resolvedLinkTargetPath = Get-PortableLinkTarget -Item $resolvedItem
+        $canonicalCandidate = if (-not [string]::IsNullOrWhiteSpace($resolvedLinkTargetPath)) {
+            $resolvedLinkTargetPath
         }
         else {
             $resolvedItem.FullName

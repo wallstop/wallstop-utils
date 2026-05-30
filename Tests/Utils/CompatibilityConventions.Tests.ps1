@@ -108,3 +108,132 @@ Describe "Cross-version compatibility gate (PSScriptAnalyzer)" {
         $gateResult.allowedFindingCount | Should -BeGreaterThan 0
     }
 }
+
+Describe "Cross-version compatibility - Core-only .NET member scan (dependency-free)" {
+    BeforeAll {
+        # Mirrors Get-CoreOnlyMemberViolation in Invoke-CompatibilityChecks.ps1 so the invariant
+        # is ALSO enforced on the Windows PowerShell 5.1 runtime lane (no PSScriptAnalyzer). A
+        # deliberately runtime-guarded native access opts out with an inline
+        # '# compat-core-member-ok' marker; there is no whole-file allowlist.
+        $script:coreOnlyMemberRules = @{
+            'ArgumentList'      = @{ RequireInvocation = $false; MinArgumentCount = 0 }
+            'ResolveLinkTarget' = @{ RequireInvocation = $true; MinArgumentCount = 0 }
+            'LinkTarget'        = @{ RequireInvocation = $false; MinArgumentCount = 0 }
+            'Kill'              = @{ RequireInvocation = $true; MinArgumentCount = 1 }
+        }
+
+        function Get-CoreOnlyMemberViolationFromAst {
+            # Pure detection over a parsed AST + its source lines, so the same logic backs both
+            # the file scan and the string-based positive test (without writing a temp file).
+            param(
+                [System.Management.Automation.Language.Ast]$Ast,
+                [string[]]$Lines,
+                [hashtable]$Rules
+            )
+
+            $found = New-Object System.Collections.Generic.List[object]
+            if ($null -eq $Ast) {
+                return , @($found.ToArray())
+            }
+
+            $memberAsts = @($Ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.MemberExpressionAst]
+                    }, $true))
+            foreach ($memberAst in $memberAsts) {
+                if (-not ($memberAst.Member -is [System.Management.Automation.Language.StringConstantExpressionAst])) {
+                    continue
+                }
+                $name = $memberAst.Member.Value
+                if (-not $Rules.ContainsKey($name)) {
+                    continue
+                }
+                $rule = $Rules[$name]
+                $isInvocation = ($memberAst -is [System.Management.Automation.Language.InvokeMemberExpressionAst])
+                if ($rule.RequireInvocation -and -not $isInvocation) {
+                    continue
+                }
+                if ($rule.MinArgumentCount -gt 0) {
+                    if (-not $isInvocation) {
+                        continue
+                    }
+                    $argCount = 0
+                    if ($null -ne $memberAst.Arguments) {
+                        $argCount = @($memberAst.Arguments).Count
+                    }
+                    if ($argCount -lt $rule.MinArgumentCount) {
+                        continue
+                    }
+                }
+                # Scan every line the member expression spans for the opt-out marker (mirrors
+                # the gate's Get-CoreOnlyMemberViolation).
+                $isMarked = $false
+                for ($markerLine = $memberAst.Extent.StartLineNumber; $markerLine -le $memberAst.Extent.EndLineNumber; $markerLine++) {
+                    if ($markerLine -ge 1 -and $markerLine -le $Lines.Length -and $Lines[$markerLine - 1].Contains('compat-core-member-ok')) {
+                        $isMarked = $true
+                        break
+                    }
+                }
+                if ($isMarked) {
+                    continue
+                }
+                $found.Add([pscustomobject]@{ Name = $name; Line = $memberAst.Extent.StartLineNumber }) | Out-Null
+            }
+            return , @($found.ToArray())
+        }
+    }
+
+    It "has no unguarded .NET Core-only member access in production scripts" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Scripts'
+        $files = @(Get-ChildItem -Path $scriptsRoot -Recurse -File -Include *.ps1, *.psm1)
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        foreach ($file in $files) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$null)
+            $lines = [System.IO.File]::ReadAllLines($file.FullName)
+            foreach ($v in (Get-CoreOnlyMemberViolationFromAst -Ast $ast -Lines $lines -Rules $script:coreOnlyMemberRules)) {
+                $violations.Add(("{0}:{1} .{2}" -f $file.Name, $v.Line, $v.Name)) | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "ProcessStartInfo.ArgumentList / FileSystemInfo.ResolveLinkTarget / .LinkTarget / Process.Kill([bool]) throw on Windows PowerShell 5.1; route them through the CompatibilityHelpers shims (Set-PortableProcessArguments / Get-PortableLinkTarget / Stop-ProcessTreePortably) or annotate a deliberately-guarded access with '# compat-core-member-ok'. Violations: " + ($violations -join '; '))
+    }
+
+    It "flags unguarded Core-only access (incl. Kill([bool]) overload), honors the opt-out marker, and ignores look-alikes" {
+        # Parse from a string (no temp file) so the detection logic is verified directly.
+        $sample = @'
+param([string[]]$ArgumentList)
+$startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+$startInfo.ArgumentList.Add("x")
+$probe = [System.Diagnostics.ProcessStartInfo].GetProperty('ArgumentList')
+$item.ResolveLinkTarget($true)
+$count = $ArgumentList.Count
+$process.Kill()
+$process.Kill($true)
+$guarded.ResolveLinkTarget($true) # compat-core-member-ok
+'@
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($sample, [ref]$null, [ref]$null)
+        $lines = $sample -split "`r?`n"
+        # Get-CoreOnlyMemberViolationFromAst comma-wraps its return for empty-safety, so the
+        # call site must NOT wrap with @() (that would nest the array). See .llm/context.md
+        # "PowerShell Empty Array Return Safety".
+        $flagged = Get-CoreOnlyMemberViolationFromAst -Ast $ast -Lines $lines -Rules $script:coreOnlyMemberRules
+        $names = @($flagged | ForEach-Object { $_.Name })
+
+        # Caught: unguarded $startInfo.ArgumentList, unguarded $item.ResolveLinkTarget, and the
+        # Core-only Process.Kill($true) OVERLOAD.
+        ($names -contains 'ArgumentList') | Should -BeTrue
+        ($names -contains 'ResolveLinkTarget') | Should -BeTrue
+        ($names -contains 'Kill') | Should -BeTrue
+
+        # Kill() (no argument) is present on both editions and must NOT be flagged; only the
+        # Kill($true) overload is. So exactly one 'Kill' violation.
+        (@($names | Where-Object { $_ -eq 'Kill' }).Count) | Should -Be 1
+        # The marked $guarded.ResolveLinkTarget is exempt, so exactly one 'ResolveLinkTarget'.
+        (@($names | Where-Object { $_ -eq 'ResolveLinkTarget' }).Count) | Should -Be 1
+        # Look-alikes ($ArgumentList param/Count, GetProperty('ArgumentList') string arg) excluded.
+        (@($names | Where-Object { $_ -eq 'ArgumentList' }).Count) | Should -Be 1
+        $flagged.Count | Should -Be 3
+    }
+}

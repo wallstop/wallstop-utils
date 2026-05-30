@@ -340,3 +340,316 @@ function ConvertFrom-JsonCompat {
         return $parsed
     }
 }
+
+function ConvertTo-ProcessArgumentString {
+    # Builds a single Win32 command-line string from an argument vector, applying the exact
+    # escaping algorithm .NET Core uses internally to render ProcessStartInfo.ArgumentList
+    # into the OS command line (the runtime's PasteArguments.AppendArgument). This is the
+    # .NET Framework (Windows PowerShell 5.1) fallback for the ArgumentList collection, which
+    # does not exist before .NET Core 2.1; see Set-PortableProcessArguments.
+    #
+    # Rules (CommandLineToArgvW-compatible):
+    #   - Empty arguments render as "" so they survive as a distinct, empty token.
+    #   - Arguments without whitespace or a double quote are emitted verbatim (backslashes
+    #     stay literal because they are not adjacent to a quote).
+    #   - Otherwise the argument is wrapped in quotes; backslashes are doubled only when they
+    #     precede a quote (or the closing quote) and an embedded quote is escaped as \".
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [string[]]$ArgumentList = @()
+    )
+
+    if ($null -eq $ArgumentList) {
+        return ""
+    }
+
+    $builder = [System.Text.StringBuilder]::new()
+    $backslash = [char]'\'
+    $quote = [char]'"'
+
+    foreach ($rawArgument in @($ArgumentList)) {
+        $argument = if ($null -eq $rawArgument) { '' } else { [string]$rawArgument }
+
+        if ($builder.Length -gt 0) {
+            [void]$builder.Append(' ')
+        }
+
+        $needsQuoting = ($argument.Length -eq 0)
+        if (-not $needsQuoting) {
+            foreach ($character in $argument.ToCharArray()) {
+                if ([char]::IsWhiteSpace($character) -or $character -eq $quote) {
+                    $needsQuoting = $true
+                    break
+                }
+            }
+        }
+
+        if (-not $needsQuoting) {
+            [void]$builder.Append($argument)
+            continue
+        }
+
+        [void]$builder.Append($quote)
+        $index = 0
+        while ($index -lt $argument.Length) {
+            $character = $argument[$index]
+            $index++
+
+            if ($character -eq $backslash) {
+                $backslashCount = 1
+                while ($index -lt $argument.Length -and $argument[$index] -eq $backslash) {
+                    $index++
+                    $backslashCount++
+                }
+
+                if ($index -eq $argument.Length) {
+                    # Trailing run of backslashes precedes the closing quote: double them so
+                    # the quote is not consumed as an escape.
+                    [void]$builder.Append($backslash, $backslashCount * 2)
+                }
+                elseif ($argument[$index] -eq $quote) {
+                    # Backslashes precede a literal quote: double them and escape the quote.
+                    [void]$builder.Append($backslash, $backslashCount * 2 + 1)
+                    [void]$builder.Append($quote)
+                    $index++
+                }
+                else {
+                    # Backslashes are not adjacent to a quote: emit them unchanged.
+                    [void]$builder.Append($backslash, $backslashCount)
+                }
+            }
+            elseif ($character -eq $quote) {
+                [void]$builder.Append($backslash)
+                [void]$builder.Append($quote)
+            }
+            else {
+                [void]$builder.Append($character)
+            }
+        }
+        [void]$builder.Append($quote)
+    }
+
+    return $builder.ToString()
+}
+
+function Set-PortableProcessArguments {
+    # Portable replacement for the `foreach ($a in $args) { $psi.ArgumentList.Add($a) }`
+    # idiom. ProcessStartInfo.ArgumentList (which escapes each argument independently and
+    # avoids hand-rolled command-line quoting bugs) exists only on .NET Core 2.1+/.NET 5+
+    # (PowerShell 7+). On .NET Framework (Windows PowerShell 5.1) the property is absent and
+    # accessing it throws "The property 'ArgumentList' cannot be found on this object"; there
+    # the equivalent escaped string is assigned to .Arguments instead. This is the single
+    # sanctioned reference to ProcessStartInfo.ArgumentList in the repository.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '',
+        Justification = 'ArgumentList is populated only after a runtime reflection guard confirms the .NET Core property exists; Windows PowerShell 5.1 takes the ConvertTo-ProcessArgumentString / .Arguments branch. Single sanctioned reference to ProcessStartInfo.ArgumentList.')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [System.Diagnostics.ProcessStartInfo]$StartInfo,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [string[]]$ArgumentList = @(),
+
+        # Test-only: force the .NET Framework (.Arguments string) fallback even where the
+        # native ArgumentList collection exists.
+        [Parameter(Mandatory = $false)]
+        [switch]$ForceFallback
+    )
+
+    $normalizedArguments = @()
+    if ($null -ne $ArgumentList) {
+        $normalizedArguments = @($ArgumentList)
+    }
+
+    $hasArgumentList = $false
+    if (-not $ForceFallback) {
+        $hasArgumentList = ($null -ne [System.Diagnostics.ProcessStartInfo].GetProperty('ArgumentList'))
+    }
+
+    if ($hasArgumentList) {
+        foreach ($argument in $normalizedArguments) {
+            [void]$StartInfo.ArgumentList.Add($argument) # compat-core-member-ok: guarded by the reflection probe above.
+        }
+        return
+    }
+
+    # Advisory telemetry only (argument count, never values, to avoid leaking secrets into
+    # verbose logs): records that the .NET Framework escaping path was taken on this edition.
+    Write-Verbose ("Set-PortableProcessArguments diagnostics: mode=arguments-string-fallback argumentCount={0} (ProcessStartInfo.ArgumentList is unavailable on this PowerShell edition)." -f $normalizedArguments.Count)
+    $StartInfo.Arguments = ConvertTo-ProcessArgumentString -ArgumentList $normalizedArguments
+}
+
+function Stop-ProcessTreePortably {
+    # Portable replacement for [System.Diagnostics.Process]::Kill($true) (terminate the whole
+    # process tree). The Kill(bool) overload was added in .NET Core 3.0 and is ABSENT on
+    # Windows PowerShell 5.1 (.NET Framework), where $process.Kill($true) throws "Cannot find an
+    # overload for 'Kill' and the argument count: '1'". On editions with the overload the entire
+    # tree is terminated; on 5.1 the parameterless Kill() terminates the target process (best
+    # effort — accepting that orphaned children may linger is better than throwing during
+    # timeout cleanup). This is the single sanctioned reference to the Kill(bool) overload.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '',
+        Justification = 'Kill($true) is invoked only after a runtime reflection guard confirms the .NET Core 3.0+ overload exists; Windows PowerShell 5.1 falls back to the parameterless Kill(). Single sanctioned reference to the Kill(bool) overload.')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [System.Diagnostics.Process]$Process,
+
+        # Test-only: force the Windows PowerShell 5.1 (parameterless Kill) fallback even where
+        # the Kill(bool) overload exists.
+        [Parameter(Mandatory = $false)]
+        [switch]$ForceFallback
+    )
+
+    $hasTreeKill = $false
+    if (-not $ForceFallback) {
+        $hasTreeKill = ($null -ne [System.Diagnostics.Process].GetMethod('Kill', [type[]]@([bool])))
+    }
+
+    if ($hasTreeKill) {
+        $Process.Kill($true) # compat-core-member-ok: guarded by the reflection probe above.
+        return
+    }
+
+    $Process.Kill()
+}
+
+function Get-FileSystemLinkTargetProperty {
+    # Reads the immediate symbolic-link/reparse-point target of a FileSystemInfo-like object
+    # from the LinkTarget/Target members, returning the target string or $null. Both the
+    # .NET 6 LinkTarget property and the Windows PowerShell 5.0+ Target ETS member are
+    # consulted via duck typing so the same helper works on real items across editions and on
+    # the Add-Member test doubles used by the discovery tests. On Windows PowerShell 5.1 the
+    # Target member can surface as a string array (legacy multi-target shape); the first
+    # entry is used.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        $Item
+    )
+
+    foreach ($propertyName in @('LinkTarget', 'Target')) {
+        $property = $Item.PSObject.Properties[$propertyName]
+        if ($null -eq $property -or $null -eq $property.Value) {
+            continue
+        }
+
+        $value = $property.Value
+        if ($value -is [System.Array]) {
+            if ($value.Length -eq 0) {
+                continue
+            }
+            $value = $value[0]
+        }
+
+        $stringValue = [string]$value
+        if (-not [string]::IsNullOrWhiteSpace($stringValue)) {
+            return $stringValue
+        }
+    }
+
+    return $null
+}
+
+function Get-PortableLinkTarget {
+    # Portable equivalent of [System.IO.FileSystemInfo]::ResolveLinkTarget($true), which was
+    # introduced in .NET 6 / PowerShell 7.1 and is absent on Windows PowerShell 5.1. Returns
+    # the FINAL target's full path (string) for a symbolic link or reparse point, or $null
+    # when the item is not a link or no target can be resolved.
+    #
+    # On editions that expose the native method it is used directly (it already follows link
+    # chains to the final target). On Windows PowerShell 5.1 the link target is read from the
+    # LinkTarget/Target ETS members that PowerShell projects onto FileSystemInfo and chains
+    # are followed hop-by-hop (bounded by -MaxDepth, and stopping as soon as a hop no longer
+    # resolves or is no longer a link) so the result matches the native "final target"
+    # semantics. Item access is duck-typed so production callers and the Add-Member test
+    # doubles share one code path. This is the single sanctioned reference to ResolveLinkTarget.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '',
+        Justification = 'ResolveLinkTarget is invoked only after a runtime duck-typing guard confirms the .NET 6+ method is present on the instance; Windows PowerShell 5.1 takes the LinkTarget/Target ETS branch. Single sanctioned reference to the native method.')]
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        $Item,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 256)]
+        [int]$MaxDepth = 64,
+
+        # Test-only: force the Windows PowerShell 5.1 (LinkTarget/Target ETS) fallback even
+        # where the native ResolveLinkTarget method exists, so the fallback can be parity-
+        # tested against the native method on PowerShell 7+.
+        [Parameter(Mandatory = $false)]
+        [switch]$ForceFallback
+    )
+
+    if (-not $ForceFallback -and ($Item.PSObject.Methods.Name -contains 'ResolveLinkTarget')) {
+        $resolved = $null
+        try {
+            $resolved = $Item.ResolveLinkTarget($true) # compat-core-member-ok: guarded by the PSObject.Methods probe above.
+        }
+        catch {
+            $resolved = $null
+        }
+
+        if ($null -ne $resolved -and -not [string]::IsNullOrWhiteSpace([string]$resolved.FullName)) {
+            return [string]$resolved.FullName
+        }
+
+        return $null
+    }
+
+    $currentItem = $Item
+    $resolvedPath = $null
+    # Track visited targets so a symlink cycle terminates (bounded additionally by -MaxDepth)
+    # instead of looping; comparison is OS-appropriate (case-insensitive only on Windows).
+    $visitedComparer = if (Test-IsWindowsPlatform) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+    $visitedTargets = [System.Collections.Generic.HashSet[string]]::new($visitedComparer)
+    for ($depth = 0; $depth -lt $MaxDepth; $depth++) {
+        $hopTarget = Get-FileSystemLinkTargetProperty -Item $currentItem
+        if ([string]::IsNullOrWhiteSpace($hopTarget)) {
+            break
+        }
+
+        if (-not [System.IO.Path]::IsPathRooted($hopTarget)) {
+            # A relative target is resolved against the directory containing the link.
+            $linkParent = Split-Path -Path ([string]$currentItem.FullName) -Parent
+            if ([string]::IsNullOrWhiteSpace($linkParent)) {
+                $linkParent = [System.IO.Path]::GetPathRoot([string]$currentItem.FullName)
+            }
+            $hopTarget = Join-Path -Path $linkParent -ChildPath $hopTarget
+        }
+
+        $resolvedPath = [System.IO.Path]::GetFullPath($hopTarget)
+
+        if (-not $visitedTargets.Add($resolvedPath)) {
+            # Cycle detected (this target was already resolved on a previous hop). The native
+            # ResolveLinkTarget($true) throws "Too many levels of symbolic links" on a cycle,
+            # which callers treat as unresolved; return $null here for the same final outcome.
+            return $null
+        }
+
+        if (-not (Test-Path -LiteralPath $resolvedPath)) {
+            break
+        }
+
+        $nextItem = Get-Item -LiteralPath $resolvedPath -Force -ErrorAction SilentlyContinue
+        if ($null -eq $nextItem -or [string]::IsNullOrWhiteSpace((Get-FileSystemLinkTargetProperty -Item $nextItem))) {
+            break
+        }
+
+        $currentItem = $nextItem
+    }
+
+    return $resolvedPath
+}

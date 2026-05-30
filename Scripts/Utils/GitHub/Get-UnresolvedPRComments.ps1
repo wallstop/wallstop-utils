@@ -1360,9 +1360,35 @@ function Get-ClipboardCommandPriority {
     return $deduplicated.ToArray()
 }
 
+function Set-ClipboardValue {
+    # Thin, mockable seam over Set-Clipboard. Tests mock THIS command — whose parameter set is
+    # identical across every PowerShell edition — instead of Set-Clipboard directly. Pester
+    # builds a mock's parameter metadata from the real command, and Set-Clipboard's -AsOSC52
+    # switch exists only on PowerShell 7.4+, so mocking Set-Clipboard with -AsOSC52 fails
+    # parameter binding under Windows PowerShell 5.1 ("A parameter cannot be found that matches
+    # parameter name 'AsOSC52'"). The -AsOSC52 branch here is reached only after a runtime
+    # capability check (Get-ClipboardCommandPriority) confirms the parameter exists.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '', Justification = 'Set-Clipboard -AsOSC52 is invoked only after Get-ClipboardCommandPriority confirms the parameter exists via a runtime Parameters.Keys check; Windows PowerShell 5.1 never selects the OSC52 strategy and falls back to plain Set-Clipboard / pbcopy / xclip / xsel / wl-copy.')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$AsOSC52
+    )
+
+    if ($AsOSC52) {
+        Set-Clipboard -Value $Value -AsOSC52
+    }
+    else {
+        Set-Clipboard -Value $Value
+    }
+}
+
 function Copy-ToClipboard {
     [OutputType([bool])]
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '', Justification = 'Set-Clipboard -AsOSC52 is invoked only after a runtime Parameters.Keys check confirms the parameter exists (Get-ClipboardCommandPriority); Windows PowerShell 5.1 falls back to plain Set-Clipboard / pbcopy / xclip / xsel / wl-copy.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1386,11 +1412,11 @@ function Copy-ToClipboard {
         try {
             switch ($clipboardCommand) {
                 "Set-Clipboard-AsOSC52" {
-                    Set-Clipboard -Value $valueToCopy -AsOSC52
+                    Set-ClipboardValue -Value $valueToCopy -AsOSC52
                     return $true
                 }
                 "Set-Clipboard" {
-                    Set-Clipboard -Value $valueToCopy
+                    Set-ClipboardValue -Value $valueToCopy
                     return $true
                 }
                 "pbcopy" {

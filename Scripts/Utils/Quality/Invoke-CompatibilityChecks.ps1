@@ -302,6 +302,132 @@ function Get-WebRequestParsingViolation {
     return , @($violations.ToArray())
 }
 
+function Get-CoreOnlyMemberViolation {
+    # Flags member access to .NET members that exist only on .NET Core / .NET 5+ (PowerShell
+    # 7+) and are ABSENT on Windows PowerShell 5.1 (.NET Framework), where the access throws
+    # "The property '<name>' cannot be found on this object" at runtime. PSScriptAnalyzer's
+    # PSUseCompatibleTypes models incompatible TYPES, not incompatible MEMBERS of a type that
+    # exists on both editions, so this class is analyzer-invisible (it slipped past the gate
+    # and only surfaced in the Windows PowerShell 5.1 runtime lane). It is checked here via the
+    # AST. Each member has a tiny, explicit set of sanctioned homes: the CompatibilityHelpers
+    # shim that wraps it behind a runtime capability guard (and, for ResolveLinkTarget, the
+    # Remove-BOM discovery helper, whose raw use is itself capability-guarded).
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    $violations = New-Object System.Collections.Generic.List[object]
+
+    # Tests legitimately attach these member names to Add-Member mock doubles, and the dual-
+    # edition Pester lanes already exercise tests on Windows PowerShell 5.1 directly, so static
+    # enforcement here is scoped to production sources.
+    $normalizedFilePath = $FilePath.Replace('\', '/')
+    if ($normalizedFilePath -match '/Tests/') {
+        return , @($violations.ToArray())
+    }
+
+    # Member name -> match rules + remediation. RequireInvocation limits a method-only member
+    # to call sites; MinArgumentCount distinguishes a Core-only OVERLOAD (for example
+    # Process.Kill($true), .NET Core 3.0+) from a member present on both editions (Process.Kill()).
+    # A deliberate, runtime-guarded native access opts out with an inline '# compat-core-member-ok'
+    # marker on the access line, mirroring the repo's other inline markers (# array-unwrap-safe,
+    # # direct-json-ok). This is finer-grained and safer than whole-file allowlisting, which would
+    # also exempt a future UNguarded access in the same file.
+    $coreOnlyMembers = @{
+        'ArgumentList'      = @{ RequireInvocation = $false; MinArgumentCount = 0; Remediation = "ProcessStartInfo.ArgumentList exists only on .NET Core 2.1+ (PowerShell 7+). Use Set-PortableProcessArguments from CompatibilityHelpers.ps1." }
+        'ResolveLinkTarget' = @{ RequireInvocation = $true; MinArgumentCount = 0; Remediation = "FileSystemInfo.ResolveLinkTarget exists only on .NET 6+ (PowerShell 7.1+). Use Get-PortableLinkTarget from CompatibilityHelpers.ps1." }
+        'LinkTarget'        = @{ RequireInvocation = $false; MinArgumentCount = 0; Remediation = "FileSystemInfo.LinkTarget exists only on .NET 6+ (PowerShell 7.1+). Use Get-PortableLinkTarget / Get-FileSystemLinkTargetProperty from CompatibilityHelpers.ps1." }
+        'Kill'              = @{ RequireInvocation = $true; MinArgumentCount = 1; Remediation = "Process.Kill([bool]) exists only on .NET Core 3.0+ (PowerShell 7+). Use Stop-ProcessTreePortably from CompatibilityHelpers.ps1." }
+    }
+
+    $parseErrors = $null
+    $tokens = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($FilePath, [ref]$tokens, [ref]$parseErrors)
+    if ($null -eq $ast) {
+        return , @($violations.ToArray())
+    }
+
+    # Read raw lines (FileShare.Read, closes immediately) to test for the opt-out marker.
+    $sourceLines = [System.IO.File]::ReadAllLines($FilePath)
+
+    $relativePath = $FilePath
+    if ($FilePath.StartsWith($RepositoryRoot)) {
+        $relativePath = $FilePath.Substring($RepositoryRoot.Length).TrimStart([char[]]@('/', '\'))
+    }
+    $relativePath = $relativePath.Replace('\', '/')
+
+    # MemberExpressionAst covers both property access ($x.ArgumentList) and method invocation
+    # ($x.ResolveLinkTarget(...)), since InvokeMemberExpressionAst derives from it. Keying on
+    # the static member NAME means $var/param references named "ArgumentList" and string
+    # arguments to reflection calls (GetProperty('ArgumentList')) are never flagged.
+    $memberAccessAsts = $ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.MemberExpressionAst]
+        }, $true)
+
+    foreach ($memberAst in $memberAccessAsts) {
+        $memberNameAst = $memberAst.Member
+        if (-not ($memberNameAst -is [System.Management.Automation.Language.StringConstantExpressionAst])) {
+            # Dynamic member name (for example $obj.$name); cannot be resolved statically.
+            continue
+        }
+
+        $memberName = $memberNameAst.Value
+        if (-not $coreOnlyMembers.ContainsKey($memberName)) {
+            continue
+        }
+
+        $memberSpec = $coreOnlyMembers[$memberName]
+        $isInvocation = ($memberAst -is [System.Management.Automation.Language.InvokeMemberExpressionAst])
+        if ($memberSpec.RequireInvocation -and -not $isInvocation) {
+            continue
+        }
+        if ($memberSpec.MinArgumentCount -gt 0) {
+            if (-not $isInvocation) {
+                continue
+            }
+            $argumentCount = 0
+            if ($null -ne $memberAst.Arguments) {
+                $argumentCount = @($memberAst.Arguments).Count
+            }
+            if ($argumentCount -lt $memberSpec.MinArgumentCount) {
+                continue
+            }
+        }
+
+        $lineNumber = $memberAst.Extent.StartLineNumber
+        # Scan every line the member expression spans (not just its start line) for the opt-out
+        # marker, so a marker on the visual member/closing-paren line of a multi-line expression
+        # still applies.
+        $isMarked = $false
+        for ($markerLine = $memberAst.Extent.StartLineNumber; $markerLine -le $memberAst.Extent.EndLineNumber; $markerLine++) {
+            if ($markerLine -ge 1 -and $markerLine -le $sourceLines.Length -and $sourceLines[$markerLine - 1].Contains('compat-core-member-ok')) {
+                $isMarked = $true
+                break
+            }
+        }
+        if ($isMarked) {
+            continue
+        }
+
+        $violations.Add([pscustomobject]@{
+                file     = $relativePath
+                line     = $lineNumber
+                ruleName = 'CompatCoreOnlyMember'
+                severity = 'Error'
+                message  = "Access to the .NET Core-only member '.$memberName' is undefined on Windows PowerShell 5.1 and throws under StrictMode. $($memberSpec.Remediation) (If this access is deliberately runtime-guarded, annotate the line with '# compat-core-member-ok'.)"
+            }) | Out-Null
+    }
+
+    return , @($violations.ToArray())
+}
+
 function Get-FindingCommandName {
     # Extracts the command name from a PSUseCompatibleCommands diagnostic message, which
     # always contains "command '<name>'".
@@ -419,6 +545,12 @@ foreach ($target in $targets) {
 
     # Analyzer-invisible class: Invoke-WebRequest missing -UseBasicParsing.
     foreach ($violation in (Get-WebRequestParsingViolation -FilePath $target -RepositoryRoot $repositoryRoot)) {
+        Add-RealFinding -Collection $realFindings -SeenKeys $seenKeys -Record $violation
+    }
+
+    # Analyzer-invisible class: .NET Core-only instance members (ProcessStartInfo.ArgumentList,
+    # FileSystemInfo.ResolveLinkTarget) that throw on Windows PowerShell 5.1.
+    foreach ($violation in (Get-CoreOnlyMemberViolation -FilePath $target -RepositoryRoot $repositoryRoot)) {
         Add-RealFinding -Collection $realFindings -SeenKeys $seenKeys -Record $violation
     }
 }
