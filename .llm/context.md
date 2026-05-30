@@ -184,15 +184,41 @@ array semantics in empty-result paths.
 - Add both behavioral and structural coverage for high-risk array-return helpers: behavior tests for empty/non-empty flattening plus AST/pattern checks that call-site wrapper usage matches the helper's return contract.
 - A convention test in `ScriptSafetyConventions.Tests.ps1` enforces this in `Scripts/`.
 
-## Cross-Platform PowerShell Portability
+## Cross-Platform And Cross-Version PowerShell Portability
 
-Scripts under `Scripts/Utils/` must run on Windows, macOS, and Linux with PowerShell 7+.
+All repository PowerShell (`Scripts/**`, `Config/Powershell/**`, `Tests/**`) must run on
+BOTH Windows PowerShell 5.1 (Desktop edition / .NET Framework) AND PowerShell 7+ (Core),
+across Windows, macOS, and Linux. The cross-version contract is enforced statically by
+`Scripts/Utils/Quality/Invoke-CompatibilityChecks.ps1` (PSScriptAnalyzer
+`PSUseCompatible*` rules over 5.1 + 7 profiles, plus an AST scan for 5.1-undefined
+automatic variables) and at runtime by the `powershell-tests-winps51` / `powershell-tests-pwsh7`
+CI lanes that execute the Pester suite under each edition. Re-divergence is policy-tested
+in `Tests/Utils/CompatibilityConventions.Tests.ps1` and `Tests/Utils/CompatibilityHelpers.Tests.ps1`.
+
+Portable idioms are single-sourced in `Scripts/Utils/Common/CompatibilityHelpers.ps1`
+(dot-source it; never reintroduce the raw construct):
+
+- `$IsWindows`/`$IsMacOS`/`$IsLinux` are undefined on 5.1 and THROW under `Set-StrictMode`;
+  use `Test-IsWindowsPlatform`/`Test-IsMacOSPlatform`/`Test-IsLinuxPlatform`.
+- `[System.IO.Path]::GetRelativePath` is absent on .NET Framework; use `Get-RelativePathCompat`.
+- `ConvertTo-Json -AsArray` (6+) → `ConvertTo-JsonArrayCompat`; `ConvertFrom-Json -Depth/-NoEnumerate`
+  (6+) → `ConvertFrom-JsonCompat`. `New-Item -LiteralPath` is invalid on every edition; create
+  directories with `[System.IO.Directory]::CreateDirectory($path)` (literal, idempotent).
+- `[ArgumentCompletions()]`, ternary `?:`, `??`/`??=`, `&&`/`||`, `clean{}`, `$PSStyle` are 7+-only;
+  use `[ValidateSet]`, `if/else`, `try/finally`. Interactive profiles must guard PSReadLine 2.2+
+  options (`-PredictionSource`/`-PredictionViewStyle`) behind a capability probe.
+- Runtime-guarded/floor-safe constructs (for example `Set-Clipboard -AsOSC52`,
+  `RuntimeInformation::ProcessArchitecture`) keep an inline justified `SuppressMessageAttribute`;
+  external executables and Pester DSL live in `compatibility-allowlist.psd1`. Never allowlist a
+  real cmdlet whose parameters differ across editions.
+
+The portability rules below also apply (PowerShell 7+ remains the primary cross-platform target):
 
 1. Use `Join-Path` and `[System.IO.Path]` for path construction; never hardcode `\` or `/`.
-2. Use `$IsWindows`, `$IsMacOS`, `$IsLinux` for OS branching; avoid `$env:OS` checks.
+2. Use the `Test-IsWindowsPlatform`/`Test-IsMacOSPlatform`/`Test-IsLinuxPlatform` helpers for OS branching (never bare `$IsWindows`/`$IsMacOS`/`$IsLinux`, which throw on 5.1; never `$env:OS`).
 3. Write files with explicit UTF-8 no-BOM encoding via `[System.IO.File]::WriteAllText(..., [System.Text.UTF8Encoding]::new($false))`.
 4. Normalize line endings (`-replace "\r", ''`) before regex matching or string comparison.
-5. Normalize path separators to `/` in generated output for deterministic cross-OS comparison. For custom output objects that include a `Path` field (for example violation and diagnostics records), normalize immediately after `GetRelativePath` before returning or logging.
+5. Normalize path separators to `/` in generated output for deterministic cross-OS comparison. For custom output objects that include a `Path` field (for example violation and diagnostics records), normalize immediately after `Get-RelativePathCompat` (the portable relative-path helper) before returning or logging.
 6. Policy tests that validate code structure must be formatter-tolerant: avoid exact-literal `.Contains(...)` checks for syntax-sensitive snippets (for example spacing around operators), and prefer semantic/regex assertions that tolerate whitespace drift while still enforcing behavior.
 7. Use `[System.IO.Path]::GetTempPath()` instead of `$env:TEMP` for portable temp directories.
 8. Use exact file name casing; Linux file systems are case-sensitive.

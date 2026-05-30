@@ -11,6 +11,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $script:InvariantCultureName = [System.Globalization.CultureInfo]::InvariantCulture.Name
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+.$compatibilityHelpersPath
+
 function Get-RepositoryRoot {
     param(
         [Parameter(Mandatory = $false)]
@@ -192,13 +199,13 @@ function Get-SkillMetadata {
     )
 
     if (-not $match.Success) {
-        $relative = [System.IO.Path]::GetRelativePath($Root,$SkillPath)
+        $relative = Get-RelativePathCompat -BasePath $Root -TargetPath $SkillPath
         throw "E_LLM_TRIGGER_METADATA_MISSING: Missing trigger metadata comment in '$relative'."
     }
 
     $category = $match.Groups['category'].Value.Trim()
 
-    $relativePath = ConvertTo-PortablePath -PathValue ([System.IO.Path]::GetRelativePath($Root,$SkillPath))
+    $relativePath = ConvertTo-PortablePath -PathValue (Get-RelativePathCompat -BasePath $Root -TargetPath $SkillPath)
     $skillLinkPath = $relativePath
     if ($skillLinkPath.StartsWith('.llm/',[System.StringComparison]::OrdinalIgnoreCase)) {
         $skillLinkPath = $skillLinkPath.Substring(5)

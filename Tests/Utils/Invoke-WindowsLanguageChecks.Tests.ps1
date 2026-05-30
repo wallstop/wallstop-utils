@@ -4,6 +4,7 @@ $ErrorActionPreference = "Stop"
 BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1") -NoInvokeMain
+    . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/CompatibilityHelpers.ps1")
 }
 
 Describe "Test-OutputLooksLikeUnsupportedAhkSwitch" {
@@ -278,7 +279,7 @@ Describe "Invoke-AutoHotkeyCommand" {
         $originalVerbosePreference = $VerbosePreference
         try {
             $VerbosePreference = "Continue"
-            Write-Verbose "[Invoke-AutoHotkeyCommand diag] Case='$Case' ExitCode=$($result.ExitCode) ExpectedExitCode=$expectedExitCode OutputLines=$outputLineCount IsWindows=$IsWindows diagnostics=$diagnostics"
+            Write-Verbose "[Invoke-AutoHotkeyCommand diag] Case='$Case' ExitCode=$($result.ExitCode) ExpectedExitCode=$expectedExitCode OutputLines=$outputLineCount IsWindows=$(Test-IsWindowsPlatform) diagnostics=$diagnostics"
             Write-Verbose "[Invoke-AutoHotkeyCommand diag] OutputPreview:`n$outputPreview"
         }
         finally {

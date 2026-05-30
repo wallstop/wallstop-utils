@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 BeforeAll {
+    . "$PSScriptRoot/../../Scripts/Utils/Common/CompatibilityHelpers.ps1"
     . "$PSScriptRoot/../../Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1" -NoRun
 }
 
@@ -847,7 +848,7 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $text | Should -Match "\(src/range\.ts\) 37-52"
 
         $json = Format-UnresolvedThreadsAsJson -Records @($record)
-        $parsed = @($json | ConvertFrom-Json -Depth 8)
+        $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
         $parsed[0].lineStart | Should -Be 37
         $parsed[0].lineEnd | Should -Be 52
     }
@@ -1140,7 +1141,7 @@ Describe "Format-UnresolvedThreadsAsJson" {
         $json = Format-UnresolvedThreadsAsJson -Records $records
         $json | Should -Match '^\s*\['
 
-        $parsed = @($json | ConvertFrom-Json -Depth 8)
+        $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
         $parsed.Count | Should -Be 1
         $propertyNames = @($parsed[0].PSObject.Properties.Name)
 

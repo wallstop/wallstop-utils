@@ -16,6 +16,13 @@ if (-not (Test-Path -Path $diagnosticsHelpersPath -PathType Leaf)) {
 
 .$diagnosticsHelpersPath
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+.$compatibilityHelpersPath
+
 function Convert-OutputToStringArray {
     param(
         [Parameter(Mandatory = $false)]
@@ -185,7 +192,7 @@ function ConvertTo-RepositoryRelativePath {
         [string]$Path
     )
 
-    return ([System.IO.Path]::GetRelativePath($RepoRoot, $Path)).Replace([System.IO.Path]::DirectorySeparatorChar, '/').Replace([System.IO.Path]::AltDirectorySeparatorChar, '/')
+    return (Get-RelativePathCompat -BasePath $RepoRoot -TargetPath $Path).Replace([System.IO.Path]::DirectorySeparatorChar, '/').Replace([System.IO.Path]::AltDirectorySeparatorChar, '/')
 }
 
 function Test-IsPathUnderDirectory {
@@ -203,7 +210,7 @@ function Test-IsPathUnderDirectory {
 
     $resolvedDirectory = (Resolve-Path -LiteralPath $DirectoryPath -ErrorAction Stop).Path
     $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
-    $relative = [System.IO.Path]::GetRelativePath($resolvedDirectory, $resolvedPath)
+    $relative = Get-RelativePathCompat -BasePath $resolvedDirectory -TargetPath $resolvedPath
     if ([string]::IsNullOrWhiteSpace($relative)) {
         return $true
     }
@@ -237,7 +244,7 @@ function Repair-AutoHotkeyStaticViolation {
     $scriptSourceRoot = Join-Path -Path $RepoRoot -ChildPath "Scripts/AutoHotKey"
 
     if ($HasV1Syntax -and (Test-IsPathUnderDirectory -DirectoryPath $configRoot -Path $File.FullName)) {
-        $relativeConfigPath = [System.IO.Path]::GetRelativePath($configRoot, $File.FullName)
+        $relativeConfigPath = Get-RelativePathCompat -BasePath $configRoot -TargetPath $File.FullName
         $sourceCandidate = Join-Path -Path $scriptSourceRoot -ChildPath $relativeConfigPath
         if (Test-Path -LiteralPath $sourceCandidate -PathType Leaf) {
             $sourceContent = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $sourceCandidate).Path, [System.Text.Encoding]::UTF8)
@@ -815,7 +822,7 @@ function Test-BatchScriptsStaticSmoke {
         for ($index = 0; $index -lt $lines.Count; $index++) {
             $line = $lines[$index]
             $lineNumber = $index + 1
-            $relative = [System.IO.Path]::GetRelativePath($RepoRoot,$file.FullName)
+            $relative = Get-RelativePathCompat -BasePath $RepoRoot -TargetPath $file.FullName
 
             if ($line -match "\s+$") {
                 $violations.Add("${relative}:$lineNumber trailing whitespace") | Out-Null
@@ -846,7 +853,7 @@ function Test-BatchScriptsStaticSmoke {
         }
 
         if ($parenBalance -ne 0) {
-            $relative = [System.IO.Path]::GetRelativePath($RepoRoot,$file.FullName)
+            $relative = Get-RelativePathCompat -BasePath $RepoRoot -TargetPath $file.FullName
             $violations.Add("$relative unbalanced parentheses at end-of-file") | Out-Null
         }
     }

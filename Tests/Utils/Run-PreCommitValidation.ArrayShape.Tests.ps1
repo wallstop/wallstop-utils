@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 
 BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
+    . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1")
     $script:preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
     $script:preCommitContent = (Get-Content -Path $script:preCommitPath -Raw) -replace "`r", ""
 
@@ -124,7 +125,7 @@ Describe "Run-PreCommitValidation call-site and helper ownership contracts" {
             foreach ($line in @(Get-Content -Path $scriptFile.FullName)) {
                 $lineNumber++
                 if ($line -match '^\s*function\s+Convert-CapturedTextToLines\b') {
-                    $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                    $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                     $portableRelativePath = $relativePath -replace '\\', '/'
                     $definitions.Add("${portableRelativePath}:$lineNumber") | Out-Null
                 }
@@ -195,7 +196,7 @@ Describe "Run-PreCommitValidation call-site and helper ownership contracts" {
                     continue
                 }
 
-                $relativePath = [System.IO.Path]::GetRelativePath($script:repoRoot, $scriptFile.FullName)
+                $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
                 $portableRelativePath = $relativePath -replace '\\', '/'
                 $violations.Add("${portableRelativePath}:$($commandNode.Extent.StartLineNumber) command '$commandName'") | Out-Null
             }

@@ -1,3 +1,10 @@
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath 'CompatibilityHelpers.ps1'
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $compatibilityHelpersPath
+
 function Add-ModulePathCandidate {
     param(
         [Parameter(Mandatory = $true)]
@@ -59,7 +66,7 @@ function Ensure-PortableUserModulePaths {
         Write-Verbose "Module path discovery: UserProfile path unavailable."
     }
 
-    if (-not $IsWindows) {
+    if (-not (Test-IsWindowsPlatform)) {
         Add-ModulePathCandidate -Path "/usr/local/share/powershell/Modules"
     }
 
@@ -70,9 +77,9 @@ function Ensure-PortableUserModulePaths {
         $entryCount,
         -not [string]::IsNullOrWhiteSpace($myDocuments),
         -not [string]::IsNullOrWhiteSpace($userHome),
-        $IsWindows,
-        $IsMacOS,
-        $IsLinux
+        (Test-IsWindowsPlatform),
+        (Test-IsMacOSPlatform),
+        (Test-IsLinuxPlatform)
     )
 }
 

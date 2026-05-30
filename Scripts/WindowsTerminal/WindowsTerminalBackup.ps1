@@ -9,7 +9,7 @@ Push-Location -LiteralPath $baseDirectory
 
 try {
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -LiteralPath $backupFolder -ItemType Directory | Out-Null
+        [System.IO.Directory]::CreateDirectory($backupFolder) | Out-Null
     }
 
     if (Test-Path -LiteralPath $sourcePath -PathType Leaf) {

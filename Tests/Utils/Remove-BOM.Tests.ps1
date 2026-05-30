@@ -6,6 +6,7 @@ BeforeAll {
     $script:removeBomScriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Remove-BOM.ps1"
     $script:gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
 
+    . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1")
     . $script:removeBomScriptPath
 
     function Resolve-CanonicalTempRoot {
@@ -23,7 +24,7 @@ BeforeAll {
 
         $canonicalBasePath = Resolve-CanonicalFileSystemPath -path $BasePath
         $canonicalTargetPath = Resolve-CanonicalFileSystemPath -path $TargetPath
-        return ([System.IO.Path]::GetRelativePath($canonicalBasePath, $canonicalTargetPath) -replace '\\', '/')
+        return ((Get-RelativePathCompat -BasePath $canonicalBasePath -TargetPath $canonicalTargetPath) -replace '\\', '/')
     }
 
     function Initialize-TestGitRepository {
@@ -68,14 +69,14 @@ Describe "Remove-BOM file discovery" {
             [bool]$UseResolveLinkTarget
         )
 
-        $resolvedPath = if ($IsWindows) {
+        $resolvedPath = if (Test-IsWindowsPlatform) {
             "C:\\runner\\_work\\_temp\\canonical-test-root"
         }
         else {
             "/private/var/folders/canonical-test-root"
         }
 
-        $missingIntermediate = if ($IsWindows) {
+        $missingIntermediate = if (Test-IsWindowsPlatform) {
             "C:\\runner"
         }
         else {
@@ -83,7 +84,7 @@ Describe "Remove-BOM file discovery" {
         }
 
         $resolvedItemPath = if ($UseResolveLinkTarget) {
-            if ($IsWindows) {
+            if (Test-IsWindowsPlatform) {
                 "C:\\runner\\alias\\canonical-test-root"
             }
             else {
@@ -94,7 +95,7 @@ Describe "Remove-BOM file discovery" {
             $resolvedPath
         }
 
-        $linkTargetPath = if ($IsWindows) {
+        $linkTargetPath = if (Test-IsWindowsPlatform) {
             "C:\\runner\\target\\canonical-test-root"
         }
         else {
@@ -139,7 +140,7 @@ Describe "Remove-BOM file discovery" {
         $actualCanonicalPath = Resolve-CanonicalFileSystemPath -path "ignored-by-mocks"
 
         $actualCanonicalPath | Should -Be $expectedCanonicalPath -Because "Scenario '$Scenario' should canonicalize without traversing intermediate path segments."
-        $expectedResolvedPathCalls = if ($IsWindows) { 1 } else { 2 }
+        $expectedResolvedPathCalls = if (Test-IsWindowsPlatform) { 1 } else { 2 }
         Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $resolvedPath } -Times $expectedResolvedPathCalls -Exactly
         Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $missingIntermediate } -Times 0 -Exactly
     }
@@ -199,7 +200,7 @@ Describe "Remove-BOM file discovery" {
             [string]$ResolvePathAliasPath
         )
 
-        if ($IsWindows) {
+        if (Test-IsWindowsPlatform) {
             Set-ItResult -Skipped -Because "Unix-style root alias canonicalization does not apply on Windows"
             return
         }
@@ -261,7 +262,7 @@ Describe "Remove-BOM file discovery" {
     }
 
     It "falls back to readlink when .NET providers fail to resolve top-level alias" {
-        if ($IsWindows) {
+        if (Test-IsWindowsPlatform) {
             Set-ItResult -Skipped -Because "Unix-style root alias canonicalization does not apply on Windows"
             return
         }
@@ -335,7 +336,7 @@ Describe "Remove-BOM file discovery" {
             [string]$LinkTargetPropertyValue
         )
 
-        if ($IsWindows) {
+        if (Test-IsWindowsPlatform) {
             Set-ItResult -Skipped -Because "Unix-style root alias canonicalization does not apply on Windows"
             return
         }

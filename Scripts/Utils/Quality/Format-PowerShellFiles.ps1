@@ -14,6 +14,13 @@ if (-not (Test-Path -Path $moduleHelpersPath -PathType Leaf)) {
 
 .$moduleHelpersPath
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+.$compatibilityHelpersPath
+
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 function Get-LeadingTabIndentedLineNumbers {
@@ -98,7 +105,7 @@ foreach ($inputPath in @($Paths)) {
         continue
     }
 
-    $relativePath = [System.IO.Path]::GetRelativePath($repoRoot,$candidatePath)
+    $relativePath = Get-RelativePathCompat -BasePath $repoRoot -TargetPath $candidatePath
 
     $rawContent = [System.IO.File]::ReadAllText($candidatePath)
     [int[]]$leadingTabLinesBefore = Get-LeadingTabIndentedLineNumbers -Content $rawContent

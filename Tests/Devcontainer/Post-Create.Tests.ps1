@@ -90,7 +90,9 @@ Describe "post-create.sh pre-commit integration" {
     }
 
     It "pre-warms pre-commit hook environments during install" {
-        $script:postCreateContent | Should -Match 'pre-commit\s+install\s+--install-hooks'
+        # Accept either the combined `install --install-hooks` form or the dedicated
+        # `install-hooks` subcommand; the bootstrap uses the latter to pre-warm environments.
+        $script:postCreateContent | Should -Match 'pre-commit\s+install(\s+--install-hooks\b|-hooks\b)'
     }
 
     It "configures core.hooksPath to .githooks" {

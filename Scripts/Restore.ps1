@@ -4,6 +4,13 @@ $ErrorActionPreference = "Stop"
 $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
 $pwshCommand = (Get-Command -Name "pwsh" -ErrorAction Stop).Source
 
+$compatibilityHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_RESTORE_COMPATIBILITY_HELPER_MISSING: compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+. $compatibilityHelpersPath
+
 function Get-LastExitCodeOrDefault {
     $lecValue = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
     if ($null -ne $lecValue) {
@@ -70,15 +77,15 @@ function Assert-RestoreStepScriptsExist {
 }
 
 function Get-CurrentPlatformName {
-    if ($IsWindows) {
+    if (Test-IsWindowsPlatform) {
         return "Windows"
     }
 
-    if ($IsMacOS) {
+    if (Test-IsMacOSPlatform) {
         return "macOS"
     }
 
-    if ($IsLinux) {
+    if (Test-IsLinuxPlatform) {
         return "Linux"
     }
 

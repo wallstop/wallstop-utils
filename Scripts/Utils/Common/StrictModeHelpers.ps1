@@ -1,3 +1,10 @@
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath 'CompatibilityHelpers.ps1'
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $compatibilityHelpersPath
+
 function Get-SafeCount {
     [CmdletBinding()]
     param(
@@ -98,7 +105,7 @@ function ConvertFrom-JsonSingleObject {
     }
 
     try {
-        $parsed = $Json | ConvertFrom-Json -NoEnumerate -ErrorAction Stop
+        $parsed = $Json | ConvertFrom-JsonCompat -NoEnumerate -ErrorAction Stop
     } catch {
         throw "E_MALFORMED_RESPONSE: $Context could not be parsed as JSON. Preview: $safePreview"
     }

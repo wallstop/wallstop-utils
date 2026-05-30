@@ -23,6 +23,13 @@ param(
 
 $script:prefixReadFailures = 0
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_REMOVE_BOM_COMPAT_HELPERS_MISSING: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $compatibilityHelpersPath
+
 function Get-DefaultExclusionPatterns {
     return @(
         # Version control
@@ -178,7 +185,7 @@ function Test-IsPathUnderRoot {
     $normalizedPath = ((Resolve-TopLevelPathAlias -Path $path) -replace '\\', '/').TrimEnd('/')
     $normalizedRoot = ((Resolve-TopLevelPathAlias -Path $root) -replace '\\', '/').TrimEnd('/')
 
-    $comparison = if ($IsWindows) {
+    $comparison = if (Test-IsWindowsPlatform) {
         [System.StringComparison]::OrdinalIgnoreCase
     }
     else {
@@ -202,7 +209,7 @@ function Resolve-UnixPhysicalPath {
         [string]$path
     )
 
-    if ($IsWindows -or [string]::IsNullOrWhiteSpace($path)) {
+    if ((Test-IsWindowsPlatform) -or [string]::IsNullOrWhiteSpace($path)) {
         return $null
     }
 
@@ -280,7 +287,7 @@ function Resolve-TopLevelPathAlias {
 
     $fullPath = [System.IO.Path]::GetFullPath($path)
 
-    if ($IsWindows -or [string]::IsNullOrWhiteSpace($fullPath) -or -not $fullPath.StartsWith('/')) {
+    if ((Test-IsWindowsPlatform) -or [string]::IsNullOrWhiteSpace($fullPath) -or -not $fullPath.StartsWith('/')) {
         return $fullPath
     }
 
@@ -377,7 +384,7 @@ function Resolve-TopLevelPathAlias {
                 # Unix-specific fallback: readlink resolves symlinks that
                 # .NET/PowerShell providers may not detect (for example macOS
                 # /var -> /private/var, where readlink returns relative target "private/var").
-                if (-not $IsWindows -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                if (-not (Test-IsWindowsPlatform) -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
                     try {
                         $readlinkOutput = (& readlink $topLevelSegment 2>$null)
                         if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($readlinkOutput)) {
@@ -400,7 +407,7 @@ function Resolve-TopLevelPathAlias {
                     }
                 }
 
-                if (-not $IsWindows -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                if (-not (Test-IsWindowsPlatform) -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
                     $physicalTopLevelPath = Resolve-UnixPhysicalPath -Path $topLevelSegment
                     if (-not [string]::IsNullOrWhiteSpace($physicalTopLevelPath)) {
                         $physicalTopLevelPath = [System.IO.Path]::GetFullPath($physicalTopLevelPath)
@@ -704,7 +711,7 @@ function Resolve-ScannableFileDiscovery {
         $gitDiscoveryFailureReason = "git command not found on PATH"
     }
 
-    $comparison = if ($IsWindows) {
+    $comparison = if (Test-IsWindowsPlatform) {
         [System.StringComparison]::OrdinalIgnoreCase
     }
     else {
@@ -810,10 +817,7 @@ function Get-ScannableFiles {
         $canonicalGitRoot = Resolve-TopLevelPathAlias -Path $scanPlan.GitRoot
         $canonicalScanRoot = Resolve-TopLevelPathAlias -Path $scanPlan.ResolvedScanRoot
         try {
-            $scopeDiagnostics = [System.IO.Path]::GetRelativePath(
-                $canonicalGitRoot,
-                $canonicalScanRoot
-            )
+            $scopeDiagnostics = Get-RelativePathCompat -BasePath $canonicalGitRoot -TargetPath $canonicalScanRoot
         }
         catch {
             $scopeDiagnostics = $null

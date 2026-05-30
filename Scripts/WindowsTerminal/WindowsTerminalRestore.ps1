@@ -10,7 +10,7 @@ try {
     $windowsTerminalSettings = "$windowsTerminalConfigPath\settings.json"
     if (-not (Test-Path -LiteralPath $windowsTerminalConfigPath -PathType Container)) {
         Write-Host "Windows Terminal settings directory not found at $windowsTerminalConfigPath, creating..."
-        New-Item -ItemType Directory -LiteralPath $windowsTerminalConfigPath -Force
+        [System.IO.Directory]::CreateDirectory($windowsTerminalConfigPath) | Out-Null
     }
 
     $settingsPath = Join-Path -Path $baseDirectory -ChildPath 'Config'
@@ -26,7 +26,7 @@ try {
     $backupFolder = Join-Path -Path $HOME -ChildPath "Documents"
     $backupFolder = Join-Path -Path $backupFolder -ChildPath "WT_Settings_Backup"
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
-        New-Item -LiteralPath $backupFolder -ItemType Directory -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($backupFolder) | Out-Null
     }
 
     $currentBackupFile = Join-Path -Path $backupFolder -ChildPath "settings_backup_$timestamp.json"

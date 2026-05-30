@@ -9,7 +9,14 @@ if (-not (Test-Path -LiteralPath $strictModeHelpersPath -PathType Leaf)) {
 
 .$strictModeHelpersPath
 
-if (-not $IsWindows) {
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+.$compatibilityHelpersPath
+
+if (-not (Test-IsWindowsPlatform)) {
     Write-Error "E_DXMSG_BACKUP_WINDOWS_ONLY: This script requires Windows (Robocopy). Current OS is not Windows."
     exit 1
 }
@@ -51,7 +58,7 @@ Write-Verbose (
 if (-not (Test-Path -LiteralPath $backupDir -PathType Container)) {
     Write-Host "Destination directory does not exist, attempting to create: $backupDir"
     try {
-        New-Item -LiteralPath $backupDir -ItemType Directory -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($backupDir) | Out-Null
         Write-Host "Destination directory created successfully."
     }
     catch {
@@ -71,7 +78,7 @@ Write-Host "Starting backup process..."
 try {
     # 1. Create Temporary Staging Directory
     Write-Host "Creating temporary staging directory: $tempStagePath"
-    New-Item -LiteralPath $tempStagePath -ItemType Directory -Force | Out-Null
+    [System.IO.Directory]::CreateDirectory($tempStagePath) | Out-Null
 
     # 2. Copy Source to Staging using Robocopy (includes hidden, excludes specified)
     Write-Host "Copying files from '$sourcePath' to staging area, excluding specified items..."

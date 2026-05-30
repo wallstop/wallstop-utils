@@ -9,6 +9,13 @@
 # stable diagnostic codes derived from $Context.DiagnosticPrefix and
 # $Context.TargetDiagnosticPrefix so the consuming scripts keep verbatim error strings.
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath 'CompatibilityHelpers.ps1'
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $compatibilityHelpersPath
+
 function New-QualityToolingContext {
     [CmdletBinding()]
     param(
@@ -100,15 +107,15 @@ function Get-QualityToolingOperatingSystemName {
         [pscustomobject]$Context
     )
 
-    if ($IsWindows) {
+    if (Test-IsWindowsPlatform) {
         return "windows"
     }
 
-    if ($IsMacOS) {
+    if (Test-IsMacOSPlatform) {
         return "darwin"
     }
 
-    if ($IsLinux) {
+    if (Test-IsLinuxPlatform) {
         return "linux"
     }
 
@@ -712,7 +719,7 @@ function Set-QualityToolingExecutableMode {
         [string]$ExecutablePath
     )
 
-    if ($IsWindows) {
+    if (Test-IsWindowsPlatform) {
         return
     }
 
@@ -774,7 +781,9 @@ function Invoke-QualityToolingDownload {
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
                 Write-Host "$($Context.LogPrefix) Downloading $($AssetSpec.ToolName) $($AssetSpec.Version) from $($AssetSpec.DownloadUrl)"
-                Invoke-WebRequest -Uri $AssetSpec.DownloadUrl -OutFile $DownloadPath -TimeoutSec $Context.DownloadTimeoutSeconds -ErrorAction Stop
+                # -UseBasicParsing avoids the Internet Explorer engine dependency on
+                # Windows PowerShell 5.1 (no-op on PowerShell 7+).
+                Invoke-WebRequest -Uri $AssetSpec.DownloadUrl -OutFile $DownloadPath -TimeoutSec $Context.DownloadTimeoutSeconds -UseBasicParsing -ErrorAction Stop
                 return
             }
             catch {
@@ -907,6 +916,7 @@ function Invoke-QualityToolingInstallLock {
 }
 
 function Resolve-QualityToolingToolExecutable {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '', Justification = 'RuntimeInformation.ProcessArchitecture is available on .NET Framework 4.7.1+, the floor on all supported Windows PowerShell 5.1 hosts.')]
     param(
         [Parameter(Mandatory = $true)]
         [pscustomobject]$Context,
@@ -972,7 +982,7 @@ function Resolve-QualityToolingTargetFiles {
     $targets = New-Object 'System.Collections.Generic.List[string]'
     $repositoryRootFullPath = [System.IO.Path]::GetFullPath($RepositoryRoot)
     $repositoryRootWithSeparator = $repositoryRootFullPath.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
-    $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $pathComparison = if (Test-IsWindowsPlatform) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
 
     foreach ($inputFile in @($InputFiles)) {
         if ([string]::IsNullOrWhiteSpace($inputFile)) {
@@ -1011,5 +1021,5 @@ function ConvertTo-QualityToolingRelativePath {
         [string]$Path
     )
 
-    return ([System.IO.Path]::GetRelativePath($RepositoryRoot, $Path) -replace '[\\/]+', '/')
+    return ((Get-RelativePathCompat -BasePath $RepositoryRoot -TargetPath $Path) -replace '[\\/]+', '/')
 }

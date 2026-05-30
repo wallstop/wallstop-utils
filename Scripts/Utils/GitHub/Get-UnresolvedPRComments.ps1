@@ -85,7 +85,6 @@ param(
     [string]$Repo,
 
     [Parameter(Mandatory = $false)]
-    [ArgumentCompletions("github.com")]
     [string]$GitHubHost = "github.com",
 
     [Parameter(Mandatory = $false)]
@@ -98,7 +97,6 @@ param(
     [string]$Token,
 
     [Parameter(Mandatory = $false)]
-    [ArgumentCompletions("text", "json")]
     [ValidateSet("text", "json")]
     [string]$OutputFormat = "text",
 
@@ -154,6 +152,13 @@ if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
 }
 
 .$strictModeHelpersPath
+
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+.$compatibilityHelpersPath
 
 function Redact-SensitiveText {
     [CmdletBinding()]
@@ -1357,6 +1362,7 @@ function Get-ClipboardCommandPriority {
 
 function Copy-ToClipboard {
     [OutputType([bool])]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '', Justification = 'Set-Clipboard -AsOSC52 is invoked only after a runtime Parameters.Keys check confirms the parameter exists (Get-ClipboardCommandPriority); Windows PowerShell 5.1 falls back to plain Set-Clipboard / pbcopy / xclip / xsel / wl-copy.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1822,7 +1828,9 @@ function Validate-GitHubTokenForRepoAccess {
         }
 
         try {
-            $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $effectiveRequestTimeoutSeconds
+            # -UseBasicParsing avoids the Internet Explorer engine dependency on Windows
+            # PowerShell 5.1 (no-op on PowerShell 7+).
+            $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $effectiveRequestTimeoutSeconds -UseBasicParsing
             $repoMetadata = $null
             if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
                 $repoMetadata = ConvertFrom-JsonSingleObject -Json $response.Content -Context "Repository metadata response"
@@ -2170,7 +2178,7 @@ function Format-UnresolvedThreadsAsJson {
         [object[]]$Records
     )
 
-    return ($Records | ConvertTo-Json -Depth 8 -AsArray)
+    return (ConvertTo-JsonArrayCompat -InputObject $Records -Depth 8)
 }
 
 function Assert-GraphQLVariableMap {

@@ -22,6 +22,13 @@ if (-not (Test-Path -Path $llmWrapperHelpersPath -PathType Leaf)) {
 
 .$llmWrapperHelpersPath
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+.$compatibilityHelpersPath
+
 function Get-RepositoryRoot {
     param(
         [Parameter(Mandatory = $false)]
@@ -114,7 +121,7 @@ function Test-IsPathWithinDirectory {
         [string]$CandidatePath
     )
 
-    $relativePath = [System.IO.Path]::GetRelativePath($BasePath,$CandidatePath)
+    $relativePath = Get-RelativePathCompat -BasePath $BasePath -TargetPath $CandidatePath
     if ([string]::IsNullOrWhiteSpace($relativePath) -or $relativePath -eq '.') {
         return $true
     }
@@ -239,7 +246,7 @@ if ($llmMarkdownFiles.Count -eq 0) {
 
 foreach ($file in $llmMarkdownFiles) {
     $lineCount = [System.IO.File]::ReadAllLines($file.FullName,[System.Text.Encoding]::UTF8).Length
-    $relativePath = [System.IO.Path]::GetRelativePath($repoRoot,$file.FullName)
+    $relativePath = Get-RelativePathCompat -BasePath $repoRoot -TargetPath $file.FullName
 
     if ($lineCount -gt $MaxLines) {
         $errors.Add("$relativePath exceeds max line limit ($lineCount > $MaxLines)") | Out-Null
@@ -273,7 +280,7 @@ $anchorLinkPattern = '\[[^\]]+\]\(\.\./skill-details/(?<detailsPath>(?:[^/#)\s]+
 $detailsAnchorsByPath = @{}
 foreach ($skillFile in $skillFiles) {
     $skillContent = [System.IO.File]::ReadAllText($skillFile.FullName,[System.Text.Encoding]::UTF8)
-    $relativePath = [System.IO.Path]::GetRelativePath($repoRoot,$skillFile.FullName)
+    $relativePath = Get-RelativePathCompat -BasePath $repoRoot -TargetPath $skillFile.FullName
 
     $match = [regex]::Match($skillContent,$triggerPattern,[System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if (-not $match.Success) {

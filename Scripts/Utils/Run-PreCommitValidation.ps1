@@ -46,6 +46,13 @@ if (-not (Test-Path -Path $llmWrapperHelpersPath -PathType Leaf)) {
 
 .$llmWrapperHelpersPath
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+.$compatibilityHelpersPath
+
 function New-LlmHarnessPattern {
     param(
         [Parameter(Mandatory = $true)]
@@ -316,7 +323,7 @@ function Write-IsolatedPesterFailureArtifact {
 
     $resolvedRepoRoot = Resolve-CanonicalPath -Path $RepoRoot
     $resolvedArtifactPath = [System.IO.Path]::GetFullPath($artifactPath)
-    $comparison = if ($IsWindows) {
+    $comparison = if (Test-IsWindowsPlatform) {
         [System.StringComparison]::OrdinalIgnoreCase
     }
     else {
