@@ -43,6 +43,59 @@ if ($selectedModules.Count -eq 0) {
 }
 
 if (-not $SkipPSGalleryTrust) {
+    # Enable TLS 1.2 on Windows PowerShell 5.1 (Desktop edition) only; the .NET Framework default
+    # protocol set predates TLS 1.2 and PSGallery requires it. Gate on PSEdition (never bare
+    # $IsWindows, which is undefined under StrictMode on 5.1) so PowerShell 7+ is unaffected.
+    if ($PSVersionTable.PSEdition -eq "Desktop") {
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            Write-Verbose "PowerShell module bootstrap diagnostics: enabled TLS 1.2 for Windows PowerShell 5.1."
+        }
+        catch {
+            Write-Verbose ("PowerShell module bootstrap diagnostics: TLS 1.2 enable skipped: {0}" -f $_.Exception.Message)
+        }
+    }
+
+    # Bootstrap the NuGet package provider when available. This registers PSGallery as a side effect
+    # on hosts where it is missing and is the step the passing Windows PowerShell 5.1 lane relied on.
+    $getPackageProviderCommand = Get-Command -Name "Get-PackageProvider" -ErrorAction SilentlyContinue
+    if ($null -ne $getPackageProviderCommand) {
+        try {
+            Get-PackageProvider -Name NuGet -ForceBootstrap | Out-Null
+            Write-Verbose "PowerShell module bootstrap diagnostics: NuGet package provider bootstrapped."
+        }
+        catch {
+            Write-Verbose ("PowerShell module bootstrap diagnostics: NuGet provider bootstrap skipped: {0}" -f $_.Exception.Message)
+        }
+    }
+    else {
+        Write-Verbose "PowerShell module bootstrap diagnostics: Get-PackageProvider command unavailable; skipping NuGet provider bootstrap."
+    }
+
+    # Register the default PSGallery repository ONLY when it is missing. GitHub runner images
+    # intermittently ship with PSGallery unregistered, which makes Set-PSRepository / Install-Module
+    # fail with "No repository with the name 'PSGallery' was found." Register-PSRepository -Default
+    # THROWS when PSGallery already exists, so the existence guard is mandatory.
+    $getPsRepositoryCommand = Get-Command -Name "Get-PSRepository" -ErrorAction SilentlyContinue
+    if ($null -ne $getPsRepositoryCommand) {
+        if ($null -eq (Get-PSRepository -Name "PSGallery" -ErrorAction SilentlyContinue)) {
+            try {
+                Register-PSRepository -Default -ErrorAction Stop
+                Write-Verbose "PowerShell module bootstrap diagnostics: registered default PSGallery repository."
+            }
+            catch {
+                Write-Warning "W_MODULE_BOOTSTRAP_GALLERY_REGISTER_FAILED: unable to register the default PSGallery repository. Continuing with explicit -Force installs."
+                Write-Verbose ("PowerShell module bootstrap gallery registration diagnostics: {0}" -f $_.Exception.Message)
+            }
+        }
+        else {
+            Write-Verbose "PowerShell module bootstrap diagnostics: PSGallery repository already registered."
+        }
+    }
+    else {
+        Write-Verbose "PowerShell module bootstrap diagnostics: Get-PSRepository command unavailable; skipping default repository registration."
+    }
+
     $setRepositoryCommand = Get-Command -Name "Set-PSRepository" -ErrorAction SilentlyContinue
     if ($null -ne $setRepositoryCommand) {
         try {
@@ -75,7 +128,7 @@ foreach ($moduleName in $selectedModules) {
     Write-Host ("Installing PowerShell module requirement: {0} >= {1}" -f $requirement.ModuleName,$requirement.MinimumVersion)
 
     try {
-        Install-Module -Name $requirement.ModuleName -Repository "PSGallery" -Scope CurrentUser -MinimumVersion $requirement.MinimumVersion -Force -ErrorAction Stop
+        Install-Module -Name $requirement.ModuleName -Repository "PSGallery" -Scope CurrentUser -MinimumVersion $requirement.MinimumVersion -Force -SkipPublisherCheck -ErrorAction Stop
     }
     catch {
         $installedVersions = Get-AvailableModuleVersionsText -ModuleName $requirement.ModuleName

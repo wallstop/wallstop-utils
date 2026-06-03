@@ -632,17 +632,7 @@ fi
 
 if command -v pwsh > /dev/null 2>&1; then
   _log "Installing PowerShell modules (Pester, PSScriptAnalyzer)..."
-  # shellcheck disable=SC2016 # Intentional: $_ is a PowerShell variable, not a bash one.
-  pwsh -NoLogo -NoProfile -Command '
-    try {
-      Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-      Install-Module Pester -Scope CurrentUser -MinimumVersion 5.5.0 -Force -ErrorAction Stop
-      Install-Module PSScriptAnalyzer -Scope CurrentUser -MinimumVersion 1.21.0 -Force -ErrorAction Stop
-      Write-Host "[devcontainer] PowerShell modules installed."
-    } catch {
-      Write-Warning ("[devcontainer] PowerShell module bootstrap skipped: " + $_.Exception.Message)
-    }
-  ' || _warn "pwsh exited non-zero during module install; container is still usable."
+  pwsh -NoLogo -NoProfile -File ./Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester,PSScriptAnalyzer || _warn "pwsh exited non-zero during module install; container is still usable."
 else
   _warn "pwsh is unavailable; skipping PowerShell module install."
 fi

@@ -518,13 +518,7 @@ jobs:
 
       - name: Install PSScriptAnalyzer
         shell: pwsh
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
-            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-            Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force
-          }
+        run: ./Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules PSScriptAnalyzer
 
       - name: Run cross-version compatibility gate (5.1 + 7+)
         shell: pwsh
@@ -543,18 +537,26 @@ jobs:
         run: |
           Write-Host ("Edition: {0}  Version: {1}" -f $PSVersionTable.PSEdition, $PSVersionTable.PSVersion)
 
-      - name: Install Pester 5 and PSScriptAnalyzer (Windows PowerShell 5.1)
+      - name: Resolve Windows PowerShell 5.1 user module path
+        id: psmodpath
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          # Windows PowerShell 5.1 ships Pester 3.4 and needs TLS 1.2 + the NuGet provider
-          # + a trusted gallery before Install-Module.
-          [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-          Get-PackageProvider -Name NuGet -ForceBootstrap | Out-Null
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
-          # PSScriptAnalyzer is required by formatter/quality tests that the suite exercises.
-          Install-Module -Name PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser
+          $documents = [Environment]::GetFolderPath("MyDocuments")
+          $modulePath = Join-Path -Path $documents -ChildPath "WindowsPowerShell\Modules"
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "modulePath=$modulePath`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Cache Windows PowerShell 5.1 modules
+        uses: actions/cache@v5.0.5
+        with:
+          path: ${{ steps.psmodpath.outputs.modulePath }}
+          key: psmodules-${{ runner.os }}-winps51-${{ hashFiles('Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1') }}
+          restore-keys: |
+            psmodules-${{ runner.os }}-winps51-
+
+      - name: Install Pester 5 and PSScriptAnalyzer (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester,PSScriptAnalyzer
 
       - name: Run Pester suite under Windows PowerShell 5.1
         shell: powershell
@@ -594,18 +596,26 @@ jobs:
         run: |
           Write-Host ("Edition: {0}  Version: {1}" -f $PSVersionTable.PSEdition, $PSVersionTable.PSVersion)
 
-      - name: Install Pester 5 and PSScriptAnalyzer (PowerShell 7+)
+      - name: Resolve PowerShell 7+ user module path
+        id: psmodpath
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -ge [version]'5.0.0' })) {
-            Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
-          }
-          # PSScriptAnalyzer is required by formatter/quality tests that the suite exercises.
-          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
-            Install-Module -Name PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser
-          }
+          $documents = [Environment]::GetFolderPath("MyDocuments")
+          $modulePath = Join-Path -Path $documents -ChildPath "PowerShell/Modules"
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "modulePath=$modulePath`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Cache PowerShell 7+ modules
+        uses: actions/cache@v5.0.5
+        with:
+          path: ${{ steps.psmodpath.outputs.modulePath }}
+          key: psmodules-${{ runner.os }}-pwsh7-${{ hashFiles('Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1') }}
+          restore-keys: |
+            psmodules-${{ runner.os }}-pwsh7-
+
+      - name: Install Pester 5 and PSScriptAnalyzer (PowerShell 7+)
+        shell: pwsh
+        run: ./Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester,PSScriptAnalyzer
 
       - name: Run Pester suite under PowerShell 7+
         shell: pwsh

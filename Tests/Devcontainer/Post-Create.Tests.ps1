@@ -396,25 +396,29 @@ Describe "devcontainer-validate.yml Codex verification contract" {
 }
 
 Describe "post-create.sh PowerShell module bootstrap" {
-    It "installs Pester" {
-        $script:postCreateContent | Should -Match 'Install-Module\s+Pester'
+    It "routes module installation through the shared bootstrap script" {
+        $script:postCreateContent | Should -Match 'Install-PowerShellQualityModules\.ps1'
     }
 
-    It "installs PSScriptAnalyzer" {
-        $script:postCreateContent | Should -Match 'Install-Module\s+PSScriptAnalyzer'
+    It "requests both Pester and PSScriptAnalyzer via the shared bootstrap script" {
+        $script:postCreateContent | Should -Match 'Install-PowerShellQualityModules\.ps1\s+-Modules\s+Pester,PSScriptAnalyzer'
     }
 
-    It "installs modules with Scope CurrentUser" {
-        $script:postCreateContent | Should -Match 'Scope\s+CurrentUser'
+    It "does not inline gallery module installation in the bootstrap script" {
+        $normalized = ($script:postCreateContent) -replace "`r", ''
+        $normalized | Should -Not -Match '(?m)^\s*Install-Module\s+Pester'
+        $normalized | Should -Not -Match '(?m)^\s*Install-Module\s+PSScriptAnalyzer'
     }
 
-    It "wraps module installation in a try/catch so failures are non-fatal" {
-        $script:postCreateContent | Should -Match '\}\s*catch\s*\{'
+    It "delegates module install error handling to the shared bootstrap script (no inline Set-PSRepository)" {
+        $normalized = ($script:postCreateContent) -replace "`r", ''
+        $normalized | Should -Not -Match '(?m)^\s*Set-PSRepository\b'
     }
 
     It "guards pwsh invocation against unexpected crashes (non-blocking)" {
         # pwsh call must be followed by || to prevent unexpected crashes from aborting the script.
-        $script:postCreateContent | Should -Match "pwsh[^`n]+'[^']*'\s*\|\|"
+        $normalized = ($script:postCreateContent) -replace "`r", ''
+        $normalized | Should -Match "(?m)^\s*pwsh\b[^`n]+Install-PowerShellQualityModules\.ps1[^`n]+\|\|"
     }
 }
 

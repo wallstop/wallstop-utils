@@ -554,6 +554,89 @@ Describe "CI scope expansion" {
     }
 }
 
+Describe "Workflow PowerShell module bootstrap routing" {
+    It "forbids inline gallery/module bootstrap in workflow YAML: <Label>" -TestCases @(
+        @{ Label = 'Set-PSRepository'; Pattern = '(?m)^\s*Set-PSRepository\b' }
+        @{ Label = 'Register-PSRepository'; Pattern = '(?m)^\s*Register-PSRepository\b' }
+        @{ Label = 'Get-PackageProvider'; Pattern = '(?m)^\s*Get-PackageProvider\b' }
+        @{ Label = 'Install-Module Pester'; Pattern = '(?m)^\s*Install-Module\b[^\r\n]*\bPester\b' }
+        @{ Label = 'Install-Module PSScriptAnalyzer'; Pattern = '(?m)^\s*Install-Module\b[^\r\n]*\bPSScriptAnalyzer\b' }
+    ) {
+        param($Label, $Pattern)
+
+        # Scope strictly to .github/workflows/*.yml. The shared bootstrap helper
+        # (Install-PowerShellQualityModules.ps1) and ModuleHelpers.ps1 legitimately
+        # contain Set-PSRepository / Register-PSRepository / Install-Module and must
+        # never be flagged; directory-scoping is the clean allowlist.
+        $workflowFiles = @(Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath '.github/workflows') -Filter '*.yml' -File -Recurse -ErrorAction Stop)
+        $workflowFiles.Count | Should -BeGreaterThan 0 -Because 'Expected at least one GitHub workflow file in .github/workflows.'
+
+        foreach ($workflowFile in $workflowFiles) {
+            $normalized = (Get-Content -Path $workflowFile.FullName -Raw) -replace "`r", ''
+            $normalized | Should -Not -Match $Pattern -Because "$($workflowFile.Name) must route module installation through Install-PowerShellQualityModules.ps1 instead of inline $Label."
+        }
+    }
+
+    It "requires module-consuming workflow lanes to route through the shared bootstrap script: <Name>" -TestCases @(
+        @{ Name = 'cross-language quality workflow'; Path = '.github/workflows/script-quality.yml' }
+        @{ Name = 'pr summarizer quality workflow'; Path = '.github/workflows/github-pr-summarizer-quality.yml' }
+    ) {
+        param($Name, $Path)
+
+        $workflowFullPath = Join-Path -Path $script:repoRoot -ChildPath $Path
+        $raw = (Get-Content -Path $workflowFullPath -Raw) -replace "`r", ''
+        $raw | Should -Match 'Install-PowerShellQualityModules\.ps1' -Because "$Name must invoke the shared module bootstrap script."
+    }
+
+    It "writes GITHUB_OUTPUT UTF-8 no-BOM in Windows PowerShell 5.1 steps (shell: powershell)" {
+        # Windows PowerShell 5.1 (shell: powershell, NOT pwsh) routes the '>' / '>>' redirection
+        # operators and Out-File through UTF-16LE, and 'Out-File -Encoding utf8' prepends a UTF-8
+        # BOM. GitHub Actions reads $GITHUB_OUTPUT as UTF-8, so either form corrupts the key=value
+        # line and silently breaks the step output (here: the actions/cache module path -> a broken
+        # or failing cache step). WinPS 5.1 steps must write GITHUB_OUTPUT via the no-BOM idiom:
+        #   [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "...`n", [System.Text.UTF8Encoding]::new($false))
+        # PowerShell 7+ (shell: pwsh) defaults to UTF-8 no-BOM, so '>>' under shell: pwsh stays allowed.
+        $workflowFiles = @(Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath '.github/workflows') -Filter '*.yml' -File -Recurse -ErrorAction Stop)
+        $workflowFiles.Count | Should -BeGreaterThan 0 -Because 'Expected at least one GitHub workflow file in .github/workflows.'
+
+        foreach ($workflowFile in $workflowFiles) {
+            $normalized = (Get-Content -Path $workflowFile.FullName -Raw) -replace "`r", ''
+
+            # Split into per-step blocks at YAML list-item boundaries so each step's shell is
+            # evaluated in isolation (a step's shell directive does not leak to sibling steps).
+            $stepBlocks = [regex]::Split($normalized, '(?m)^(?=\s*-\s+name:\s)')
+            foreach ($stepBlock in $stepBlocks) {
+                if ($stepBlock -notmatch '(?m)^\s*shell:\s*powershell\s*$') { continue }
+
+                $offendingLines = @(
+                    ($stepBlock -split "`n") | Where-Object {
+                        $_ -match '>\s*\$env:GITHUB_OUTPUT' -or ($_ -match '\bOut-File\b' -and $_ -match 'GITHUB_OUTPUT')
+                    }
+                )
+
+                $offendingLines.Count | Should -Be 0 -Because "$($workflowFile.Name): a Windows PowerShell 5.1 step (shell: powershell) writes GITHUB_OUTPUT via redirection/Out-File (UTF-16LE/BOM corruption). Use [System.IO.File]::AppendAllText(`$env:GITHUB_OUTPUT, ..., [System.Text.UTF8Encoding]::new(`$false)). Offending: $($offendingLines.ForEach({ $_.Trim() }) -join ' | ')"
+            }
+        }
+    }
+
+    It "resolves module-cache paths with the UTF-8 no-BOM GITHUB_OUTPUT idiom: <Name>" -TestCases @(
+        @{ Name = 'winps51 lane'; StepName = 'Resolve Windows PowerShell 5.1 user module path' }
+        @{ Name = 'pwsh7 lane'; StepName = 'Resolve PowerShell 7+ user module path' }
+    ) {
+        param($Name, $StepName)
+
+        $raw = (Get-Content -Path $script:crossLanguageWorkflowPath -Raw) -replace "`r", ''
+        $escapedName = [regex]::Escape($StepName)
+        $raw | Should -Match $escapedName -Because "Expected the '$StepName' step to exist."
+
+        # Isolate the named step block (up to the next list item or end of file).
+        $stepBlock = [regex]::Match($raw, "(?ms)-\s+name:\s*$escapedName\b.*?(?=^\s*-\s+name:\s|\z)").Value
+        $stepBlock | Should -Match '\[System\.IO\.File\]::AppendAllText\(\s*\$env:GITHUB_OUTPUT' -Because "$Name must write GITHUB_OUTPUT via [System.IO.File]::AppendAllText for UTF-8 no-BOM safety."
+        $stepBlock | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\s*\$false\s*\)' -Because "$Name must use a BOM-free UTF-8 encoding."
+        $stepBlock | Should -Not -Match '>\s*\$env:GITHUB_OUTPUT' -Because "$Name must not use '>'/'>>' redirection to GITHUB_OUTPUT."
+    }
+}
+
 Describe "Cross-language quality platform conventions" {
     It "defines a pinned pre-commit configuration with required hook coverage" {
         $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
@@ -3579,6 +3662,7 @@ $result = "value {0} {1}" -f
 
         $contextContent | Should -Match 'Install-PowerShellQualityModules\.ps1'
         $contextContent | Should -Match 'rerun preflight before any hook execution'
+        $contextContent | Should -Match 'Register-PSRepository -Default'
         $validationWorkflowContent | Should -Match 'Install-PowerShellQualityModules\.ps1'
         $validationWorkflowContent | Should -Match 'Invoke-FullValidation\.ps1 -PreflightOnly'
     }
