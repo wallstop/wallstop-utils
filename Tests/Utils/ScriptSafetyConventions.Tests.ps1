@@ -26,12 +26,15 @@ BeforeAll {
     $script:preCommitHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-commit"
     $script:prePushHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-push"
     $script:qualityPowerShellScripts = @(
+        "Scripts/Utils/Common/GitHookRegistrationHelpers.ps1",
+        "Scripts/Utils/Common/PreCommitCliHelpers.ps1",
         "Scripts/Utils/Common/QualityToolingHelpers.ps1",
         "Scripts/Utils/Quality/Assert-CleanGitTree.ps1",
         "Scripts/Utils/Quality/Format-PowerShellFiles.ps1",
         "Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1",
         "Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1",
         "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1",
+        "Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1",
         "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1",
         "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1",
         "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
@@ -43,6 +46,7 @@ BeforeAll {
         ".psscriptanalyzer.psd1",
         ".shellcheckrc",
         ".stylua.toml",
+        "requirements.txt",
         "Scripts/Utils/Quality/native-quality-tools.json"
     )
     $script:shellConventionScripts = @(
@@ -594,6 +598,20 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Not -Match 'id:\s+llm-harness-validation' -Because 'LLM harness checks should run once via the orchestrator to avoid duplicate execution'
     }
 
+    It "pins and verifies the pre-commit CLI itself" {
+        $requirementsPath = Join-Path -Path $script:repoRoot -ChildPath 'requirements.txt'
+        $requirements = (Get-Content -Path $requirementsPath -Raw) -replace "`r", ''
+        $fullValidation = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw
+        $recoveryScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1') -Raw
+        $cliHelper = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/PreCommitCliHelpers.ps1') -Raw
+
+        $requirements | Should -Match '(?m)^pre-commit==\d+(?:\.\d+){1,3}$'
+        $cliHelper | Should -Match 'Get-RequiredPreCommitVersion'
+        $cliHelper | Should -Match 'E_VALIDATION_PRECOMMIT_VERSION_MISMATCH'
+        $fullValidation | Should -Match 'Assert-PreCommitCliVersion'
+        $recoveryScript | Should -Match 'Assert-PreCommitCliVersion'
+    }
+
     It "routes shell safety conventions through the precommit orchestrator" {
         $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
         $validatorContent = Get-Content -Path $validatorPath -Raw
@@ -740,6 +758,23 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook | Should -Match 'run_with_timeout'
         $prePushHook | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $prePushHook | Should -Match 'W_HOOK_RUNTIME_BUDGET'
+    }
+
+    It "provides a hook-preflighted push helper for branches without upstreams" {
+        $pushHelperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1'
+        $pushHelper = Get-Content -Path $pushHelperPath -Raw
+
+        $pushHelper | Should -Match 'Assert-GitHookRegistration\s+-RepositoryRoot\s+\$resolvedRepositoryRoot\s+-Repair'
+        $pushHelper | Should -Match 'push",\s*"-u",\s*\$SelectedRemote,\s*"HEAD"'
+        $pushHelper | Should -Match 'push",\s*\$SelectedRemote,\s*"HEAD"'
+        $pushHelper | Should -Match 'E_GIT_PUSH_DETACHED_HEAD'
+        $pushHelper | Should -Match 'E_GIT_PUSH_REMOTE_MISSING'
+        $pushHelper | Should -Match 'E_GIT_PUSH_REMOTE_MISMATCH'
+        $pushHelper | Should -Match 'E_GIT_PUSH_REMOTE_BRANCH_DIVERGED'
+        $pushHelper | Should -Match 'merge-base",\s*"--is-ancestor"'
+        $pushHelper | Should -Not -Match 'push",\s*"-f"|--force' -Because (
+            "Automated push helpers must never force-push."
+        )
     }
 
     It "keeps pre-hook Windows language auto-repair safe and static-only" {
@@ -989,6 +1024,9 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Match 'uses:\s+actions/checkout@v\d+\.\d+\.\d+'
         $workflow | Should -Match 'uses:\s+actions/setup-python@v\d+\.\d+\.\d+'
         $workflow | Should -Match 'uses:\s+actions/cache@v\d+\.\d+\.\d+'
+        $workflow | Should -Match "hashFiles\('\.pre-commit-config\.yaml', 'requirements\.txt'\)"
+        $workflow | Should -Match 'python -m pip install --requirement requirements\.txt'
+        $workflow | Should -Not -Match 'python -m pip install --upgrade pip pre-commit'
         $workflow | Should -Match 'shell-debt-audit'
         $workflow | Should -Match 'run_shell_debt_audit'
     }
@@ -2566,8 +2604,8 @@ Describe "Dependabot update automation conventions" {
         )
         $ecosystems = @($ecosystemMatches | ForEach-Object { $_.Groups['name'].Value })
 
-        $ecosystems.Count | Should -Be 3
-        @($ecosystems | Sort-Object -Unique) | Should -Be @('devcontainers', 'github-actions', 'pre-commit') -Because (
+        $ecosystems.Count | Should -Be 4
+        @($ecosystems | Sort-Object -Unique) | Should -Be @('devcontainers', 'github-actions', 'pip', 'pre-commit') -Because (
             "Dependabot coverage must remain aligned to the agreed tooling areas"
         )
     }
@@ -2575,10 +2613,10 @@ Describe "Dependabot update automation conventions" {
     It "uses Monday 03:00 UTC weekly schedule for each configured ecosystem" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count | Should -Be 3
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count | Should -Be 3
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count | Should -Be 3
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count | Should -Be 4
     }
 
     It "groups both version and security updates into one PR per ecosystem area per update type" {
@@ -2616,7 +2654,7 @@ Describe "Dependabot update automation conventions" {
             $ecosystemBlocks[$currentEcosystem] = ($currentLines -join "`n")
         }
 
-        foreach ($ecosystem in @('github-actions', 'pre-commit', 'devcontainers')) {
+        foreach ($ecosystem in @('github-actions', 'pre-commit', 'pip', 'devcontainers')) {
             $ecosystemBlocks.ContainsKey($ecosystem) | Should -BeTrue -Because "Missing ecosystem block for '$ecosystem'"
             $body = $ecosystemBlocks[$ecosystem]
 
@@ -2653,14 +2691,14 @@ Describe "Dependabot update automation conventions" {
     It "targets repository root directory for all configured ecosystems" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*directory:\s*(?:"/"|/)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*directory:\s*(?:"/"|/)\s*$')).Count | Should -Be 4
     }
 
     It "caps open version-update PR volume per ecosystem and keeps default branch behavior" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*open-pull-requests-limit:\s*10\s*$')).Count | Should -Be 3
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*separator:\s*"?/"?\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*open-pull-requests-limit:\s*10\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*separator:\s*"?/"?\s*$')).Count | Should -Be 4
         # Policy assumption: updates target the repository default branch.
         # If multi-branch release flows are introduced, this policy test should be updated.
         $content | Should -Not -Match '(?m)^\s*target-branch:\s*'
@@ -2811,6 +2849,10 @@ Describe "Dependabot manifest coverage drift conventions" {
 
         Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath '.pre-commit-config.yaml') -PathType Leaf | Should -BeTrue -Because (
             "Dependabot ecosystem 'pre-commit' requires .pre-commit-config.yaml"
+        )
+
+        Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath 'requirements.txt') -PathType Leaf | Should -BeTrue -Because (
+            "Dependabot ecosystem 'pip' requires requirements.txt"
         )
 
         Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/devcontainer.json') -PathType Leaf | Should -BeTrue -Because (
@@ -4379,6 +4421,20 @@ Describe "Quality tooling shared-helper conventions" {
         )
         $content | Should -Match '\$sha256\s*-notmatch\s*''\^\[a-f0-9\]\{64\}\$''' -Because (
             "shared helper asset resolution must validate sha256 format."
+        )
+    }
+
+    It "does not use closure-captured install-lock callbacks" {
+        $content = (Get-Content -Path $script:sharedHelperPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'Invoke-QualityToolingInstallLock[\s\S]*\[object\[\]\]\$ArgumentList' -Because (
+            "Install-lock callbacks must receive explicit arguments so callback visibility is not dependent on GetNewClosure."
+        )
+        $content | Should -Match '&\s+\$ScriptBlock\s+@ArgumentList' -Because (
+            "The shared lock helper must splat explicit callback arguments."
+        )
+        $content | Should -Not -Match '\.GetNewClosure\s*\(' -Because (
+            "Quality-tooling install-lock callbacks must not use GetNewClosure."
         )
     }
 }

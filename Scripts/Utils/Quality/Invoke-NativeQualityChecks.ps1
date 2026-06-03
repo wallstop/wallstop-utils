@@ -125,10 +125,13 @@ function Invoke-NativeQualityInstallLock {
         [string]$LockPath,
 
         [Parameter(Mandatory = $true)]
-        [scriptblock]$ScriptBlock
+        [scriptblock]$ScriptBlock,
+
+        [Parameter(Mandatory = $false)]
+        [object[]]$ArgumentList = @()
     )
 
-    Invoke-QualityToolingInstallLock -Context $script:NativeQualityContext -LockPath $LockPath -ScriptBlock $ScriptBlock -LockTimeoutSeconds $script:NativeQualityLockTimeoutSeconds -LockRetryMilliseconds $script:NativeQualityLockRetryMilliseconds
+    Invoke-QualityToolingInstallLock -Context $script:NativeQualityContext -LockPath $LockPath -ScriptBlock $ScriptBlock -LockTimeoutSeconds $script:NativeQualityLockTimeoutSeconds -LockRetryMilliseconds $script:NativeQualityLockRetryMilliseconds -ArgumentList $ArgumentList
 }
 
 function Test-NativeQualityArchiveEntryPath {
@@ -323,8 +326,33 @@ function Invoke-NativeQualityChecksMain {
     )
 
     $repositoryRoot = Get-NativeQualityRepositoryRoot
-    $manifest = Read-NativeQualityToolManifest
     $toolNames = if ($SelectedTool -eq "All") { @("stylua", "actionlint") } else { @($SelectedTool) }
+
+    if (-not $OnlyEnsureTools) {
+        $targetPaths = @(Resolve-NativeQualityTargetFiles -RepositoryRoot $repositoryRoot -InputFiles $InputFiles)
+        if ($targetPaths.Count -eq 0) {
+            Write-Host "[native-quality] No existing native quality targets selected; skipping."
+            return
+        }
+
+        $filterForTool = ($SelectedTool -eq "All")
+        $toolTargetMap = @{}
+        foreach ($toolName in $toolNames) {
+            $matchingTargets = @(Select-NativeQualityToolTargetFiles -ToolName $toolName -RepositoryRoot $repositoryRoot -Files $targetPaths -FilterForTool $filterForTool)
+            if ($matchingTargets.Count -gt 0) {
+                $toolTargetMap[$toolName] = $matchingTargets
+            }
+        }
+
+        if ($toolTargetMap.Count -eq 0) {
+            Write-Host "[native-quality] No native quality targets matched requested tool selection; skipping."
+            return
+        }
+
+        $toolNames = @($toolNames | Where-Object { $toolTargetMap.ContainsKey($_) })
+    }
+
+    $manifest = Read-NativeQualityToolManifest
     $toolExecutables = @{}
 
     foreach ($toolName in $toolNames) {
@@ -336,22 +364,15 @@ function Invoke-NativeQualityChecksMain {
         return
     }
 
-    $targetPaths = @(Resolve-NativeQualityTargetFiles -RepositoryRoot $repositoryRoot -InputFiles $InputFiles)
-    if ($targetPaths.Count -eq 0) {
-        Write-Host "[native-quality] No existing native quality targets selected; skipping."
-        return
-    }
-
-    $filterForTool = ($SelectedTool -eq "All")
     if ($toolExecutables.ContainsKey("stylua")) {
-        $styluaTargets = @(Select-NativeQualityToolTargetFiles -ToolName stylua -RepositoryRoot $repositoryRoot -Files $targetPaths -FilterForTool $filterForTool)
+        $styluaTargets = @($toolTargetMap["stylua"])
         if ($styluaTargets.Count -gt 0) {
             Invoke-StyluaQualityCheck -ExecutablePath $toolExecutables["stylua"] -RepositoryRoot $repositoryRoot -Files $styluaTargets -ApplyFix $ApplyFix
         }
     }
 
     if ($toolExecutables.ContainsKey("actionlint")) {
-        $actionlintTargets = @(Select-NativeQualityToolTargetFiles -ToolName actionlint -RepositoryRoot $repositoryRoot -Files $targetPaths -FilterForTool $filterForTool)
+        $actionlintTargets = @($toolTargetMap["actionlint"])
         if ($actionlintTargets.Count -gt 0) {
             Invoke-ActionlintQualityCheck -ExecutablePath $toolExecutables["actionlint"] -RepositoryRoot $repositoryRoot -Files $actionlintTargets
         }

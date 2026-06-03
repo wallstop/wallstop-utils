@@ -55,6 +55,8 @@ Run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-NativeQualityChe
 
 When pre-commit itself reports cache/environment installation failures, route through `Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1`; it cleans hook environments, runs `pre-commit install-hooks`, and retries once before failing with stable `E_PRECOMMIT_*` diagnostics.
 
+`Invoke-FullValidation.ps1 -PreflightOnly` must also verify local `.githooks` registration and the pinned pre-commit CLI from `requirements.txt`. Agents should publish branches through `Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1` instead of bare `git push`; the helper runs hook registration preflight first and safely applies `push -u origin HEAD` only when the remote branch is absent or an ancestor of `HEAD`.
+
 ## Failure Artifact Diagnostics
 
 When isolated Pester runs fail in `Run-PreCommitValidation.ps1`, keep throw messages compact and triage through warnings:
@@ -74,7 +76,8 @@ Track executable bit changes for hook wrapper scripts and keep trailing newline 
 4. Use pre-commit if available for pre-commit and pre-push stages.
 5. Keep fallback PowerShell validation path available.
 6. Ensure fallback path propagates exit status.
-7. Use the full-validation wrapper for major session-close checks.
+7. Use `Invoke-GitPushWithUpstream.ps1` for branch pushes.
+8. Use the full-validation wrapper for major session-close checks.
 
 ## References
 

@@ -33,7 +33,12 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -P
 pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1
 ```
 
-- Push your branch so CI jobs execute.
+- Push your branch so CI jobs execute:
+
+```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1
+```
+
 - Watch PR checks to completion:
 
 ```bash
@@ -89,6 +94,7 @@ Use the first failing gate as the active remediation target.
 - `E_HOOK_TIMEOUT` / `E_HOOK_TIMEOUT_CONFIG` from `.githooks/*`: raise timeout guardrail values only when needed (`WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`, `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`, `WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS`), then rerun with the same command path.
 - `W_HOOK_RUNTIME_BUDGET` from `.githooks/*`: hook phase exceeded the <=1s fast-path target; treat this as a performance regression signal and investigate the specific phase before widening budgets.
 - Hook-time index-lock recovery knobs: adjust only when needed (`WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE`, `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`), then rerun with the same command path.
+- `E_GIT_PUSH_DETACHED_HEAD`, `E_GIT_PUSH_REMOTE_MISSING`, or `E_GIT_PUSH_REMOTE_BRANCH_DIVERGED` from `Invoke-GitPushWithUpstream.ps1`: fix branch/remote state explicitly; do not force-push from automation.
 
 ## Codify New Knowledge (Forest-Not-Trees)
 

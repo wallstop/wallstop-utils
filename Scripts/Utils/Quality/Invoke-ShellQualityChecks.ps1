@@ -125,10 +125,13 @@ function Invoke-ShellQualityInstallLock {
         [string]$LockPath,
 
         [Parameter(Mandatory = $true)]
-        [scriptblock]$ScriptBlock
+        [scriptblock]$ScriptBlock,
+
+        [Parameter(Mandatory = $false)]
+        [object[]]$ArgumentList = @()
     )
 
-    Invoke-QualityToolingInstallLock -Context $script:ShellQualityContext -LockPath $LockPath -ScriptBlock $ScriptBlock -LockTimeoutSeconds $script:ShellQualityLockTimeoutSeconds -LockRetryMilliseconds $script:ShellQualityLockRetryMilliseconds
+    Invoke-QualityToolingInstallLock -Context $script:ShellQualityContext -LockPath $LockPath -ScriptBlock $ScriptBlock -LockTimeoutSeconds $script:ShellQualityLockTimeoutSeconds -LockRetryMilliseconds $script:ShellQualityLockRetryMilliseconds -ArgumentList $ArgumentList
 }
 
 function Test-ShellQualityArchiveEntryPath {
@@ -294,6 +297,14 @@ function Invoke-ShellQualityChecksMain {
     )
 
     $repositoryRoot = Get-ShellQualityRepositoryRoot
+    if (-not $OnlyEnsureTools) {
+        $targetPaths = @(Resolve-ShellQualityTargetFiles -RepositoryRoot $repositoryRoot -InputFiles $InputFiles)
+        if ($targetPaths.Count -eq 0) {
+            Write-Host "[shell-quality] No existing shell targets selected; skipping."
+            return
+        }
+    }
+
     $manifest = Read-ShellQualityToolManifest
     $toolNames = if ($SelectedTool -eq "All") { @("shfmt", "shellcheck") } else { @($SelectedTool) }
     $toolExecutables = @{}
@@ -304,12 +315,6 @@ function Invoke-ShellQualityChecksMain {
 
     if ($OnlyEnsureTools) {
         Write-Host "[shell-quality] Shell quality tools are ready."
-        return
-    }
-
-    $targetPaths = @(Resolve-ShellQualityTargetFiles -RepositoryRoot $repositoryRoot -InputFiles $InputFiles)
-    if ($targetPaths.Count -eq 0) {
-        Write-Host "[shell-quality] No existing shell targets selected; skipping."
         return
     }
 

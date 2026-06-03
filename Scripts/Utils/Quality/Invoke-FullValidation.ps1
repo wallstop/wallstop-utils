@@ -35,6 +35,20 @@ if (-not (Test-Path -Path $diagnosticsHelpersPath -PathType Leaf)) {
 
 .$diagnosticsHelpersPath
 
+$gitHookRegistrationHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/GitHookRegistrationHelpers.ps1"
+if (-not (Test-Path -Path $gitHookRegistrationHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_HOOK_REGISTRATION_HELPER_MISSING: hook registration helper file not found at '$gitHookRegistrationHelpersPath'."
+}
+
+.$gitHookRegistrationHelpersPath
+
+$preCommitCliHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/PreCommitCliHelpers.ps1"
+if (-not (Test-Path -Path $preCommitCliHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_PRECOMMIT_CLI_HELPER_MISSING: pre-commit CLI helper file not found at '$preCommitCliHelpersPath'."
+}
+
+.$preCommitCliHelpersPath
+
 if ($PreflightOnly -and $WatchCi) {
     throw "E_VALIDATION_ARG_CONFLICT: -PreflightOnly cannot be combined with -WatchCi."
 }
@@ -239,6 +253,21 @@ function Assert-PreCommitHookEnvironmentAvailability {
     }
 }
 
+function Assert-PreCommitCliAvailability {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
+    if ($null -eq $preCommitCommand) {
+        throw "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit==$(Get-RequiredPreCommitVersion -RepositoryRoot $RepositoryRoot)' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=$HOME/.local/bin:$PATH and persist that export in ~/.bashrc or ~/.zshrc), then rerun validation preflight."
+    }
+
+    # Assert-PreCommitCliVersion emits E_VALIDATION_PRECOMMIT_VERSION_MISMATCH for exact-version drift.
+    [void](Assert-PreCommitCliVersion -PreCommitExecutable $preCommitCommand.Source -RepositoryRoot $RepositoryRoot)
+}
+
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
 Push-Location -LiteralPath $repoRoot
 
@@ -246,9 +275,11 @@ try {
     Write-Host "[validation] PowerShell format-operator binding safety check"
     Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts", "Tests") -ErrorCode "E_VALIDATION_FORMAT_OPERATOR_BINDING" -ContextLabel "PowerShell format-operator safety"
 
-    if (-not (Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue)) {
-        throw "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install pre-commit; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=$HOME/.local/bin:$PATH and persist that export in ~/.bashrc or ~/.zshrc), then run 'pre-commit install --hook-type pre-commit --hook-type pre-push'."
-    }
+    Write-Host "[validation] git hook registration preflight"
+    [void](Assert-GitHookRegistration -RepositoryRoot $repoRoot -Repair)
+
+    Write-Host "[validation] pre-commit CLI version check"
+    Assert-PreCommitCliAvailability -RepositoryRoot $repoRoot
 
     Write-Host "[validation] PowerShell module prerequisite check"
     Assert-PowerShellQualityModuleAvailability

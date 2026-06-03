@@ -238,10 +238,11 @@ Hook troubleshooting is intentionally automated first:
 Enable hooks:
 
 ```bash
-pipx install pre-commit
+PRE_COMMIT_VERSION="$(awk -F'==' '/^[[:space:]]*pre-commit==/ { gsub(/[[:space:]].*$/, "", $2); print $2; exit }' requirements.txt)"
+pipx install pre-commit=="${PRE_COMMIT_VERSION}"
 # or use a dedicated pre-commit venv when pipx is unavailable:
 python3 -m venv ~/.local/venvs/pre-commit
-~/.local/venvs/pre-commit/bin/pip install pre-commit
+~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt
 mkdir -p ~/.local/bin
 ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit
 export PATH="$HOME/.local/bin:$PATH"

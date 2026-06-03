@@ -66,7 +66,10 @@ jobs:
           echo "Pre-run ~/.bashrc HOME/.local/bin occurrences: ${count}"
 
       - name: Run post-create.sh
-        run: bash .devcontainer/post-create.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .devcontainer/post-create.sh | tee "${RUNNER_TEMP}/post-create-first.log"
 
       - name: Verify pre-commit is discoverable
         shell: bash
@@ -79,6 +82,74 @@ jobs:
           fi
           pre-commit --version
           echo "pre-commit is available: $(command -v pre-commit)"
+
+      - name: Verify Codex CLI is discoverable now and in fresh shells
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          first_log="${RUNNER_TEMP}/post-create-first.log"
+
+          codex_in_path=0
+          codex_reported_available=0
+          codex_reported_nonblocking_failure=0
+
+          if command -v codex > /dev/null 2>&1; then
+            codex_in_path=1
+          fi
+          if [[ -f "${first_log}" ]] && grep -qF 'Codex CLI available at ' "${first_log}"; then
+            codex_reported_available=1
+          fi
+          if [[ -f "${first_log}" ]] && grep -qF 'Codex CLI install/update failed (non-blocking).' "${first_log}"; then
+            codex_reported_nonblocking_failure=1
+          fi
+
+          if [[ "${codex_in_path}" -eq 0 ]]; then
+            if [[ "${codex_reported_available}" -eq 1 ]]; then
+              echo "ERROR: post-create.sh reported Codex availability but codex is missing on PATH."
+              exit 1
+            fi
+            if [[ "${codex_reported_nonblocking_failure}" -eq 1 ]]; then
+              echo "ERROR: Codex CLI unavailable after first run; post-create.sh reported a non-blocking install failure, but CI requires codex availability."
+              exit 1
+            fi
+            echo "ERROR: codex is missing after post-create.sh without an expected non-blocking failure signal."
+            exit 1
+          fi
+
+          codex_path="$(command -v codex)"
+          if [[ "${codex_path}" == "${HOME}/.local/bin/codex" ]]; then
+            if [[ -L "${codex_path}" ]]; then
+              link_target="$(readlink "${codex_path}" 2>/dev/null || true)"
+              if [[ -z "${link_target}" ]]; then
+                echo "ERROR: ${codex_path} exists but is not a valid symlink target."
+                exit 1
+              fi
+              if [[ "${link_target}" != /* ]]; then
+                link_target="$(cd "$(dirname "${codex_path}")" && pwd)/${link_target}"
+              fi
+              if [[ "${link_target}" == "${codex_path}" ]]; then
+                echo "ERROR: ${codex_path} is self-referential."
+                exit 1
+              fi
+            elif [[ ! -x "${codex_path}" ]]; then
+              echo "ERROR: ${codex_path} exists but is not executable."
+              exit 1
+            fi
+          fi
+
+          if ! codex --version; then
+            echo "ERROR: codex command exists but --version failed."
+            exit 1
+          fi
+          echo "codex is available: ${codex_path}"
+
+          if ! bash -lc 'command -v codex > /dev/null 2>&1'; then
+            echo "ERROR: codex is not resolvable in a fresh shell session."
+            exit 1
+          fi
+          bash -lc 'codex --version'
+          echo "codex is resolvable in fresh shell sessions."
 
       - name: Verify git hooks are configured
         shell: bash
@@ -123,7 +194,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash .devcontainer/post-create.sh
+          bash .devcontainer/post-create.sh | tee "${RUNNER_TEMP}/post-create-second.log"
           # Verify no duplicate PATH entries were added on the second run.
           dup_count=$(grep -cF 'HOME/.local/bin' "${HOME}/.bashrc" || true)
           if [[ "${dup_count}" -gt 1 ]]; then
@@ -131,6 +202,71 @@ jobs:
             exit 1
           fi
           echo "Second run completed without errors or duplicate entries."
+
+      - name: Verify Codex CLI after second post-create run
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          first_log="${RUNNER_TEMP}/post-create-first.log"
+          second_log="${RUNNER_TEMP}/post-create-second.log"
+
+          codex_reported_available=0
+          codex_reported_nonblocking_failure=0
+          if [[ -f "${first_log}" ]] && grep -qF 'Codex CLI available at ' "${first_log}"; then
+            codex_reported_available=1
+          fi
+          if [[ -f "${second_log}" ]] && grep -qF 'Codex CLI available at ' "${second_log}"; then
+            codex_reported_available=1
+          fi
+          if [[ -f "${second_log}" ]] && grep -qF 'Codex CLI install/update failed (non-blocking).' "${second_log}"; then
+            codex_reported_nonblocking_failure=1
+          fi
+
+          if ! command -v codex > /dev/null 2>&1; then
+            if [[ "${codex_reported_available}" -eq 1 ]]; then
+              echo "ERROR: Codex was reported available but is missing after second run."
+              exit 1
+            fi
+            if [[ "${codex_reported_nonblocking_failure}" -eq 1 ]]; then
+              echo "ERROR: Codex CLI unavailable after second run; post-create.sh reported a non-blocking install failure, but CI requires codex availability."
+              exit 1
+            fi
+            echo "ERROR: codex is missing after second run without an expected non-blocking failure signal."
+            exit 1
+          fi
+
+          codex_path="$(command -v codex)"
+          if [[ "${codex_path}" == "${HOME}/.local/bin/codex" ]]; then
+            if [[ -L "${codex_path}" ]]; then
+              link_target="$(readlink "${codex_path}" 2>/dev/null || true)"
+              if [[ -z "${link_target}" ]]; then
+                echo "ERROR: ${codex_path} exists but is not a valid symlink target after second run."
+                exit 1
+              fi
+              if [[ "${link_target}" != /* ]]; then
+                link_target="$(cd "$(dirname "${codex_path}")" && pwd)/${link_target}"
+              fi
+              if [[ "${link_target}" == "${codex_path}" ]]; then
+                echo "ERROR: ${codex_path} is self-referential after second run."
+                exit 1
+              fi
+            elif [[ ! -x "${codex_path}" ]]; then
+              echo "ERROR: ${codex_path} exists but is not executable after second run."
+              exit 1
+            fi
+          fi
+
+          if ! codex --version; then
+            echo "ERROR: codex command exists but --version failed after second run."
+            exit 1
+          fi
+          if ! bash -lc 'command -v codex > /dev/null 2>&1'; then
+            echo "ERROR: codex is not resolvable in a fresh shell after second run."
+            exit 1
+          fi
+          bash -lc 'codex --version'
+          echo "codex remains resolvable after second post-create run."
 
   # ---------------------------------------------------------------------------
   # Coverage job: exercise the venv fallback strategy (Strategy 3) by removing

@@ -37,12 +37,21 @@ if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
 }
 . $diagnosticsHelpersPath
 
+$preCommitCliHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/PreCommitCliHelpers.ps1"
+if (-not (Test-Path -LiteralPath $preCommitCliHelpersPath -PathType Leaf)) {
+    throw "E_PRECOMMIT_RECOVERY_CLI_HELPER_MISSING: pre-commit CLI helper file not found at '$preCommitCliHelpersPath'."
+}
+. $preCommitCliHelpersPath
+
+$script:PreCommitRecoveryRepositoryRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "../../..") -ErrorAction Stop).Path
+
 function Get-PreCommitExecutableOrThrow {
     $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
     if ($null -eq $preCommitCommand) {
         throw "E_PRECOMMIT_RECOVERY_PREREQ_MISSING: pre-commit is required but was not found on PATH."
     }
 
+    [void](Assert-PreCommitCliVersion -PreCommitExecutable $preCommitCommand.Source -RepositoryRoot $script:PreCommitRecoveryRepositoryRoot)
     Write-Verbose ("Pre-commit recovery diagnostics: preCommitPath='{0}'" -f $preCommitCommand.Source)
     return $preCommitCommand.Source
 }

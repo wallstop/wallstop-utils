@@ -26,9 +26,12 @@ Describe "Invoke-FullValidation workflow contract" {
         "E_VALIDATION_POWERSHELL_MODULES_MISSING"
         "E_VALIDATION_MODULE_HELPER_MISSING"
         "E_VALIDATION_DIAGNOSTICS_HELPER_MISSING"
+        "E_VALIDATION_HOOK_REGISTRATION_HELPER_MISSING"
+        "E_VALIDATION_PRECOMMIT_CLI_HELPER_MISSING"
         "E_VALIDATION_NATIVE_TOOL_SCRIPT_MISSING"
         "E_VALIDATION_PRECOMMIT_RECOVERY_SCRIPT_MISSING"
         "E_VALIDATION_PRECOMMIT_ENV_PREFLIGHT_FAILED"
+        "E_VALIDATION_PRECOMMIT_VERSION_MISMATCH"
         "E_VALIDATION_STATUS_BEFORE_NULL"
         "E_VALIDATION_STATUS_AFTER_NULL"
     )
@@ -87,6 +90,21 @@ Describe "Invoke-FullValidation workflow contract" {
         $script:validationScript | Should -Match 'Assert-PreCommitHookEnvironmentAvailability'
         $script:validationScript | Should -Match 'Invoke-PreCommitWithRecovery\.ps1'
         $script:validationScript | Should -Match 'pre-commit hook environment preflight'
+    }
+
+    It "preflights and repairs local git hook registration before hook environment warming" {
+        $script:validationScript | Should -Match 'Common/GitHookRegistrationHelpers\.ps1'
+        $script:validationScript | Should -Match 'Assert-GitHookRegistration\s+-RepositoryRoot\s+\$repoRoot\s+-Repair'
+        $script:validationScript | Should -Match 'git hook registration preflight'
+        $script:validationScript | Should -Match 'E_VALIDATION_HOOK_REGISTRATION_HELPER_MISSING'
+    }
+
+    It "verifies the pinned pre-commit CLI version before running hook stages" {
+        $script:validationScript | Should -Match 'Common/PreCommitCliHelpers\.ps1'
+        $script:validationScript | Should -Match 'Assert-PreCommitCliAvailability'
+        $script:validationScript | Should -Match 'Assert-PreCommitCliVersion'
+        $script:validationScript | Should -Match 'pre-commit CLI version check'
+        $script:validationScript | Should -Match 'E_VALIDATION_PRECOMMIT_VERSION_MISMATCH'
     }
 
     It "reuses shared diagnostics helper for output previews" {

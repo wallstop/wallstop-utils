@@ -112,6 +112,34 @@ run_with_timeout() {
 
 validate_timeout_seconds "$prepush_timeout_seconds" "WALLSTOP_PREPUSH_TIMEOUT_SECONDS"
 
+required_precommit_version() {
+  local requirements_path="${repo_root}/requirements.txt"
+  local version=""
+
+  if [[ -f "$requirements_path" ]]; then
+    version="$(awk -F'==' '/^[[:space:]]*pre-commit==/ { gsub(/[[:space:]].*$/, "", $2); print $2; exit }' "$requirements_path")"
+  fi
+
+  if [[ -n "$version" ]]; then
+    printf '%s\n' "$version"
+  else
+    printf '%s\n' "<pinned-version-from-requirements.txt>"
+  fi
+}
+
+print_precommit_bootstrap_guidance() {
+  local pinned_version
+  pinned_version="$(required_precommit_version)"
+
+  echo "  pipx install pre-commit==${pinned_version}"
+  echo "    or via venv:"
+  echo "      python3 -m venv ~/.local/venvs/pre-commit"
+  echo "      ~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt"
+  echo "      mkdir -p ~/.local/bin"
+  echo "      ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit"
+  echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
+}
+
 run_legacy_validation() {
   if command -v pwsh > /dev/null 2>&1; then
     run_with_timeout "$prepush_timeout_seconds" "legacy pre-push PowerShell validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1" -All
@@ -119,12 +147,8 @@ run_legacy_validation() {
   fi
 
   echo "pre-commit is unavailable and pwsh was not found; cannot run legacy PowerShell quality gates."
-  echo "Install pre-commit with: pipx install pre-commit"
-  echo "  (or via venv: python3 -m venv ~/.local/venvs/pre-commit"
-  echo "                ~/.local/venvs/pre-commit/bin/pip install pre-commit"
-  echo "                mkdir -p ~/.local/bin"
-  echo "                ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit"
-  echo "                export PATH=\"\$HOME/.local/bin:\$PATH\")"
+  echo "Install pre-commit with:"
+  print_precommit_bootstrap_guidance
   echo "Install PowerShell from: https://learn.microsoft.com/powershell/scripting/install/installing-powershell"
   exit 1
 }
@@ -141,13 +165,7 @@ fi
 
 echo "pre-commit is not installed; falling back to legacy PowerShell checks."
 echo "Recommended bootstrap:"
-echo "  pipx install pre-commit"
-echo "    or via venv:"
-echo "      python3 -m venv ~/.local/venvs/pre-commit"
-echo "      ~/.local/venvs/pre-commit/bin/pip install pre-commit"
-echo "      mkdir -p ~/.local/bin"
-echo "      ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit"
-echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
+print_precommit_bootstrap_guidance
 echo "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"
 echo "  pre-commit install --hook-type pre-commit --hook-type pre-push"
 echo "Major changes should close with: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1"

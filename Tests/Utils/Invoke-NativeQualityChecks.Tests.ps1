@@ -111,6 +111,56 @@ Describe "Invoke-NativeQualityChecks target scoping" {
         $actionlintTargets.Count | Should -Be 1
         (ConvertTo-NativeQualityRelativePath -RepositoryRoot $script:repoRoot -Path $actionlintTargets[0]) | Should -Be ".github/workflows/script-quality.yml"
     }
+
+    It "skips zero selected targets before reading the manifest or resolving tools" {
+        Mock Read-NativeQualityToolManifest { throw "manifest should not be read for zero-target checks" }
+        Mock Resolve-NativeQualityToolExecutable { throw "tool resolution should not run for zero-target checks" }
+
+        { Invoke-NativeQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("does-not-exist.lua") } |
+            Should -Not -Throw
+
+        Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
+        Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+    }
+
+    It "resolves only tools with matching targets in All mode" {
+        $script:resolvedNativeTools = New-Object System.Collections.Generic.List[string]
+        $workflowPath = ".github/workflows/script-quality.yml"
+
+        Mock Read-NativeQualityToolManifest {
+            return [pscustomobject]@{ tools = [pscustomobject]@{} }
+        }
+        Mock Resolve-NativeQualityToolExecutable {
+            param($Manifest, $ToolName, $RepositoryRoot)
+            $script:resolvedNativeTools.Add($ToolName) | Out-Null
+            return "/tmp/$ToolName"
+        }
+        Mock Invoke-ActionlintQualityCheck {}
+        Mock Invoke-StyluaQualityCheck { throw "stylua should not run for workflow-only targets" }
+
+        Invoke-NativeQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @($workflowPath)
+
+        @($script:resolvedNativeTools.ToArray()) | Should -Be @("actionlint")
+        Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 1 -Exactly
+        Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 0 -Exactly
+    }
+
+    It "still resolves all requested tools in EnsureOnly mode" {
+        $script:resolvedNativeEnsureTools = New-Object System.Collections.Generic.List[string]
+
+        Mock Read-NativeQualityToolManifest {
+            return [pscustomobject]@{ tools = [pscustomobject]@{} }
+        }
+        Mock Resolve-NativeQualityToolExecutable {
+            param($Manifest, $ToolName, $RepositoryRoot)
+            $script:resolvedNativeEnsureTools.Add($ToolName) | Out-Null
+            return "/tmp/$ToolName"
+        }
+
+        Invoke-NativeQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$true -InputFiles @()
+
+        @($script:resolvedNativeEnsureTools.ToArray()) | Should -Be @("stylua", "actionlint")
+    }
 }
 
 Describe "Invoke-NativeQualityChecks manifest contract" {
@@ -144,6 +194,59 @@ Describe "Invoke-NativeQualityChecks manifest contract" {
 }
 
 Describe "Invoke-NativeQualityChecks install robustness" {
+    It "rechecks readiness under the install lock and invokes the install command without network access" {
+        $script:nativeReadyCheckCount = 0
+        $script:nativeInstallCommandCount = 0
+        $manifest = Read-NativeQualityToolManifest
+        $tempRepositoryRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("native-quality-install-callback-{0}" -f [guid]::NewGuid().ToString("N"))
+
+        try {
+            [System.IO.Directory]::CreateDirectory($tempRepositoryRoot) | Out-Null
+            Mock Test-QualityToolingToolReady {
+                $script:nativeReadyCheckCount += 1
+                return ($script:nativeReadyCheckCount -ge 3)
+            }
+            Mock Install-NativeQualityToolAsset {
+                param($InstallRoot, $AssetSpec, $RepositoryRoot)
+                $script:nativeInstallCommandCount += 1
+                $AssetSpec.ToolName | Should -Be "stylua"
+                $RepositoryRoot | Should -Be $tempRepositoryRoot
+            }
+
+            $executablePath = Resolve-NativeQualityToolExecutable -Manifest $manifest -ToolName stylua -RepositoryRoot $tempRepositoryRoot
+
+            $executablePath | Should -Match 'stylua'
+            $script:nativeReadyCheckCount | Should -Be 3
+            $script:nativeInstallCommandCount | Should -Be 1
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRepositoryRoot) {
+                Remove-Item -LiteralPath $tempRepositoryRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "passes explicit argument lists to install-lock callbacks" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("native-quality-argument-lock-{0}" -f [guid]::NewGuid().ToString("N"))
+        $lockPath = Join-Path -Path $tempRoot -ChildPath "tool.lock"
+        $script:nativeLockArgumentValue = ""
+
+        try {
+            [System.IO.Directory]::CreateDirectory($tempRoot) | Out-Null
+            Invoke-NativeQualityInstallLock -LockPath $lockPath -ArgumentList @("callback-value") -ScriptBlock {
+                param($Value)
+                $script:nativeLockArgumentValue = [string]$Value
+            }
+
+            $script:nativeLockArgumentValue | Should -Be "callback-value"
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRoot) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "times out with a stable diagnostic when another process holds the install lock" {
         $originalLockTimeoutSeconds = $script:NativeQualityLockTimeoutSeconds
         $originalLockRetryMilliseconds = $script:NativeQualityLockRetryMilliseconds

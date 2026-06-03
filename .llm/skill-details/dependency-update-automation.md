@@ -21,7 +21,8 @@ Schema contract: `version: 2`.
 
 1. `github-actions`
 2. `pre-commit`
-3. `devcontainers`
+3. `pip`
+4. `devcontainers`
 
 Policy tests in `Tests/Utils/ScriptSafetyConventions.Tests.ps1` enforce this exact baseline and fail if it drifts.
 
@@ -31,7 +32,8 @@ Security updates are grouped by area, not merged across ecosystems.
 
 1. GitHub Actions security updates remain in a GitHub Actions group.
 2. Pre-commit security updates remain in a pre-commit group.
-3. Devcontainer security updates remain in a devcontainers group.
+3. Pip security updates remain in a pip group.
+4. Devcontainer security updates remain in a devcontainers group.
 
 This keeps review ownership clear while still reducing PR volume.
 
@@ -46,7 +48,8 @@ Examples:
 
 1. `github-actions-all` and `github-actions-security`
 2. `pre-commit-all` and `pre-commit-security`
-3. `devcontainers-all` and `devcontainers-security`
+3. `pip-all` and `pip-security`
+4. `devcontainers-all` and `devcontainers-security`
 
 If a new ecosystem is added, use the same suffixes to keep conventions and tests consistent.
 

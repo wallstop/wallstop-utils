@@ -5,11 +5,82 @@ BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     $script:postCreatePath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/post-create.sh"
     $script:postCreateContent = Get-Content -Path $script:postCreatePath -Raw
+    $script:devcontainerWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/devcontainer-validate.yml"
+    $script:devcontainerWorkflowContent = Get-Content -Path $script:devcontainerWorkflowPath -Raw
 
     $script:preCommitHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-commit"
     $script:prePushHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-push"
     $script:preCommitHookContent = Get-Content -Path $script:preCommitHookPath -Raw
     $script:prePushHookContent = Get-Content -Path $script:prePushHookPath -Raw
+    $script:getBashFunctionBlock = {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$Content,
+
+            [Parameter(Mandatory = $true)]
+            [string]$FunctionName
+        )
+
+        $lines = $Content -split "`n"
+        $escapedName = [Regex]::Escape($FunctionName)
+        $startLine = -1
+
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^\s*${escapedName}\(\)\s*\{") {
+                $startLine = $i
+                break
+            }
+        }
+
+        if ($startLine -lt 0) {
+            throw "Function '${FunctionName}' was not found."
+        }
+
+        $endLine = $lines.Count - 1
+        for ($i = $startLine + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{') {
+                $endLine = $i - 1
+                break
+            }
+        }
+
+        return ($lines[$startLine..$endLine] -join "`n")
+    }
+
+    $script:getWorkflowStepBlock = {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$Content,
+
+            [Parameter(Mandatory = $true)]
+            [string]$StepName
+        )
+
+        $lines = $Content -split "`n"
+        $escapedName = [Regex]::Escape($StepName)
+        $startLine = -1
+
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^\s*-\s+name:\s+${escapedName}\s*$") {
+                $startLine = $i
+                break
+            }
+        }
+
+        if ($startLine -lt 0) {
+            throw "Workflow step '${StepName}' was not found."
+        }
+
+        $endLine = $lines.Count - 1
+        for ($i = $startLine + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*-\s+name:\s+') {
+                $endLine = $i - 1
+                break
+            }
+        }
+
+        return ($lines[$startLine..$endLine] -join "`n")
+    }
 }
 
 Describe "post-create.sh file structure" {
@@ -100,6 +171,19 @@ Describe "post-create.sh pre-commit integration" {
         $script:postCreateContent | Should -Match '\.githooks'
     }
 
+    It "uses the shared hook registration preflight when PowerShell is available" {
+        $script:postCreateContent | Should -Match 'GitHookRegistrationHelpers\.ps1'
+        $script:postCreateContent | Should -Match 'Assert-GitHookRegistration\s+-RepositoryRoot\s+''\.''\s+-Repair'
+        $script:postCreateContent | Should -Match 'falling back to direct core\.hooksPath repair'
+    }
+
+    It "installs the pinned pre-commit CLI from requirements.txt" {
+        $script:postCreateContent | Should -Match '_required_precommit_version\(\)'
+        $script:postCreateContent | Should -Match '_precommit_version_matches_pin\(\)'
+        $script:postCreateContent | Should -Match 'pre-commit==\$\{required_version\}'
+        $script:postCreateContent | Should -Match '--requirement\s+"\$\{ROOT_DIR\}/requirements\.txt"'
+    }
+
     It "registers both pre-commit and pre-push hook types" {
         $script:postCreateContent | Should -Match '--hook-type\s+pre-commit'
         $script:postCreateContent | Should -Match '--hook-type\s+pre-push'
@@ -157,6 +241,123 @@ Describe "post-create.sh ripgrep installation" {
         $preCommitCheckLine | Should -Not -Be -1 -Because "Main flow must check pre-commit availability"
         $ripgrepCallLine | Should -BeLessThan $preCommitCheckLine `
             -Because "ripgrep bootstrap should run before pre-commit install decision"
+    }
+}
+
+Describe "post-create.sh Codex CLI bootstrap" {
+    BeforeAll {
+        $script:ensureNpmOnPathBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_ensure_npm_on_path"
+        $script:installCodexCliBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_install_codex_cli"
+        $script:linkCodexBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_link_codex_into_local_bin"
+    }
+
+    It "defines a dedicated Codex install function" {
+        $script:postCreateContent | Should -Match '_install_codex_cli\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_link_codex_into_local_bin\(\)\s*\{'
+    }
+
+    It "installs @openai/codex using npm latest tag" {
+        $script:installCodexCliBody | Should -Match '@openai/codex@latest'
+        $script:installCodexCliBody | Should -Match 'npm\s+install\s+--global'
+    }
+
+    It "attempts npm PATH recovery from current node and standard nvm layouts when npm is missing" {
+        $script:ensureNpmOnPathBody | Should -Match 'command\s+-v\s+node'
+        $script:ensureNpmOnPathBody | Should -Match 'readlink\s+-f'
+        $script:ensureNpmOnPathBody | Should -Match 'NVM_DIR'
+        $script:ensureNpmOnPathBody | Should -Match '\$\{HOME\}/\.nvm'
+        $script:ensureNpmOnPathBody | Should -Match '/usr/local/share/nvm'
+        $script:ensureNpmOnPathBody | Should -Match 'nvm_roots\[@\]'
+    }
+
+    It "uses version-aware nvm fallback selection to avoid oldest npm path picks" {
+        $script:ensureNpmOnPathBody | Should -Match 'best_npm_version'
+        $script:ensureNpmOnPathBody | Should -Match 'best_npm_path'
+        $script:ensureNpmOnPathBody | Should -Match 'sort\s+-V'
+    }
+
+    It "uses timeout-guarded bounded retries for npm Codex install" {
+        $script:installCodexCliBody | Should -Match 'WALLSTOP_DEVCONTAINER_CODEX_NPM_TIMEOUT_SECONDS'
+        $script:installCodexCliBody | Should -Match '_run_with_timeout\s+"\$\{npm_install_timeout_seconds\}"\s+npm\s+install\s+--global'
+        $script:installCodexCliBody | Should -Match 'max_attempts=3'
+        $script:installCodexCliBody | Should -Match 'attempt\s*<=\s*max_attempts'
+        $script:installCodexCliBody | Should -Match 'Retrying Codex CLI npm install in'
+    }
+
+    It "guards against self-referential ~/.local/bin/codex symlink loops" {
+        $script:linkCodexBody | Should -Match 'codex_source_path.*codex_link_path'
+        $script:linkCodexBody | Should -Match 'readlink\s+"\$\{codex_link_path\}"'
+        $script:linkCodexBody | Should -Match 'Skipping Codex symlink update to avoid self-referential'
+        $script:linkCodexBody | Should -Match 'ln\s+-sf\s+"\$\{codex_source_path\}"\s+"\$\{codex_link_path\}"'
+    }
+
+    It "treats ~/.local/bin/codex regular executable source as already valid" {
+        $script:linkCodexBody | Should -Match '(?s)"\$\{codex_source_path\}"\s*==\s*"\$\{codex_link_path\}".*\[\[\s+-x\s+"\$\{codex_link_path\}"\s+\]\]\s*&&\s*\[\[\s+!\s+-L\s+"\$\{codex_link_path\}"\s+\]\].*return\s+0'
+    }
+
+    It "prefers npm prefix codex resolution before command -v fallback" {
+        $prefixIndex = ($script:installCodexCliBody | Select-String 'prefix_codex_path' -AllMatches).Matches[0].Index
+        $commandVIndex = ($script:installCodexCliBody | Select-String 'command -v codex' -AllMatches).Matches[0].Index
+        $prefixIndex | Should -BeLessThan $commandVIndex `
+            -Because "npm prefix resolution should run before command -v fallback to avoid recursive ~/.local/bin/codex links"
+    }
+
+    It "invokes Codex install/update as non-blocking in the main flow" {
+        $script:postCreateContent | Should -Match '_install_codex_cli\s*\|\|\s*_warn\s+"Codex CLI install/update failed \(non-blocking\)\."'
+    }
+}
+
+Describe "devcontainer-validate.yml Codex verification contract" {
+    BeforeAll {
+        $script:runPostCreateStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Run post-create.sh"
+        $script:verifyFirstCodexStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Verify Codex CLI is discoverable now and in fresh shells"
+        $script:confirmIdempotenceStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Confirm idempotence (run post-create.sh a second time)"
+        $script:verifySecondCodexStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Verify Codex CLI after second post-create run"
+    }
+
+    It "captures first-run post-create output for Codex-aware assertions" {
+        $script:runPostCreateStep | Should -Match 'post-create-first\.log'
+        $script:runPostCreateStep | Should -Match 'tee'
+    }
+
+    It "keeps first-run Codex checks strict even when post-create reports non-blocking failure" {
+        $script:verifyFirstCodexStep | Should -Match 'Codex CLI available at '
+        $script:verifyFirstCodexStep | Should -Match 'Codex CLI install/update failed \(non-blocking\)\.'
+        $script:verifyFirstCodexStep | Should -Match 'reported Codex availability but codex is missing on PATH'
+        $script:verifyFirstCodexStep | Should -Match 'post-create\.sh reported a non-blocking install failure, but CI requires codex availability'
+        $script:verifyFirstCodexStep | Should -Match 'self-referential'
+        $script:verifyFirstCodexStep | Should -Match '\[\[\s+-L\s+"\$\{codex_path\}"\s+\]\]'
+        $script:verifyFirstCodexStep | Should -Match 'exists but is not executable'
+        $script:verifyFirstCodexStep | Should -Not -Match '::warning::Codex CLI unavailable after first run due explicit non-blocking install failure'
+    }
+
+    It "captures second-run output and validates Codex after the second post-create run" {
+        $script:confirmIdempotenceStep | Should -Match 'post-create-second\.log'
+        $script:verifySecondCodexStep | Should -Match 'post-create\.sh reported a non-blocking install failure, but CI requires codex availability'
+        $script:verifySecondCodexStep | Should -Match 'self-referential after second run'
+        $script:verifySecondCodexStep | Should -Match '\[\[\s+-L\s+"\$\{codex_path\}"\s+\]\]'
+        $script:verifySecondCodexStep | Should -Match 'exists but is not executable after second run'
+        $script:verifySecondCodexStep | Should -Not -Match '::warning::Codex CLI unavailable after second run due explicit non-blocking install failure'
+        $script:verifySecondCodexStep | Should -Match 'fresh shell after second run'
+    }
+
+    It "runs Codex second-run validation after the idempotence rerun step" {
+        $lines = $script:devcontainerWorkflowContent -split "`n"
+        $idempotenceStepLine = -1
+        $secondCodexStepLine = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*-\s+name:\s+Confirm idempotence \(run post-create\.sh a second time\)\s*$' -and $idempotenceStepLine -eq -1) {
+                $idempotenceStepLine = $i
+            }
+            if ($lines[$i] -match '^\s*-\s+name:\s+Verify Codex CLI after second post-create run\s*$' -and $secondCodexStepLine -eq -1) {
+                $secondCodexStepLine = $i
+            }
+        }
+
+        $idempotenceStepLine | Should -Not -Be -1 -Because "Workflow must rerun post-create.sh for idempotence checks"
+        $secondCodexStepLine | Should -Not -Be -1 -Because "Workflow must validate Codex after the second run"
+        $idempotenceStepLine | Should -BeLessThan $secondCodexStepLine `
+            -Because "Codex idempotence validation must run after the second post-create execution"
     }
 }
 

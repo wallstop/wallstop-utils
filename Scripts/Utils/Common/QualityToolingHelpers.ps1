@@ -888,7 +888,10 @@ function Invoke-QualityToolingInstallLock {
         [int]$LockTimeoutSeconds,
 
         [Parameter(Mandatory = $true)]
-        [int]$LockRetryMilliseconds
+        [int]$LockRetryMilliseconds,
+
+        [Parameter(Mandatory = $false)]
+        [object[]]$ArgumentList = @()
     )
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -908,7 +911,7 @@ function Invoke-QualityToolingInstallLock {
     }
 
     try {
-        & $ScriptBlock
+        & $ScriptBlock @ArgumentList
     }
     finally {
         Remove-Item -LiteralPath $LockPath -Recurse -Force -ErrorAction SilentlyContinue
@@ -954,11 +957,28 @@ function Resolve-QualityToolingToolExecutable {
 
     New-Item -Path (Split-Path -Path $installRoot -Parent) -ItemType Directory -Force | Out-Null
     $lockPath = "$installRoot.lock"
-    Invoke-QualityToolingInstallLock -Context $Context -LockPath $lockPath -LockTimeoutSeconds $LockTimeoutSeconds -LockRetryMilliseconds $LockRetryMilliseconds -ScriptBlock {
-        if (-not (Test-QualityToolingToolReady -Context $Context -InstallRoot $installRoot -AssetSpec $assetSpec -RepositoryRoot $RepositoryRoot)) {
-            & $InstallCommand -InstallRoot $installRoot -AssetSpec $assetSpec -RepositoryRoot $RepositoryRoot
+    Invoke-QualityToolingInstallLock -Context $Context -LockPath $lockPath -LockTimeoutSeconds $LockTimeoutSeconds -LockRetryMilliseconds $LockRetryMilliseconds -ArgumentList @($Context, $installRoot, $assetSpec, $RepositoryRoot, $InstallCommand) -ScriptBlock {
+        param(
+            [Parameter(Mandatory = $true)]
+            [pscustomobject]$CallbackContext,
+
+            [Parameter(Mandatory = $true)]
+            [string]$CallbackInstallRoot,
+
+            [Parameter(Mandatory = $true)]
+            [pscustomobject]$CallbackAssetSpec,
+
+            [Parameter(Mandatory = $true)]
+            [string]$CallbackRepositoryRoot,
+
+            [Parameter(Mandatory = $true)]
+            [scriptblock]$CallbackInstallCommand
+        )
+
+        if (-not (Test-QualityToolingToolReady -Context $CallbackContext -InstallRoot $CallbackInstallRoot -AssetSpec $CallbackAssetSpec -RepositoryRoot $CallbackRepositoryRoot)) {
+            & $CallbackInstallCommand -InstallRoot $CallbackInstallRoot -AssetSpec $CallbackAssetSpec -RepositoryRoot $CallbackRepositoryRoot
         }
-    }.GetNewClosure()
+    }
 
     if (-not (Test-QualityToolingToolReady -Context $Context -InstallRoot $installRoot -AssetSpec $assetSpec -RepositoryRoot $RepositoryRoot)) {
         throw "E_$($Context.DiagnosticPrefix)_INSTALL_FAILED: $ToolName was not ready after automated install at '$installRoot'."
