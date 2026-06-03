@@ -100,6 +100,79 @@ function Get-StatusSnapshot {
     $statusExit = $LASTEXITCODE
     if ($statusExit -ne 0) {
         $statusDiagnostics = @(& $GitExecutable @statusArgs 2>&1)
+        if (Test-IsGitIndexLockFailure -OutputLines $statusDiagnostics) {
+            Write-Warning (
+                "W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED: context='full-validation-status-snapshot'; repositoryRoot='{0}'." -f
+                $RepositoryRoot
+            )
+
+            $lockRecovery = Invoke-SafeGitIndexLockRecovery -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -OutputLines $statusDiagnostics -Context 'full-validation-status-snapshot'
+            if ($lockRecovery.ElapsedMilliseconds -gt $lockRecovery.SlowPathThresholdMs) {
+                Write-Warning (
+                    "W_PRECOMMIT_GIT_INDEX_LOCK_SLOW_PATH: context='full-validation-status-snapshot'; elapsedMs={0}; thresholdMs={1}." -f
+                    [int]$lockRecovery.ElapsedMilliseconds,
+                    [int]$lockRecovery.SlowPathThresholdMs
+                )
+            }
+
+            if ($lockRecovery.Recovered) {
+                Write-Warning (
+                    "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING: context='full-validation-status-snapshot'; lockPath='{0}'; lockAgeSeconds={1}." -f
+                    [string]$lockRecovery.LockPath,
+                    [int]$lockRecovery.LockAgeSeconds
+                )
+
+                $statusLines = @(& $GitExecutable @statusArgs 2>$null)
+                $statusExit = $LASTEXITCODE
+                if ($statusExit -eq 0) {
+                    $invariantCultureName = [System.Globalization.CultureInfo]::InvariantCulture.Name
+                    $sortedRecoveredStatusLines = @($statusLines | Sort-Object -Culture $invariantCultureName)
+                    $cultureDiagnostic = if ([string]::IsNullOrEmpty($invariantCultureName)) { '<InvariantCulture>' } else { $invariantCultureName }
+                    Write-Verbose "Status snapshot diagnostics: entries=$($statusLines.Count) sortCulture=$cultureDiagnostic"
+                    Write-Output -NoEnumerate ([string[]]$sortedRecoveredStatusLines)
+                    return
+                }
+
+                $statusDiagnostics = @(& $GitExecutable @statusArgs 2>&1)
+            }
+            else {
+                $skipReason = if ([string]::IsNullOrWhiteSpace([string]$lockRecovery.SkippedReason)) {
+                    'unknown'
+                }
+                else {
+                    [string]$lockRecovery.SkippedReason
+                }
+
+                Write-Warning (
+                    "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context='full-validation-status-snapshot'; reason={0}; lockPath='{1}'; lockAgeSeconds={2}; activeGitProcessCount={3}; processScanDegraded={4}." -f
+                    $skipReason,
+                    [string]$lockRecovery.LockPath,
+                    [int]$lockRecovery.LockAgeSeconds,
+                    [int]$lockRecovery.ActiveGitProcessCount,
+                    [bool]$lockRecovery.ProcessScanDegraded
+                )
+
+                if ($skipReason -eq 'recovery_failed') {
+                    throw (
+                        "E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED: unable to recover status snapshot lock (repositoryRoot='{0}'; lockPath='{1}'; error={2})." -f
+                        $RepositoryRoot,
+                        [string]$lockRecovery.LockPath,
+                        [string]$lockRecovery.ErrorMessage
+                    )
+                }
+            }
+
+            if (Test-IsGitIndexLockFailure -OutputLines $statusDiagnostics) {
+                $statusPreview = Get-OutputPreview -OutputLines $statusDiagnostics
+                throw (
+                    "E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED: unable to read status snapshot because git index lock persisted (repositoryRoot='{0}'; lockPath='{1}'; outputPreview={2})." -f
+                    $RepositoryRoot,
+                    [string]$lockRecovery.LockPath,
+                    $statusPreview
+                )
+            }
+        }
+
         $statusPreview = Get-OutputPreview -OutputLines $statusDiagnostics
         $workingDirectory = (Get-Location).Path
         throw "E_VALIDATION_GIT_STATUS_FAILED: unable to read git status snapshot (exitCode=$statusExit; repositoryRoot='$RepositoryRoot'; workingDirectory='$workingDirectory'; outputPreview=$statusPreview)."

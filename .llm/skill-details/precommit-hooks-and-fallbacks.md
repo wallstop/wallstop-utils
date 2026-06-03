@@ -7,6 +7,7 @@ This expanded guide supports the lightweight skill stub in `.llm/skills/precommi
 Keep local hook wrappers as last-resort gates while preserving deterministic fallback behavior.
 
 During agentic work, run targeted validators and safe fixers before invoking hooks. When hook wrappers do run, use pre-commit as the default execution path for pre-commit and pre-push stages.
+When `pwsh` is available, the pre-commit wrapper should run `Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1` first so staged Windows-language drift can be repaired with `-Fix -StaticOnly` and restaged before last-resort gate execution.
 
 Shell formatter/linter hooks must stay repo-managed. Use local `shellcheck` and `shfmt` hook IDs that invoke `Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1`; do not use external Python-packaged shell hook repositories such as `pre-commit-shfmt` or `shellcheck-py`, and do not rely on PATH-only `shfmt`/`shellcheck` entries.
 
@@ -37,6 +38,7 @@ When commit hooks autofix files (`files were modified by this hook`), backup orc
 Keep hook wrappers bounded so stalled commands cannot lock editor-hosted workflows.
 
 - `.githooks/pre-commit` must run primary/fallback commands through timeout guards and emit stable timeout diagnostics.
+- `.githooks/pre-commit` must run safe Windows-language auto-repair before pre-commit execution, and skip files with unstaged drift (`W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SKIPPED_UNSTAGED`) instead of staging extra content.
 - `.githooks/pre-push` must run `Invoke-FullValidation.ps1` (or fallback commands) through timeout guards.
 - `.devcontainer/post-create.sh` preflight should stay non-blocking and timeout-bounded.
 - Allow controlled overrides via environment variables when intentionally running slower sessions:

@@ -57,6 +57,64 @@ Describe "CompatibilityHelpers OS detection" {
     }
 }
 
+Describe "Resolve-PowerShellExecutablePath" {
+    It "exposes the runtime resolver helper" {
+        Get-Command Resolve-PowerShellExecutablePath -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+    }
+
+    It "returns the discovered pwsh path when pwsh is available" {
+        $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
+        if ($null -eq $pwshCommand) {
+            Set-ItResult -Skipped -Because "pwsh is not available in this environment."
+            return
+        }
+
+        (Resolve-PowerShellExecutablePath) | Should -BeExactly ([string]$pwshCommand.Source)
+    }
+
+    It "prefers pwsh over powershell.exe on Windows-capable probes" {
+        Mock -CommandName Test-IsWindowsPlatform -MockWith { return $true }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith {
+            return [pscustomobject]@{ Source = 'C:\Program Files\PowerShell\7\pwsh.exe' }
+        }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
+            return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        }
+
+        $verboseRecords = @(& { Resolve-PowerShellExecutablePath -Verbose } 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
+        $selectedExecutable = Resolve-PowerShellExecutablePath
+        $selectedExecutable | Should -BeExactly 'C:\Program Files\PowerShell\7\pwsh.exe'
+        (@($verboseRecords | ForEach-Object { $_.Message }) -join [Environment]::NewLine) | Should -Match "selectedExecutable='C:\\Program Files\\PowerShell\\7\\pwsh\.exe'; source='pwsh'"
+    }
+
+    It "falls back to powershell.exe on Windows when pwsh is unavailable" {
+        Mock -CommandName Test-IsWindowsPlatform -MockWith { return $true }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith { return $null }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
+            return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        }
+
+        $resolvedExecutable = Resolve-PowerShellExecutablePath
+        $resolvedExecutable | Should -BeExactly 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    }
+
+    It "throws a stable E_* diagnostic when no PowerShell executable is available" {
+        Mock -CommandName Test-IsWindowsPlatform -MockWith { return $false }
+        Mock -CommandName Test-IsMacOSPlatform -MockWith { return $false }
+        Mock -CommandName Test-IsLinuxPlatform -MockWith { return $true }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith { return $null }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith { return $null }
+
+        {
+            Resolve-PowerShellExecutablePath
+        } | Should -Throw -Because 'Resolver must fail with a stable E_* diagnostic when no runtime is available.'
+
+        {
+            Resolve-PowerShellExecutablePath
+        } | Should -Throw -ExpectedMessage '*E_COMPATIBILITY_POWERSHELL_EXECUTABLE_NOT_FOUND*'
+    }
+}
+
 Describe "Get-RelativePathCompat" {
     # Expected values use '/' separators; the actual result is normalized to '/' so the
     # contract is asserted identically on Windows ('\') and Unix ('/'). These expectations

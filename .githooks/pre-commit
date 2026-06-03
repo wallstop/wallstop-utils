@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v git > /dev/null 2>&1; then
+  echo "E_PRECOMMIT_HOOK_GIT_NOT_AVAILABLE: git is required for hook execution but was not found on PATH."
+  exit 1
+fi
+
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 precommit_timeout_seconds="${WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS:-600}"
+hook_start_seconds="$SECONDS"
 
 validate_timeout_seconds() {
   local timeout_value="$1"
@@ -35,6 +41,7 @@ run_with_timeout() {
   shift
   local label="$1"
   shift
+  local phase_start_seconds=$SECONDS
 
   local timeout_command
   if timeout_command="$(resolve_timeout_command)"; then
@@ -47,22 +54,86 @@ run_with_timeout() {
       echo "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
     fi
 
+    local elapsed_seconds=$((SECONDS - phase_start_seconds))
+    if [[ $elapsed_seconds -gt 1 ]]; then
+      echo "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
+    fi
+
     return $command_exit
   fi
 
-  echo "W_HOOK_TIMEOUT_UNAVAILABLE: timeout/gtimeout not found; running '${label}' without timeout guard."
+  echo "W_HOOK_TIMEOUT_UNAVAILABLE: timeout/gtimeout not found; using shell watchdog timeout for '${label}'."
+
+  local timeout_flag_file
+  timeout_flag_file="$(mktemp 2> /dev/null || true)"
+  if [[ -z "$timeout_flag_file" ]]; then
+    timeout_flag_file="/tmp/wallstop-hook-timeout.$$.$RANDOM.flag"
+  fi
+  rm -f "$timeout_flag_file"
+
   set +e
-  "$@"
+  "$@" &
+  local command_pid=$!
+  (
+    sleep "$timeout_seconds"
+    if kill -0 "$command_pid" > /dev/null 2>&1; then
+      : > "$timeout_flag_file"
+      kill -TERM "$command_pid" > /dev/null 2>&1 || true
+      sleep 2
+      if kill -0 "$command_pid" > /dev/null 2>&1; then
+        kill -KILL "$command_pid" > /dev/null 2>&1 || true
+      fi
+    fi
+  ) &
+  local watchdog_pid=$!
+
+  wait "$command_pid"
   local fallback_exit=$?
+  kill "$watchdog_pid" > /dev/null 2>&1 || true
+  wait "$watchdog_pid" > /dev/null 2>&1 || true
   set -e
+
+  if [[ -f "$timeout_flag_file" ]]; then
+    rm -f "$timeout_flag_file"
+    echo "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
+    local elapsed_seconds=$((SECONDS - phase_start_seconds))
+    if [[ $elapsed_seconds -gt 1 ]]; then
+      echo "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
+    fi
+    return 124
+  fi
+
+  rm -f "$timeout_flag_file"
+  local elapsed_seconds=$((SECONDS - phase_start_seconds))
+  if [[ $elapsed_seconds -gt 1 ]]; then
+    echo "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
+  fi
   return $fallback_exit
+}
+
+remaining_timeout_seconds() {
+  local phase_label="$1"
+  local elapsed_seconds=$((SECONDS - hook_start_seconds))
+  local remaining_seconds=$((precommit_timeout_seconds - elapsed_seconds))
+
+  if [[ "$remaining_seconds" -lt 1 ]]; then
+    echo "E_HOOK_TIMEOUT: ${phase_label} exceeded total hook budget of ${precommit_timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
+    return 1
+  fi
+
+  printf '%s\n' "$remaining_seconds"
 }
 
 validate_timeout_seconds "$precommit_timeout_seconds" "WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS"
 
 run_legacy_validation() {
   if command -v pwsh > /dev/null 2>&1; then
-    run_with_timeout "$precommit_timeout_seconds" "legacy pre-commit PowerShell validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1"
+    local remaining_seconds
+    if ! remaining_seconds="$(remaining_timeout_seconds "legacy pre-commit PowerShell validation")"; then
+      return 124
+    fi
+
+    run_with_timeout "$remaining_seconds" "legacy pre-commit PowerShell validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1"
     return $?
   fi
 
@@ -77,14 +148,70 @@ run_legacy_validation() {
   exit 1
 }
 
+has_staged_windows_language_targets() {
+  local staged_files
+  if ! staged_files="$(git diff --cached --name-only --diff-filter=ACMR -- 2> /dev/null)"; then
+    echo "W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED: unable to read staged files for auto-repair prefilter; running pwsh auto-repair fallback."
+    return 0
+  fi
+
+  if [[ -z "$staged_files" ]]; then
+    return 1
+  fi
+
+  if printf '%s\n' "$staged_files" | grep -Ei '^(Scripts/AutoHotKey/.+\.ahk|Config/\.config/.+\.ahk|Scripts/.+\.bat)$' > /dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
+run_safe_autorepair() {
+  if command -v pwsh > /dev/null 2>&1; then
+    if ! has_staged_windows_language_targets; then
+      return 0
+    fi
+
+    local remaining_seconds
+    if ! remaining_seconds="$(remaining_timeout_seconds "pre-commit safe auto-repair")"; then
+      return 124
+    fi
+
+    run_with_timeout "$remaining_seconds" "pre-commit safe auto-repair" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1"
+    return $?
+  fi
+
+  return 0
+}
+
 if command -v pre-commit > /dev/null 2>&1; then
   if command -v pwsh > /dev/null 2>&1; then
-    run_with_timeout "$precommit_timeout_seconds" "pre-commit hook-stage pre-commit" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-commit
+    if run_safe_autorepair; then
+      :
+    else
+      safe_autorepair_exit=$?
+      exit $safe_autorepair_exit
+    fi
+
+    if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
+      if [[ "$remaining_seconds" -lt 30 ]]; then
+        echo "E_HOOK_TIMEOUT: pre-commit hook-stage pre-commit has ${remaining_seconds}s remaining, below minimum safe inner timeout (30s)."
+        exit 124
+      fi
+
+      run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-commit -TimeoutSeconds "$remaining_seconds"
+      exit $?
+    fi
+
+    exit 124
+  fi
+
+  if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
+    run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pre-commit run --hook-stage pre-commit --show-diff-on-failure --color always
     exit $?
   fi
 
-  run_with_timeout "$precommit_timeout_seconds" "pre-commit hook-stage pre-commit" pre-commit run --hook-stage pre-commit --show-diff-on-failure --color always
-  exit $?
+  exit 124
 fi
 
 echo "pre-commit is not installed; falling back to legacy PowerShell checks."

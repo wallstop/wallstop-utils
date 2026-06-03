@@ -121,6 +121,33 @@ Scripts/          # Backup and restore scripts
 .\Scripts\Backup.ps1
 ```
 
+### Scheduled Backup (Windows Task Scheduler)
+
+Use explicit unattended mode for non-interactive scheduled runs:
+
+```powershell
+pwsh -NoLogo -NoProfile -File .\Scripts\Backup.ps1 -Unattended
+```
+
+If `pwsh` is unavailable on Windows, use the Windows PowerShell fallback explicitly:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File .\Scripts\Backup.ps1 -Unattended
+```
+
+Environment fallback is also supported when the switch is omitted:
+
+```powershell
+$env:WALLSTOP_BACKUP_UNATTENDED = "1"
+pwsh -NoLogo -NoProfile -File .\Scripts\Backup.ps1
+```
+
+Safety notes:
+
+- Unattended mode bypasses hook verification only for backup commit (`git commit --no-verify`).
+- Backup still enforces clean preflight, managed scope checks, pull-before-mutate, branch assertions, and post-push clean checks.
+- Before staging/commit, backup redacts known secret fields in changed `Config/` text outputs and fails with `E_BACKUP_SECRET_SCAN_FAILED` if unknown high-confidence secret patterns remain.
+
 **macOS:**
 
 ```bash
@@ -199,7 +226,11 @@ Compiled native tools that publish release binaries follow the same contract. `S
 
 Hook troubleshooting is intentionally automated first:
 
+- When `pwsh` is available, `.githooks/pre-commit` runs `Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1` before pre-commit to safely repair and restage fixable staged AHK/batch drift (`-Fix -StaticOnly`) while skipping files that have unstaged drift.
+- Hook-time git index lock failures (`.git/index.lock`) are auto-detected and recovered in `Invoke-PreCommitAutoRepair.ps1`, `Run-PreCommitValidation.ps1`, and `Invoke-PreCommitWithRecovery.ps1`; recovery emits stable `W_PRECOMMIT_GIT_INDEX_LOCK_*` / `E_PRECOMMIT_GIT_INDEX_LOCK_*` diagnostics and retries once before failing.
 - `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` bound hook runtime; values must be integers of at least 30 seconds.
+- Hook wrappers emit `W_HOOK_RUNTIME_BUDGET` when a phase exceeds the fast-path target (`<= 1s`) so slow paths are visible and can be remediated.
+- Index-lock recovery tuning is available via `WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE` (`safe` or `off`), `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, and `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`.
 - `WALLSTOP_NATIVE_TOOL_DOWNLOAD_TIMEOUT_SECONDS` overrides the native binary download timeout when a slow network needs more than the default 300 seconds.
 - `.tools/shell-quality` and `.tools/native-quality` are ignored caches. Delete them only when deliberately forcing a fresh verified download; normal version/hash drift repairs itself.
 - If pre-commit reports environment installation corruption, run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1 -InstallHooksOnly` to trigger the same clean + `install-hooks` repair path used by preflight.

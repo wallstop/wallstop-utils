@@ -2,7 +2,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
-$pwshCommand = (Get-Command -Name "pwsh" -ErrorAction Stop).Source
 
 $compatibilityHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/CompatibilityHelpers.ps1"
 if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
@@ -10,6 +9,7 @@ if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
 }
 
 . $compatibilityHelpersPath
+$pwshCommand = Resolve-PowerShellExecutablePath
 
 function Get-LastExitCodeOrDefault {
     $lecValue = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue

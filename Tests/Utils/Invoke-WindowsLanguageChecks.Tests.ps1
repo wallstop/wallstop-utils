@@ -570,6 +570,52 @@ Describe "Test-AutoHotkeyScripts control flow" {
         Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 1 -Exactly
     }
 
+    It "runs a follow-up static pass so source repairs unblock dependent config snapshot repair" {
+        $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo-static-fix-two-pass")
+        $configRoot = Join-Path -Path $repoRoot -ChildPath "Config/.config"
+        $sourceRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"
+        New-Item -Path $configRoot -ItemType Directory -Force | Out-Null
+        New-Item -Path $sourceRoot -ItemType Directory -Force | Out-Null
+
+        $configFile = Join-Path -Path $configRoot -ChildPath "window-control.ahk"
+        $sourceFile = Join-Path -Path $sourceRoot -ChildPath "window-control.ahk"
+
+        # Source starts as v2-compatible content without #Requires so it is fixable.
+        Set-Content -Path $sourceFile -Value "MsgBox('ok')" -NoNewline
+        # Config starts as legacy v1 drift and should be refreshed from source after source is repaired.
+        Set-Content -Path $configFile -Value "WinGet, activeWin, ID, A" -NoNewline
+
+        Mock -CommandName Get-AutoHotkeyExecutablePath -MockWith { $null }
+
+        {
+            Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($configFile, $sourceFile) -Fix
+        } | Should -Not -Throw
+
+        $updatedSourceContent = Get-Content -Path $sourceFile -Raw
+        $updatedConfigContent = Get-Content -Path $configFile -Raw
+
+        $updatedSourceContent | Should -Match '^#Requires\s+AutoHotkey\s+v2\.0\b'
+        $updatedConfigContent | Should -Be $updatedSourceContent
+        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 1 -Exactly
+    }
+
+    It "skips runtime probing in static-only mode after static checks pass" {
+        $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo-static-only")
+        $scriptsRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"
+        New-Item -Path $scriptsRoot -ItemType Directory -Force | Out-Null
+
+        $fileA = Join-Path -Path $scriptsRoot -ChildPath "a.ahk"
+        Set-Content -Path $fileA -Value "#Requires AutoHotkey v2.0`nMsgBox('ok')" -NoNewline
+
+        Mock -CommandName Get-AutoHotkeyExecutablePath -MockWith { throw "runtime probing should be skipped in static-only mode" }
+
+        {
+            Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA) -StaticOnly
+        } | Should -Not -Throw
+
+        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 0 -Exactly
+    }
+
     It "preserves collected validation failures when a later file reports unsupported mode" {
         $repoRoot = (Join-Path -Path $TestDrive -ChildPath "repo")
         $scriptsRoot = Join-Path -Path $repoRoot -ChildPath "Scripts/AutoHotKey"
@@ -799,6 +845,19 @@ Describe "Invoke-Main targeted mode behavior" {
         }
         Assert-MockCalled -CommandName Write-Verbose -Times 1 -ParameterFilter {
             $Message -like "Windows language checks: targeted mode resolved zero existing .ahk/.bat files; skipping targeted checks without full-repo fallback."
+        }
+    }
+
+    It "forwards StaticOnly to AutoHotkey checks" {
+        Mock -CommandName Resolve-RequestedTargetFilePaths -MockWith { return , @("/tmp/example.ahk") }
+        Mock -CommandName Test-AutoHotkeyScripts
+        Mock -CommandName Test-BatchScriptsStaticSmoke
+        Mock -CommandName Write-Host
+
+        Invoke-Main -TargetFiles "Scripts/AutoHotKey/example.ahk" -StaticOnly
+
+        Assert-MockCalled -CommandName Test-AutoHotkeyScripts -Times 1 -Exactly -ParameterFilter {
+            $StaticOnly -and $UseTargetedScope -and $RequestedTargetFilePaths.Count -eq 1
         }
     }
 }

@@ -111,4 +111,101 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
         Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
             Should -Be 7
     }
+
+    It "preserves timeout exits without environment repair" {
+        Mock Get-PreCommitExecutableOrThrow { return "pre-commit" }
+        Mock Invoke-PreCommitEnvironmentRepair { throw "repair should not run for timeout exits" }
+        Mock Write-PreCommitCapturedOutput {}
+        Mock Invoke-PreCommitCapturedCommand {
+            return [pscustomobject]@{
+                ExitCode = 124
+                Stdout   = ""
+                Stderr   = "E_PRECOMMIT_RECOVERY_TIMEOUT: pre-commit command exceeded 30s."
+                TimedOut = $true
+            }
+        }
+
+        Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
+            Should -Be 124
+        Assert-MockCalled -CommandName Invoke-PreCommitEnvironmentRepair -Times 0 -Exactly
+    }
+
+    It "recovers from git index lock failures before environment repair" {
+        $script:capturedRunCommands = New-Object System.Collections.Generic.List[string]
+        Mock Get-PreCommitExecutableOrThrow { return "pre-commit" }
+        Mock Write-PreCommitCapturedOutput {}
+        Mock Invoke-PreCommitEnvironmentRepair { throw "environment repair should not run for index lock recovery" }
+        Mock Invoke-SafeGitIndexLockRecovery {
+            return [pscustomobject]@{
+                Recovered            = $true
+                SkippedReason        = ""
+                ErrorMessage         = ""
+                LockPath             = "/tmp/repo/.git/index.lock"
+                LockAgeSeconds       = 42
+                ActiveGitProcessCount = 0
+                ProcessScanDegraded  = $false
+                ElapsedMilliseconds  = 4
+                SlowPathThresholdMs  = 250
+            }
+        }
+        Mock Invoke-PreCommitCapturedCommand {
+            param($PreCommitExecutable, $Arguments, $CommandTimeoutSeconds)
+
+            $script:capturedRunCommands.Add(($Arguments -join " ")) | Out-Null
+            if ($script:capturedRunCommands.Count -eq 1) {
+                return [pscustomobject]@{
+                    ExitCode = 1
+                    Stdout   = ""
+                    Stderr   = "fatal: Unable to create '/tmp/repo/.git/index.lock': File exists.`nAnother git process seems to be running in this repository"
+                    TimedOut = $false
+                }
+            }
+
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = ""
+                Stderr   = ""
+                TimedOut = $false
+            }
+        }
+
+        Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
+            Should -Be 0
+
+        Assert-MockCalled -CommandName Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
+        @($script:capturedRunCommands.ToArray()).Count | Should -Be 2
+    }
+
+    It "returns retry exit code when git index lock persists after recovery" {
+        Mock Get-PreCommitExecutableOrThrow { return "pre-commit" }
+        Mock Write-PreCommitCapturedOutput {}
+        Mock Invoke-PreCommitEnvironmentRepair { throw "environment repair should not run for index lock recovery" }
+        Mock Invoke-SafeGitIndexLockRecovery {
+            return [pscustomobject]@{
+                Recovered            = $true
+                SkippedReason        = ""
+                ErrorMessage         = ""
+                LockPath             = "/tmp/repo/.git/index.lock"
+                LockAgeSeconds       = 42
+                ActiveGitProcessCount = 0
+                ProcessScanDegraded  = $false
+                ElapsedMilliseconds  = 5
+                SlowPathThresholdMs  = 250
+            }
+        }
+        Mock Invoke-PreCommitCapturedCommand {
+            return [pscustomobject]@{
+                ExitCode = 23
+                Stdout   = ""
+                Stderr   = "fatal: Unable to create '/tmp/repo/.git/index.lock': File exists.`nAnother git process seems to be running in this repository"
+                TimedOut = $false
+            }
+        }
+
+        Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
+            Should -Be 23
+
+        Assert-MockCalled -CommandName Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
+        Assert-MockCalled -CommandName Invoke-PreCommitEnvironmentRepair -Times 0 -Exactly
+    }
 }

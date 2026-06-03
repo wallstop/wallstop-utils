@@ -31,6 +31,12 @@ if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
 }
 . $compatibilityHelpersPath
 
+$diagnosticsHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/DiagnosticsHelpers.ps1"
+if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
+    throw "E_PRECOMMIT_RECOVERY_DIAGNOSTICS_HELPER_MISSING: Diagnostics helper file not found at '$diagnosticsHelpersPath'."
+}
+. $diagnosticsHelpersPath
+
 function Get-PreCommitExecutableOrThrow {
     $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
     if ($null -eq $preCommitCommand) {
@@ -145,6 +151,88 @@ function Test-PreCommitEnvironmentFailure {
     return $false
 }
 
+function Invoke-PreCommitIndexLockRecovery {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$Result,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PreCommitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+
+        [Parameter(Mandatory = $true)]
+        [int]$CommandTimeoutSeconds
+    )
+
+    $combinedOutputLines = @([string]$Result.Stdout, [string]$Result.Stderr)
+    if (-not (Test-IsGitIndexLockFailure -OutputLines $combinedOutputLines)) {
+        return [pscustomobject]@{
+            Handled  = $false
+            ExitCode = [int]$Result.ExitCode
+        }
+    }
+
+    $workingDirectory = (Get-Location).Path
+    $detectedMessage = "W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED: repositoryRoot='{0}'; context='pre-commit-wrapper'; exitCode={1}." -f $workingDirectory, [int]$Result.ExitCode
+    [Console]::Error.WriteLine($detectedMessage)
+
+    $lockRecovery = Invoke-SafeGitIndexLockRecovery -GitExecutable "git" -RepositoryRoot $workingDirectory -OutputLines $combinedOutputLines -Context "pre-commit-wrapper"
+    if ($lockRecovery.ElapsedMilliseconds -gt $lockRecovery.SlowPathThresholdMs) {
+        $slowPathMessage = "W_PRECOMMIT_GIT_INDEX_LOCK_SLOW_PATH: context='pre-commit-wrapper'; elapsedMs={0}; thresholdMs={1}." -f $lockRecovery.ElapsedMilliseconds, $lockRecovery.SlowPathThresholdMs
+        [Console]::Error.WriteLine($slowPathMessage)
+    }
+
+    if (-not $lockRecovery.Recovered) {
+        $skipReason = if ([string]::IsNullOrWhiteSpace([string]$lockRecovery.SkippedReason)) {
+            "unknown"
+        }
+        else {
+            [string]$lockRecovery.SkippedReason
+        }
+
+        $skipMessage = "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context='pre-commit-wrapper'; reason={0}; lockPath='{1}'; lockAgeSeconds={2}; activeGitProcessCount={3}; processScanDegraded={4}." -f $skipReason, [string]$lockRecovery.LockPath, [int]$lockRecovery.LockAgeSeconds, [int]$lockRecovery.ActiveGitProcessCount, [bool]$lockRecovery.ProcessScanDegraded
+        [Console]::Error.WriteLine($skipMessage)
+
+        if ($skipReason -eq "recovery_failed") {
+            $recoveryFailedMessage = "E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED: context='pre-commit-wrapper'; error={0}." -f [string]$lockRecovery.ErrorMessage
+            [Console]::Error.WriteLine($recoveryFailedMessage)
+            return [pscustomobject]@{
+                Handled  = $true
+                ExitCode = [int]$Result.ExitCode
+            }
+        }
+
+        return [pscustomobject]@{
+            Handled  = $true
+            ExitCode = [int]$Result.ExitCode
+        }
+    }
+
+    $retryingMessage = "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING: context='pre-commit-wrapper'; lockPath='{0}'; lockAgeSeconds={1}." -f [string]$lockRecovery.LockPath, [int]$lockRecovery.LockAgeSeconds
+    [Console]::Error.WriteLine($retryingMessage)
+
+    $retryResult = Invoke-PreCommitCapturedCommand -PreCommitExecutable $PreCommitExecutable -Arguments $Arguments -CommandTimeoutSeconds $CommandTimeoutSeconds
+    Write-PreCommitCapturedOutput -Result $retryResult
+    if ($retryResult.ExitCode -eq 0) {
+        return [pscustomobject]@{
+            Handled  = $true
+            ExitCode = 0
+        }
+    }
+
+    if (Test-IsGitIndexLockFailure -OutputLines @([string]$retryResult.Stdout, [string]$retryResult.Stderr)) {
+        $persistedMessage = "E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED: context='pre-commit-wrapper'; lock persisted after recovery retry (exitCode={0})." -f [int]$retryResult.ExitCode
+        [Console]::Error.WriteLine($persistedMessage)
+    }
+
+    return [pscustomobject]@{
+        Handled  = $true
+        ExitCode = [int]$retryResult.ExitCode
+    }
+}
+
 function Invoke-PreCommitEnvironmentRepair {
     param(
         [Parameter(Mandatory = $true)]
@@ -221,6 +309,11 @@ function Invoke-PreCommitWithRecoveryMain {
     Write-PreCommitCapturedOutput -Result $result
     if ($result.ExitCode -eq 0) {
         return 0
+    }
+
+    $indexLockRecoveryResult = Invoke-PreCommitIndexLockRecovery -Result $result -PreCommitExecutable $preCommitExecutable -Arguments $arguments -CommandTimeoutSeconds $CommandTimeoutSeconds
+    if ($indexLockRecoveryResult.Handled) {
+        return [int]$indexLockRecoveryResult.ExitCode
     }
 
     if (-not (Test-PreCommitEnvironmentFailure -Result $result)) {

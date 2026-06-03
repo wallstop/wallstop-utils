@@ -100,6 +100,98 @@ function Get-PwshExecutableOrThrow {
     return $pwshCommand.Source
 }
 
+function Get-StagedFilesWithIndexLockRecoveryOrThrow {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    $stagedFileQuery = 'git diff --cached --name-only --diff-filter=ACMR'
+    $stagedFileOutput = @(& $GitExecutable diff --cached --name-only --diff-filter=ACMR 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        return @($stagedFileOutput)
+    }
+
+    if (Test-IsGitIndexLockFailure -OutputLines $stagedFileOutput) {
+        Write-Warning (
+            "W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED: context='staged-file-discovery'; repositoryRoot='{0}'." -f
+            $RepositoryRoot
+        )
+
+        $lockRecovery = Invoke-SafeGitIndexLockRecovery -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -OutputLines $stagedFileOutput -Context 'staged-file-discovery'
+        if ($lockRecovery.ElapsedMilliseconds -gt $lockRecovery.SlowPathThresholdMs) {
+            Write-Warning (
+                "W_PRECOMMIT_GIT_INDEX_LOCK_SLOW_PATH: context='staged-file-discovery'; elapsedMs={0}; thresholdMs={1}." -f
+                [int]$lockRecovery.ElapsedMilliseconds,
+                [int]$lockRecovery.SlowPathThresholdMs
+            )
+        }
+
+        if (-not $lockRecovery.Recovered) {
+            $skipReason = if ([string]::IsNullOrWhiteSpace([string]$lockRecovery.SkippedReason)) {
+                'unknown'
+            }
+            else {
+                [string]$lockRecovery.SkippedReason
+            }
+
+            Write-Warning (
+                "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context='staged-file-discovery'; reason={0}; lockPath='{1}'; lockAgeSeconds={2}; activeGitProcessCount={3}; processScanDegraded={4}." -f
+                $skipReason,
+                [string]$lockRecovery.LockPath,
+                [int]$lockRecovery.LockAgeSeconds,
+                [int]$lockRecovery.ActiveGitProcessCount,
+                [bool]$lockRecovery.ProcessScanDegraded
+            )
+
+            if ($skipReason -eq 'recovery_failed') {
+                throw (
+                    "E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED: staged-file discovery failed to recover index lock (repositoryRoot='{0}'; lockPath='{1}'; error={2})." -f
+                    $RepositoryRoot,
+                    [string]$lockRecovery.LockPath,
+                    [string]$lockRecovery.ErrorMessage
+                )
+            }
+
+            $failurePreview = Get-OutputPreview -OutputLines $stagedFileOutput
+            throw (
+                "E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED: staged-file discovery blocked by index lock (repositoryRoot='{0}'; lockPath='{1}'; reason={2}; outputPreview={3})." -f
+                $RepositoryRoot,
+                [string]$lockRecovery.LockPath,
+                $skipReason,
+                $failurePreview
+            )
+        }
+
+        Write-Warning (
+            "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING: context='staged-file-discovery'; lockPath='{0}'; lockAgeSeconds={1}." -f
+            [string]$lockRecovery.LockPath,
+            [int]$lockRecovery.LockAgeSeconds
+        )
+
+        $stagedFileOutput = @(& $GitExecutable diff --cached --name-only --diff-filter=ACMR 2>&1)
+        if ($LASTEXITCODE -eq 0) {
+            return @($stagedFileOutput)
+        }
+
+        if (Test-IsGitIndexLockFailure -OutputLines $stagedFileOutput) {
+            $failurePreview = Get-OutputPreview -OutputLines $stagedFileOutput
+            throw (
+                "E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED: staged-file discovery still blocked after recovery retry (repositoryRoot='{0}'; lockPath='{1}'; outputPreview={2})." -f
+                $RepositoryRoot,
+                [string]$lockRecovery.LockPath,
+                $failurePreview
+            )
+        }
+    }
+
+    $gitErrorText = if ($stagedFileOutput.Count -gt 0) { $stagedFileOutput -join ' ' } else { '(no output)' }
+    throw "E_CONFIG_ERROR: Failed to read staged files using '$stagedFileQuery' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"
+}
+
 function Get-FileContentHashOrMissing {
     param(
         [Parameter(Mandatory = $true)]
@@ -855,23 +947,18 @@ try {
     $gitExecutable = Get-GitExecutableOrThrow
     $stagedFiles = @()
     if (-not $All) {
-        $stagedFileQuery = 'git diff --cached --name-only --diff-filter=ACMR'
-        $stagedFileOutput = @(& $gitExecutable diff --cached --name-only --diff-filter=ACMR 2>&1)
-        if ($LASTEXITCODE -ne 0) {
-            $gitErrorText = if ($stagedFileOutput.Count -gt 0) { $stagedFileOutput -join ' ' } else { '(no output)' }
-            throw "E_CONFIG_ERROR: Failed to read staged files using '$stagedFileQuery' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"
-        }
-
-        $stagedFiles = @($stagedFileOutput)
+        $stagedFiles = @(Get-StagedFilesWithIndexLockRecoveryOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repoRoot)
     }
 
-    $utilsTestPattern = '^(Scripts/Utils|Tests/Utils)/.+\.ps1$'
+    $utilsScriptPattern = '^Scripts/Utils/.+\.ps1$'
+    $utilsPesterPattern = '^Tests/Utils/.+\.Tests\.ps1$'
     $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
     $scriptPattern = '^Scripts/Utils/.+\.ps1$'
     $shellQualityPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push))$'
     $shellSafetyTriggerPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push)|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1)$'
     $nativeQualityPattern = '^(Config/Wezterm/wezterm\.lua|\.github/workflows/.+\.(yml|yaml))$'
     $windowsLanguagePattern = '^(Scripts/AutoHotKey/.+\.ahk|Config/\.config/.+\.ahk|Scripts/.+\.bat)$'
+    $compatibilityTargetPattern = '^(Scripts|Config|Tests)/.+\.(ps1|psm1)$'
 
     $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
     $llmHarnessPatternSource = 'wrapper-contract'
@@ -890,9 +977,19 @@ try {
     $llmHarnessPattern = New-LlmHarnessPattern -WrapperFiles $llmHarnessWrapperFiles
     Write-Verbose ("LLM harness trigger diagnostics: source={0}; wrapperCount={1}; wrappers={2}; pattern={3}" -f $llmHarnessPatternSource, $llmHarnessWrapperFiles.Count, ($llmHarnessWrapperFiles -join ','), $llmHarnessPattern)
 
-    $utilsTestFiles = @($stagedFiles | Where-Object { $_ -match $utilsTestPattern })
+    $utilsScriptFiles = @($stagedFiles | Where-Object { $_ -match $utilsScriptPattern })
+    $utilsTestFiles = @($stagedFiles | Where-Object { $_ -match $utilsPesterPattern })
     $githubTestFiles = @($stagedFiles | Where-Object { $_ -match $githubTestPattern })
     $scriptFiles = @($stagedFiles | Where-Object { $_ -match $scriptPattern })
+    $compatibilityTargetFiles = @()
+    if (-not $All) {
+        $compatibilityTargetFiles = @(
+            $stagedFiles |
+                Where-Object { $_ -match $compatibilityTargetPattern } |
+                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+                Sort-Object -Unique
+        )
+    }
     if ($All) {
         $trackedFileOutput = @(& $gitExecutable ls-files 2>&1)
         if ($LASTEXITCODE -ne 0) {
@@ -910,6 +1007,56 @@ try {
     $shellSafetyFiles = @($stagedFiles | Where-Object { $_ -match $shellSafetyTriggerPattern })
     $windowsLanguageFiles = @($stagedFiles | Where-Object { $_ -match $windowsLanguagePattern })
     $llmHarnessFiles = @($stagedFiles | Where-Object { $_ -match $llmHarnessPattern })
+
+    $utilsTestTargets = @()
+    if ($All) {
+        $utilsTestTargets = @((Join-Path -Path $repoRoot -ChildPath 'Tests/Utils'))
+    }
+    else {
+        $utilsScriptToTestMap = @{
+            'CompatibilityHelpers'      = @('Tests/Utils/CompatibilityHelpers.Tests.ps1')
+            'DiagnosticsHelpers'        = @('Tests/Utils/DiagnosticsHelpers.Tests.ps1')
+            'Format-PowerShellFiles'    = @('Tests/Utils/Format-PowerShellFiles.Tests.ps1')
+            'Invoke-FullValidation'     = @('Tests/Utils/Invoke-FullValidation.Tests.ps1')
+            'Invoke-NativeQualityChecks' = @('Tests/Utils/Invoke-NativeQualityChecks.Tests.ps1')
+            'Invoke-PreCommitAutoRepair' = @('Tests/Utils/Invoke-PreCommitAutoRepair.Tests.ps1')
+            'Invoke-PreCommitWithRecovery' = @('Tests/Utils/Invoke-PreCommitWithRecovery.Tests.ps1')
+            'Invoke-ShellQualityChecks' = @('Tests/Utils/Invoke-ShellQualityChecks.Tests.ps1')
+            'Invoke-WindowsLanguageChecks' = @('Tests/Utils/Invoke-WindowsLanguageChecks.Tests.ps1')
+            'Remove-BOM'                = @('Tests/Utils/Remove-BOM.Tests.ps1')
+            'Run-PreCommitValidation'   = @(
+                'Tests/Utils/Run-PreCommitValidation.ArrayShape.Tests.ps1',
+                'Tests/Utils/Run-PreCommitValidation.NativeQualityRestage.Tests.ps1'
+            )
+        }
+
+        $derivedUtilsTestTargets = New-Object System.Collections.Generic.List[string]
+        foreach ($utilsScriptFile in $utilsScriptFiles) {
+            $scriptBaseName = [System.IO.Path]::GetFileNameWithoutExtension($utilsScriptFile)
+            if ([string]::IsNullOrWhiteSpace($scriptBaseName)) {
+                continue
+            }
+
+            if ($utilsScriptToTestMap.ContainsKey($scriptBaseName)) {
+                foreach ($mappedTestPath in @($utilsScriptToTestMap[$scriptBaseName])) {
+                    if (Test-Path -LiteralPath $mappedTestPath -PathType Leaf) {
+                        $derivedUtilsTestTargets.Add($mappedTestPath) | Out-Null
+                    }
+                }
+            }
+
+            $conventionalTestPath = "Tests/Utils/{0}.Tests.ps1" -f $scriptBaseName
+            if (Test-Path -LiteralPath $conventionalTestPath -PathType Leaf) {
+                $derivedUtilsTestTargets.Add($conventionalTestPath) | Out-Null
+            }
+        }
+
+        $utilsTestTargets = @(
+            @($utilsTestFiles) + @($derivedUtilsTestTargets.ToArray()) |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique
+        )
+    }
 
     $analyzerTargets = @()
     if ($All) {
@@ -936,16 +1083,19 @@ try {
         )
     }
 
-    $runUtilsTests = $All -or $utilsTestFiles.Count -gt 0
+    $runUtilsTests = $utilsTestTargets.Count -gt 0
     $runGitHubTests = $All -or $githubTestFiles.Count -gt 0
     $runShellQualityChecks = $All -or $shellQualityFiles.Count -gt 0
     $runNativeQualityChecks = $All -or $nativeQualityFiles.Count -gt 0
     $runShellSafetySuite = -not $runUtilsTests -and ($All -or $shellSafetyFiles.Count -gt 0)
     $runWindowsLanguageChecks = $All -or $windowsLanguageFiles.Count -gt 0
+    $runCompatibilityGate = -not $All -and $compatibilityTargetFiles.Count -gt 0
     $runAnalyzer = $analyzerTargets.Count -gt 0
-    $runFormatOperatorSafetyCheck = $All -or $scriptFiles.Count -gt 0 -or $utilsTestFiles.Count -gt 0 -or $githubTestFiles.Count -gt 0
+    $runFormatOperatorSafetyCheck = $All -or $scriptFiles.Count -gt 0 -or $utilsTestTargets.Count -gt 0 -or $githubTestFiles.Count -gt 0
     $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
     $analyzerTargetsText = if ($analyzerTargets.Count -gt 0) { $analyzerTargets -join ', ' } else { '(none)' }
+    $utilsTestTargetsText = if ($utilsTestTargets.Count -gt 0) { $utilsTestTargets -join ', ' } else { '(none)' }
+    $compatibilityTargetFilesText = if ($compatibilityTargetFiles.Count -gt 0) { $compatibilityTargetFiles -join ', ' } else { '(none)' }
     $shellQualityMatchedFilesText = if ($shellQualityFiles.Count -gt 0) { $shellQualityFiles -join ', ' } else { '(none)' }
     $nativeQualityMatchedFilesText = if ($nativeQualityFiles.Count -gt 0) { $nativeQualityFiles -join ', ' } else { '(none)' }
     $shellSafetyMatchedFilesText = if ($shellSafetyFiles.Count -gt 0) { $shellSafetyFiles -join ', ' } else { '(none)' }
@@ -953,7 +1103,7 @@ try {
     $llmHarnessMatchedFilesText = if ($llmHarnessFiles.Count -gt 0) { $llmHarnessFiles -join ', ' } else { '(none)' }
 
     Write-Verbose (
-        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runShellQualityChecks={4}; runNativeQualityChecks={5}; runShellSafetySuite={6}; runWindowsLanguageChecks={7}; runAnalyzer={8}; analyzerTargetCount={9}; runLlmHarnessValidation={10}" -f
+        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runShellQualityChecks={4}; runNativeQualityChecks={5}; runShellSafetySuite={6}; runWindowsLanguageChecks={7}; runCompatibilityGate={8}; runAnalyzer={9}; analyzerTargetCount={10}; runLlmHarnessValidation={11}" -f
         $All.IsPresent,
         $stagedFiles.Count,
         $runUtilsTests,
@@ -962,11 +1112,21 @@ try {
         $runNativeQualityChecks,
         $runShellSafetySuite,
         $runWindowsLanguageChecks,
+        $runCompatibilityGate,
         $runAnalyzer,
         $analyzerTargets.Count,
         $runLlmHarnessValidation
     )
     Write-Verbose ("ScriptAnalyzer target diagnostics: allMode={0}; targetCount={1}; targets={2}" -f $All.IsPresent, $analyzerTargets.Count, $analyzerTargetsText)
+    Write-Verbose ("Utils test target diagnostics: allMode={0}; targetCount={1}; targets={2}" -f $All.IsPresent, $utilsTestTargets.Count, $utilsTestTargetsText)
+    Write-Verbose ("Compatibility target diagnostics: allMode={0}; targetCount={1}; targets={2}" -f $All.IsPresent, $compatibilityTargetFiles.Count, $compatibilityTargetFilesText)
+
+    if (-not $All -and $utilsScriptFiles.Count -gt 0 -and $utilsTestTargets.Count -eq 0) {
+        Write-Verbose (
+            "Skipping Tests/Utils Pester suite for script-only staged changes in pre-commit mode; full suite remains enforced in -All/pre-push. Staged utils scripts: {0}" -f
+            ($utilsScriptFiles -join ', ')
+        )
+    }
 
     if ($runLlmHarnessValidation) {
         Write-Host ("Running LLM harness validation... allMode={0}; source={1}; matchedCount={2}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count)
@@ -976,7 +1136,7 @@ try {
         Write-Verbose ("Skipping LLM harness validation: allMode={0}; source={1}; matchedCount={2}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count)
     }
 
-    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellQualityChecks -and -not $runNativeQualityChecks -and -not $runShellSafetySuite -and -not $runWindowsLanguageChecks -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
+    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellQualityChecks -and -not $runNativeQualityChecks -and -not $runShellSafetySuite -and -not $runWindowsLanguageChecks -and -not $runCompatibilityGate -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
         Write-Verbose "No staged files requiring utility validation; skipping validation."
         return
     }
@@ -1249,7 +1409,7 @@ try {
             "Running format-operator safety validation: allMode={0}; scriptCount={1}; utilsTestCount={2}; githubTestCount={3}" -f
             $All.IsPresent,
             $scriptFiles.Count,
-            $utilsTestFiles.Count,
+            $utilsTestTargets.Count,
             $githubTestFiles.Count
         )
         Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts", "Tests") -ErrorCode "E_PRECOMMIT_FORMAT_OPERATOR_BINDING" -ContextLabel "Pre-commit PowerShell format-operator safety"
@@ -1266,7 +1426,44 @@ try {
             & $windowsLanguageScriptPath
         }
         else {
-            & $windowsLanguageScriptPath -TargetFiles $windowsLanguageFiles
+            & $windowsLanguageScriptPath -TargetFiles $windowsLanguageFiles -StaticOnly
+        }
+    }
+
+    if ($runCompatibilityGate) {
+        $compatibilityGatePath = Join-Path -Path $repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-CompatibilityChecks.ps1'
+        if (-not (Test-Path -LiteralPath $compatibilityGatePath -PathType Leaf)) {
+            throw "E_CONFIG_ERROR: Compatibility checker is missing at '$compatibilityGatePath'."
+        }
+
+        $pwshExecutable = Get-PwshExecutableOrThrow
+        $compatibilityTargetListPath = [System.IO.Path]::GetTempFileName()
+        try {
+            [System.IO.File]::WriteAllLines($compatibilityTargetListPath, $compatibilityTargetFiles, [System.Text.UTF8Encoding]::new($false))
+
+            $compatibilityGateLiteral = "'{0}'" -f ([string]$compatibilityGatePath).Replace("'", "''")
+            $compatibilityTargetListLiteral = "'{0}'" -f ([string]$compatibilityTargetListPath).Replace("'", "''")
+            $compatibilityCommandText = (
+                "& {{ `$targets = @((Get-Content -LiteralPath {0} -ErrorAction Stop) | Where-Object {{ -not [string]::IsNullOrWhiteSpace(`$_) }}); & {1} -OutputFormat json -TargetFiles `$targets }}" -f
+                $compatibilityTargetListLiteral,
+                $compatibilityGateLiteral
+            )
+            $compatibilityEncodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($compatibilityCommandText))
+
+            Write-Host ("Running cross-version compatibility gate for {0} staged target(s)..." -f $compatibilityTargetFiles.Count)
+            $compatibilityOutput = @(& $pwshExecutable -NoLogo -NoProfile -EncodedCommand $compatibilityEncodedCommand 2>&1)
+            $compatibilityExitCode = $LASTEXITCODE
+            if ($compatibilityExitCode -ne 0) {
+                $compatibilityPreview = Get-OutputPreview -OutputLines $compatibilityOutput -MaxLines 6 -FilterBlankLines -HeadTailWhenTruncated -PerLineMaxCharacters 220
+                throw (
+                    "E_PRECOMMIT_COMPATIBILITY_FAILED: cross-version compatibility gate failed for staged targets (targetCount={0}; outputPreview={1})." -f
+                    $compatibilityTargetFiles.Count,
+                    $compatibilityPreview
+                )
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $compatibilityTargetListPath -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -1292,8 +1489,31 @@ try {
     }
 
     if ($runUtilsTests) {
-        Write-Host "Running Tests/Utils Pester suite in isolated process..."
-        Invoke-PesterQualityGateInIsolatedProcess -RepoRoot $repoRoot -TestPath (Join-Path -Path $repoRoot -ChildPath "Tests/Utils") -SuiteLabel "PreCommitUtils" -OutputVerbosity $PesterOutputVerbosity -TimeoutSeconds $PesterTimeoutSeconds
+        foreach ($utilsTestTarget in $utilsTestTargets) {
+            $resolvedUtilsTestPath = if ($All) {
+                $utilsTestTarget
+            }
+            else {
+                Join-Path -Path $repoRoot -ChildPath $utilsTestTarget
+            }
+
+            $utilsSuiteLabel = if ($All) {
+                'PreCommitUtils'
+            }
+            else {
+                'PreCommitUtils-{0}' -f [System.IO.Path]::GetFileNameWithoutExtension($utilsTestTarget)
+            }
+
+            $utilsTargetDisplay = if ($All) {
+                'Tests/Utils'
+            }
+            else {
+                $utilsTestTarget
+            }
+
+            Write-Host ("Running {0} Pester suite in isolated process..." -f $utilsTargetDisplay)
+            Invoke-PesterQualityGateInIsolatedProcess -RepoRoot $repoRoot -TestPath $resolvedUtilsTestPath -SuiteLabel $utilsSuiteLabel -OutputVerbosity $PesterOutputVerbosity -TimeoutSeconds $PesterTimeoutSeconds
+        }
     }
 
     if ($runGitHubTests) {

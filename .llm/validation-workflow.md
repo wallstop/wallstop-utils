@@ -53,6 +53,7 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -W
 5. optional CI watch via `gh pr checks --watch`
 
 `Run-PreCommitValidation.ps1` executes Pester through the centralized `Invoke-PesterQualityGate.ps1` wrapper in an isolated `pwsh -NoProfile -NonInteractive` subprocess with explicit timeout, bounded/truncated output capture, and bounded stream-drain timeout handling to avoid host/terminal lockups. In pre-commit mode (non-`-All`), ScriptAnalyzer targets must remain staged-file scoped (`Scripts/Utils/*.ps1`) to keep commit-time checks fast and reduce editor-host pressure; full-repo analyzer scope remains in `-All` paths.
+When `pwsh` is available, `.githooks/pre-commit` runs `Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1` before pre-commit execution so staged AHK/batch drift can be safely auto-repaired (`-Fix -StaticOnly`) and restaged before last-resort hook gating.
 
 For Copilot/agent-driven ad-hoc test runs, do not call `Invoke-Pester` directly in terminal sessions. Use a timeout-bounded quality-gate invocation with low output verbosity:
 
@@ -74,12 +75,20 @@ Use the first failing gate as the active remediation target.
 - `E_TEST_FAILURE`: isolated Pester suite failed; use `W_TEST_FAILURE_OUTPUT_PREVIEW` for compact head/tail context and `W_TEST_FAILURE_ARTIFACT` (`logPath` under temp root) for bounded, redacted stdout/stderr and failure metadata (`suite`, `exitCode`, `rootCode`).
 - `E_TEST_TIMEOUT` or `E_TEST_CAPTURE_*`: isolated Pester subprocess exceeded runtime or stream-capture bounds; treat as execution-path instability and remediate before rerunning.
 - `E_AHK_STATIC_VALIDATION_FAILED`, `E_AHK_REQUIRES_V2_*`, or `E_AHK_V1_SYNTAX_DETECTED`: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1 -TargetFiles <paths> -Fix`; if v1 syntax remains, migrate the script to AHK v2 and rerun the targeted command before hooks.
+- `W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SKIPPED_UNSTAGED`: pre-hook auto-repair skipped one or more staged Windows-language files because they had unstaged drift; either stage/stash the unstaged changes or rerun the targeted fixer on the intended scope.
+- `W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SOURCE_UNSTAGED`: pre-hook auto-repair skipped config snapshot refresh because the mapped `Scripts/AutoHotKey/<name>.ahk` source had unstaged drift; stage/stash source changes first, then rerun commit.
+- `E_PRECOMMIT_AUTOREPAIR_*`: pre-hook safe auto-repair failed before pre-commit execution; fix the reported git/config issue and rerun commit.
+- `W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED` / `W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING`: hook-time stale index lock recovery ran automatically; if failures continue, inspect concurrent git activity in the same repository.
+- `W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED`: safe recovery was intentionally skipped (for example active git process detected, lock too new, or recovery mode disabled); resolve the reported reason and rerun.
+- `E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED` / `E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED`: lock recovery could not safely resolve `.git/index.lock`; check for active git processes in this repo, then rerun after contention clears.
 - `E_PRECOMMIT_WINDOWS_LANGUAGE_RESTAGE_REQUIRED`: a staged AHK/batch target differs from the repaired working tree; stage the repaired target files and rerun pre-commit validation.
 - `E_VALIDATION_CI_FAILED`: fix failing workflow checks, rerun with `-WatchCi`.
 - `E_VALIDATION_PR_MISSING`: open a PR, then rerun with `-WatchCi`.
 - `E_CONFIG_ERROR` from PowerShell hooks: install or update required modules using the command in the diagnostic, then rerun in the same session.
 - `E_VALIDATION_ARG_CONFLICT`: remove invalid flag combinations (for example `-PreflightOnly` with `-WatchCi`) and rerun with a valid workflow stage.
 - `E_HOOK_TIMEOUT` / `E_HOOK_TIMEOUT_CONFIG` from `.githooks/*`: raise timeout guardrail values only when needed (`WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`, `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`, `WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS`), then rerun with the same command path.
+- `W_HOOK_RUNTIME_BUDGET` from `.githooks/*`: hook phase exceeded the <=1s fast-path target; treat this as a performance regression signal and investigate the specific phase before widening budgets.
+- Hook-time index-lock recovery knobs: adjust only when needed (`WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE`, `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`), then rerun with the same command path.
 
 ## Codify New Knowledge (Forest-Not-Trees)
 

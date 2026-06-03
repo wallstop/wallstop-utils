@@ -626,10 +626,32 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'Config/\\\.config/.+\\\.ahk'
         $validatorContent | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
         $validatorContent | Should -Match '-TargetFiles\s+\$windowsLanguageFiles'
+        $validatorContent | Should -Match '-TargetFiles\s+\$windowsLanguageFiles\s+-StaticOnly'
         $validatorContent | Should -Not -Match '-TargetFiles\s+\$windowsLanguageFiles\s+-Fix'
         $validatorContent | Should -Match 'E_PRECOMMIT_WINDOWS_LANGUAGE_RESTAGE_REQUIRED'
         $validatorContent | Should -Match 'git diff[\s\S]*--name-only'
         $validatorContent | Should -Match 'Running Windows language static validation'
+    }
+
+    It "runs staged PowerShell compatibility checks through the precommit orchestrator" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = Get-Content -Path $validatorPath -Raw
+
+        $validatorContent | Should -Match '\$compatibilityTargetPattern\s*='
+        $validatorContent | Should -Match '\$runCompatibilityGate\s*='
+        $validatorContent | Should -Match 'Invoke-CompatibilityChecks\.ps1'
+        $validatorContent | Should -Match 'Running cross-version compatibility gate for'
+        $validatorContent | Should -Match 'E_PRECOMMIT_COMPATIBILITY_FAILED'
+    }
+
+    It "keeps pre-commit utils Pester execution fast-lane scoped to staged utils test files" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = Get-Content -Path $validatorPath -Raw
+
+        $validatorContent | Should -Match '\$utilsPesterPattern\s*=\s*''\^Tests/Utils/.+\\.Tests\\.ps1\$'''
+        $validatorContent | Should -Match '\$utilsScriptPattern\s*=\s*''\^Scripts/Utils/.+\\.ps1\$'''
+        $validatorContent | Should -Match 'Skipping Tests/Utils Pester suite for script-only staged changes in pre-commit mode'
+        $validatorContent | Should -Match 'full suite remains enforced in -All/pre-push'
     }
 
     It "routes native Lua and workflow checks through the precommit orchestrator" {
@@ -683,23 +705,64 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
 
         $preCommitHook | Should -Match 'pre-commit run --hook-stage pre-commit'
+        $preCommitHook | Should -Match 'command -v git'
+        $preCommitHook | Should -Match 'E_PRECOMMIT_HOOK_GIT_NOT_AVAILABLE'
+        $preCommitHook | Should -Match 'run_safe_autorepair'
+        $preCommitHook | Should -Match 'has_staged_windows_language_targets'
+        $preCommitHook | Should -Match 'git diff --cached --name-only --diff-filter=ACMR --'
+        $preCommitHook | Should -Match 'W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED'
+        $preCommitHook | Should -Match 'Invoke-PreCommitAutoRepair\.ps1'
         $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit'
+        $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit -TimeoutSeconds "\$remaining_seconds"'
+        $preCommitHook | Should -Match '\[\[ "\$remaining_seconds" -lt 30 \]\]'
+        $preCommitHook | Should -Match 'below minimum safe inner timeout \(30s\)'
         $preCommitHook | Should -Match 'Run-PreCommitValidation\.ps1'
         $preCommitHook | Should -Match 'pipx install pre-commit'
         $preCommitHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $preCommitHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
         $preCommitHook | Should -Match 'run_with_timeout'
+        $preCommitHook | Should -Match 'hook_start_seconds='
+        $preCommitHook | Should -Match 'remaining_timeout_seconds'
+        $preCommitHook | Should -Match 'total hook budget'
         $preCommitHook | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $preCommitHook | Should -Match 'E_HOOK_TIMEOUT_CONFIG'
+        $preCommitHook | Should -Match 'W_HOOK_RUNTIME_BUDGET'
         $preCommitHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt 30 \]\]'
+        $preCommitHook | Should -Match 'grep -Ei'
 
         $prePushHook | Should -Match 'pre-commit run --hook-stage pre-push --all-files'
+        $prePushHook | Should -Match 'command -v git'
+        $prePushHook | Should -Match 'E_PREPUSH_HOOK_GIT_NOT_AVAILABLE'
         $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -All'
         $prePushHook | Should -Match 'pipx install pre-commit'
         $prePushHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $prePushHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
         $prePushHook | Should -Match 'run_with_timeout'
         $prePushHook | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
+        $prePushHook | Should -Match 'W_HOOK_RUNTIME_BUDGET'
+    }
+
+    It "keeps pre-hook Windows language auto-repair safe and static-only" {
+        $autoRepairPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1'
+        $autoRepair = (Get-Content -Path $autoRepairPath -Raw) -replace "`r", ''
+
+        $autoRepair | Should -Match 'diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMR"'
+        $autoRepair | Should -Match 'Scripts/AutoHotKey/.+\\\.ahk'
+        $autoRepair | Should -Match 'Config/\\\.config/.+\\\.ahk'
+        $autoRepair | Should -Match 'Scripts/.+\\\.bat'
+        $autoRepair | Should -Match 'W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SKIPPED_UNSTAGED'
+        $autoRepair | Should -Match 'W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SOURCE_UNSTAGED'
+        $autoRepair | Should -Match 'function\s+Invoke-WindowsLanguageCheckerForAutoRepair'
+        $autoRepair | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
+        $autoRepair | Should -Match '-TargetFiles\s+\$repairTargets\s+-Fix\s+-StaticOnly'
+        $autoRepair | Should -Match 'add",\s*"--"'
+        $autoRepair | Should -Match 'E_PRECOMMIT_AUTOREPAIR_GIT_ADD_FAILED'
+        $autoRepair | Should -Match 'Invoke-SafeGitIndexLockRecovery'
+        $autoRepair | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED'
+        $autoRepair | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING'
+        $autoRepair | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED'
+        $autoRepair | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED'
+        $autoRepair | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED'
     }
 
     It "keeps pre-commit bootstrap guidance aligned with PEP 668-safe flows" {
@@ -833,6 +896,13 @@ Describe "Cross-language quality platform conventions" {
         $recoveryScript | Should -Match 'install-hooks'
         $recoveryScript | Should -Match 'W_PRECOMMIT_ENV_AUTO_REPAIR'
         $recoveryScript | Should -Match 'E_PRECOMMIT_ENV_AUTO_REPAIR_FAILED'
+        $recoveryScript | Should -Match 'Invoke-PreCommitIndexLockRecovery'
+        $recoveryScript | Should -Match 'Invoke-SafeGitIndexLockRecovery'
+        $recoveryScript | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED'
+        $recoveryScript | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING'
+        $recoveryScript | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED'
+        $recoveryScript | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED'
+        $recoveryScript | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED'
         $recoveryScript | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
 
         $fullValidation | Should -Match 'Assert-PreCommitHookEnvironmentAvailability'
@@ -847,7 +917,8 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
 
-        $preCommitHook | Should -Match 'run_with_timeout\s+"\$precommit_timeout_seconds"\s+"legacy pre-commit PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s*\r?\n\s*return\s+\$\?'
+        $preCommitHook | Should -Match 'remaining_timeout_seconds\s+"legacy pre-commit PowerShell validation"'
+        $preCommitHook | Should -Match 'run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-commit PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s*\r?\n\s*return\s+\$\?'
         $prePushHook | Should -Match 'run_with_timeout\s+"\$prepush_timeout_seconds"\s+"legacy pre-push PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-All\s*\r?\n\s*return\s+\$\?'
         $preCommitHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
         $prePushHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
@@ -861,8 +932,14 @@ Describe "Cross-language quality platform conventions" {
 
         $preCommitHook | Should -Match 'resolve_timeout_command'
         $preCommitHook | Should -Match 'E_HOOK_TIMEOUT'
+        $preCommitHook | Should -Match 'using shell watchdog timeout'
+        $preCommitHook | Should -Match 'sleep "\$timeout_seconds"'
+        $preCommitHook | Should -Match 'kill -TERM "\$command_pid"'
         $prePushHook | Should -Match 'resolve_timeout_command'
         $prePushHook | Should -Match 'E_HOOK_TIMEOUT'
+        $prePushHook | Should -Match 'using shell watchdog timeout'
+        $prePushHook | Should -Match 'sleep "\$timeout_seconds"'
+        $prePushHook | Should -Match 'kill -TERM "\$command_pid"'
         $prePushHook | Should -Match 'pre-push full validation'
 
         $postCreate | Should -Match '_run_with_timeout'
@@ -1073,6 +1150,15 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecks | Should -Match 'Batch checks limitation'
         $windowsChecks | Should -Match 'best-effort static smoke checks'
         $windowsChecks | Should -Match 'unbalanced parentheses at end-of-file'
+    }
+
+    It "keeps bounded follow-up static validation pass for fixable AHK dependency chains" {
+        $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
+        $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
+
+        $windowsChecks | Should -Match '\$maxStaticPasses\s*=\s*if\s*\(\$Fix\)\s*\{\s*2\s*\}\s*else\s*\{\s*1\s*\}'
+        $windowsChecks | Should -Match 'repairsAppliedThisPass'
+        $windowsChecks | Should -Match 'running follow-up static validation pass after auto-repair updates'
     }
 }
 
@@ -1765,7 +1851,8 @@ Describe "Restore script safety conventions" {
 
         $restoreScript | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
         $restoreScript | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
-        $restoreScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
+        $restoreScript | Should -Match 'Resolve-PowerShellExecutablePath'
+        $restoreScript | Should -Not -Match 'Get-Command\s+-Name\s+"pwsh"'
         $restoreScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
         $restoreScript | Should -Match 'E_RESTORE_PARTIAL_FAILURE'
     }
@@ -1884,9 +1971,13 @@ Describe "Backup script safety conventions" {
 
         $backupScript | Should -Match '\$stepResults\s*=\s*New-Object\s+System\.Collections\.Generic\.List\[object\]'
         $backupScript | Should -Match 'Proceeding with git operations \(best-effort mode\)'
+        $backupScript | Should -Match 'param\(\s*\[Parameter\(Mandatory\s*=\s*\$false\)\]\s*\[switch\]\$Unattended\s*\)'
+        $backupScript | Should -Match 'WALLSTOP_BACKUP_UNATTENDED'
+        $backupScript | Should -Match 'function\s+Test-BackupTruthySettingValue'
         $backupScript | Should -Match 'if\s*\(\s*\$hasBackupStepFailures\s*\)\s*\{[\s\S]*partial success:'
         $backupScript | Should -Match 'else\s*\{[\s\S]*\$commitMessage\s*=\s*"Backup for \$dateString \(\$succeededCount/\$totalCount\)"'
-        $backupScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
+        $backupScript | Should -Match 'Resolve-PowerShellExecutablePath'
+        $backupScript | Should -Not -Match 'Get-Command\s+-Name\s+"pwsh"'
         $backupScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
         $backupScript | Should -Match 'function\s+Get-GitExecutableOrThrow'
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"git"'
@@ -1937,9 +2028,20 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+push\s+origin\s+main'
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?Assert-BackupGitBranchOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot\s+-ExpectedBranch\s+"main"[\s\S]*?git\s+push\s+origin\s+main'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX'
+        $backupScript | Should -Match 'W_BACKUP_UNATTENDED_MODE_ACTIVE'
+        $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_NO_VERIFY'
         $backupScript | Should -Match 'W_BACKUP_GIT_ADD_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'if\s*\(\s*\$isUnattendedMode\s*\)\s*\{[\s\S]*?\$gitExecutable\s+-C\s+\$repositoryRoot\s+commit\s+--no-verify\s+-m\s+\$commitMessage[\s\S]*?\}\s*else\s*\{' -Because 'Unattended backup commits must bypass hooks with --no-verify, while attended commits use the retry/autofix branch.'
+        $backupScript | Should -Not -Match 'while\s*\(\s*-not\s+\$commitSucceeded\s+-and\s+\$commitAttempt\s+-lt\s+\$maxCommitAttempts\s*\)[\s\S]*?--no-verify' -Because '--no-verify must remain scoped to unattended mode and not appear inside attended retry commits.'
+        $backupScript | Should -Match 'function\s+Get-BackupManagedChangedFilesOrThrow'
+        $backupScript | Should -Match 'function\s+Invoke-BackupKnownSecretSanitization'
+        $backupScript | Should -Match 'function\s+Find-BackupUnknownSecretFindings'
+        $backupScript | Should -Match 'W_BACKUP_SECRET_SANITIZED'
+        $backupScript | Should -Match 'E_BACKUP_SECRET_SCAN_FAILED'
+        $backupScript | Should -Match 'W_BACKUP_SECRET_SCAN_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'Get-BackupManagedChangedFilesOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot\s+-ManagedPathspecs\s+\$managedPathspecs[\s\S]*?Invoke-BackupKnownSecretSanitization\s+-RepositoryRoot\s+\$repositoryRoot\s+-RelativePaths\s+\$managedChangedFiles[\s\S]*?Find-BackupUnknownSecretFindings\s+-RepositoryRoot\s+\$repositoryRoot\s+-RelativePaths\s+\$managedChangedFiles[\s\S]*?\$gitAddArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"add",\s*"--"\)' -Because 'Secret sanitization and unknown-secret scanning must run on managed backup files before staging and commit.'
         $backupScript | Should -Match 'Write-Host\s+"INFO_BACKUP_FORMATTER_BOUNDARY:[^"]*pre-commit run --all-files'
         $backupScript | Should -Match 'E_BACKUP_STEP_SELECTION_INVALID'
         $backupScript | Should -Match 'Assert-ApplicableBackupStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
@@ -3500,6 +3602,12 @@ $result = "value {0} {1}" -f
         $fullValidation | Should -Match 'E_VALIDATION_DIAGNOSTICS_HELPER_MISSING'
         $fullValidation | Should -Not -Match 'function\s+Get-OutputPreview'
         $fullValidation | Should -Match 'statusArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all"\)'
+        $fullValidation | Should -Match 'Invoke-SafeGitIndexLockRecovery'
+        $fullValidation | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED'
+        $fullValidation | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING'
+        $fullValidation | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED'
+        $fullValidation | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED'
+        $fullValidation | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED'
         $fullValidation | Should -Match 'E_VALIDATION_GIT_NOT_REPOSITORY'
         $fullValidation | Should -Match 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*repositoryRoot=' -Because "Validation status failures should include repository context."
         $fullValidation | Should -Match 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*workingDirectory=' -Because "Validation status failures should include calling working-directory context."
@@ -3525,10 +3633,23 @@ $result = "value {0} {1}" -f
         $diagnosticsHelpers | Should -Match 'switch\]\$CollapseWhitespace'
         $diagnosticsHelpers | Should -Match 'Alias\(\s*''MaxPreviewLines''\s*\)'
         $diagnosticsHelpers | Should -Match 'Alias\(\s*''MaxLength''\s*\)'
+        $diagnosticsHelpers | Should -Match 'function\s+Test-IsGitIndexLockFailure'
+        $diagnosticsHelpers | Should -Match 'function\s+Get-GitIndexLockPathFromOutput'
+        $diagnosticsHelpers | Should -Match 'function\s+Get-GitIndexLockRecoveryConfig'
+        $diagnosticsHelpers | Should -Match 'function\s+Invoke-SafeGitIndexLockRecovery'
+        $diagnosticsHelpers | Should -Match 'WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE'
+        $diagnosticsHelpers | Should -Match 'WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS'
+        $diagnosticsHelpers | Should -Match 'WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT'
+        $diagnosticsHelpers | Should -Match 'WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS'
+        $diagnosticsHelpers | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_CONFIG'
 
         $preCommit | Should -Match 'Common/DiagnosticsHelpers\.ps1'
         $preCommit | Should -Not -Match 'function\s+Get-OutputPreview'
         $preCommit | Should -Match 'Get-OutputPreview\s+-OutputLines\s+\$redactedCombinedLines\s+-MaxPreviewLines\s+4\s+-FilterBlankLines\s+-HeadTailWhenTruncated\s+-PerLineMaxCharacters\s+240'
+        $preCommit | Should -Match 'Get-StagedFilesWithIndexLockRecoveryOrThrow'
+        $preCommit | Should -Match 'Invoke-SafeGitIndexLockRecovery'
+        $preCommit | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED'
+        $preCommit | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED'
 
         $windowsChecks | Should -Match 'Common/DiagnosticsHelpers\.ps1'
         $windowsChecks | Should -Not -Match 'function\s+Get-OutputPreview'

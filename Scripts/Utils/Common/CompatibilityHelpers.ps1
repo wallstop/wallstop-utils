@@ -89,6 +89,59 @@ function Test-IsLinuxPlatform {
     return (Get-PortableAutomaticBool -Name 'IsLinux')
 }
 
+function Resolve-PowerShellExecutablePath {
+    # Resolves the PowerShell executable path used to invoke child scripts.
+    # Preference order:
+    #   1) pwsh (all platforms)
+    #   2) powershell.exe (Windows fallback)
+    # Throws a stable E_* diagnostic when no supported executable is available.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+
+    $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
+    if ($null -ne $pwshCommand -and -not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Source)) {
+        Write-Verbose (
+            "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='pwsh'." -f
+            $pwshCommand.Source
+        )
+        return [string]$pwshCommand.Source
+    }
+
+    if (Test-IsWindowsPlatform) {
+        $windowsPowerShellCommand = Get-Command -Name 'powershell.exe' -ErrorAction SilentlyContinue
+        if ($null -ne $windowsPowerShellCommand -and -not [string]::IsNullOrWhiteSpace([string]$windowsPowerShellCommand.Source)) {
+            Write-Verbose (
+                "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='powershell.exe-fallback'." -f
+                $windowsPowerShellCommand.Source
+            )
+            return [string]$windowsPowerShellCommand.Source
+        }
+    }
+
+    $platformName = 'Unknown'
+    if (Test-IsWindowsPlatform) {
+        $platformName = 'Windows'
+    }
+    elseif (Test-IsMacOSPlatform) {
+        $platformName = 'macOS'
+    }
+    elseif (Test-IsLinuxPlatform) {
+        $platformName = 'Linux'
+    }
+
+    $checkedExecutables = @('pwsh')
+    if ($platformName -eq 'Windows') {
+        $checkedExecutables += 'powershell.exe'
+    }
+
+    throw (
+        "E_COMPATIBILITY_POWERSHELL_EXECUTABLE_NOT_FOUND: unable to resolve a PowerShell executable for child script execution. Checked={0}; platform='{1}'." -f
+        ($checkedExecutables -join ', '),
+        $platformName
+    )
+}
+
 function Get-RelativePathFallback {
     # .NET Framework fallback for [System.IO.Path]::GetRelativePath. Mirrors the native
     # algorithm: normalize both paths, confirm a shared root, diff the path segments, and
