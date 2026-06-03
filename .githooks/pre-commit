@@ -10,14 +10,16 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 precommit_timeout_seconds="${WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS:-600}"
+precommit_recovery_shutdown_buffer_seconds=15
+minimum_precommit_timeout_seconds=$((30 + precommit_recovery_shutdown_buffer_seconds))
 hook_start_seconds="$SECONDS"
 
 validate_timeout_seconds() {
   local timeout_value="$1"
   local env_name="$2"
 
-  if [[ ! "$timeout_value" =~ ^[0-9]+$ ]] || [[ "$timeout_value" -lt 30 ]]; then
-    echo "E_HOOK_TIMEOUT_CONFIG: ${env_name} must be an integer >= 30 seconds (received '${timeout_value}')."
+  if [[ ! "$timeout_value" =~ ^[0-9]+$ ]] || [[ "$timeout_value" -lt "$minimum_precommit_timeout_seconds" ]]; then
+    echo "E_HOOK_TIMEOUT_CONFIG: ${env_name} must be an integer >= ${minimum_precommit_timeout_seconds} seconds (30s inner recovery timeout plus ${precommit_recovery_shutdown_buffer_seconds}s shutdown buffer; received '${timeout_value}')."
     exit 2
   fi
 }
@@ -117,7 +119,7 @@ remaining_timeout_seconds() {
   local remaining_seconds=$((precommit_timeout_seconds - elapsed_seconds))
 
   if [[ "$remaining_seconds" -lt 1 ]]; then
-    echo "E_HOOK_TIMEOUT: ${phase_label} exceeded total hook budget of ${precommit_timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
+    echo "E_HOOK_TIMEOUT: ${phase_label} exceeded total hook budget of ${precommit_timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS." >&2
     return 1
   fi
 
@@ -174,7 +176,7 @@ run_legacy_validation() {
 
 has_staged_windows_language_targets() {
   local staged_files
-  if ! staged_files="$(git diff --cached --name-only --diff-filter=ACMR -- 2> /dev/null)"; then
+  if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMR -- 2> /dev/null)"; then
     echo "W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED: unable to read staged files for auto-repair prefilter; running pwsh auto-repair fallback."
     return 0
   fi
@@ -218,12 +220,13 @@ if command -v pre-commit > /dev/null 2>&1; then
     fi
 
     if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
-      if [[ "$remaining_seconds" -lt 30 ]]; then
-        echo "E_HOOK_TIMEOUT: pre-commit hook-stage pre-commit has ${remaining_seconds}s remaining, below minimum safe inner timeout (30s)."
+      inner_timeout_seconds=$((remaining_seconds - precommit_recovery_shutdown_buffer_seconds))
+      if [[ "$inner_timeout_seconds" -lt 30 ]]; then
+        echo "E_HOOK_TIMEOUT: pre-commit hook-stage pre-commit has ${remaining_seconds}s remaining, below minimum safe inner timeout (30s) plus shutdown buffer (${precommit_recovery_shutdown_buffer_seconds}s)."
         exit 124
       fi
 
-      run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-commit -TimeoutSeconds "$remaining_seconds"
+      run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-commit -TimeoutSeconds "$inner_timeout_seconds"
       exit $?
     fi
 

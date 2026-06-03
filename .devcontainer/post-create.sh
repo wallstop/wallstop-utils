@@ -28,9 +28,24 @@ _resolve_timeout_command() {
   return 1
 }
 
+_validate_timeout_seconds() {
+  local timeout_seconds="$1"
+
+  if [[ ! "${timeout_seconds}" =~ ^[0-9]+$ ]] || [[ "${timeout_seconds}" -lt 30 ]]; then
+    _warn "E_HOOK_TIMEOUT_CONFIG: timeout values must be integer seconds >= 30 (received '${timeout_seconds}')."
+    return 1
+  fi
+
+  return 0
+}
+
 _run_with_timeout() {
   local timeout_seconds="$1"
   shift
+
+  if ! _validate_timeout_seconds "${timeout_seconds}"; then
+    return 2
+  fi
 
   local timeout_command
   if timeout_command="$(_resolve_timeout_command)"; then
@@ -38,14 +53,49 @@ _run_with_timeout() {
     "$timeout_command" --foreground "${timeout_seconds}s" "$@"
     local command_exit=$?
     set -e
+    if [[ $command_exit -eq 124 || $command_exit -eq 137 ]]; then
+      _warn "E_HOOK_TIMEOUT: command exceeded ${timeout_seconds}s: $*"
+    fi
     return $command_exit
   fi
 
-  _warn "timeout/gtimeout is unavailable; running command without timeout guard: $*"
+  _warn "timeout/gtimeout is unavailable; using shell watchdog timeout for command: $*"
+  local timeout_flag_file
+  timeout_flag_file="$(mktemp 2> /dev/null || true)"
+  if [[ -z "${timeout_flag_file}" ]]; then
+    timeout_flag_file="/tmp/wallstop-devcontainer-timeout.$$.$RANDOM.flag"
+  fi
+  rm -f "${timeout_flag_file}"
+
   set +e
-  "$@"
+  "$@" &
+  local command_pid=$!
+  (
+    sleep "${timeout_seconds}"
+    if kill -0 "${command_pid}" > /dev/null 2>&1; then
+      : > "${timeout_flag_file}"
+      kill -TERM "${command_pid}" > /dev/null 2>&1 || true
+      sleep 2
+      if kill -0 "${command_pid}" > /dev/null 2>&1; then
+        kill -KILL "${command_pid}" > /dev/null 2>&1 || true
+      fi
+    fi
+  ) &
+  local watchdog_pid=$!
+
+  wait "${command_pid}"
   local fallback_exit=$?
+  kill "${watchdog_pid}" > /dev/null 2>&1 || true
+  wait "${watchdog_pid}" > /dev/null 2>&1 || true
   set -e
+
+  if [[ -f "${timeout_flag_file}" ]]; then
+    rm -f "${timeout_flag_file}"
+    _warn "E_HOOK_TIMEOUT: command exceeded ${timeout_seconds}s: $*"
+    return 124
+  fi
+
+  rm -f "${timeout_flag_file}"
   return $fallback_exit
 }
 
@@ -466,6 +516,41 @@ _install_precommit() {
   return 1
 }
 
+_ensure_precommit_cli_ready() {
+  local required_version="$1"
+
+  if [[ -z "${required_version}" ]]; then
+    _warn "pre-commit install skipped because the pinned version could not be determined."
+    return 1
+  fi
+
+  if command -v pre-commit > /dev/null 2>&1 && _precommit_version_matches_pin "${required_version}"; then
+    _log "pre-commit ${required_version} is already available; skipping install."
+    return 0
+  fi
+
+  if command -v pre-commit > /dev/null 2>&1; then
+    _warn "pre-commit is available but does not match pinned version ${required_version}; reinstalling."
+  else
+    _log "pre-commit is not available; installing pinned version ${required_version}."
+  fi
+
+  if ! _install_precommit "${required_version}"; then
+    ensure_local_bin_on_path || _warn "PATH refresh failed after pre-commit install attempt; continuing without profile updates."
+    _warn "E_DEVCONTAINER_PRECOMMIT_INSTALL_FAILED: unable to install pinned pre-commit ${required_version}; hooks will not be registered with an unverified CLI."
+    return 1
+  fi
+
+  ensure_local_bin_on_path || _warn "PATH refresh failed after pre-commit install; continuing without profile updates."
+  if command -v pre-commit > /dev/null 2>&1 && _precommit_version_matches_pin "${required_version}"; then
+    _log "pre-commit ${required_version} verified after install."
+    return 0
+  fi
+
+  _warn "E_DEVCONTAINER_PRECOMMIT_VERSION_DRIFT: pre-commit install completed but the CLI on PATH does not match pinned version ${required_version}; hooks will not be registered with an unverified CLI."
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # Install pre-commit (skip if already present)
 # ---------------------------------------------------------------------------
@@ -479,24 +564,9 @@ ensure_local_bin_on_path || _warn "PATH setup failed; continuing without profile
 _install_ripgrep || _warn "ripgrep installation failed (non-blocking)."
 
 required_precommit_version="$(_required_precommit_version || true)"
-if command -v pre-commit > /dev/null 2>&1; then
-  if [[ -n "${required_precommit_version}" ]] && _precommit_version_matches_pin "${required_precommit_version}"; then
-    _log "pre-commit ${required_precommit_version} is already available; skipping install."
-  elif [[ -n "${required_precommit_version}" ]]; then
-    _warn "pre-commit is available but does not match pinned version ${required_precommit_version}; reinstalling."
-    _install_precommit "${required_precommit_version}" || true
-    ensure_local_bin_on_path || _warn "PATH refresh failed; continuing without profile updates."
-  else
-    _warn "pre-commit is available but the pinned version could not be determined."
-  fi
-else
-  if [[ -n "${required_precommit_version}" ]]; then
-    _install_precommit "${required_precommit_version}" || true
-  else
-    _warn "pre-commit install skipped because the pinned version could not be determined."
-  fi
-  # Refresh PATH in case a new install landed in ~/.local/bin.
-  ensure_local_bin_on_path || _warn "PATH refresh failed; continuing without profile updates."
+precommit_cli_ready=0
+if _ensure_precommit_cli_ready "${required_precommit_version}"; then
+  precommit_cli_ready=1
 fi
 
 # ---------------------------------------------------------------------------
@@ -510,16 +580,16 @@ ensure_local_bin_on_path || _warn "PATH refresh failed after Codex install; cont
 # Register git hooks via pre-commit
 # ---------------------------------------------------------------------------
 
-if command -v pre-commit > /dev/null 2>&1; then
+if [[ "${precommit_cli_ready}" -eq 1 ]]; then
   if command -v pwsh > /dev/null 2>&1; then
     if pwsh -NoLogo -NoProfile -Command "& { . './Scripts/Utils/Common/GitHookRegistrationHelpers.ps1'; Assert-GitHookRegistration -RepositoryRoot '.' -Repair | Out-Null }"; then
       _log "git hooksPath verified via shared hook registration preflight."
     else
       _warn "shared hook registration preflight failed; falling back to direct core.hooksPath repair."
-      git config --local core.hooksPath .githooks || true
+      git -C "${ROOT_DIR}" config --local core.hooksPath .githooks || true
     fi
   else
-    git config --local core.hooksPath .githooks || true
+    git -C "${ROOT_DIR}" config --local core.hooksPath .githooks || true
   fi
 
   if pre-commit install --hook-type pre-commit --hook-type pre-push; then
@@ -528,19 +598,32 @@ if command -v pre-commit > /dev/null 2>&1; then
     _warn "pre-commit install returned non-zero; hooks may not be fully registered."
   fi
 
-  if command -v pwsh > /dev/null 2>&1; then
-    if pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1 -InstallHooksOnly; then
+  precommit_prewarm_timeout_seconds="${WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS:-180}"
+  precommit_prewarm_inner_timeout_seconds=""
+  if ! _validate_timeout_seconds "${precommit_prewarm_timeout_seconds}"; then
+    _warn "pre-commit hook environment prewarm skipped because WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS is invalid."
+  else
+    precommit_prewarm_shutdown_buffer_seconds=15
+    precommit_prewarm_inner_timeout_seconds=$((precommit_prewarm_timeout_seconds - precommit_prewarm_shutdown_buffer_seconds))
+  fi
+
+  if [[ -z "${precommit_prewarm_inner_timeout_seconds:-}" ]]; then
+    :
+  elif [[ "${precommit_prewarm_inner_timeout_seconds}" -lt 30 ]]; then
+    _warn "E_HOOK_TIMEOUT_CONFIG: WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS must leave at least 30s for inner pre-commit recovery after a ${precommit_prewarm_shutdown_buffer_seconds}s shutdown buffer (received '${precommit_prewarm_timeout_seconds}')."
+  elif command -v pwsh > /dev/null 2>&1; then
+    if _run_with_timeout "${precommit_prewarm_timeout_seconds}" pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1 -InstallHooksOnly -TimeoutSeconds "${precommit_prewarm_inner_timeout_seconds}"; then
       _log "pre-commit hook environments pre-warmed."
     else
       _warn "pre-commit hook environment prewarm failed; validation preflight will retry later."
     fi
-  elif pre-commit install-hooks; then
+  elif _run_with_timeout "${precommit_prewarm_timeout_seconds}" pre-commit install-hooks; then
     _log "pre-commit hook environments pre-warmed."
   else
     _warn "pre-commit install-hooks returned non-zero; validation preflight will retry later."
   fi
 else
-  _warn "pre-commit not found after install step; git hooks not registered."
+  _warn "pre-commit CLI is not verified against requirements.txt; git hooks not registered."
 fi
 
 # ---------------------------------------------------------------------------

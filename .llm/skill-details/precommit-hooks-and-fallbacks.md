@@ -40,11 +40,12 @@ Keep hook wrappers bounded so stalled commands cannot lock editor-hosted workflo
 - `.githooks/pre-commit` must run primary/fallback commands through timeout guards and emit stable timeout diagnostics.
 - `.githooks/pre-commit` must run safe Windows-language auto-repair before pre-commit execution, and skip files with unstaged drift (`W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SKIPPED_UNSTAGED`) instead of staging extra content.
 - `.githooks/pre-push` must run `Invoke-FullValidation.ps1` (or fallback commands) through timeout guards.
-- `.devcontainer/post-create.sh` preflight should stay non-blocking and timeout-bounded.
+- `.devcontainer/post-create.sh` preflight and pre-commit environment prewarm should stay non-blocking and timeout-bounded.
 - Allow controlled overrides via environment variables when intentionally running slower sessions:
   - `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`
   - `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`
   - `WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS`
+  - `WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS`
 - For Copilot/agent ad-hoc tests, do not run direct `Invoke-Pester` terminal commands. Use timeout-bounded `Invoke-PesterQualityGate.ps1` with `-OutputVerbosity None` and a narrow `-TestPath` scope.
 
 ## Pinned Native Hook Tools

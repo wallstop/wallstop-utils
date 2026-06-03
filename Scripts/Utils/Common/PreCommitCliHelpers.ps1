@@ -86,11 +86,15 @@ function Assert-PreCommitCliVersion {
         [string]$PreCommitExecutable,
 
         [Parameter(Mandatory = $true)]
-        [string]$RepositoryRoot
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 120)]
+        [int]$TimeoutSeconds = 30
     )
 
     $expectedVersion = Get-RequiredPreCommitVersion -RepositoryRoot $RepositoryRoot
-    $versionResult = Invoke-PreCommitVersionProbe -PreCommitExecutable $PreCommitExecutable -RepositoryRoot $RepositoryRoot
+    $versionResult = Invoke-PreCommitVersionProbe -PreCommitExecutable $PreCommitExecutable -RepositoryRoot $RepositoryRoot -TimeoutSeconds $TimeoutSeconds
     $combinedOutput = @([string]$versionResult.Stdout, [string]$versionResult.Stderr) -join [Environment]::NewLine
     if ($versionResult.ExitCode -ne 0) {
         throw "E_VALIDATION_PRECOMMIT_VERSION_FAILED: pre-commit --version failed (exitCode=$($versionResult.ExitCode); executable='$PreCommitExecutable'; output=$combinedOutput)."

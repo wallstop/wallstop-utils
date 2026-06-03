@@ -164,6 +164,10 @@ Describe "post-create.sh pre-commit integration" {
         # Accept either the combined `install --install-hooks` form or the dedicated
         # `install-hooks` subcommand; the bootstrap uses the latter to pre-warm environments.
         $script:postCreateContent | Should -Match 'pre-commit\s+install(\s+--install-hooks\b|-hooks\b)'
+        $script:postCreateContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
+        $script:postCreateContent | Should -Match 'precommit_prewarm_shutdown_buffer_seconds=15'
+        $script:postCreateContent | Should -Match '_run_with_timeout\s+"\$\{precommit_prewarm_timeout_seconds\}"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Quality/Invoke-PreCommitWithRecovery\.ps1\s+-InstallHooksOnly\s+-TimeoutSeconds\s+"\$\{precommit_prewarm_inner_timeout_seconds\}"'
+        $script:postCreateContent | Should -Match '_run_with_timeout\s+"\$\{precommit_prewarm_timeout_seconds\}"\s+pre-commit\s+install-hooks'
     }
 
     It "configures core.hooksPath to .githooks" {
@@ -175,13 +179,30 @@ Describe "post-create.sh pre-commit integration" {
         $script:postCreateContent | Should -Match 'GitHookRegistrationHelpers\.ps1'
         $script:postCreateContent | Should -Match 'Assert-GitHookRegistration\s+-RepositoryRoot\s+''\.''\s+-Repair'
         $script:postCreateContent | Should -Match 'falling back to direct core\.hooksPath repair'
+        $script:postCreateContent | Should -Match 'git\s+-C\s+"\$\{ROOT_DIR\}"\s+config\s+--local\s+core\.hooksPath\s+\.githooks'
     }
 
     It "installs the pinned pre-commit CLI from requirements.txt" {
         $script:postCreateContent | Should -Match '_required_precommit_version\(\)'
         $script:postCreateContent | Should -Match '_precommit_version_matches_pin\(\)'
+        $script:postCreateContent | Should -Match '_ensure_precommit_cli_ready\(\)'
         $script:postCreateContent | Should -Match 'pre-commit==\$\{required_version\}'
         $script:postCreateContent | Should -Match '--requirement\s+"\$\{ROOT_DIR\}/requirements\.txt"'
+    }
+
+    It "rechecks the pinned pre-commit CLI after reinstall before registering hooks" {
+        $ensurePreCommitBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_ensure_precommit_cli_ready"
+        $installIndex = $ensurePreCommitBody.IndexOf('_install_precommit "${required_version}"', [System.StringComparison]::Ordinal)
+        $recheckIndex = $ensurePreCommitBody.IndexOf('_precommit_version_matches_pin "${required_version}"', [Math]::Max($installIndex, 0) + 1, [System.StringComparison]::Ordinal)
+        $registrationIndex = $script:postCreateContent.IndexOf('if [[ "${precommit_cli_ready}" -eq 1 ]]; then', [System.StringComparison]::Ordinal)
+        $ensureCallIndex = $script:postCreateContent.IndexOf('if _ensure_precommit_cli_ready "${required_precommit_version}"; then', [System.StringComparison]::Ordinal)
+
+        $installIndex | Should -BeGreaterOrEqual 0 -Because "pre-commit install must run through the readiness helper"
+        $recheckIndex | Should -BeGreaterThan $installIndex -Because "bootstrap must verify the CLI on PATH after reinstall"
+        $ensurePreCommitBody | Should -Match 'E_DEVCONTAINER_PRECOMMIT_VERSION_DRIFT'
+        $script:postCreateContent | Should -Match 'precommit_cli_ready=0'
+        $ensureCallIndex | Should -BeGreaterOrEqual 0 -Because "main flow must set readiness from the helper result"
+        $registrationIndex | Should -BeGreaterThan $ensureCallIndex -Because "hook registration must wait for pinned CLI verification"
     }
 
     It "registers both pre-commit and pre-push hook types" {
@@ -202,6 +223,19 @@ Describe "post-create.sh validation preflight integration" {
 
     It "keeps validation preflight non-blocking with a warning path" {
         $script:postCreateContent | Should -Match 'Validation preflight failed'
+    }
+
+    It "keeps timeout execution bounded even when timeout/gtimeout is unavailable" {
+        $runWithTimeoutBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_run_with_timeout"
+        $validateTimeoutBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_validate_timeout_seconds"
+
+        $script:postCreateContent | Should -Match '_validate_timeout_seconds\(\)'
+        $validateTimeoutBody | Should -Match 'E_HOOK_TIMEOUT_CONFIG'
+        $runWithTimeoutBody | Should -Match 'using shell watchdog timeout'
+        $runWithTimeoutBody | Should -Match 'sleep\s+"\$\{timeout_seconds\}"'
+        $runWithTimeoutBody | Should -Match 'kill\s+-TERM\s+"\$\{command_pid\}"'
+        $runWithTimeoutBody | Should -Match 'E_HOOK_TIMEOUT'
+        $runWithTimeoutBody | Should -Not -Match 'running command without timeout guard'
     }
 }
 
@@ -232,7 +266,7 @@ Describe "post-create.sh ripgrep installation" {
             if ($lines[$i] -match '_install_ripgrep\s*\|\|\s*_warn' -and $ripgrepCallLine -eq -1) {
                 $ripgrepCallLine = $i
             }
-            if ($lines[$i] -match 'command\s+-v\s+pre-commit' -and $preCommitCheckLine -eq -1) {
+            if ($lines[$i] -match '^required_precommit_version=' -and $preCommitCheckLine -eq -1) {
                 $preCommitCheckLine = $i
             }
         }

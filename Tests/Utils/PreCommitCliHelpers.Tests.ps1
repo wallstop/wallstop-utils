@@ -54,6 +54,28 @@ Describe "PreCommitCliHelpers" {
         $result.ActualVersion | Should -Be "4.6.0"
     }
 
+    It "passes explicit timeout to the pre-commit version probe" {
+        $repoRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString("N"))
+        [System.IO.Directory]::CreateDirectory($repoRoot) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path -Path $repoRoot -ChildPath "requirements.txt"), "pre-commit==4.6.0`n", [System.Text.UTF8Encoding]::new($false))
+        $script:capturedVersionProbeTimeout = 0
+
+        Mock Invoke-PreCommitVersionProbe {
+            param($PreCommitExecutable, $RepositoryRoot, $TimeoutSeconds)
+
+            $script:capturedVersionProbeTimeout = [int]$TimeoutSeconds
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = "pre-commit 4.6.0"
+                Stderr   = ""
+            }
+        }
+
+        [void](Assert-PreCommitCliVersion -PreCommitExecutable "pre-commit" -RepositoryRoot $repoRoot -TimeoutSeconds 17)
+
+        $script:capturedVersionProbeTimeout | Should -Be 17
+    }
+
     It "rejects a mismatching pre-commit --version result" {
         $repoRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString("N"))
         [System.IO.Directory]::CreateDirectory($repoRoot) | Out-Null

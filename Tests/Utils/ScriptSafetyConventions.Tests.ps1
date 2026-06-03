@@ -727,13 +727,18 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook | Should -Match 'E_PRECOMMIT_HOOK_GIT_NOT_AVAILABLE'
         $preCommitHook | Should -Match 'run_safe_autorepair'
         $preCommitHook | Should -Match 'has_staged_windows_language_targets'
-        $preCommitHook | Should -Match 'git diff --cached --name-only --diff-filter=ACMR --'
+        $preCommitHook | Should -Match 'git -C "\$repo_root" diff --cached --name-only --diff-filter=ACMR --'
         $preCommitHook | Should -Match 'W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED'
         $preCommitHook | Should -Match 'Invoke-PreCommitAutoRepair\.ps1'
         $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit'
-        $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit -TimeoutSeconds "\$remaining_seconds"'
-        $preCommitHook | Should -Match '\[\[ "\$remaining_seconds" -lt 30 \]\]'
-        $preCommitHook | Should -Match 'below minimum safe inner timeout \(30s\)'
+        $preCommitHook | Should -Match 'precommit_recovery_shutdown_buffer_seconds=15'
+        $preCommitHook | Should -Match 'minimum_precommit_timeout_seconds=\$\(\(30 \+ precommit_recovery_shutdown_buffer_seconds\)\)'
+        $preCommitHook | Should -Match '30s inner recovery timeout plus \$\{precommit_recovery_shutdown_buffer_seconds\}s shutdown buffer'
+        $preCommitHook | Should -Match 'exceeded total hook budget of \$\{precommit_timeout_seconds\}s[\s\S]*>&2'
+        $preCommitHook | Should -Match 'inner_timeout_seconds=\$\(\(remaining_seconds - precommit_recovery_shutdown_buffer_seconds\)\)'
+        $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit -TimeoutSeconds "\$inner_timeout_seconds"'
+        $preCommitHook | Should -Match '\[\[ "\$inner_timeout_seconds" -lt 30 \]\]'
+        $preCommitHook | Should -Match 'below minimum safe inner timeout \(30s\) plus shutdown buffer'
         $preCommitHook | Should -Match 'Run-PreCommitValidation\.ps1'
         $preCommitHook | Should -Match 'pipx install pre-commit'
         $preCommitHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
@@ -745,7 +750,7 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $preCommitHook | Should -Match 'E_HOOK_TIMEOUT_CONFIG'
         $preCommitHook | Should -Match 'W_HOOK_RUNTIME_BUDGET'
-        $preCommitHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt 30 \]\]'
+        $preCommitHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt "\$minimum_precommit_timeout_seconds" \]\]'
         $preCommitHook | Should -Match 'grep -Ei'
 
         $prePushHook | Should -Match 'pre-commit run --hook-stage pre-push --all-files'
@@ -931,8 +936,20 @@ Describe "Cross-language quality platform conventions" {
         $recoveryScript | Should -Match 'install-hooks'
         $recoveryScript | Should -Match 'W_PRECOMMIT_ENV_AUTO_REPAIR'
         $recoveryScript | Should -Match 'E_PRECOMMIT_ENV_AUTO_REPAIR_FAILED'
+        $recoveryScript | Should -Match 'Resolve-PreCommitRecoveryRepositoryRootOrThrow'
+        $recoveryScript | Should -Match 'Get-PreCommitRecoveryRemainingTimeoutSeconds'
+        $recoveryScript | Should -Match 'Receive-PreCommitCommandStreamText'
+        $recoveryScript | Should -Match 'StreamDrainTimeoutMilliseconds'
+        $recoveryScript | Should -Match 'E_PRECOMMIT_RECOVERY_CAPTURE_TIMEOUT'
+        $recoveryScript | Should -Match 'New-PreCommitEnvironmentRepairResult'
+        $recoveryScript | Should -Match 'Succeeded'
+        $recoveryScript | Should -Match '\$deadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(\$CommandTimeoutSeconds\)[\s\S]*Get-PreCommitRecoveryGitExecutableOrThrow[\s\S]*Resolve-PreCommitRecoveryRepositoryRootOrThrow[\s\S]*Get-PreCommitExecutableOrThrow[\s\S]*-DeadlineUtc\s+\$deadlineUtc'
+        $recoveryScript | Should -Match 'Assert-PreCommitCliVersion[\s\S]*-TimeoutSeconds\s+\$versionProbeTimeoutSeconds'
+        $recoveryScript | Should -Match 'OverallTimeoutSeconds'
+        $recoveryScript | Should -Match 'WorkingDirectory = \$RepositoryRoot'
         $recoveryScript | Should -Match 'Invoke-PreCommitIndexLockRecovery'
         $recoveryScript | Should -Match 'Invoke-SafeGitIndexLockRecovery'
+        $recoveryScript | Should -Match 'workingDirectory='
         $recoveryScript | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED'
         $recoveryScript | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING'
         $recoveryScript | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED'
@@ -964,6 +981,7 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
         $postCreatePath = Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh'
         $postCreate = Get-Content -Path $postCreatePath -Raw
+        $recoveryScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1') -Raw
 
         $preCommitHook | Should -Match 'resolve_timeout_command'
         $preCommitHook | Should -Match 'E_HOOK_TIMEOUT'
@@ -978,8 +996,24 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook | Should -Match 'pre-push full validation'
 
         $postCreate | Should -Match '_run_with_timeout'
+        $postCreate | Should -Match '_validate_timeout_seconds'
         $postCreate | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $postCreate | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
+        $postCreate | Should -Match 'Invoke-PreCommitWithRecovery\.ps1 -InstallHooksOnly -TimeoutSeconds "\$\{precommit_prewarm_inner_timeout_seconds\}"'
         $postCreate | Should -Match 'Invoke-FullValidation\.ps1 -PreflightOnly'
+        $postCreate | Should -Match 'using shell watchdog timeout'
+        $postCreate | Should -Match 'E_HOOK_TIMEOUT'
+
+        $streamDrainMatch = [regex]::Match($recoveryScript, '\[int\]\$StreamDrainTimeoutMilliseconds\s*=\s*(?<milliseconds>\d+)')
+        $preCommitBufferMatch = [regex]::Match($preCommitHook, 'precommit_recovery_shutdown_buffer_seconds=(?<seconds>\d+)')
+        $prewarmBufferMatch = [regex]::Match($postCreate, 'precommit_prewarm_shutdown_buffer_seconds=(?<seconds>\d+)')
+        $streamDrainMatch.Success | Should -BeTrue -Because 'the recovery wrapper must declare a bounded per-stream drain timeout'
+        $preCommitBufferMatch.Success | Should -BeTrue -Because 'pre-commit hook must reserve shutdown/capture time outside the inner recovery timeout'
+        $prewarmBufferMatch.Success | Should -BeTrue -Because 'devcontainer prewarm must reserve shutdown/capture time outside the inner recovery timeout'
+
+        $minimumBufferMilliseconds = ([int]$streamDrainMatch.Groups['milliseconds'].Value * 2) + 1000
+        ([int]$preCommitBufferMatch.Groups['seconds'].Value * 1000) | Should -BeGreaterOrEqual $minimumBufferMilliseconds
+        ([int]$prewarmBufferMatch.Groups['seconds'].Value * 1000) | Should -BeGreaterOrEqual $minimumBufferMilliseconds
     }
 
     It "tracks pre-push hook executable mode in git" {
@@ -3562,6 +3596,7 @@ $result = "value {0} {1}" -f
         $contextContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'Copilot/agent-driven test execution'
         $contextContent | Should -Match 'avoid direct `Invoke-Pester` terminal calls'
 
@@ -3569,6 +3604,7 @@ $result = "value {0} {1}" -f
         $validationWorkflowContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'do not call `Invoke-Pester` directly'
         $validationWorkflowContent | Should -Match 'timeout --foreground 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate\.ps1'
         $validationWorkflowContent | Should -Match 'OutputVerbosity None'
@@ -3577,6 +3613,7 @@ $result = "value {0} {1}" -f
         $skillDetailContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'do not run direct `Invoke-Pester` terminal commands'
     }
 
@@ -3606,7 +3643,7 @@ $result = "value {0} {1}" -f
 
     It "uses explicit git availability preflight in git-consuming utility scripts" {
         $gitPreflightCases = @(
-            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+diff\s+--cached\s+--name-only\s+--diff-filter=ACMR' },
+            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '\$stagedFileArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMR"\)[\s\S]*&\s+\$GitExecutable\s+@stagedFileArgs' },
             @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
             @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
             @{ Path = 'Scripts/Utils/Increment-Version.ps1'; ErrorCode = 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree' }

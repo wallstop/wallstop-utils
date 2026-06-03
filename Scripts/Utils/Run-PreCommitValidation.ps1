@@ -109,8 +109,9 @@ function Get-StagedFilesWithIndexLockRecoveryOrThrow {
         [string]$RepositoryRoot
     )
 
-    $stagedFileQuery = 'git diff --cached --name-only --diff-filter=ACMR'
-    $stagedFileOutput = @(& $GitExecutable diff --cached --name-only --diff-filter=ACMR 2>&1)
+    $stagedFileQuery = 'git -C <repositoryRoot> diff --cached --name-only --diff-filter=ACMR'
+    $stagedFileArgs = @("-C", $RepositoryRoot, "diff", "--cached", "--name-only", "--diff-filter=ACMR")
+    $stagedFileOutput = @(& $GitExecutable @stagedFileArgs 2>&1)
     if ($LASTEXITCODE -eq 0) {
         return @($stagedFileOutput)
     }
@@ -172,7 +173,7 @@ function Get-StagedFilesWithIndexLockRecoveryOrThrow {
             [int]$lockRecovery.LockAgeSeconds
         )
 
-        $stagedFileOutput = @(& $GitExecutable diff --cached --name-only --diff-filter=ACMR 2>&1)
+        $stagedFileOutput = @(& $GitExecutable @stagedFileArgs 2>&1)
         if ($LASTEXITCODE -eq 0) {
             return @($stagedFileOutput)
         }
@@ -991,7 +992,7 @@ try {
         )
     }
     if ($All) {
-        $trackedFileOutput = @(& $gitExecutable ls-files 2>&1)
+        $trackedFileOutput = @(& $gitExecutable -C $repoRoot ls-files 2>&1)
         if ($LASTEXITCODE -ne 0) {
             $gitErrorText = if ($trackedFileOutput.Count -gt 0) { $trackedFileOutput -join ' ' } else { '(no output)' }
             throw "E_CONFIG_ERROR: Failed to read tracked files using 'git ls-files' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"
@@ -1026,6 +1027,7 @@ try {
             'Remove-BOM'                = @('Tests/Utils/Remove-BOM.Tests.ps1')
             'Run-PreCommitValidation'   = @(
                 'Tests/Utils/Run-PreCommitValidation.ArrayShape.Tests.ps1',
+                'Tests/Utils/Run-PreCommitValidation.GitRoot.Tests.ps1',
                 'Tests/Utils/Run-PreCommitValidation.NativeQualityRestage.Tests.ps1'
             )
         }
@@ -1150,7 +1152,7 @@ try {
         )
 
         if (-not $All) {
-            $windowsLanguageDiffArgs = @("diff", "--name-only", "--") + @($windowsLanguageFiles)
+            $windowsLanguageDiffArgs = @("-C", $repoRoot, "diff", "--name-only", "--") + @($windowsLanguageFiles)
             $unstagedWindowsLanguageDiffOutput = @(& $gitExecutable @windowsLanguageDiffArgs 2>&1)
             if ($LASTEXITCODE -ne 0) {
                 $diffErrorText = if ($unstagedWindowsLanguageDiffOutput.Count -gt 0) { $unstagedWindowsLanguageDiffOutput -join ' ' } else { '(no output)' }
@@ -1192,7 +1194,7 @@ try {
         }
 
         if ($shellQualityFiles.Count -gt 0) {
-            $shellQualityDiffArgs = @("diff", "--name-only", "--") + @($shellQualityFiles)
+            $shellQualityDiffArgs = @("-C", $repoRoot, "diff", "--name-only", "--") + @($shellQualityFiles)
             $preShellQualityDiffOutput = @()
             $preShellQualityDirtyFileHashes = @{}
             if ($All) {
@@ -1305,7 +1307,7 @@ try {
         }
 
         if ($nativeQualityFiles.Count -gt 0) {
-            $nativeQualityDiffArgs = @("diff", "--name-only", "--") + @($nativeQualityFiles)
+            $nativeQualityDiffArgs = @("-C", $repoRoot, "diff", "--name-only", "--") + @($nativeQualityFiles)
             $preNativeQualityDiffOutput = @()
             $preNativeQualityDirtyFileHashes = @{}
             if ($All) {
