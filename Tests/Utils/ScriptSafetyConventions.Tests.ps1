@@ -905,6 +905,8 @@ Describe "Cross-language quality platform conventions" {
         $fullValidation | Should -Match 'pipx install pre-commit'
         $fullValidation | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $fullValidation | Should -Match '~/.bashrc or ~/.zshrc'
+        $fullValidation | Should -Match 'Get-PreCommitBootstrapVersionGuidance'
+        $fullValidation | Should -Not -Match '\$\(Get-RequiredPreCommitVersion'
         $fullValidation | Should -Not -Match 'python3 -m pip install --user pre-commit'
 
         $preCommitHook | Should -Match '~/.bashrc or ~/.zshrc'
@@ -1062,6 +1064,7 @@ Describe "Cross-language quality platform conventions" {
     It "enforces timeout guardrails for hooks and devcontainer preflight" {
         $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
+        $readme = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'README.md') -Raw
         $postCreatePath = Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh'
         $postCreate = Get-Content -Path $postCreatePath -Raw
         $recoveryScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1') -Raw
@@ -1077,6 +1080,17 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook | Should -Match 'sleep "\$timeout_seconds"'
         $prePushHook | Should -Match 'kill -TERM "\$command_pid"'
         $prePushHook | Should -Match 'pre-push full validation'
+        $prePushHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt 30 \]\]'
+
+        $readme | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS[\s\S]*at least 45 seconds' -Because (
+            "README must document the same pre-commit minimum enforced by .githooks/pre-commit."
+        )
+        $readme | Should -Match '30s inner recovery timeout plus a 15s shutdown buffer' -Because (
+            "README must explain why pre-commit accepts no values below 45 seconds."
+        )
+        $readme | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS[\s\S]*at least 30 seconds' -Because (
+            "README must document that pre-push keeps the 30 second minimum."
+        )
 
         $postCreate | Should -Match '_run_with_timeout'
         $postCreate | Should -Match '_validate_timeout_seconds'
@@ -3681,6 +3695,8 @@ $result = "value {0} {1}" -f
         $contextContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
+        $contextContent | Should -Match 'pre-commit outer timeout minimum 45s'
+        $contextContent | Should -Match 'Diagnostic strings that must preserve stable `E_\*`/`W_\*` codes'
         $contextContent | Should -Match 'Copilot/agent-driven test execution'
         $contextContent | Should -Match 'avoid direct `Invoke-Pester` terminal calls'
 
@@ -3689,6 +3705,7 @@ $result = "value {0} {1}" -f
         $validationWorkflowContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
+        $validationWorkflowContent | Should -Match 'override minimum is 45s'
         $validationWorkflowContent | Should -Match 'do not call `Invoke-Pester` directly'
         $validationWorkflowContent | Should -Match 'timeout --foreground 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate\.ps1'
         $validationWorkflowContent | Should -Match 'OutputVerbosity None'
@@ -3698,6 +3715,7 @@ $result = "value {0} {1}" -f
         $skillDetailContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
+        $skillDetailContent | Should -Match 'at least 45 seconds'
         $skillDetailContent | Should -Match 'do not run direct `Invoke-Pester` terminal commands'
     }
 
@@ -4473,6 +4491,84 @@ Describe "PowerShell return safety conventions" {
         $fullValidation | Should -Match 'function\s+Get-StatusSnapshot\b[\s\S]*?Write-Output\s+-NoEnumerate\s+\(' -Because "Get-StatusSnapshot must use Write-Output -NoEnumerate to preserve empty git-status snapshots as a typed string[] without extra array wrapping."
         $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusBeforeValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_BEFORE_NULL' -Because "workspace drift comparison must guard null before-snapshot values with an explicit E_ code."
         $fullValidation | Should -Match 'if\s*\(\s*\$null\s*-eq\s*\$statusAfterValidation\s*\)\s*\{\s*throw\s+"E_VALIDATION_STATUS_AFTER_NULL' -Because "workspace drift comparison must guard null after-snapshot values with an explicit E_ code."
+    }
+}
+
+Describe "PowerShell diagnostic stability conventions" {
+    It "does not invoke helper commands inside expandable diagnostic strings" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts"
+        $scripts = Get-ChildItem -Path $scriptsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+        $diagnosticEmitterNames = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($name in @("Write-Error", "Write-Warning", "Write-Verbose", "Write-Host")) {
+            [void]$diagnosticEmitterNames.Add($name)
+        }
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        foreach ($scriptFile in $scripts) {
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptFile.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($null -eq $ast -or @($parseErrors).Count -gt 0) {
+                continue
+            }
+
+            $diagnosticNodes = @($ast.FindAll({
+                        param($node)
+
+                        if ($node -is [System.Management.Automation.Language.ThrowStatementAst]) {
+                            return $true
+                        }
+
+                        if (-not ($node -is [System.Management.Automation.Language.CommandAst])) {
+                            return $false
+                        }
+
+                        $commandName = $node.GetCommandName()
+                        return -not [string]::IsNullOrWhiteSpace($commandName) -and $diagnosticEmitterNames.Contains($commandName)
+                    }, $true))
+            if ($diagnosticNodes.Count -eq 0) {
+                continue
+            }
+
+            $expandableStrings = @($ast.FindAll({
+                        param($node)
+                        return $node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+                    }, $true))
+
+            foreach ($stringNode in $expandableStrings) {
+                $hasCommandSubexpression = $false
+                foreach ($nestedExpression in $stringNode.NestedExpressions) {
+                    if (-not ($nestedExpression -is [System.Management.Automation.Language.SubExpressionAst])) {
+                        continue
+                    }
+
+                    $commandExpressions = @($nestedExpression.FindAll({
+                                param($innerNode)
+                                return $innerNode -is [System.Management.Automation.Language.CommandAst]
+                            }, $true))
+                    if ($commandExpressions.Count -gt 0) {
+                        $hasCommandSubexpression = $true
+                        break
+                    }
+                }
+
+                if (-not $hasCommandSubexpression) {
+                    continue
+                }
+
+                foreach ($diagnosticNode in $diagnosticNodes) {
+                    if ($stringNode.Extent.StartOffset -ge $diagnosticNode.Extent.StartOffset -and $stringNode.Extent.EndOffset -le $diagnosticNode.Extent.EndOffset) {
+                        $relative = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
+                        $violations.Add("${relative}:$($stringNode.Extent.StartLineNumber)") | Out-Null
+                        break
+                    }
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Stable diagnostics must precompute helper output before throw/Write-* messages so helper failures cannot mask the primary E_/W_ code. Violations: {0}" -f ($violations -join ", ")
+        )
     }
 }
 

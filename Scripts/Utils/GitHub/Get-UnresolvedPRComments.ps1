@@ -387,11 +387,13 @@ function Get-SingleHeaderValueOrThrow {
             return $null
         }
 
-        throw "${ErrorCode}: Missing $Context. $(Get-HeaderValueDiagnostics -Key $Key -Values $values)"
+        $headerDiagnostics = Get-HeaderValueDiagnostics -Key $Key -Values $values
+        throw "${ErrorCode}: Missing $Context. $headerDiagnostics"
     }
 
     if ($valueCount -gt 1) {
-        throw "${ErrorCode}: Expected exactly one value for $Context but received $valueCount. $(Get-HeaderValueDiagnostics -Key $Key -Values $values)"
+        $headerDiagnostics = Get-HeaderValueDiagnostics -Key $Key -Values $values
+        throw "${ErrorCode}: Expected exactly one value for $Context but received $valueCount. $headerDiagnostics"
     }
 
     return $values[0]
@@ -1694,7 +1696,8 @@ function Invoke-GitHubRequestWithRetry {
                                 $resetValue = $retryAfterDate.ToUnixTimeSeconds().ToString()
                             }
                             else {
-                                throw "E_RATE_LIMIT: Invalid Retry-After value '$retryAfterCandidate'. $(Get-HeaderValueDiagnostics -Key 'Retry-After' -Values @($retryAfterValue))"
+                                $retryAfterDiagnostics = Get-HeaderValueDiagnostics -Key 'Retry-After' -Values @($retryAfterValue)
+                                throw "E_RATE_LIMIT: Invalid Retry-After value '$retryAfterCandidate'. $retryAfterDiagnostics"
                             }
                         }
                     }
@@ -1703,7 +1706,8 @@ function Invoke-GitHubRequestWithRetry {
                 if ($null -ne $resetValue) {
                     $resetEpoch = [int64]0
                     if (-not [int64]::TryParse($resetValue, [ref]$resetEpoch)) {
-                        throw "E_RATE_LIMIT: Invalid rate-limit reset value '$resetValue'. $(Get-HeaderValueDiagnostics -Key 'X-RateLimit-Reset' -Values @($resetValue))"
+                        $rateLimitResetDiagnostics = Get-HeaderValueDiagnostics -Key 'X-RateLimit-Reset' -Values @($resetValue)
+                        throw "E_RATE_LIMIT: Invalid rate-limit reset value '$resetValue'. $rateLimitResetDiagnostics"
                     }
 
                     $resetUtc = [DateTimeOffset]::FromUnixTimeSeconds($resetEpoch).UtcDateTime
@@ -1879,7 +1883,8 @@ function Validate-GitHubTokenForRepoAccess {
                 }
 
                 if ($scopes.Count -eq 0) {
-                    throw "E_MALFORMED_RESPONSE: Token scope header did not contain any non-empty scope values. $(Get-HeaderValueDiagnostics -Key 'X-OAuth-Scopes' -Values $scopeHeaderValues)"
+                    $scopeHeaderDiagnostics = Get-HeaderValueDiagnostics -Key 'X-OAuth-Scopes' -Values $scopeHeaderValues
+                    throw "E_MALFORMED_RESPONSE: Token scope header did not contain any non-empty scope values. $scopeHeaderDiagnostics"
                 }
 
                 $isPrivateRepo = $false

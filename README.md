@@ -228,7 +228,7 @@ Hook troubleshooting is intentionally automated first:
 
 - When `pwsh` is available, `.githooks/pre-commit` runs `Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1` before pre-commit to safely repair and restage fixable staged AHK/batch drift (`-Fix -StaticOnly`) while skipping files that have unstaged drift.
 - Hook-time git index lock failures (`.git/index.lock`) are auto-detected and recovered in `Invoke-PreCommitAutoRepair.ps1`, `Run-PreCommitValidation.ps1`, and `Invoke-PreCommitWithRecovery.ps1`; recovery emits stable `W_PRECOMMIT_GIT_INDEX_LOCK_*` / `E_PRECOMMIT_GIT_INDEX_LOCK_*` diagnostics and retries once before failing.
-- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` bound hook runtime; values must be integers of at least 30 seconds.
+- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` bound hook runtime. Pre-commit values must be integers of at least 45 seconds (30s inner recovery timeout plus a 15s shutdown buffer); pre-push values must be integers of at least 30 seconds.
 - Hook wrappers emit `W_HOOK_RUNTIME_BUDGET` when a phase exceeds the fast-path target (`<= 1s`) so slow paths are visible and can be remediated.
 - Index-lock recovery tuning is available via `WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE` (`safe` or `off`), `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, and `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`.
 - `WALLSTOP_NATIVE_TOOL_DOWNLOAD_TIMEOUT_SECONDS` overrides the native binary download timeout when a slow network needs more than the default 300 seconds.

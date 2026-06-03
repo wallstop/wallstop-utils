@@ -35,6 +35,30 @@ Describe "PreCommitCliHelpers" {
             Should -Throw -ExpectedMessage "*E_VALIDATION_PRECOMMIT_REQUIREMENTS_INVALID*"
     }
 
+    It "returns fallback bootstrap guidance when the pre-commit pin cannot be resolved" {
+        $repoRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString("N"))
+        [System.IO.Directory]::CreateDirectory($repoRoot) | Out-Null
+
+        $guidance = Get-PreCommitBootstrapVersionGuidance -RepositoryRoot $repoRoot
+
+        $guidance.Version | Should -Be "<pinned-version-from-requirements.txt>"
+        $guidance.IsFallback | Should -BeTrue
+        $guidance.RequirementsDiagnostic | Should -Match "E_VALIDATION_PRECOMMIT_REQUIREMENTS_MISSING"
+    }
+
+    It "returns exact bootstrap guidance when the pre-commit pin can be resolved" {
+        $repoRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString("N"))
+        [System.IO.Directory]::CreateDirectory($repoRoot) | Out-Null
+        $requirementsPath = Join-Path -Path $repoRoot -ChildPath "requirements.txt"
+        [System.IO.File]::WriteAllText($requirementsPath, "pre-commit==4.6.0`n", [System.Text.UTF8Encoding]::new($false))
+
+        $guidance = Get-PreCommitBootstrapVersionGuidance -RepositoryRoot $repoRoot
+
+        $guidance.Version | Should -Be "4.6.0"
+        $guidance.IsFallback | Should -BeFalse
+        $guidance.RequirementsDiagnostic | Should -Be ""
+    }
+
     It "accepts a matching pre-commit --version result" {
         $repoRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString("N"))
         [System.IO.Directory]::CreateDirectory($repoRoot) | Out-Null

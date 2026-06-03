@@ -261,7 +261,17 @@ function Assert-PreCommitCliAvailability {
 
     $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
     if ($null -eq $preCommitCommand) {
-        throw "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit==$(Get-RequiredPreCommitVersion -RepositoryRoot $RepositoryRoot)' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=$HOME/.local/bin:$PATH and persist that export in ~/.bashrc or ~/.zshrc), then rerun validation preflight."
+        $preCommitGuidance = Get-PreCommitBootstrapVersionGuidance -RepositoryRoot $RepositoryRoot
+        $requirementsDiagnostic = ""
+        if ($preCommitGuidance.IsFallback -and -not [string]::IsNullOrWhiteSpace([string]$preCommitGuidance.RequirementsDiagnostic)) {
+            $requirementsDiagnostic = " requirementsPinDiagnostic='$([string]$preCommitGuidance.RequirementsDiagnostic)'."
+        }
+
+        throw (
+            "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit=={0}' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=`$HOME/.local/bin:`$PATH and persist that export in ~/.bashrc or ~/.zshrc), then rerun validation preflight.{1}" -f
+            [string]$preCommitGuidance.Version,
+            $requirementsDiagnostic
+        )
     }
 
     # Assert-PreCommitCliVersion emits E_VALIDATION_PRECOMMIT_VERSION_MISMATCH for exact-version drift.

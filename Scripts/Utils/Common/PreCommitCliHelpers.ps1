@@ -29,6 +29,40 @@ function Get-RequiredPreCommitVersion {
     return $match.Groups["version"].Value
 }
 
+function Get-PreCommitBootstrapVersionGuidance {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string]$FallbackVersion = "<pinned-version-from-requirements.txt>"
+    )
+
+    try {
+        $requiredVersion = Get-RequiredPreCommitVersion -RepositoryRoot $RepositoryRoot
+        if (-not [string]::IsNullOrWhiteSpace($requiredVersion)) {
+            return [pscustomobject]@{
+                Version                = $requiredVersion
+                IsFallback             = $false
+                RequirementsDiagnostic = ""
+            }
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Version                = $FallbackVersion
+            IsFallback             = $true
+            RequirementsDiagnostic = $_.Exception.Message
+        }
+    }
+
+    return [pscustomobject]@{
+        Version                = $FallbackVersion
+        IsFallback             = $true
+        RequirementsDiagnostic = "Get-RequiredPreCommitVersion returned an empty version."
+    }
+}
+
 function Invoke-PreCommitVersionProbe {
     param(
         [Parameter(Mandatory = $true)]

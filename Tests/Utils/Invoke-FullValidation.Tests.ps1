@@ -103,6 +103,9 @@ Describe "Invoke-FullValidation workflow contract" {
         $script:validationScript | Should -Match 'Common/PreCommitCliHelpers\.ps1'
         $script:validationScript | Should -Match 'Assert-PreCommitCliAvailability'
         $script:validationScript | Should -Match 'Assert-PreCommitCliVersion'
+        $script:validationScript | Should -Match 'Get-PreCommitBootstrapVersionGuidance'
+        $script:validationScript | Should -Match 'requirementsPinDiagnostic='
+        $script:validationScript | Should -Not -Match '\$\(Get-RequiredPreCommitVersion'
         $script:validationScript | Should -Match 'pre-commit CLI version check'
         $script:validationScript | Should -Match 'E_VALIDATION_PRECOMMIT_VERSION_MISMATCH'
     }

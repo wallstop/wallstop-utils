@@ -41,6 +41,7 @@ Keep hook wrappers bounded so stalled commands cannot lock editor-hosted workflo
 - `.githooks/pre-commit` must run safe Windows-language auto-repair before pre-commit execution, and skip files with unstaged drift (`W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SKIPPED_UNSTAGED`) instead of staging extra content.
 - `.githooks/pre-push` must run `Invoke-FullValidation.ps1` (or fallback commands) through timeout guards.
 - `.devcontainer/post-create.sh` preflight and pre-commit environment prewarm should stay non-blocking and timeout-bounded.
+- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` must be at least 45 seconds because the outer hook budget includes 30s for `Invoke-PreCommitWithRecovery.ps1` plus a 15s shutdown buffer; `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` remains at least 30 seconds.
 - Allow controlled overrides via environment variables when intentionally running slower sessions:
   - `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`
   - `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`
