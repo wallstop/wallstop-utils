@@ -16,4 +16,5 @@ Lightweight skill card for GitHub API safety and retry behavior.
 - [Clipboard fallback and strict mode](../skill-details/github-pr-unresolved-comments.md#clipboard-fallback-and-strict-mode)
 - [Output file contract](../skill-details/github-pr-unresolved-comments.md#output-file-contract)
 - [PowerShell completion contract](../skill-details/github-pr-unresolved-comments.md#powershell-completion-contract)
+- Auth recovery invariant: resolve `GH_TOKEN` before `GITHUB_TOKEN`; prompted fallback bypasses environment-token sources and excludes previously rejected token values.
 - Quick check: `pwsh -NoLogo -NoProfile -File Scripts/Utils/Run-PreCommitValidation.ps1`

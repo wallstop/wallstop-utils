@@ -20,7 +20,10 @@ Keep diagnostics explicit and maintain coverage for URI safety, retries, and hos
 - Enforce this contract in-script before each GraphQL request via `Assert-GraphQLVariableMap` (or equivalent), so mismatches fail with deterministic `E_CONFIG_ERROR` diagnostics before reaching the API.
 - Tests should assert serialized request payload key casing for GraphQL variables to prevent silent regressions.
 - Keep a static policy guard in `Tests/Utils/ScriptSafetyConventions.Tests.ps1` that asserts the unresolved-comments script keeps lowercase GraphQL variable keys and invokes the runtime variable-map assertion.
+- Resolve environment tokens in GH CLI precedence order: `GH_TOKEN` before `GITHUB_TOKEN`.
 - In PR URL and interactive flows, recoverable token-auth failures should attempt one anonymous retry before prompting login so public-repo access remains resilient when cached tokens expire.
+- Track rejected token values from recoverable auth failures and exclude them from later token resolution in the same run. Prompted login fallback must bypass environment-token sources and rejected-token values so stale env credentials are not reused in long-running shells.
+- Direct owner/repo mode remains fail-fast: no login prompt fallback in this mode.
 
 ## Review Thread Range Rendering
 
@@ -73,7 +76,7 @@ For PowerShell terminal usage, keep value discovery aids in the script parameter
 3. Preserve retry behavior for transient status codes.
 4. Keep GraphQL variable keys aligned with declared variable names and casing.
 5. Assert GraphQL variable-map/query alignment in-script before request dispatch.
-6. Retry recoverable auth failures anonymously once before interactive login prompts in PR URL/interactive flows.
+6. Apply source-aware auth recovery: enforce `GH_TOKEN` before `GITHUB_TOKEN`, track rejected token values after recoverable auth failures, and bypass env/rejected values during prompted login fallback.
 7. Keep non-global IP blocks and host allowlist checks active.
 8. Preserve copy fallback order and strict mode behavior.
 9. Preserve bot comment cleanup and embedded-location behavior with both behavioral and policy tests.

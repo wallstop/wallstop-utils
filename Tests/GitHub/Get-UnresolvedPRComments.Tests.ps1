@@ -1245,16 +1245,52 @@ Describe "Get-AuthToken" {
         $value | Should -Be "explicit-token"
     }
 
-    It "falls back to GITHUB_TOKEN" {
-        $env:GITHUB_TOKEN = "env-token"
-        $value = Get-AuthToken -GitHubHost "github.com"
-        $value | Should -Be "env-token"
-    }
-
-    It "falls back to GH_TOKEN if GITHUB_TOKEN is missing" {
+    It "prefers GH_TOKEN over GITHUB_TOKEN when both are set" {
         $env:GH_TOKEN = "gh-token"
+        $env:GITHUB_TOKEN = "github-token"
+
         $value = Get-AuthToken -GitHubHost "github.com"
         $value | Should -Be "gh-token"
+    }
+
+    It "falls back to GITHUB_TOKEN when GH_TOKEN is missing" {
+        $env:GITHUB_TOKEN = "github-token"
+
+        $value = Get-AuthToken -GitHubHost "github.com"
+        $value | Should -Be "github-token"
+    }
+
+    It "returns source metadata when requested" {
+        $env:GH_TOKEN = "gh-token"
+
+        $resolution = Get-AuthToken -GitHubHost "github.com" -IncludeSourceMetadata
+        $resolution.Token | Should -Be "gh-token"
+        $resolution.Source | Should -Be "GH_TOKEN"
+        $resolution.SourceCategory | Should -Be "environment"
+        $resolution.EnvironmentVariable | Should -Be "GH_TOKEN"
+    }
+
+    It "skips rejected token values while resolving environment sources" {
+        $env:GH_TOKEN = "rejected-token"
+        $env:GITHUB_TOKEN = "fallback-token"
+
+        $resolution = Get-AuthToken -GitHubHost "github.com" -IncludeSourceMetadata -RejectedTokenValues @("rejected-token")
+
+        $resolution.Token | Should -Be "fallback-token"
+        $resolution.Source | Should -Be "GITHUB_TOKEN"
+        $resolution.SourceCategory | Should -Be "environment"
+        $resolution.EnvironmentVariable | Should -Be "GITHUB_TOKEN"
+    }
+
+    It "ignores environment tokens when requested" {
+        $env:GH_TOKEN = "gh-token"
+        $env:GITHUB_TOKEN = "github-token"
+
+        Mock Get-Command { $null } -ParameterFilter { $Name -eq "gh" }
+
+        $resolution = Get-AuthToken -GitHubHost "github.com" -IncludeSourceMetadata -IgnoreEnvironmentTokens
+        $resolution.Token | Should -Be $null
+        $resolution.Source | Should -Be "none"
     }
 }
 
@@ -2411,6 +2447,134 @@ Describe "Invoke-Main" {
         Assert-MockCalled Read-Host -Times 1 -Scope It
     }
 
+    It "passes rejected-token exclusions to prompted login fallback" {
+        $PullRequestUrl = "https://github.com/org/repo/pull/5"
+        $Owner = $null
+        $Repo = $null
+        $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @()
+        $PullRequestNumber = 0
+        $Token = $null
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        $script:authTokenCallCount = 0
+        $script:secondCallRejectedTokens = @()
+        $script:secondCallIgnoredEnvironmentTokens = $false
+        $script:firstCallAllowInteractive = $null
+        Mock Get-AuthToken {
+            param(
+                [string]$ExplicitToken,
+                [string]$GitHubHost,
+                [switch]$AllowInteractive,
+                [switch]$IncludeSourceMetadata,
+                [switch]$IgnoreEnvironmentTokens,
+                [string[]]$RejectedTokenValues
+            )
+
+            $script:authTokenCallCount++
+            if ($script:authTokenCallCount -eq 1) {
+                $script:firstCallAllowInteractive = $AllowInteractive.IsPresent
+                return [pscustomobject]@{
+                    Token               = "bad-env-token"
+                    Source              = "GH_TOKEN"
+                    SourceCategory      = "environment"
+                    EnvironmentVariable = "GH_TOKEN"
+                }
+            }
+
+            $script:secondCallRejectedTokens = @($RejectedTokenValues)
+            $script:secondCallIgnoredEnvironmentTokens = $IgnoreEnvironmentTokens.IsPresent
+
+            return [pscustomobject]@{
+                Token               = "fresh-token"
+                Source              = "gh"
+                SourceCategory      = "gh"
+                EnvironmentVariable = $null
+            }
+        }
+
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
+        Mock Test-CanPromptForLogin { $true }
+        Mock Assert-IsHashtableLike { }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+
+        $script:validateCallCount = 0
+        Mock Validate-GitHubTokenForRepoAccess {
+            $script:validateCallCount++
+            if ($script:validateCallCount -eq 1) {
+                throw "E_AUTH_INVALID: Token authentication failed"
+            }
+        }
+
+        $script:reviewCallCount = 0
+        Mock Get-UnresolvedReviewThreads {
+            param($Headers)
+
+            $script:reviewCallCount++
+            if ($script:reviewCallCount -eq 1) {
+                throw "E_AUTH_INVALID: Authentication failed"
+            }
+
+            if ($null -eq $Headers -or -not $Headers.ContainsKey("Authorization")) {
+                throw "E_AUTH_INVALID: Missing authorization header after prompted login"
+            }
+
+            return @(
+                [pscustomobject]@{
+                    path               = "src/recovered.ts"
+                    lineStart          = 1
+                    lineEnd            = 1
+                    topLevelComment    = "Recovered"
+                    latestReplySummary = $null
+                }
+            )
+        }
+
+        Mock Read-Host { "y" }
+        Mock Format-UnresolvedThreadsAsText { "recovered with fresh token" }
+        $script:lastOutput = $null
+        Mock Write-Output {
+            param($InputObject)
+            $script:lastOutput = $InputObject
+        }
+
+        Invoke-Main
+
+        $script:lastOutput | Should -Be "recovered with fresh token"
+        $script:authTokenCallCount | Should -Be 2
+        $script:firstCallAllowInteractive | Should -BeFalse
+        $script:validateCallCount | Should -Be 2
+        $script:reviewCallCount | Should -Be 2
+        $script:secondCallIgnoredEnvironmentTokens | Should -BeTrue
+        $script:secondCallRejectedTokens | Should -Contain "bad-env-token"
+        Assert-MockCalled Get-AuthToken -Times 1 -Scope It -ParameterFilter { $IgnoreEnvironmentTokens.IsPresent -and $RejectedTokenValues -contains "bad-env-token" }
+    }
+
     It "offers login fallback in interactive mode when provided credentials are invalid" {
         $PullRequestUrl = $null
         $Owner = $null
@@ -2550,6 +2714,138 @@ Describe "Invoke-Main" {
         { Invoke-Main } | Should -Throw "*E_AUTH_INVALID*"
         Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "bad-token" }
         Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
+        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
+    }
+
+    It "appends environment-token remediation guidance in direct owner/repo mode" {
+        $PullRequestUrl = $null
+        $Owner = "org"
+        $Repo = "repo"
+        $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @()
+        $PullRequestNumber = 5
+        $Token = $null
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        Mock Get-AuthToken {
+            [pscustomobject]@{
+                Token               = "bad-env-token"
+                Source              = "GH_TOKEN"
+                SourceCategory      = "environment"
+                EnvironmentVariable = "GH_TOKEN"
+            }
+        }
+        Mock Assert-IsHashtableLike { }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token authentication failed" }
+        Mock Test-CanPromptForLogin { $true }
+        Mock Read-Host { throw "Read-Host should not be called in direct mode auth failure." }
+        Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called when token validation fails." }
+
+        $thrownMessage = $null
+        try {
+            Invoke-Main
+        }
+        catch {
+            $thrownMessage = $_.Exception.Message
+        }
+
+        $thrownMessage | Should -Match "E_AUTH_INVALID"
+        $thrownMessage | Should -Match ([regex]::Escape("Refresh or unset GH_TOKEN"))
+        $thrownMessage | Should -Match "GH_TOKEN takes precedence over GITHUB_TOKEN"
+        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
+    }
+
+    It "does not append environment-token remediation guidance for direct-mode auth rate limits" {
+        $PullRequestUrl = $null
+        $Owner = "org"
+        $Repo = "repo"
+        $GitHubHost = "github.com"
+        $AllowedGitHubHosts = @()
+        $PullRequestNumber = 5
+        $Token = $null
+        $OutputFormat = "text"
+        $Interactive = [System.Management.Automation.SwitchParameter]::new($false)
+        $WaitOnRateLimit = [System.Management.Automation.SwitchParameter]::new($false)
+        $PerPage = 100
+        $MaxPages = 100
+        $RequestTimeoutSeconds = 60
+        $OverallTimeoutSeconds = 300
+        $script:TopLevelBoundParameters = @{}
+
+        Mock Resolve-PullRequestTarget {
+            [pscustomobject]@{
+                Host              = "github.com"
+                Owner             = "org"
+                Repo              = "repo"
+                PullRequestNumber = 5
+            }
+        }
+
+        Mock Get-AuthToken {
+            [pscustomobject]@{
+                Token               = "throttled-env-token"
+                Source              = "GH_TOKEN"
+                SourceCategory      = "environment"
+                EnvironmentVariable = "GH_TOKEN"
+            }
+        }
+        Mock Assert-IsHashtableLike { }
+        Mock Get-GitHubHeaders {
+            param($AuthToken)
+
+            $headers = @{ "Accept" = "application/json" }
+            if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+                $headers["Authorization"] = "Bearer $AuthToken"
+            }
+
+            return $headers
+        }
+        Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
+        Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_RATE_LIMITED: Token temporarily rate limited" }
+        Mock Test-CanPromptForLogin { $true }
+        Mock Read-Host { throw "Read-Host should not be called in direct mode auth failure." }
+        Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called when token validation fails." }
+
+        $thrownMessage = $null
+        try {
+            Invoke-Main
+        }
+        catch {
+            $thrownMessage = $_.Exception.Message
+        }
+
+        $thrownMessage | Should -Match "E_AUTH_RATE_LIMITED"
+        $thrownMessage | Should -Not -Match ([regex]::Escape("Refresh or unset GH_TOKEN"))
+        $thrownMessage | Should -Not -Match "GH_TOKEN takes precedence over GITHUB_TOKEN"
         Assert-MockCalled Read-Host -Times 0 -Scope It
         Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
     }

@@ -119,14 +119,16 @@ add `-Truncate` to restore legacy clipping behavior.
 ## Authentication Order
 
 1. `-Token` argument
-2. `GITHUB_TOKEN` environment variable
-3. `GH_TOKEN` environment variable
+2. `GH_TOKEN` environment variable
+3. `GITHUB_TOKEN` environment variable
 4. `gh auth token`
 5. `gh auth login` (interactive fallback)
 
 Public repos can work without auth, but auth is preferred to avoid low rate limits.
 Private repos require auth.
 For PR URL and interactive flows, recoverable auth failures with an existing token are retried once anonymously before prompting for login.
+When interactive fallback is used after an auth failure, the script ignores `GH_TOKEN`/`GITHUB_TOKEN` for the prompted token refresh and excludes the token value that already failed in this run.
+Direct owner/repo mode remains fail-fast and does not prompt; when an environment token fails there, diagnostics include explicit non-interactive remediation guidance.
 When auth is used, the script validates token access against repository metadata before querying review threads.
 For `github.com`, the script also validates `X-OAuth-Scopes` and expects:
 

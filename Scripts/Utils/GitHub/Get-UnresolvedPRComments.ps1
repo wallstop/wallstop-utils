@@ -1555,6 +1555,226 @@ function Test-CanPromptForLogin {
     }
 }
 
+function New-AuthTokenResolutionResult {
+    [OutputType([pscustomobject])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Token,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Source,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$EnvironmentVariable
+    )
+
+    $normalizedToken = if ([string]::IsNullOrWhiteSpace($Token)) {
+        $null
+    }
+    else {
+        $Token.Trim()
+    }
+
+    $sourceCategory = "unknown"
+    switch ($Source) {
+        "explicit" {
+            $sourceCategory = "explicit"
+            break
+        }
+        "GH_TOKEN" {
+            $sourceCategory = "environment"
+            break
+        }
+        "GITHUB_TOKEN" {
+            $sourceCategory = "environment"
+            break
+        }
+        "gh" {
+            $sourceCategory = "gh"
+            break
+        }
+        "none" {
+            $sourceCategory = "none"
+            break
+        }
+    }
+
+    return [pscustomobject]@{
+        Token               = $normalizedToken
+        Source              = $Source
+        SourceCategory      = $sourceCategory
+        EnvironmentVariable = $EnvironmentVariable
+    }
+}
+
+function Invoke-GitHubCliAuthCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Command,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IgnoreEnvironmentTokens
+    )
+
+    $originalGhToken = $env:GH_TOKEN
+    $originalGitHubToken = $env:GITHUB_TOKEN
+
+    try {
+        if ($IgnoreEnvironmentTokens.IsPresent) {
+            $env:GH_TOKEN = $null
+            $env:GITHUB_TOKEN = $null
+        }
+
+        return & $Command
+    }
+    finally {
+        if ($IgnoreEnvironmentTokens.IsPresent) {
+            $env:GH_TOKEN = $originalGhToken
+            $env:GITHUB_TOKEN = $originalGitHubToken
+        }
+    }
+}
+
+function Resolve-AuthTokenWithSource {
+    [OutputType([pscustomobject])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$ExplicitToken,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$AllowInteractive,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IgnoreEnvironmentTokens,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$RejectedTokenValues = @()
+    )
+
+    $rejectedTokenSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+    foreach ($rejectedTokenValue in $RejectedTokenValues) {
+        if ([string]::IsNullOrWhiteSpace($rejectedTokenValue)) {
+            continue
+        }
+
+        $trimmedRejectedTokenValue = $rejectedTokenValue.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($trimmedRejectedTokenValue)) {
+            $rejectedTokenSet.Add($trimmedRejectedTokenValue) | Out-Null
+        }
+    }
+
+    $resolveCandidate = {
+        param(
+            [Parameter(Mandatory = $false)]
+            [AllowNull()]
+            [string]$CandidateToken,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Source,
+
+            [Parameter(Mandatory = $false)]
+            [AllowNull()]
+            [string]$EnvironmentVariable
+        )
+
+        if ([string]::IsNullOrWhiteSpace($CandidateToken)) {
+            return $null
+        }
+
+        $trimmedCandidateToken = $CandidateToken.Trim()
+        if ($rejectedTokenSet.Contains($trimmedCandidateToken)) {
+            Write-Verbose "Skipping previously rejected token from source '$Source'."
+            return $null
+        }
+
+        return New-AuthTokenResolutionResult -Token $trimmedCandidateToken -Source $Source -EnvironmentVariable $EnvironmentVariable
+    }
+
+    $explicitResolution = & $resolveCandidate -CandidateToken $ExplicitToken -Source "explicit" -EnvironmentVariable $null
+    if ($null -ne $explicitResolution) {
+        return $explicitResolution
+    }
+
+    if (-not $IgnoreEnvironmentTokens.IsPresent) {
+        $ghTokenResolution = & $resolveCandidate -CandidateToken $env:GH_TOKEN -Source "GH_TOKEN" -EnvironmentVariable "GH_TOKEN"
+        if ($null -ne $ghTokenResolution) {
+            return $ghTokenResolution
+        }
+
+        $githubTokenResolution = & $resolveCandidate -CandidateToken $env:GITHUB_TOKEN -Source "GITHUB_TOKEN" -EnvironmentVariable "GITHUB_TOKEN"
+        if ($null -ne $githubTokenResolution) {
+            return $githubTokenResolution
+        }
+    }
+
+    $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
+    if ($null -eq $ghCmd) {
+        if ($AllowInteractive.IsPresent) {
+            throw "E_AUTH_REQUIRED: GitHub CLI (gh) is required for interactive login but is not installed."
+        }
+
+        return New-AuthTokenResolutionResult -Token $null -Source "none" -EnvironmentVariable $null
+    }
+
+    try {
+        $tokenOutput = Invoke-GitHubCliAuthCommand -IgnoreEnvironmentTokens:$IgnoreEnvironmentTokens -Command {
+            & gh auth token --hostname $GitHubHost 2>$null
+        }
+
+        if ($LASTEXITCODE -eq 0) {
+            $ghCliResolution = & $resolveCandidate -CandidateToken $tokenOutput -Source "gh" -EnvironmentVariable $null
+            if ($null -ne $ghCliResolution) {
+                return $ghCliResolution
+            }
+        }
+    }
+    catch {
+        # Continue to interactive fallback only if allowed.
+    }
+
+    if (-not $AllowInteractive.IsPresent) {
+        return New-AuthTokenResolutionResult -Token $null -Source "none" -EnvironmentVariable $null
+    }
+
+    if (-not (Test-CanPromptForLogin)) {
+        throw "E_AUTH_REQUIRED: Interactive login is unavailable because input/output is redirected. Provide -Token or set GH_TOKEN/GITHUB_TOKEN."
+    }
+
+    Write-Host "No usable GitHub token found. Starting GitHub CLI login for $GitHubHost..." -ForegroundColor Yellow
+    [void](Invoke-GitHubCliAuthCommand -IgnoreEnvironmentTokens:$IgnoreEnvironmentTokens -Command {
+            & gh auth login --hostname $GitHubHost --web --git-protocol https --scopes repo | Out-Null
+        })
+    if ($LASTEXITCODE -ne 0) {
+        throw "E_AUTH_REQUIRED: GitHub CLI login was not completed."
+    }
+
+    $tokenOutput = Invoke-GitHubCliAuthCommand -IgnoreEnvironmentTokens:$IgnoreEnvironmentTokens -Command {
+        & gh auth token --hostname $GitHubHost 2>$null
+    }
+    if ($LASTEXITCODE -eq 0) {
+        if ([string]::IsNullOrWhiteSpace($tokenOutput)) {
+            throw "E_AUTH_REQUIRED: Login succeeded but no token was returned by GitHub CLI."
+        }
+
+        $postLoginResolution = & $resolveCandidate -CandidateToken $tokenOutput -Source "gh" -EnvironmentVariable $null
+        if ($null -ne $postLoginResolution) {
+            return $postLoginResolution
+        }
+
+        throw "E_AUTH_REQUIRED: Login succeeded but returned a token that was already rejected in this session. Refresh or unset GH_TOKEN/GITHUB_TOKEN, then retry."
+    }
+
+    throw "E_AUTH_REQUIRED: Login succeeded but no token was returned by GitHub CLI."
+}
+
 function Get-AuthToken {
     [CmdletBinding()]
     param(
@@ -1565,62 +1785,94 @@ function Get-AuthToken {
         [string]$GitHubHost,
 
         [Parameter(Mandatory = $false)]
-        [switch]$AllowInteractive
+        [switch]$AllowInteractive,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IncludeSourceMetadata,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IgnoreEnvironmentTokens,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$RejectedTokenValues = @()
     )
 
-    if (-not [string]::IsNullOrWhiteSpace($ExplicitToken)) {
-        return $ExplicitToken.Trim()
+    $resolution = Resolve-AuthTokenWithSource -ExplicitToken $ExplicitToken -GitHubHost $GitHubHost -AllowInteractive:$AllowInteractive -IgnoreEnvironmentTokens:$IgnoreEnvironmentTokens -RejectedTokenValues $RejectedTokenValues
+    if ($IncludeSourceMetadata.IsPresent) {
+        return $resolution
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
-        return $env:GITHUB_TOKEN.Trim()
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-        return $env:GH_TOKEN.Trim()
-    }
-
-    $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
-    if ($null -eq $ghCmd) {
-        if ($AllowInteractive.IsPresent) {
-            throw "E_AUTH_REQUIRED: GitHub CLI (gh) is required for interactive login but is not installed."
-        }
-
-        return $null
-    }
-
-    try {
-        $tokenOutput = & gh auth token --hostname $GitHubHost 2>$null
-        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tokenOutput)) {
-            return $tokenOutput.Trim()
-        }
-    }
-    catch {
-        # Continue to interactive fallback only if allowed.
-    }
-
-    if (-not $AllowInteractive.IsPresent) {
-        return $null
-    }
-
-    if (-not (Test-CanPromptForLogin)) {
-        throw "E_AUTH_REQUIRED: Interactive login is unavailable because input/output is redirected. Provide -Token or set GITHUB_TOKEN/GH_TOKEN."
-    }
-
-    Write-Host "No GitHub token found. Starting GitHub CLI login for $GitHubHost..." -ForegroundColor Yellow
-    & gh auth login --hostname $GitHubHost --web --git-protocol https --scopes repo | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "E_AUTH_REQUIRED: GitHub CLI login was not completed."
-    }
-
-    $tokenOutput = & gh auth token --hostname $GitHubHost 2>$null
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tokenOutput)) {
-        return $tokenOutput.Trim()
-    }
-
-    throw "E_AUTH_REQUIRED: Login succeeded but no token was returned by GitHub CLI."
+    return $resolution.Token
 }
 
+function Convert-ToAuthTokenResolutionResult {
+    [OutputType([pscustomobject])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $AuthTokenValue,
+
+        [Parameter(Mandatory = $false)]
+        [string]$FallbackSource = "unknown"
+    )
+
+    if ($null -eq $AuthTokenValue) {
+        return New-AuthTokenResolutionResult -Token $null -Source "none" -EnvironmentVariable $null
+    }
+
+    if ($AuthTokenValue -is [string]) {
+        return New-AuthTokenResolutionResult -Token $AuthTokenValue -Source $FallbackSource -EnvironmentVariable $null
+    }
+
+    $tokenValue = $null
+    $sourceValue = $FallbackSource
+    $sourceCategoryValue = $null
+    $environmentVariableValue = $null
+    $hasToken = $false
+
+    if ($AuthTokenValue -is [System.Collections.IDictionary]) {
+        if ($AuthTokenValue.Contains("Token")) {
+            $tokenValue = $AuthTokenValue["Token"]
+            $hasToken = $true
+        }
+        if ($AuthTokenValue.Contains("Source") -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue["Source"])) {
+            $sourceValue = [string]$AuthTokenValue["Source"]
+        }
+        if ($AuthTokenValue.Contains("SourceCategory") -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue["SourceCategory"])) {
+            $sourceCategoryValue = [string]$AuthTokenValue["SourceCategory"]
+        }
+        if ($AuthTokenValue.Contains("EnvironmentVariable") -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue["EnvironmentVariable"])) {
+            $environmentVariableValue = [string]$AuthTokenValue["EnvironmentVariable"]
+        }
+    }
+    else {
+        if ($AuthTokenValue.PSObject.Properties.Name -contains "Token") {
+            $tokenValue = $AuthTokenValue.Token
+            $hasToken = $true
+        }
+        if ($AuthTokenValue.PSObject.Properties.Name -contains "Source" -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue.Source)) {
+            $sourceValue = [string]$AuthTokenValue.Source
+        }
+        if ($AuthTokenValue.PSObject.Properties.Name -contains "SourceCategory" -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue.SourceCategory)) {
+            $sourceCategoryValue = [string]$AuthTokenValue.SourceCategory
+        }
+        if ($AuthTokenValue.PSObject.Properties.Name -contains "EnvironmentVariable" -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue.EnvironmentVariable)) {
+            $environmentVariableValue = [string]$AuthTokenValue.EnvironmentVariable
+        }
+    }
+
+    if (-not $hasToken) {
+        return New-AuthTokenResolutionResult -Token ([string]$AuthTokenValue) -Source $FallbackSource -EnvironmentVariable $null
+    }
+
+    $normalizedResolution = New-AuthTokenResolutionResult -Token ([string]$tokenValue) -Source $sourceValue -EnvironmentVariable $environmentVariableValue
+    if (-not [string]::IsNullOrWhiteSpace($sourceCategoryValue)) {
+        $normalizedResolution.SourceCategory = $sourceCategoryValue
+    }
+
+    return $normalizedResolution
+}
 function Invoke-GitHubRequestWithRetry {
     [CmdletBinding()]
     param(
@@ -2678,7 +2930,12 @@ function Invoke-Main {
         return
     }
 
-    $authToken = Get-AuthToken -ExplicitToken $Token -GitHubHost $target.Host -AllowInteractive:$Interactive
+    $rejectedTokenValues = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+
+    $authResolution = Convert-ToAuthTokenResolutionResult -AuthTokenValue (Get-AuthToken -ExplicitToken $Token -GitHubHost $target.Host -AllowInteractive:$false -IncludeSourceMetadata) -FallbackSource "unknown"
+    $authToken = $authResolution.Token
+    $authTokenSourceCategory = $authResolution.SourceCategory
+    $authTokenEnvironmentVariable = $authResolution.EnvironmentVariable
     if ($null -ne $authToken) {
         $authToken = [string]$authToken
     }
@@ -2707,15 +2964,22 @@ function Invoke-Main {
     catch {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
 
-        $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+        $isAuthRateLimitFailure = $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+        $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $isAuthRateLimitFailure
         $originalAuthRecoverableFailure = $isAuthRecoverableFailure
         $originalSensitiveTokens = @($sensitiveTokens)
         $anonymousRetrySucceeded = $false
+
+        if ($isAuthRecoverableFailure -and -not $isAuthRateLimitFailure -and -not [string]::IsNullOrWhiteSpace($authToken)) {
+            $rejectedTokenValues.Add($authToken) | Out-Null
+        }
 
         if ($allowPromptedLoginFallback -and $isAuthRecoverableFailure -and -not [string]::IsNullOrWhiteSpace($authToken)) {
             Write-Verbose "Recoverable authentication failure detected. Retrying request anonymously before prompting for login."
 
             $authToken = $null
+            $authTokenSourceCategory = "none"
+            $authTokenEnvironmentVariable = $null
             $sensitiveTokens = @()
             $headers = Get-GitHubHeaders -AuthToken $null
             Assert-IsHashtableLike -Value $headers -Name "Headers"
@@ -2726,7 +2990,8 @@ function Invoke-Main {
             }
             catch {
                 $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $originalSensitiveTokens
-                $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+                $isAuthRateLimitFailure = $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+                $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $isAuthRateLimitFailure
             }
         }
 
@@ -2734,7 +2999,7 @@ function Invoke-Main {
             # If retry produced a non-auth error (for example network timeout), surface
             # that actionable failure instead of forcing an E_AUTH_REQUIRED wrapper.
             if ($isAuthRecoverableFailure) {
-                throw "E_AUTH_REQUIRED: Authentication is missing or invalid, but interactive login prompt is unavailable because input/output is redirected. Provide -Token or set GITHUB_TOKEN/GH_TOKEN."
+                throw "E_AUTH_REQUIRED: Authentication is missing or invalid, but interactive login prompt is unavailable because input/output is redirected. Provide -Token or set GH_TOKEN/GITHUB_TOKEN."
             }
 
             throw $message
@@ -2743,7 +3008,11 @@ function Invoke-Main {
         if (-not $anonymousRetrySucceeded -and $allowPromptedLoginFallback -and $originalAuthRecoverableFailure) {
             $choice = Read-Host "Authentication is missing or invalid. Log in using GitHub CLI now? [y/N]"
             if ($choice -match "^(y|yes)$") {
-                $authToken = Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive
+                $rejectedTokenValuesArray = @($rejectedTokenValues)
+                $promptedAuthResolution = Convert-ToAuthTokenResolutionResult -AuthTokenValue (Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive -IncludeSourceMetadata -IgnoreEnvironmentTokens -RejectedTokenValues $rejectedTokenValuesArray) -FallbackSource "unknown"
+                $authToken = $promptedAuthResolution.Token
+                $authTokenSourceCategory = $promptedAuthResolution.SourceCategory
+                $authTokenEnvironmentVariable = $promptedAuthResolution.EnvironmentVariable
                 if ($null -ne $authToken) {
                     $authToken = [string]$authToken
                 }
@@ -2768,6 +3037,11 @@ function Invoke-Main {
             }
         }
         elseif (-not $anonymousRetrySucceeded) {
+            $isDirectModeEnvironmentTokenFailure = (-not $allowPromptedLoginFallback) -and $isAuthRecoverableFailure -and -not $isAuthRateLimitFailure -and ($authTokenSourceCategory -eq "environment" -or -not [string]::IsNullOrWhiteSpace($authTokenEnvironmentVariable))
+            if ($isDirectModeEnvironmentTokenFailure -and $message -notlike "*GH_TOKEN takes precedence over GITHUB_TOKEN*") {
+                $message = "$message Refresh or unset GH_TOKEN (GH_TOKEN takes precedence over GITHUB_TOKEN), or set GITHUB_TOKEN, then retry; you can also pass -Token explicitly."
+            }
+
             throw $message
         }
     }

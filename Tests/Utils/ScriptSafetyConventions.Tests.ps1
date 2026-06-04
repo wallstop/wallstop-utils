@@ -2681,6 +2681,68 @@ Describe "GitHub API resilience conventions" {
         $content | Should -Match 'Select-PullRequestInteractively[^\n]*-RequestTimeoutSeconds\s+\$RequestTimeoutSeconds'
         $content | Should -Match 'Resolve-PullRequestTarget[^\n]*-RequestTimeoutSeconds\s+\$RequestTimeoutSeconds'
     }
+
+    It "keeps source-aware auth token recovery contracts in Invoke-Main" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+
+        @($parseErrors).Count | Should -Be 0 -Because "Get-UnresolvedPRComments.ps1 must parse for policy checks to be meaningful"
+
+        $resolveFunction = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Resolve-AuthTokenWithSource"
+                }, $true) | Select-Object -First 1)
+        $invokeMainFunction = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Invoke-Main"
+                }, $true) | Select-Object -First 1)
+
+        $resolveFunction.Count | Should -Be 1 -Because "Resolve-AuthTokenWithSource must exist to enforce source-aware token precedence"
+        $invokeMainFunction.Count | Should -Be 1 -Because "Invoke-Main must exist to enforce auth fallback contracts"
+
+        $resolveBodyText = $resolveFunction[0].Body.Extent.Text
+        $ghTokenIndex = $resolveBodyText.IndexOf('-CandidateToken $env:GH_TOKEN', [System.StringComparison]::Ordinal)
+        $githubTokenIndex = $resolveBodyText.IndexOf('-CandidateToken $env:GITHUB_TOKEN', [System.StringComparison]::Ordinal)
+
+        $ghTokenIndex | Should -BeGreaterOrEqual 0
+        $githubTokenIndex | Should -BeGreaterOrEqual 0
+        ($ghTokenIndex -lt $githubTokenIndex) | Should -BeTrue -Because "GH_TOKEN must be evaluated before GITHUB_TOKEN"
+
+        $invokeMainBodyText = $invokeMainFunction[0].Body.Extent.Text
+        $invokeMainBodyText | Should -Match '\$rejectedTokenValues\s*=\s*New-Object\s+System\.Collections\.Generic\.HashSet\[string\]'
+        $invokeMainBodyText | Should -Match 'Get-AuthToken[^\n]*-ExplicitToken\s+\$Token[^\n]*-AllowInteractive:\$false[^\n]*-IncludeSourceMetadata'
+        $invokeMainBodyText | Should -Match 'Refresh\s+or\s+unset\s+GH_TOKEN'
+        $invokeMainBodyText | Should -Match 'GH_TOKEN\s+takes\s+precedence\s+over\s+GITHUB_TOKEN'
+
+        $getAuthTokenCalls = @($invokeMainFunction[0].Body.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq "Get-AuthToken"
+                }, $true))
+        $getAuthTokenCalls.Count | Should -BeGreaterOrEqual 2 -Because "Invoke-Main should call Get-AuthToken for initial resolution and prompted retry"
+
+        $hasIncludeSourceMetadata = $false
+        $hasBypassEnvironmentRetry = $false
+        foreach ($call in $getAuthTokenCalls) {
+            $parameterNames = @($call.CommandElements | Where-Object {
+                    $_ -is [System.Management.Automation.Language.CommandParameterAst]
+                } | ForEach-Object {
+                    $_.ParameterName
+                })
+
+            if ($parameterNames -contains "IncludeSourceMetadata") {
+                $hasIncludeSourceMetadata = $true
+            }
+
+            if (($parameterNames -contains "IgnoreEnvironmentTokens") -and ($parameterNames -contains "RejectedTokenValues")) {
+                $hasBypassEnvironmentRetry = $true
+            }
+        }
+
+        $hasIncludeSourceMetadata | Should -BeTrue
+        $hasBypassEnvironmentRetry | Should -BeTrue
+    }
 }
 
 Describe "Workflow security conventions" {
