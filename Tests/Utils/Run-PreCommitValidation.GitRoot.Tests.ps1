@@ -13,24 +13,42 @@ BeforeAll {
         throw "E_CONFIG_ERROR: Failed to parse Run-PreCommitValidation.ps1 for git-root tests."
     }
 
+    function Get-RequiredFunctionDefinitionAst {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Name,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Context
+        )
+
+        $matches = @($Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name
+                }, $true))
+
+        if ($matches.Count -ne 1) {
+            throw "E_CONFIG_ERROR: Expected exactly one function '$Name' for $Context; found $($matches.Count)."
+        }
+
+        return $matches[0]
+    }
+
     . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/DiagnosticsHelpers.ps1")
 
     foreach ($functionName in @("Get-StagedFilesWithIndexLockRecoveryOrThrow")) {
-        $targetFunction = @($script:preCommitAst.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
-                }, $true) | Select-Object -First 1)
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $script:preCommitAst -Name $functionName -Context "git-root tests"
 
-        if ($targetFunction.Count -ne 1) {
-            throw "E_CONFIG_ERROR: Expected function '$functionName' for git-root tests."
-        }
-
-        . ([scriptblock]::Create($targetFunction[0].Extent.Text))
+        . ([scriptblock]::Create($targetFunction.Extent.Text))
     }
 }
 
 AfterAll {
     Remove-Item -Path Function:Get-StagedFilesWithIndexLockRecoveryOrThrow -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:Get-RequiredFunctionDefinitionAst -ErrorAction SilentlyContinue
 }
 
 Describe "Run-PreCommitValidation git repository-root anchoring" {

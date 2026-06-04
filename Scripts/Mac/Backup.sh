@@ -123,7 +123,9 @@ fi
 WEZTERM_BACKUP="$REPO_ROOT/Scripts/Wezterm/WeztermBackup.sh"
 if [[ -x "$WEZTERM_BACKUP" ]]; then
   echo "Running WezTerm backup..."
-  "$WEZTERM_BACKUP" || echo "Warning: WezTerm backup skipped (no config found)"
+  if ! "$WEZTERM_BACKUP"; then
+    echo "Warning: WezTerm backup skipped (no config found)" >&2
+  fi
 fi
 
 # Directory to store the backups

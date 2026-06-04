@@ -10,7 +10,7 @@ wallstop_timeout_emit_warning() {
     return 0
   fi
 
-  echo "$message"
+  echo "$message" >&2
 }
 
 wallstop_resolve_timeout_command() {

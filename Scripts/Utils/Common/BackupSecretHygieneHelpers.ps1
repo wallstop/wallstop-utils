@@ -275,16 +275,6 @@ function Get-BackupSecretHygieneFileProbe {
     }
 }
 
-function Test-BackupSecretHygieneLikelyBinaryFile {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path
-    )
-
-    $probe = Get-BackupSecretHygieneFileProbe -Path $Path
-    return [bool]$probe.IsBinary
-}
-
 function Get-BackupSecretHygieneTextContent {
     param(
         [Parameter(Mandatory = $true)]

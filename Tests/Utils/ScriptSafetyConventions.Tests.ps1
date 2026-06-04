@@ -9,6 +9,87 @@ BeforeAll {
         return $resolvedItem.FullName
     }
 
+    function Get-RequiredFunctionDefinitionAst {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Name,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Context
+        )
+
+        $matches = @($Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name
+                }, $true))
+
+        if ($matches.Count -ne 1) {
+            throw "E_CONFIG_ERROR: Expected exactly one function '$Name' for $Context; found $($matches.Count)."
+        }
+
+        return $matches[0]
+    }
+
+    function Test-IsSelectObjectFirstOneCommandAst {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.CommandAst]$CommandAst
+        )
+
+        $commandName = $CommandAst.GetCommandName()
+        if ($commandName -notin @("Select-Object", "Select")) {
+            return $false
+        }
+
+        $sawFirstParameter = $false
+        foreach ($element in @($CommandAst.CommandElements | Select-Object -Skip 1)) {
+            if ($element -is [System.Management.Automation.Language.VariableExpressionAst] -and $element.Splatted) {
+                return $true
+            }
+
+            if ($element -is [System.Management.Automation.Language.CommandParameterAst]) {
+                $parameterName = $element.ParameterName
+                if (-not [string]::IsNullOrWhiteSpace($parameterName) -and "First".StartsWith($parameterName, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    if ($null -ne $element.Argument) {
+                        return ($element.Argument.Extent.Text -eq "1")
+                    }
+
+                    $sawFirstParameter = $true
+                    continue
+                }
+
+                $sawFirstParameter = $false
+                continue
+            }
+
+            if ($sawFirstParameter) {
+                return ($element.Extent.Text -eq "1")
+            }
+        }
+
+        return $false
+    }
+
+    function Test-HasFunctionDefinitionAstTypeReference {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+
+        return @($Ast.FindAll({
+                    param($node)
+                    if (-not ($node -is [System.Management.Automation.Language.TypeExpressionAst])) {
+                        return $false
+                    }
+
+                    return ($node.TypeName.FullName -eq "System.Management.Automation.Language.FunctionDefinitionAst" -or
+                        $node.TypeName.Name -eq "FunctionDefinitionAst")
+                }, $true)).Count -gt 0
+    }
+
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/CompatibilityHelpers.ps1")
     $script:migratedScripts = @(
@@ -68,6 +149,93 @@ BeforeAll {
     $script:wrapperContractFiles = @(
         Get-WrapperContractEntries -ContextFilePath $script:llmContextPath -DefaultFallback @()
     )
+}
+
+Describe "PowerShell test harness conventions" {
+    It "does not truncate FunctionDefinitionAst matches before exact-cardinality assertions" {
+        $testsRoot = Join-Path -Path $script:repoRoot -ChildPath "Tests"
+        $testFiles = @(Get-ChildItem -Path $testsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop)
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($testFile in $testFiles) {
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($testFile.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+                continue
+            }
+
+            $functionAstMatchVariables = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $functionAstAssignments = @($ast.FindAll({
+                        param($node)
+                        if (-not ($node -is [System.Management.Automation.Language.AssignmentStatementAst])) {
+                            return $false
+                        }
+
+                        if (-not ($node.Left -is [System.Management.Automation.Language.VariableExpressionAst])) {
+                            return $false
+                        }
+
+                        return (Test-HasFunctionDefinitionAstTypeReference -Ast $node.Right)
+                    }, $true))
+
+            foreach ($assignment in $functionAstAssignments) {
+                $variableName = $assignment.Left.VariablePath.UserPath
+                if (-not [string]::IsNullOrWhiteSpace($variableName)) {
+                    [void]$functionAstMatchVariables.Add($variableName)
+                }
+            }
+
+            $violatingPipelines = @($ast.FindAll({
+                        param($node)
+                        if (-not ($node -is [System.Management.Automation.Language.PipelineAst])) {
+                            return $false
+                        }
+
+                        $hasSelectFirstOne = $false
+                        foreach ($pipelineElement in $node.PipelineElements) {
+                            if ($pipelineElement -is [System.Management.Automation.Language.CommandAst] -and
+                                (Test-IsSelectObjectFirstOneCommandAst -CommandAst $pipelineElement)) {
+                                $hasSelectFirstOne = $true
+                                break
+                            }
+                        }
+
+                        if ($hasSelectFirstOne) {
+                            foreach ($pipelineElement in $node.PipelineElements) {
+                                $variableReferences = @($pipelineElement.FindAll({
+                                            param($innerNode)
+                                            if (-not ($innerNode -is [System.Management.Automation.Language.VariableExpressionAst])) {
+                                                return $false
+                                            }
+
+                                            return $functionAstMatchVariables.Contains($innerNode.VariablePath.UserPath)
+                                        }, $true))
+
+                                if ($variableReferences.Count -gt 0) {
+                                    return $true
+                                }
+                            }
+                        }
+
+                        if (-not $hasSelectFirstOne) {
+                            return $false
+                        }
+
+                        return (Test-HasFunctionDefinitionAstTypeReference -Ast $node)
+                    }, $true))
+
+            foreach ($pipeline in $violatingPipelines) {
+                $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $testFile.FullName
+                $portableRelativePath = $relativePath -replace '\\', '/'
+                $violations.Add("${portableRelativePath}:$($pipeline.Extent.StartLineNumber)") | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "FunctionDefinitionAst extraction tests must collect all matches and assert Count -eq 1 before dot-sourcing or inspecting a function. Violations: {0}" -f ($violations -join ", ")
+        )
+    }
 }
 
 Describe "Shared helper migration" {
@@ -1141,6 +1309,15 @@ Describe "Cross-language quality platform conventions" {
         $hookTimeoutHelper | Should -Match 'wallstop_cleanup_timeout_command_processes'
         $hookTimeoutHelper | Should -Match 'W_HOOK_PROCESS_GROUP_UNAVAILABLE'
         $hookTimeoutHelper | Should -Match 'W_HOOK_PROCESS_GROUP_CLEANUP'
+        $hookTimeoutWarningFunctionMatch = [regex]::Match(
+            $hookTimeoutHelper,
+            '(?ms)wallstop_timeout_emit_warning\(\)\s*\{(?<body>.*?)^\}'
+        )
+        $hookTimeoutWarningFunctionMatch.Success | Should -BeTrue
+        $hookTimeoutWarningFunctionBody = $hookTimeoutWarningFunctionMatch.Groups["body"].Value
+        $hookTimeoutWarningFunctionBody | Should -Match '\$\{WALLSTOP_TIMEOUT_WARNING_PREFIX\}\$\{message\}[\s\S]*?1?>\s*&2'
+        $hookTimeoutWarningFunctionBody | Should -Match '\$message[\s\S]*?1?>\s*&2'
+        $hookTimeoutWarningFunctionBody | Should -Not -Match '(?m)^\s*(?:echo|printf\b)(?![^\r\n]*(?:1?>\s*&2|\|[&]?\s*(?:cat|tee)\s*>\s*/dev/stderr))[^\r\n]*\$message'
 
         $streamDrainMatch = [regex]::Match($recoveryScript, '\[int\]\$StreamDrainTimeoutMilliseconds\s*=\s*(?<milliseconds>\d+)')
         $preCommitBufferMatch = [regex]::Match($preCommitHook, 'precommit_recovery_shutdown_buffer_seconds=(?<seconds>\d+)')
@@ -1538,6 +1715,160 @@ Describe "Shell quality conventions" {
 
         $violations.Count | Should -Be 0 -Because (
             "Shell scripts must not propagate `$? from negated conditions. Violations: {0}" -f ($violations -join ', ')
+        )
+    }
+
+    It "routes shell warning and error diagnostics to stderr" {
+        $shellFiles = @(
+            Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts') -Filter '*.sh' -File -Recurse -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-commit') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-push') -ErrorAction Stop
+        )
+        $diagnosticEmitPattern = '^\s*(?:echo(?:\s+-e)?|printf\b).*?(?:(?<![A-Za-z0-9_])(?:E_[A-Z0-9_]+|W_[A-Z0-9_]+)\b|Error:|Warning:|Unknown option:|Use -h or --help|Install Homebrew first)'
+        $diagnosticTextPattern = '(?:(?<![A-Za-z0-9_])(?:E_[A-Z0-9_]+|W_[A-Z0-9_]+)\b|Error:|Warning:|Unknown option:|Use -h or --help|Install Homebrew first)'
+        $diagnosticHelperNames = @("emit_diagnostic", "_warn", "wallstop_timeout_emit_warning")
+        $diagnosticHelperCallPattern = '^\s*(?<helper>{0})\s+' -f (($diagnosticHelperNames | ForEach-Object { [regex]::Escape($_) }) -join '|')
+        $diagnosticHelperFunctionPattern = '(?m)^\s*(?<helper>{0})\(\)\s*\{{' -f (($diagnosticHelperNames | ForEach-Object { [regex]::Escape($_) }) -join '|')
+        $stderrRedirectPattern = '(?:1?>\s*&2|\|[&]?\s*(?:cat|tee)\s*>\s*/dev/stderr)'
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($shellFile in $shellFiles) {
+            $relativePath = (Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $shellFile.FullName) -replace '\\', '/'
+            $content = (Get-Content -Path $shellFile.FullName -Raw) -replace "`r", ''
+            $lines = $content -split "`n"
+            $stderrGroupedLines = [System.Collections.Generic.HashSet[int]]::new()
+            $groupStartStack = New-Object System.Collections.Generic.Stack[int]
+            $stderrDiagnosticHelpers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+
+            foreach ($helperMatch in [regex]::Matches($content, $diagnosticHelperFunctionPattern)) {
+                $helperName = $helperMatch.Groups["helper"].Value
+                $lineStart = $helperMatch.Index
+                $lineEnd = $content.IndexOf("`n", $lineStart)
+                if ($lineEnd -lt 0) {
+                    $lineEnd = $content.Length
+                }
+
+                $definitionLine = $content.Substring($lineStart, $lineEnd - $lineStart)
+                $helperBody = ''
+                if ($definitionLine -match '^\s*[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{\s*(?<body>.*?)\s*\}\s*$') {
+                    $helperBody = $Matches["body"]
+                }
+                else {
+                    $bodyStart = $content.IndexOf("`n", $lineStart)
+                    if ($bodyStart -lt 0) {
+                        continue
+                    }
+
+                    $bodyEndMatch = [regex]::Match($content.Substring($bodyStart + 1), '(?m)^\s*\}')
+                    if (-not $bodyEndMatch.Success) {
+                        continue
+                    }
+
+                    $helperBody = $content.Substring($bodyStart + 1, $bodyEndMatch.Index)
+                }
+
+                $helperBodyLines = $helperBody -split "`n"
+                $helperBodyStderrGroupedLines = [System.Collections.Generic.HashSet[int]]::new()
+                $helperBodyGroupStartStack = New-Object System.Collections.Generic.Stack[int]
+                for ($helperLineIndex = 0; $helperLineIndex -lt $helperBodyLines.Count; $helperLineIndex++) {
+                    $helperLineNumber = $helperLineIndex + 1
+                    $helperLine = $helperBodyLines[$helperLineIndex]
+
+                    if ($helperLine -match '^\s*\{\s*$') {
+                        $helperBodyGroupStartStack.Push($helperLineNumber)
+                        continue
+                    }
+
+                    if ($helperLine -match '^\s*\}\s*1?>\s*&2\s*$' -and $helperBodyGroupStartStack.Count -gt 0) {
+                        $groupStart = $helperBodyGroupStartStack.Pop()
+                        for ($groupLineNumber = $groupStart; $groupLineNumber -le $helperLineNumber; $groupLineNumber++) {
+                            [void]$helperBodyStderrGroupedLines.Add($groupLineNumber)
+                        }
+                        continue
+                    }
+
+                    if ($helperLine -match '^\s*\}\s*$' -and $helperBodyGroupStartStack.Count -gt 0) {
+                        [void]$helperBodyGroupStartStack.Pop()
+                    }
+                }
+
+                $unsafeHelperEmitLines = @()
+                for ($helperLineIndex = 0; $helperLineIndex -lt $helperBodyLines.Count; $helperLineIndex++) {
+                    $helperLineNumber = $helperLineIndex + 1
+                    $helperLine = $helperBodyLines[$helperLineIndex]
+
+                    if ($helperLine -cnotmatch '^\s*(?:echo(?:\s+-e)?|printf\b)') {
+                        continue
+                    }
+
+                    if ($helperLine -cmatch $stderrRedirectPattern -or $helperBodyStderrGroupedLines.Contains($helperLineNumber)) {
+                        continue
+                    }
+
+                    $unsafeHelperEmitLines += $helperLineNumber
+                }
+
+                if (@($unsafeHelperEmitLines).Count -eq 0) {
+                    [void]$stderrDiagnosticHelpers.Add($helperName)
+                    continue
+                }
+
+                $helperLineNumber = (($content.Substring(0, $helperMatch.Index) -split "`n").Count)
+                $violations.Add("${relativePath}:$helperLineNumber diagnostic helper '$helperName' has stdout emit line(s): $($unsafeHelperEmitLines -join ', ')") | Out-Null
+            }
+
+            for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++) {
+                $lineNumber = $lineIndex + 1
+                $line = $lines[$lineIndex]
+
+                if ($line -match '^\s*\{\s*$') {
+                    $groupStartStack.Push($lineNumber)
+                    continue
+                }
+
+                if ($line -match '^\s*\}\s*1?>\s*&2\s*$' -and $groupStartStack.Count -gt 0) {
+                    $groupStart = $groupStartStack.Pop()
+                    for ($groupLineNumber = $groupStart; $groupLineNumber -le $lineNumber; $groupLineNumber++) {
+                        [void]$stderrGroupedLines.Add($groupLineNumber)
+                    }
+                    continue
+                }
+
+                if ($line -match '^\s*\}\s*$' -and $groupStartStack.Count -gt 0) {
+                    [void]$groupStartStack.Pop()
+                }
+            }
+
+            for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++) {
+                $lineNumber = $lineIndex + 1
+                $line = $lines[$lineIndex]
+
+                if ($line -cnotmatch $diagnosticEmitPattern) {
+                    $helperCallMatch = [regex]::Match($line, $diagnosticHelperCallPattern)
+                    if (-not $helperCallMatch.Success -or $line -cnotmatch $diagnosticTextPattern) {
+                        continue
+                    }
+
+                    $helperName = $helperCallMatch.Groups["helper"].Value
+                    if ($stderrDiagnosticHelpers.Contains($helperName)) {
+                        continue
+                    }
+
+                    $violations.Add("${relativePath}:$lineNumber helper '$helperName' must redirect diagnostics to stderr: $line") | Out-Null
+                    continue
+                }
+
+                if ($line -cmatch $stderrRedirectPattern -or $stderrGroupedLines.Contains($lineNumber)) {
+                    continue
+                }
+
+                $violations.Add("${relativePath}:$lineNumber $line") | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Shell diagnostics must go to stderr so stdout remains machine-readable. Violations: {0}" -f ($violations -join ', ')
         )
     }
 
@@ -2248,6 +2579,9 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'function\s+Get-BackupManagedChangedFilesOrThrow'
         $backupScript | Should -Match 'function\s+Invoke-BackupKnownSecretSanitization'
         $backupScript | Should -Match 'function\s+Find-BackupUnknownSecretFindings'
+        $backupScript | Should -Not -Match 'function\s+Test-BackupLikelyBinaryFile\b'
+        $backupSecretHygieneHelpers = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/BackupSecretHygieneHelpers.ps1') -Raw
+        $backupSecretHygieneHelpers | Should -Not -Match 'function\s+Test-BackupSecretHygieneLikelyBinaryFile\b'
         $backupScript | Should -Match 'W_BACKUP_SECRET_SANITIZED'
         $backupScript | Should -Match 'E_BACKUP_SECRET_SCAN_FAILED'
         $backupScript | Should -Match 'W_BACKUP_SECRET_SCAN_SKIPPED_PRIOR_GIT_FAILURE'
@@ -2275,6 +2609,43 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX:[\s\S]*before retry attempt \{0\} of \{1\}' -Because "Retry diagnostics should reference the next attempt, not the attempt that just failed."
         $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT:[\s\S]*\$commitAttempt,\s*\$maxCommitAttempts,\s*\$maxAutofixRetries' -Because "Retry-limit diagnostics must report real attempts performed and configured bounds."
         $backupScript | Should -Not -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT:[\s\S]*autofix retry attempt\(s\)' -Because "Retry-limit wording must distinguish total attempts from retry count."
+    }
+
+    It "keeps Backup.ps1 free of unused local function definitions" {
+        $backupPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Backup.ps1"
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($backupPath, [ref]$tokens, [ref]$parseErrors)
+
+        @($parseErrors).Count | Should -Be 0 -Because "Backup.ps1 must parse before unused helper policy can be validated."
+
+        $functionDefinitions = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+                }, $true))
+        $invokedFunctionNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $commandNodes = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst]
+                }, $true))
+
+        foreach ($commandNode in $commandNodes) {
+            $commandName = $commandNode.GetCommandName()
+            if (-not [string]::IsNullOrWhiteSpace($commandName)) {
+                [void]$invokedFunctionNames.Add($commandName)
+            }
+        }
+
+        $unusedFunctions = New-Object System.Collections.Generic.List[string]
+        foreach ($functionDefinition in $functionDefinitions) {
+            if (-not $invokedFunctionNames.Contains($functionDefinition.Name)) {
+                $unusedFunctions.Add("$($functionDefinition.Name):$($functionDefinition.Extent.StartLineNumber)") | Out-Null
+            }
+        }
+
+        $unusedFunctions.Count | Should -Be 0 -Because (
+            "Backup.ps1 local helpers should be directly used by the orchestrator; remove unused thin wrappers instead of keeping dead compatibility surface. Unused definitions: {0}" -f ($unusedFunctions -join ", ")
+        )
     }
 
     It "uses platform-aware backup step metadata and skip diagnostics" {
@@ -2648,13 +3019,8 @@ Describe "GitHub API resilience conventions" {
         $tokens = $null
         $parseErrors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
-        $targetFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-UnresolvedReviewThreads"
-                }, $true) | Select-Object -First 1)
-
-        $targetFunction.Count | Should -Be 1 -Because "Get-UnresolvedReviewThreads should exist so GraphQL variable-map contracts can be validated"
-        $functionBody = $targetFunction[0].Body.Extent.Text
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-UnresolvedReviewThreads" -Context "GraphQL variable-map contracts"
+        $functionBody = $targetFunction.Body.Extent.Text
 
         $variablesMatch = [regex]::Match($functionBody, '(?ms)\$variables\s*=\s*@\{(?<body>.*?)^\s*\}')
         $variablesMatch.Success | Should -BeTrue -Because "Get-UnresolvedReviewThreads should define a variables hashtable"
@@ -2690,19 +3056,10 @@ Describe "GitHub API resilience conventions" {
 
         @($parseErrors).Count | Should -Be 0 -Because "Get-UnresolvedPRComments.ps1 must parse for policy checks to be meaningful"
 
-        $resolveFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Resolve-AuthTokenWithSource"
-                }, $true) | Select-Object -First 1)
-        $invokeMainFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Invoke-Main"
-                }, $true) | Select-Object -First 1)
+        $resolveFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Resolve-AuthTokenWithSource" -Context "source-aware token precedence"
+        $invokeMainFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Invoke-Main" -Context "auth fallback contracts"
 
-        $resolveFunction.Count | Should -Be 1 -Because "Resolve-AuthTokenWithSource must exist to enforce source-aware token precedence"
-        $invokeMainFunction.Count | Should -Be 1 -Because "Invoke-Main must exist to enforce auth fallback contracts"
-
-        $resolveBodyText = $resolveFunction[0].Body.Extent.Text
+        $resolveBodyText = $resolveFunction.Body.Extent.Text
         $ghTokenIndex = $resolveBodyText.IndexOf('-CandidateToken $env:GH_TOKEN', [System.StringComparison]::Ordinal)
         $githubTokenIndex = $resolveBodyText.IndexOf('-CandidateToken $env:GITHUB_TOKEN', [System.StringComparison]::Ordinal)
 
@@ -2710,13 +3067,13 @@ Describe "GitHub API resilience conventions" {
         $githubTokenIndex | Should -BeGreaterOrEqual 0
         ($ghTokenIndex -lt $githubTokenIndex) | Should -BeTrue -Because "GH_TOKEN must be evaluated before GITHUB_TOKEN"
 
-        $invokeMainBodyText = $invokeMainFunction[0].Body.Extent.Text
+        $invokeMainBodyText = $invokeMainFunction.Body.Extent.Text
         $invokeMainBodyText | Should -Match '\$rejectedTokenValues\s*=\s*New-Object\s+System\.Collections\.Generic\.HashSet\[string\]'
         $invokeMainBodyText | Should -Match 'Get-AuthToken[^\n]*-ExplicitToken\s+\$Token[^\n]*-AllowInteractive:\$false[^\n]*-IncludeSourceMetadata'
         $invokeMainBodyText | Should -Match 'Refresh\s+or\s+unset\s+GH_TOKEN'
         $invokeMainBodyText | Should -Match 'GH_TOKEN\s+takes\s+precedence\s+over\s+GITHUB_TOKEN'
 
-        $getAuthTokenCalls = @($invokeMainFunction[0].Body.FindAll({
+        $getAuthTokenCalls = @($invokeMainFunction.Body.FindAll({
                     param($node)
                     $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq "Get-AuthToken"
                 }, $true))
@@ -3237,14 +3594,9 @@ Describe "Utility configuration safety conventions" {
             throw "E_CONFIG_ERROR: Failed to parse Run-PreCommitValidation.ps1 for redaction helper behavior checks."
         }
 
-        $targetFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-RedactedFailureLine"
-                }, $true) | Select-Object -First 1)
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-RedactedFailureLine" -Context "redaction helper behavior checks"
 
-        $targetFunction.Count | Should -Be 1
-
-        . ([scriptblock]::Create($targetFunction[0].Extent.Text))
+        . ([scriptblock]::Create($targetFunction.Extent.Text))
         try {
             (Get-RedactedFailureLine -Line 'Authorization: Bearer "secretjwt"') | Should -Be 'Authorization: [REDACTED]'
             (Get-RedactedFailureLine -Line "Authorization: Bearer 'secretjwt'") | Should -Be 'Authorization: [REDACTED]'
@@ -3275,13 +3627,9 @@ Describe "Utility configuration safety conventions" {
 
         $requiredFunctions = @("Get-RedactedFailureLine", "Convert-ToRedactedOutputLines")
         foreach ($requiredFunction in $requiredFunctions) {
-            $targetFunction = @($ast.FindAll({
-                        param($node)
-                        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $requiredFunction
-                    }, $true) | Select-Object -First 1)
+            $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name $requiredFunction -Context "array-shape behavior checks"
 
-            $targetFunction.Count | Should -Be 1 -Because "Expected function '$requiredFunction' for array-shape behavior checks."
-            . ([scriptblock]::Create($targetFunction[0].Extent.Text))
+            . ([scriptblock]::Create($targetFunction.Extent.Text))
         }
 
         try {
@@ -4464,13 +4812,7 @@ Describe "GitHub output and clipboard conventions" {
             "Get-UnresolvedPRComments.ps1 must parse cleanly before checking truncation policy."
         )
 
-        $targetFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-                    $node.Name -eq "Convert-ReviewThreadToOutputRecord"
-                }, $true) | Select-Object -First 1)
-
-        $targetFunction | Should -Not -BeNullOrEmpty
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Convert-ReviewThreadToOutputRecord" -Context "review-thread truncation policy"
         $parameterNames = @($targetFunction.Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
         ($parameterNames -ccontains "Truncate") | Should -BeTrue
 
@@ -4518,13 +4860,8 @@ Describe "GitHub output and clipboard conventions" {
         $content | Should -Match 'githubLineStart\s*=\s*\$githubAnchor\.Start'
         $content | Should -Match 'embeddedLocations\s*=\s*@\(\$embeddedLocations\)'
 
-        $normalizeFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-                    $node.Name -eq "Normalize-CommentText"
-                }, $true) | Select-Object -First 1)
-        $normalizeFunction | Should -Not -BeNullOrEmpty
-        $normalizeText = $normalizeFunction[0].Extent.Text
+        $normalizeFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Normalize-CommentText" -Context "bot cleanup policy"
+        $normalizeText = $normalizeFunction.Extent.Text
         $normalizeText | Should -Match '\$cleanedText\s*=\s*if\s*\(\$KeepMarkup\.IsPresent\)\s*\{\s*\$Text\s*\}\s*else\s*\{\s*Remove-MarkupFromCommentText\s+-Text\s+\$Text\s*\}'
 
         $testsContent | Should -Match 'Describe\s+"Normalize-CommentText"'

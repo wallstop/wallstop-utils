@@ -42,8 +42,8 @@ while [[ $# -gt 0 ]]; do
       usage
       ;;
     *)
-      echo "Unknown option: $1"
-      usage
+      echo "Unknown option: $1" >&2
+      usage >&2
       ;;
   esac
 done
@@ -54,8 +54,10 @@ BACKUP_DIR_REL="$SCRIPT_DIR/../../Config/Wezterm"
 
 # Resolve to absolute path, with friendly error if it doesn't exist
 if [[ ! -d "$BACKUP_DIR_REL" ]]; then
-  echo "Error: Backup directory '$BACKUP_DIR_REL' does not exist."
-  echo "Make sure you have backed up a WezTerm configuration first."
+  {
+    echo "Error: Backup directory '$BACKUP_DIR_REL' does not exist."
+    echo "Make sure you have backed up a WezTerm configuration first."
+  } >&2
   exit 1
 fi
 BACKUP_DIR="$(cd "$BACKUP_DIR_REL" && pwd)"
@@ -68,8 +70,10 @@ OS_TYPE="$(uname -s)"
 
 # Ensure backup file exists
 if [[ ! -f "$BACKUP_DIR/$CONFIG_FILE" ]]; then
-  echo "Error: Backup file '$BACKUP_DIR/$CONFIG_FILE' does not exist."
-  echo "Make sure you have backed up a WezTerm configuration first."
+  {
+    echo "Error: Backup file '$BACKUP_DIR/$CONFIG_FILE' does not exist."
+    echo "Make sure you have backed up a WezTerm configuration first."
+  } >&2
   exit 1
 fi
 

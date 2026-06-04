@@ -340,15 +340,6 @@ function Get-BackupManagedChangedFilesOrThrow {
     return $managedChangedFiles.ToArray()
 }
 
-function Test-BackupLikelyBinaryFile {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path
-    )
-
-    return (Test-BackupSecretHygieneLikelyBinaryFile -Path $Path)
-}
-
 function Invoke-BackupKnownSecretSanitization {
     param(
         [Parameter(Mandatory = $true)]

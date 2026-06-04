@@ -31,13 +31,13 @@ fi
 # Check if we're on Linux
 OS_TYPE="$(uname -s)"
 if [[ "$OS_TYPE" != "Linux" ]]; then
-  echo "Error: PaperWM is only supported on Linux with GNOME Shell."
+  echo "Error: PaperWM is only supported on Linux with GNOME Shell." >&2
   exit 1
 fi
 
 # Check if dconf is available
 if ! command -v dconf &> /dev/null; then
-  echo "Error: dconf command not found. Please install dconf-cli."
+  echo "Error: dconf command not found. Please install dconf-cli." >&2
   exit 1
 fi
 
@@ -46,9 +46,11 @@ echo "Running environment checks..."
 
 # Check if GNOME Shell is available
 if ! command -v gnome-shell &> /dev/null; then
-  echo "Warning: gnome-shell command not found."
-  echo "         PaperWM requires GNOME Shell to function."
-  echo ""
+  {
+    echo "Warning: gnome-shell command not found."
+    echo "         PaperWM requires GNOME Shell to function."
+    echo ""
+  } >&2
 fi
 
 # Check if PaperWM extension is installed
@@ -56,11 +58,13 @@ PAPERWM_USER_DIR="$HOME/.local/share/gnome-shell/extensions/paperwm@paperwm.gith
 PAPERWM_SYSTEM_DIR="/usr/share/gnome-shell/extensions/paperwm@paperwm.github.com"
 
 if [[ ! -d "$PAPERWM_USER_DIR" && ! -d "$PAPERWM_SYSTEM_DIR" ]]; then
-  echo "Warning: PaperWM extension not found."
-  echo "         Checked: $PAPERWM_USER_DIR"
-  echo "         Checked: $PAPERWM_SYSTEM_DIR"
-  echo "         Backup will proceed, but there may be no settings to back up."
-  echo ""
+  {
+    echo "Warning: PaperWM extension not found."
+    echo "         Checked: $PAPERWM_USER_DIR"
+    echo "         Checked: $PAPERWM_SYSTEM_DIR"
+    echo "         Backup will proceed, but there may be no settings to back up."
+    echo ""
+  } >&2
 fi
 
 # Get the directory where the script is located and resolve to absolute path
@@ -78,8 +82,10 @@ echo "Starting PaperWM configuration backup..."
 # Check if PaperWM dconf settings exist
 DCONF_DUMP=$(dconf dump "$DCONF_PATH" 2> /dev/null || true)
 if [[ -z "$DCONF_DUMP" ]]; then
-  echo "Warning: No PaperWM dconf settings found at $DCONF_PATH"
-  echo "Make sure PaperWM extension is installed and has been configured."
+  {
+    echo "Warning: No PaperWM dconf settings found at $DCONF_PATH"
+    echo "Make sure PaperWM extension is installed and has been configured."
+  } >&2
 else
   echo "Found PaperWM dconf settings"
 fi

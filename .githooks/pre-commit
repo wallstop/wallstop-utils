@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+emit_diagnostic() {
+  printf '%s\n' "$*" >&2
+}
+
 if ! command -v git > /dev/null 2>&1; then
-  echo "E_PRECOMMIT_HOOK_GIT_NOT_AVAILABLE: git is required for hook execution but was not found on PATH."
+  emit_diagnostic "E_PRECOMMIT_HOOK_GIT_NOT_AVAILABLE: git is required for hook execution but was not found on PATH."
   exit 1
 fi
 
@@ -11,7 +15,7 @@ cd "$repo_root"
 
 hook_timeout_helpers_path="${repo_root}/Scripts/Utils/Common/HookTimeout.sh"
 if [[ ! -f "$hook_timeout_helpers_path" ]]; then
-  echo "E_HOOK_TIMEOUT_HELPER_MISSING: timeout helper file not found at '$hook_timeout_helpers_path'."
+  emit_diagnostic "E_HOOK_TIMEOUT_HELPER_MISSING: timeout helper file not found at '$hook_timeout_helpers_path'."
   exit 1
 fi
 
@@ -28,7 +32,7 @@ validate_timeout_seconds() {
   local env_name="$2"
 
   if [[ ! "$timeout_value" =~ ^[0-9]+$ ]] || [[ "$timeout_value" -lt "$minimum_precommit_timeout_seconds" ]]; then
-    echo "E_HOOK_TIMEOUT_CONFIG: ${env_name} must be an integer >= ${minimum_precommit_timeout_seconds} seconds (30s inner recovery timeout plus ${precommit_recovery_shutdown_buffer_seconds}s shutdown buffer; received '${timeout_value}')."
+    emit_diagnostic "E_HOOK_TIMEOUT_CONFIG: ${env_name} must be an integer >= ${minimum_precommit_timeout_seconds} seconds (30s inner recovery timeout plus ${precommit_recovery_shutdown_buffer_seconds}s shutdown buffer; received '${timeout_value}')."
     exit 2
   fi
 }
@@ -52,18 +56,18 @@ run_with_timeout() {
     set -e
 
     if [[ $command_exit -eq 124 || $command_exit -eq 137 ]]; then
-      echo "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
+      emit_diagnostic "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
     fi
 
     local elapsed_seconds=$((SECONDS - phase_start_seconds))
     if [[ $elapsed_seconds -gt 1 ]]; then
-      echo "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
+      emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
     fi
 
     return $command_exit
   fi
 
-  echo "W_HOOK_TIMEOUT_UNAVAILABLE: timeout/gtimeout not found; using shell watchdog timeout for '${label}'."
+  emit_diagnostic "W_HOOK_TIMEOUT_UNAVAILABLE: timeout/gtimeout not found; using shell watchdog timeout for '${label}'."
 
   local timeout_flag_file
   timeout_flag_file="$(mktemp 2> /dev/null || true)"
@@ -96,10 +100,10 @@ run_with_timeout() {
 
   if [[ -f "$timeout_flag_file" ]]; then
     rm -f "$timeout_flag_file"
-    echo "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
+    emit_diagnostic "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
     local elapsed_seconds=$((SECONDS - phase_start_seconds))
     if [[ $elapsed_seconds -gt 1 ]]; then
-      echo "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
+      emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
     fi
     return 124
   fi
@@ -107,7 +111,7 @@ run_with_timeout() {
   rm -f "$timeout_flag_file"
   local elapsed_seconds=$((SECONDS - phase_start_seconds))
   if [[ $elapsed_seconds -gt 1 ]]; then
-    echo "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
+    emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
   fi
   return $fallback_exit
 }
@@ -146,13 +150,13 @@ print_precommit_bootstrap_guidance() {
   local pinned_version
   pinned_version="$(required_precommit_version)"
 
-  echo "  pipx install pre-commit==${pinned_version}"
-  echo "    or via venv:"
-  echo "      python3 -m venv ~/.local/venvs/pre-commit"
-  echo "      ~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt"
-  echo "      mkdir -p ~/.local/bin"
-  echo "      ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit"
-  echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
+  emit_diagnostic "  pipx install pre-commit==${pinned_version}"
+  emit_diagnostic "    or via venv:"
+  emit_diagnostic "      python3 -m venv ~/.local/venvs/pre-commit"
+  emit_diagnostic "      ~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt"
+  emit_diagnostic "      mkdir -p ~/.local/bin"
+  emit_diagnostic "      ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit"
+  emit_diagnostic "      export PATH=\"\$HOME/.local/bin:\$PATH\""
 }
 
 run_legacy_validation() {
@@ -166,17 +170,17 @@ run_legacy_validation() {
     return $?
   fi
 
-  echo "pre-commit is unavailable and pwsh was not found; cannot run legacy PowerShell quality gates."
-  echo "Install pre-commit with:"
+  emit_diagnostic "pre-commit is unavailable and pwsh was not found; cannot run legacy PowerShell quality gates."
+  emit_diagnostic "Install pre-commit with:"
   print_precommit_bootstrap_guidance
-  echo "Install PowerShell from: https://learn.microsoft.com/powershell/scripting/install/installing-powershell"
+  emit_diagnostic "Install PowerShell from: https://learn.microsoft.com/powershell/scripting/install/installing-powershell"
   exit 1
 }
 
 has_staged_windows_language_targets() {
   local staged_files
   if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMR -- 2> /dev/null)"; then
-    echo "W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED: unable to read staged files for auto-repair prefilter; running pwsh auto-repair fallback."
+    emit_diagnostic "W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED: unable to read staged files for auto-repair prefilter; running pwsh auto-repair fallback."
     return 0
   fi
 
@@ -221,7 +225,7 @@ if command -v pre-commit > /dev/null 2>&1; then
     if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
       inner_timeout_seconds=$((remaining_seconds - precommit_recovery_shutdown_buffer_seconds))
       if [[ "$inner_timeout_seconds" -lt 30 ]]; then
-        echo "E_HOOK_TIMEOUT: pre-commit hook-stage pre-commit has ${remaining_seconds}s remaining, below minimum safe inner timeout (30s) plus shutdown buffer (${precommit_recovery_shutdown_buffer_seconds}s)."
+        emit_diagnostic "E_HOOK_TIMEOUT: pre-commit hook-stage pre-commit has ${remaining_seconds}s remaining, below minimum safe inner timeout (30s) plus shutdown buffer (${precommit_recovery_shutdown_buffer_seconds}s)."
         exit 124
       fi
 
@@ -240,11 +244,11 @@ if command -v pre-commit > /dev/null 2>&1; then
   exit 124
 fi
 
-echo "pre-commit is not installed; falling back to legacy PowerShell checks."
-echo "Recommended bootstrap:"
+emit_diagnostic "pre-commit is not installed; falling back to legacy PowerShell checks."
+emit_diagnostic "Recommended bootstrap:"
 print_precommit_bootstrap_guidance
-echo "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"
-echo "  pre-commit install --hook-type pre-commit --hook-type pre-push"
-echo "Major changes should close with: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1"
+emit_diagnostic "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"
+emit_diagnostic "  pre-commit install --hook-type pre-commit --hook-type pre-push"
+emit_diagnostic "Major changes should close with: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1"
 run_legacy_validation
 exit $?

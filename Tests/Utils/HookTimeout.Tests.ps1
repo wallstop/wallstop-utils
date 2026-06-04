@@ -8,6 +8,76 @@ BeforeAll {
 }
 
 Describe "HookTimeout shell watchdog behavior" {
+    It "emits timeout warnings on stderr without polluting stdout" {
+        $bashCommand = Get-Command -Name bash -ErrorAction SilentlyContinue
+        if ($null -eq $bashCommand) {
+            Set-ItResult -Skipped -Because "bash is unavailable on this runner."
+            return
+        }
+
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-hook-warning-stream-test-{0}" -f [guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($tempRoot)
+        $driverPath = Join-Path -Path $tempRoot -ChildPath "driver.sh"
+
+        $driverContent = @'
+#!/usr/bin/env bash
+set -euo pipefail
+
+helper_path="$1"
+
+# shellcheck source=Scripts/Utils/Common/HookTimeout.sh
+. "$helper_path"
+
+unset WALLSTOP_TIMEOUT_WARNING_PREFIX
+wallstop_timeout_emit_warning "W_HOOK_TEST_UNPREFIXED: unprefixed warning"
+WALLSTOP_TIMEOUT_WARNING_PREFIX="prefix: "
+export WALLSTOP_TIMEOUT_WARNING_PREFIX
+wallstop_timeout_emit_warning "W_HOOK_TEST_PREFIXED: prefixed warning"
+printf '%s\n' "stdout-data"
+'@
+
+        $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+        [System.IO.File]::WriteAllText($driverPath, $driverContent, $utf8NoBom)
+
+        $process = $null
+        try {
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $bashCommand.Source
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @(
+                $driverPath,
+                $script:hookTimeoutHelperPath
+            )
+
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            $process.Start() | Should -BeTrue
+
+            if (-not $process.WaitForExit(10000)) {
+                Stop-ProcessTreePortably -Process $process
+                throw "Hook timeout warning stream test driver exceeded 10s."
+            }
+
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+
+            $process.ExitCode | Should -Be 0 -Because ("stdout={0}; stderr={1}" -f $stdout, $stderr)
+            $stdout.Trim() | Should -Be "stdout-data"
+            $stderr | Should -Match 'W_HOOK_TEST_UNPREFIXED: unprefixed warning'
+            $stderr | Should -Match 'prefix: W_HOOK_TEST_PREFIXED: prefixed warning'
+        }
+        finally {
+            if ($null -ne $process) {
+                $process.Dispose()
+            }
+
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "terminates descendants when the fallback watchdog times out" {
         if (Test-IsWindowsPlatform) {
             Set-ItResult -Skipped -Because "POSIX process-group watchdog behavior is validated on Linux/macOS hosts."
@@ -253,6 +323,8 @@ exit 8
             $stdout = $process.StandardOutput.ReadToEnd()
             $stderr = $process.StandardError.ReadToEnd()
             $process.ExitCode | Should -Be 0 -Because ("stdout={0}; stderr={1}" -f $stdout,$stderr)
+            $stdout | Should -Not -Match 'W_HOOK_PROCESS_GROUP_CLEANUP'
+            $stderr | Should -Match 'W_HOOK_PROCESS_GROUP_CLEANUP'
         }
         finally {
             if ($null -ne $process) {

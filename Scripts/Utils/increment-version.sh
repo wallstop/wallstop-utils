@@ -149,7 +149,7 @@ parse_args() {
         ;;
       *)
         echo -e "${RED}Error: Unknown option '$1'${NC}" >&2
-        echo "Use -h or --help for usage information."
+        echo "Use -h or --help for usage information." >&2
         exit 1
         ;;
     esac

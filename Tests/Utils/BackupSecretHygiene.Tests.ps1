@@ -83,6 +83,23 @@ Describe "Backup secret hygiene helper behaviors" {
         @($findings | Where-Object { $_.PatternName -eq "text-decode-failed" }).Count | Should -Be 1
     }
 
+    It "skips binary files without mutating or scanning their contents" {
+        $relativePath = "Config/binary-secret.bin"
+        $fullPath = Join-Path -Path $script:testRoot -ChildPath $relativePath
+        $binaryBytes = [byte[]](0x00, 0xFF, 0x10, 0x00, 0x41, 0x42, 0x00, 0x80, 0x7F, 0x00)
+        [System.IO.File]::WriteAllBytes($fullPath, $binaryBytes)
+
+        $sanitizationResult = Invoke-BackupSecretHygieneSanitizeKnownSecrets -RepositoryRoot $script:testRoot -RelativePaths @($relativePath)
+        $findings = @(Find-BackupSecretHygieneUnknownSecretFindings -RepositoryRoot $script:testRoot -RelativePaths @($relativePath))
+        $afterBytes = [System.IO.File]::ReadAllBytes($fullPath)
+
+        @($sanitizationResult.SkippedBinaryFiles) | Should -Contain $relativePath
+        @($sanitizationResult.RedactedFiles).Count | Should -Be 0
+        @($sanitizationResult.DecodeFailureFiles).Count | Should -Be 0
+        $findings.Count | Should -Be 0
+        [Convert]::ToBase64String($afterBytes) | Should -Be ([Convert]::ToBase64String($binaryBytes))
+    }
+
     It "detects quoted JSON Authorization bearer tokens with high-confidence pattern" {
         $relativePath = "Config/auth.json"
         $fullPath = Join-Path -Path $script:testRoot -ChildPath $relativePath
