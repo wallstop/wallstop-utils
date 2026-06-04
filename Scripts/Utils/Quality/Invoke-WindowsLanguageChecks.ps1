@@ -346,7 +346,7 @@ function Invoke-AutoHotkeyCommand {
 
         if (-not $process.WaitForExit($processTimeoutMilliseconds)) {
             try {
-                $process.Kill()
+                Stop-ProcessTreePortably -Process $process
             }
             catch {
                 # Preserve original timeout context if kill fails.
@@ -439,7 +439,7 @@ function Invoke-AutoHotkeyCommand {
         if ($null -ne $process) {
             try {
                 if (-not $process.HasExited) {
-                    $process.Kill()
+                    Stop-ProcessTreePortably -Process $process
                 }
             }
             catch {

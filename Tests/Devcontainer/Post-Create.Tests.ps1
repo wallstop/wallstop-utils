@@ -233,7 +233,12 @@ Describe "post-create.sh validation preflight integration" {
         $validateTimeoutBody | Should -Match 'E_HOOK_TIMEOUT_CONFIG'
         $runWithTimeoutBody | Should -Match 'using shell watchdog timeout'
         $runWithTimeoutBody | Should -Match 'sleep\s+"\$\{timeout_seconds\}"'
-        $runWithTimeoutBody | Should -Match 'kill\s+-TERM\s+"\$\{command_pid\}"'
+        $script:postCreateContent | Should -Match 'HookTimeout\.sh'
+        $runWithTimeoutBody | Should -Match 'wallstop_start_timeout_command'
+        $runWithTimeoutBody | Should -Match 'wallstop_terminate_timeout_command'
+        $runWithTimeoutBody | Should -Match 'wallstop_cleanup_timeout_command_processes'
+        $runWithTimeoutBody | Should -Not -Match 'kill\s+-TERM\s+"\$\{command_pid\}"'
+        $runWithTimeoutBody | Should -Not -Match 'kill\s+-KILL\s+"\$\{command_pid\}"'
         $runWithTimeoutBody | Should -Match 'E_HOOK_TIMEOUT'
         $runWithTimeoutBody | Should -Not -Match 'running command without timeout guard'
     }

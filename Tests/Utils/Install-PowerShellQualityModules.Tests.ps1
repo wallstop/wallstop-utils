@@ -10,10 +10,11 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         # Pester Mock can intercept the helper functions it defines (for example
         # Get-CommandWithOptionalModuleImport, which the script re-imports internally).
         . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/ModuleHelpers.ps1")
+        . $script:bootstrapPath -NoInvokeMain
     }
 
     BeforeEach {
-        Mock Install-Module {}
+        $script:installModuleCalls = [System.Collections.Generic.List[hashtable]]::new()
         Mock Set-PSRepository {}
         Mock Get-PackageProvider {}
         Mock Get-PSRepository { [pscustomobject]@{ Name = "PSGallery"; InstallationPolicy = "Trusted" } }
@@ -25,20 +26,51 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         # function shadow plus a global invocation counter rather than Mock. This is the one command
         # that cannot use Mock here; everything else uses Mock (which correctly intercepts the
         # dot-sourced ModuleHelpers functions).
+        $global:WallstopInstallModuleShouldThrow = $false
+        function Global:Install-Module {
+            [CmdletBinding()]
+            param(
+                [string]$Name,
+                [string]$Repository,
+                [string]$Scope,
+                [version]$MinimumVersion,
+                [switch]$Force,
+                [switch]$SkipPublisherCheck
+            )
+
+            $parameters = @{}
+            foreach ($key in $PSBoundParameters.Keys) {
+                $parameters[$key] = $PSBoundParameters[$key]
+            }
+
+            $script:installModuleCalls.Add($parameters) | Out-Null
+            if ($global:WallstopInstallModuleShouldThrow) {
+                throw "simulated install failure"
+            }
+        }
+
         $global:WallstopRegisterPSRepositoryCalls = [System.Collections.Generic.List[object]]::new()
+        $global:WallstopRegisterPSRepositoryShouldThrow = $false
         function Global:Register-PSRepository {
             [CmdletBinding()]
             param(
                 [switch]$Default
             )
 
+            if ($global:WallstopRegisterPSRepositoryShouldThrow) {
+                throw "simulated registration failure"
+            }
+
             $global:WallstopRegisterPSRepositoryCalls.Add([pscustomobject]@{ Default = [bool]$Default })
         }
     }
 
     AfterEach {
+        Remove-Item -Path Function:Install-Module -ErrorAction SilentlyContinue
         Remove-Item -Path Function:Register-PSRepository -ErrorAction SilentlyContinue
+        Remove-Variable -Name WallstopInstallModuleShouldThrow -Scope Global -ErrorAction SilentlyContinue
         Remove-Variable -Name WallstopRegisterPSRepositoryCalls -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name WallstopRegisterPSRepositoryShouldThrow -Scope Global -ErrorAction SilentlyContinue
     }
 
     It "parses without syntax errors" {
@@ -55,9 +87,9 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
 
         Mock Get-CommandWithOptionalModuleImport { [pscustomobject]@{ Name = $Command } }.GetNewClosure()
 
-        & $script:bootstrapPath -Modules $Module
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules $Module
 
-        Should -Invoke Install-Module -Times 0
+        @($script:installModuleCalls).Count | Should -Be 0
     }
 
     It "installs the module when it is not yet satisfied" {
@@ -70,18 +102,63 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
             if ($state.Count -eq 1) { $null } else { [pscustomobject]@{ Name = "Invoke-Pester" } }
         }.GetNewClosure()
 
-        & $script:bootstrapPath -Modules Pester
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester
 
-        Should -Invoke Install-Module -Times 1
+        @($script:installModuleCalls).Count | Should -Be 1
+    }
+
+    It "installs without SkipPublisherCheck when PSGallery trust setup succeeds" {
+        $state = @{ Count = 0 }
+        Mock Get-CommandWithOptionalModuleImport {
+            $state.Count++
+            if ($state.Count -eq 1) { $null } else { [pscustomobject]@{ Name = "Invoke-Pester" } }
+        }.GetNewClosure()
+
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester
+
+        @($script:installModuleCalls).Count | Should -Be 1
+        $script:installModuleCalls[0].ContainsKey("SkipPublisherCheck") | Should -BeFalse
+        Should -Invoke Write-Warning -ParameterFilter { $Message -match "W_MODULE_BOOTSTRAP_SKIP_PUBLISHER_CHECK_FALLBACK" } -Times 0
+    }
+
+    It "uses SkipPublisherCheck when PSGallery trust setup is explicitly skipped" {
+        $state = @{ Count = 0 }
+        Mock Get-CommandWithOptionalModuleImport {
+            $state.Count++
+            if ($state.Count -eq 1) { $null } else { [pscustomobject]@{ Name = "Invoke-Pester" } }
+        }.GetNewClosure()
+
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester -SkipPSGalleryTrust
+
+        @($script:installModuleCalls).Count | Should -Be 1
+        $script:installModuleCalls[0].ContainsKey("SkipPublisherCheck") | Should -BeTrue
+        Should -Invoke Write-Warning -ParameterFilter { $Message -match "W_MODULE_BOOTSTRAP_SKIP_PUBLISHER_CHECK_FALLBACK" -and $Message -match "SkipPSGalleryTrust" } -Times 1
+    }
+
+    It "uses SkipPublisherCheck when PSGallery registration and trust setup degrade" {
+        $state = @{ Count = 0 }
+        Mock Get-CommandWithOptionalModuleImport {
+            $state.Count++
+            if ($state.Count -eq 1) { $null } else { [pscustomobject]@{ Name = "Invoke-Pester" } }
+        }.GetNewClosure()
+        Mock Get-PSRepository { $null }
+        Mock Set-PSRepository { throw "simulated trust failure" }
+        $global:WallstopRegisterPSRepositoryShouldThrow = $true
+
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester
+
+        @($script:installModuleCalls).Count | Should -Be 1
+        $script:installModuleCalls[0].ContainsKey("SkipPublisherCheck") | Should -BeTrue
+        Should -Invoke Write-Warning -ParameterFilter { $Message -match "W_MODULE_BOOTSTRAP_SKIP_PUBLISHER_CHECK_FALLBACK" -and $Message -match "gallery-register-failed" -and $Message -match "gallery-trust-update-failed" } -Times 1
     }
 
     It "throws an actionable diagnostic when installation fails" {
         Mock Get-CommandWithOptionalModuleImport { $null }
-        Mock Install-Module { throw "simulated install failure" }
+        $global:WallstopInstallModuleShouldThrow = $true
         Mock Get-AvailableModuleVersionsText { "(none)" }
         Mock Get-ModulePathDiagnosticsText { "entryCount=0; existingEntryCount=0; entries=(none)" }
 
-        { & $script:bootstrapPath -Modules Pester } | Should -Throw -ExpectedMessage "*E_MODULE_BOOTSTRAP_INSTALL_FAILED*"
+        { Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester } | Should -Throw -ExpectedMessage "*E_MODULE_BOOTSTRAP_INSTALL_FAILED*"
     }
 
     It "throws an actionable diagnostic when verification fails after install" {
@@ -90,14 +167,14 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         Mock Get-AvailableModuleVersionsText { "(none)" }
         Mock Get-ModulePathDiagnosticsText { "entryCount=0; existingEntryCount=0; entries=(none)" }
 
-        { & $script:bootstrapPath -Modules Pester } | Should -Throw -ExpectedMessage "*E_MODULE_BOOTSTRAP_VERIFY_FAILED*"
+        { Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester } | Should -Throw -ExpectedMessage "*E_MODULE_BOOTSTRAP_VERIFY_FAILED*"
     }
 
     It "bypasses all repository setup when -SkipPSGalleryTrust is supplied" {
         Mock Get-CommandWithOptionalModuleImport { [pscustomobject]@{ Name = "Invoke-Pester" } }
         Mock Get-PSRepository { $null }
 
-        & $script:bootstrapPath -Modules Pester -SkipPSGalleryTrust
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester -SkipPSGalleryTrust
 
         Should -Invoke Set-PSRepository -Times 0
         Should -Invoke Get-PackageProvider -Times 0
@@ -108,7 +185,7 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         Mock Get-CommandWithOptionalModuleImport { [pscustomobject]@{ Name = "Invoke-Pester" } }
         Mock Set-PSRepository { throw "simulated trust failure" }
 
-        { & $script:bootstrapPath -Modules Pester } | Should -Not -Throw
+        { Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester } | Should -Not -Throw
         Should -Invoke Write-Warning -ParameterFilter { $Message -match "W_MODULE_BOOTSTRAP_TRUST_UPDATE_FAILED" }
     }
 
@@ -116,7 +193,7 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         Mock Get-CommandWithOptionalModuleImport { [pscustomobject]@{ Name = "Invoke-Pester" } }
         Mock Get-PSRepository { $null }
 
-        & $script:bootstrapPath -Modules Pester
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester
 
         @($global:WallstopRegisterPSRepositoryCalls).Count | Should -Be 1
         $global:WallstopRegisterPSRepositoryCalls[0].Default | Should -BeTrue
@@ -126,7 +203,7 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         Mock Get-CommandWithOptionalModuleImport { [pscustomobject]@{ Name = "Invoke-Pester" } }
         Mock Get-PSRepository { [pscustomobject]@{ Name = "PSGallery" } }
 
-        & $script:bootstrapPath -Modules Pester
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester
 
         @($global:WallstopRegisterPSRepositoryCalls).Count | Should -Be 0
     }
@@ -134,7 +211,7 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
     It "bootstraps the NuGet package provider" {
         Mock Get-CommandWithOptionalModuleImport { [pscustomobject]@{ Name = "Invoke-Pester" } }
 
-        & $script:bootstrapPath -Modules Pester
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester
 
         Should -Invoke Get-PackageProvider -ParameterFilter { $Name -eq "NuGet" }
     }

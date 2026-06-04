@@ -63,7 +63,7 @@ When `pwsh` is available, `.githooks/pre-commit` runs `Scripts/Utils/Quality/Inv
 For Copilot/agent-driven ad-hoc test runs, do not call `Invoke-Pester` directly in terminal sessions. Use a timeout-bounded quality-gate invocation with low output verbosity:
 
 ```bash
-timeout --foreground 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1 -TestPath Tests/Utils/ScriptSafetyConventions.Tests.ps1 -OutputVerbosity None -DiagnosticsPrefix AgentSafe
+timeout -k 5s 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1 -TestPath Tests/Utils/ScriptSafetyConventions.Tests.ps1 -OutputVerbosity None -DiagnosticsPrefix AgentSafe
 ```
 
 On macOS hosts, use `gtimeout` if `timeout` is unavailable.

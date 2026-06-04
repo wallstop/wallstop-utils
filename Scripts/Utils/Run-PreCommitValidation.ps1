@@ -802,7 +802,7 @@ function Invoke-PesterQualityGateInIsolatedProcess {
 
         if (-not $process.WaitForExit($timeoutMilliseconds)) {
             try {
-                $process.Kill()
+                Stop-ProcessTreePortably -Process $process
             }
             catch {
                 # Preserve timeout diagnostics if process termination fails.
@@ -925,7 +925,7 @@ function Invoke-PesterQualityGateInIsolatedProcess {
             }
 
             try {
-                $process.Kill()
+                Stop-ProcessTreePortably -Process $process
             }
             catch {
                 Write-Verbose "Isolated Pester cleanup diagnostics: failed to kill process '$SuiteLabel': $($_.Exception.Message)"

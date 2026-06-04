@@ -833,6 +833,9 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $preCommitHook | Should -Match 'E_HOOK_TIMEOUT_CONFIG'
         $preCommitHook | Should -Match 'W_HOOK_RUNTIME_BUDGET'
+        $preCommitHook | Should -Match 'HookTimeout\.sh'
+        $preCommitHook | Should -Match 'wallstop_resolve_timeout_command'
+        $preCommitHook | Should -Match 'wallstop_start_timeout_command'
         $preCommitHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt "\$minimum_precommit_timeout_seconds" \]\]'
         $preCommitHook | Should -Match 'grep -Ei'
 
@@ -846,6 +849,9 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook | Should -Match 'run_with_timeout'
         $prePushHook | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $prePushHook | Should -Match 'W_HOOK_RUNTIME_BUDGET'
+        $prePushHook | Should -Match 'HookTimeout\.sh'
+        $prePushHook | Should -Match 'wallstop_resolve_timeout_command'
+        $prePushHook | Should -Match 'wallstop_start_timeout_command'
     }
 
     It "provides a hook-preflighted push helper for branches without upstreams" {
@@ -1067,18 +1073,32 @@ Describe "Cross-language quality platform conventions" {
         $readme = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'README.md') -Raw
         $postCreatePath = Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh'
         $postCreate = Get-Content -Path $postCreatePath -Raw
+        $hookTimeoutHelperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/HookTimeout.sh'
+        $hookTimeoutHelper = Get-Content -Path $hookTimeoutHelperPath -Raw
         $recoveryScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1') -Raw
 
         $preCommitHook | Should -Match 'resolve_timeout_command'
         $preCommitHook | Should -Match 'E_HOOK_TIMEOUT'
         $preCommitHook | Should -Match 'using shell watchdog timeout'
         $preCommitHook | Should -Match 'sleep "\$timeout_seconds"'
-        $preCommitHook | Should -Match 'kill -TERM "\$command_pid"'
+        $preCommitHook | Should -Match 'wallstop_start_timeout_command'
+        $preCommitHook | Should -Match 'wallstop_terminate_timeout_command'
+        $preCommitHook | Should -Match 'wallstop_cleanup_timeout_command_processes'
+        $preCommitHook | Should -Match '\$timeout_command"\s+-k\s+2s\s+"\$\{timeout_seconds\}s"'
+        $preCommitHook | Should -Not -Match 'timeout_command"\s+--foreground'
+        $preCommitHook | Should -Not -Match 'kill\s+-TERM\s+"\$command_pid"'
+        $preCommitHook | Should -Not -Match 'kill\s+-KILL\s+"\$command_pid"'
         $prePushHook | Should -Match 'resolve_timeout_command'
         $prePushHook | Should -Match 'E_HOOK_TIMEOUT'
         $prePushHook | Should -Match 'using shell watchdog timeout'
         $prePushHook | Should -Match 'sleep "\$timeout_seconds"'
-        $prePushHook | Should -Match 'kill -TERM "\$command_pid"'
+        $prePushHook | Should -Match 'wallstop_start_timeout_command'
+        $prePushHook | Should -Match 'wallstop_terminate_timeout_command'
+        $prePushHook | Should -Match 'wallstop_cleanup_timeout_command_processes'
+        $prePushHook | Should -Match '\$timeout_command"\s+-k\s+2s\s+"\$\{timeout_seconds\}s"'
+        $prePushHook | Should -Not -Match 'timeout_command"\s+--foreground'
+        $prePushHook | Should -Not -Match 'kill\s+-TERM\s+"\$command_pid"'
+        $prePushHook | Should -Not -Match 'kill\s+-KILL\s+"\$command_pid"'
         $prePushHook | Should -Match 'pre-push full validation'
         $prePushHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt 30 \]\]'
 
@@ -1100,6 +1120,27 @@ Describe "Cross-language quality platform conventions" {
         $postCreate | Should -Match 'Invoke-FullValidation\.ps1 -PreflightOnly'
         $postCreate | Should -Match 'using shell watchdog timeout'
         $postCreate | Should -Match 'E_HOOK_TIMEOUT'
+        $postCreate | Should -Match 'HookTimeout\.sh'
+        $postCreate | Should -Match 'wallstop_start_timeout_command'
+        $postCreate | Should -Match 'wallstop_terminate_timeout_command'
+        $postCreate | Should -Match 'wallstop_cleanup_timeout_command_processes'
+        $postCreate | Should -Match '\$timeout_command"\s+-k\s+2s\s+"\$\{timeout_seconds\}s"'
+        $postCreate | Should -Not -Match 'timeout_command"\s+--foreground'
+        $postCreate | Should -Not -Match 'kill\s+-TERM\s+"\$\{command_pid\}"'
+        $postCreate | Should -Not -Match 'kill\s+-KILL\s+"\$\{command_pid\}"'
+
+        $hookTimeoutHelper | Should -Match 'function\s+wallstop_start_timeout_command|wallstop_start_timeout_command\(\)'
+        $hookTimeoutHelper | Should -Match '\bsetsid\b'
+        $hookTimeoutHelper | Should -Match 'os\.setsid\(\)'
+        $hookTimeoutHelper | Should -Match 'wallstop_can_start_session_with_setsid'
+        $hookTimeoutHelper | Should -Match 'kill -0 -- "-\$\$"'
+        $hookTimeoutHelper | Should -Match 'os\.kill\(-os\.getpid\(\), 0\)'
+        $hookTimeoutHelper | Should -Match 'kill 0, -\$\$'
+        $hookTimeoutHelper | Should -Match 'wallstop_terminate_timeout_command'
+        $hookTimeoutHelper | Should -Match 'kill "\-\$\{signal_name\}" -- "-\$\{command_pid\}"'
+        $hookTimeoutHelper | Should -Match 'wallstop_cleanup_timeout_command_processes'
+        $hookTimeoutHelper | Should -Match 'W_HOOK_PROCESS_GROUP_UNAVAILABLE'
+        $hookTimeoutHelper | Should -Match 'W_HOOK_PROCESS_GROUP_CLEANUP'
 
         $streamDrainMatch = [regex]::Match($recoveryScript, '\[int\]\$StreamDrainTimeoutMilliseconds\s*=\s*(?<milliseconds>\d+)')
         $preCommitBufferMatch = [regex]::Match($preCommitHook, 'precommit_recovery_shutdown_buffer_seconds=(?<seconds>\d+)')
@@ -3634,7 +3675,10 @@ $result = "value {0} {1}" -f
         $content | Should -Match 'Common/ModuleHelpers\.ps1'
         $content | Should -Match '\[ValidateSet\("Pester",\s*"PSScriptAnalyzer"\)\]'
         $content | Should -Match 'Set-PSRepository\s+-Name\s+"PSGallery"\s+-InstallationPolicy\s+Trusted'
-        $content | Should -Match 'Install-Module\s+-Name\s+\$requirement\.ModuleName\s+-Repository\s+"PSGallery"\s+-Scope\s+CurrentUser\s+-MinimumVersion\s+\$requirement\.MinimumVersion\s+-Force'
+        $content | Should -Match 'Install-PowerShellQualityModuleRequirement'
+        $content | Should -Match '\$installModuleParameters\["SkipPublisherCheck"\]\s*=\s*\$true'
+        $content | Should -Match 'W_MODULE_BOOTSTRAP_SKIP_PUBLISHER_CHECK_FALLBACK'
+        $content | Should -Not -Match 'Install-Module[^\r\n]*-SkipPublisherCheck'
         $content | Should -Match 'E_MODULE_BOOTSTRAP_INSTALL_FAILED'
         $content | Should -Match 'E_MODULE_BOOTSTRAP_VERIFY_FAILED'
     }
@@ -3707,7 +3751,7 @@ $result = "value {0} {1}" -f
         $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'override minimum is 45s'
         $validationWorkflowContent | Should -Match 'do not call `Invoke-Pester` directly'
-        $validationWorkflowContent | Should -Match 'timeout --foreground 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate\.ps1'
+        $validationWorkflowContent | Should -Match 'timeout -k 5s 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate\.ps1'
         $validationWorkflowContent | Should -Match 'OutputVerbosity None'
 
         $skillDetailContent | Should -Match 'Timeout-Guarded Hook Execution'
@@ -3851,6 +3895,25 @@ $result = "value {0} {1}" -f
         $windowsChecks | Should -Match 'Write-Verbose\s+"Batch checks: running best-effort static smoke checks'
         $windowsChecks | Should -Match 'Write-Verbose\s+"Windows language checks: running in targeted mode'
         $windowsChecks | Should -Not -Match 'Write-Host\s+"Batch checks limitation:'
+    }
+
+    It "keeps portable process-tree cleanup from degrading to parent-only kills" {
+        $compatibilityHelpersPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/CompatibilityHelpers.ps1'
+        $compatibilityHelpers = (Get-Content -Path $compatibilityHelpersPath -Raw) -replace "`r", ''
+        $preCommit = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1') -Raw) -replace "`r", ''
+        $windowsChecks = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1') -Raw) -replace "`r", ''
+        $compatibilityTests = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Tests/Utils/CompatibilityHelpers.Tests.ps1') -Raw) -replace "`r", ''
+
+        $compatibilityHelpers | Should -Match 'function\s+Get-ChildProcessIdsPortably'
+        $compatibilityHelpers | Should -Match 'function\s+Get-ProcessDescendantIdsPortably'
+        $compatibilityHelpers | Should -Match 'function\s+Stop-ProcessTreeFallbackPortably'
+        $compatibilityHelpers | Should -Match 'Get-CimInstance'
+        $compatibilityHelpers | Should -Match '\bpgrep\b'
+        $compatibilityHelpers | Should -Match '\bps\b'
+        $compatibilityHelpers | Should -Match 'Stop-ProcessTreeFallbackPortably\s+-Process\s+\$Process'
+        $preCommit | Should -Match 'Stop-ProcessTreePortably\s+-Process\s+\$process'
+        $windowsChecks | Should -Match 'Stop-ProcessTreePortably\s+-Process\s+\$process'
+        $compatibilityTests | Should -Match 'terminates descendants when using the explicit fallback path'
     }
 
     It "keeps Invoke-PesterQualityGate diagnostics low-noise" {

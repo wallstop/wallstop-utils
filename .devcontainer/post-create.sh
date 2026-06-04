@@ -14,18 +14,18 @@ echo "[devcontainer] Bootstrapping tooling..."
 _log() { echo "[devcontainer] $*"; }
 _warn() { echo "[devcontainer] WARNING: $*" >&2; }
 
+WALLSTOP_TIMEOUT_WARNING_PREFIX="[devcontainer] WARNING: "
+hook_timeout_helpers_path="${ROOT_DIR}/Scripts/Utils/Common/HookTimeout.sh"
+if [[ ! -f "${hook_timeout_helpers_path}" ]]; then
+  _warn "E_HOOK_TIMEOUT_HELPER_MISSING: timeout helper file not found at '${hook_timeout_helpers_path}'."
+  exit 1
+fi
+
+# shellcheck source=Scripts/Utils/Common/HookTimeout.sh
+. "${hook_timeout_helpers_path}"
+
 _resolve_timeout_command() {
-  if command -v timeout > /dev/null 2>&1; then
-    printf '%s\n' "timeout"
-    return 0
-  fi
-
-  if command -v gtimeout > /dev/null 2>&1; then
-    printf '%s\n' "gtimeout"
-    return 0
-  fi
-
-  return 1
+  wallstop_resolve_timeout_command
 }
 
 _validate_timeout_seconds() {
@@ -50,7 +50,7 @@ _run_with_timeout() {
   local timeout_command
   if timeout_command="$(_resolve_timeout_command)"; then
     set +e
-    "$timeout_command" --foreground "${timeout_seconds}s" "$@"
+    "$timeout_command" -k 2s "${timeout_seconds}s" "$@"
     local command_exit=$?
     set -e
     if [[ $command_exit -eq 124 || $command_exit -eq 137 ]]; then
@@ -68,17 +68,16 @@ _run_with_timeout() {
   rm -f "${timeout_flag_file}"
 
   set +e
-  "$@" &
-  local command_pid=$!
+  WALLSTOP_TIMEOUT_COMMAND_PID=""
+  WALLSTOP_TIMEOUT_COMMAND_PROCESS_GROUP_MODE=""
+  wallstop_start_timeout_command "$*" "$@"
+  local command_pid="${WALLSTOP_TIMEOUT_COMMAND_PID}"
+  local command_process_group_mode="${WALLSTOP_TIMEOUT_COMMAND_PROCESS_GROUP_MODE}"
   (
     sleep "${timeout_seconds}"
-    if kill -0 "${command_pid}" > /dev/null 2>&1; then
+    if wallstop_is_timeout_command_alive "${command_pid}" "${command_process_group_mode}"; then
       : > "${timeout_flag_file}"
-      kill -TERM "${command_pid}" > /dev/null 2>&1 || true
-      sleep 2
-      if kill -0 "${command_pid}" > /dev/null 2>&1; then
-        kill -KILL "${command_pid}" > /dev/null 2>&1 || true
-      fi
+      wallstop_terminate_timeout_command "${command_pid}" "${command_process_group_mode}"
     fi
   ) &
   local watchdog_pid=$!
@@ -87,6 +86,7 @@ _run_with_timeout() {
   local fallback_exit=$?
   kill "${watchdog_pid}" > /dev/null 2>&1 || true
   wait "${watchdog_pid}" > /dev/null 2>&1 || true
+  wallstop_cleanup_timeout_command_processes "${command_pid}" "${command_process_group_mode}" "$*"
   set -e
 
   if [[ -f "${timeout_flag_file}" ]]; then

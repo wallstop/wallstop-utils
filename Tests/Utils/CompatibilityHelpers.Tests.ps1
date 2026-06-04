@@ -451,6 +451,100 @@ Describe "Stop-ProcessTreePortably" {
             [void]$process.Start()
             return $process
         }
+
+        function Test-ProcessIdAlive {
+            param(
+                [Parameter(Mandatory = $true)]
+                [int]$ProcessId
+            )
+
+            try {
+                $process = [System.Diagnostics.Process]::GetProcessById($ProcessId)
+                try {
+                    return (-not $process.HasExited)
+                }
+                finally {
+                    $process.Dispose()
+                }
+            }
+            catch {
+                return $false
+            }
+        }
+
+        function Wait-ProcessIdExit {
+            param(
+                [Parameter(Mandatory = $true)]
+                [int]$ProcessId,
+
+                [Parameter(Mandatory = $false)]
+                [int]$TimeoutMilliseconds = 20000
+            )
+
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($stopwatch.ElapsedMilliseconds -lt $TimeoutMilliseconds) {
+                if (-not (Test-ProcessIdAlive -ProcessId $ProcessId)) {
+                    return $true
+                }
+
+                Start-Sleep -Milliseconds 100
+            }
+
+            return $false
+        }
+
+        function Wait-FileText {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string]$Path,
+
+                [Parameter(Mandatory = $false)]
+                [int]$TimeoutMilliseconds = 10000
+            )
+
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($stopwatch.ElapsedMilliseconds -lt $TimeoutMilliseconds) {
+                if (Test-Path -LiteralPath $Path -PathType Leaf) {
+                    $content = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8).Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($content)) {
+                        return $content
+                    }
+                }
+
+                Start-Sleep -Milliseconds 100
+            }
+
+            throw "Timed out waiting for file text at '$Path'."
+        }
+
+        function Start-LongRunningProcessWithChild {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string]$ChildPidPath
+            )
+
+            $escapedPowerShellPath = ([string]$script:killHostPwsh).Replace("'", "''")
+            $escapedChildPidPath = ([string]$ChildPidPath).Replace("'", "''")
+            $commandText = @"
+`$childStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+`$childStartInfo.FileName = '$escapedPowerShellPath'
+`$childStartInfo.UseShellExecute = `$false
+`$childStartInfo.CreateNoWindow = `$true
+`$childStartInfo.Arguments = '-NoLogo -NoProfile -Command "Start-Sleep -Seconds 120"'
+`$child = [System.Diagnostics.Process]::Start(`$childStartInfo)
+[System.IO.File]::WriteAllText('$escapedChildPidPath', [string]`$child.Id, [System.Text.Encoding]::UTF8)
+Start-Sleep -Seconds 120
+"@
+
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $script:killHostPwsh
+            $startInfo.UseShellExecute = $false
+            Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-NoLogo", "-NoProfile", "-Command", $commandText)
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            [void]$process.Start()
+            return $process
+        }
     }
 
     It "terminates a running process via <Case>" -ForEach @(
@@ -471,6 +565,36 @@ Describe "Stop-ProcessTreePortably" {
                 $process.Kill()
             }
             $process.Dispose()
+        }
+    }
+
+    It "terminates descendants when using the explicit fallback path" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-process-tree-test-{0}" -f [guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($tempRoot)
+        $childPidPath = Join-Path -Path $tempRoot -ChildPath "child.pid"
+
+        $parentProcess = Start-LongRunningProcessWithChild -ChildPidPath $childPidPath
+        $childProcessId = -1
+        try {
+            $childPidText = Wait-FileText -Path $childPidPath
+            $childProcessId = [int]$childPidText
+            Test-ProcessIdAlive -ProcessId $childProcessId | Should -BeTrue -Because "the child process should still be running before fallback cleanup."
+
+            Stop-ProcessTreePortably -Process $parentProcess -ForceFallback
+            $parentProcess.WaitForExit(20000) | Should -BeTrue -Because "the parent process must be terminated by fallback cleanup."
+            Wait-ProcessIdExit -ProcessId $childProcessId | Should -BeTrue -Because "the fallback cleanup must also terminate descendants."
+        }
+        finally {
+            if ($childProcessId -gt 0 -and (Test-ProcessIdAlive -ProcessId $childProcessId)) {
+                Stop-ProcessByIdPortably -ProcessId $childProcessId
+            }
+
+            if (-not $parentProcess.HasExited) {
+                $parentProcess.Kill()
+            }
+
+            $parentProcess.Dispose()
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }
