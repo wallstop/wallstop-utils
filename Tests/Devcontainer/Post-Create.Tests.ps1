@@ -3,6 +3,8 @@ $ErrorActionPreference = "Stop"
 
 BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
+    . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1")
+
     $script:postCreatePath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/post-create.sh"
     $script:postCreateContent = Get-Content -Path $script:postCreatePath -Raw
     $script:devcontainerWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/devcontainer-validate.yml"
@@ -286,12 +288,21 @@ Describe "post-create.sh ripgrep installation" {
 Describe "post-create.sh Codex CLI bootstrap" {
     BeforeAll {
         $script:ensureNpmOnPathBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_ensure_npm_on_path"
+        $script:testCodexPathIsLocalBinEntryBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_test_codex_path_is_local_bin_entry"
+        $script:resolveCodexNpmPackageBinBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_resolve_codex_npm_package_bin"
+        $script:testCodexLocalBinIsNpmManagedBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_test_codex_local_bin_is_npm_managed"
+        $script:resolveCodexNpmGlobalBinBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_resolve_codex_npm_global_bin"
+        $script:resolveCodexPathWithoutLocalBinBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_resolve_codex_path_without_local_bin"
         $script:installCodexCliBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_install_codex_cli"
         $script:linkCodexBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_link_codex_into_local_bin"
     }
 
     It "defines a dedicated Codex install function" {
         $script:postCreateContent | Should -Match '_install_codex_cli\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_resolve_codex_npm_package_bin\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_test_codex_local_bin_is_npm_managed\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_resolve_codex_npm_global_bin\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_resolve_codex_path_without_local_bin\(\)\s*\{'
         $script:postCreateContent | Should -Match '_link_codex_into_local_bin\(\)\s*\{'
     }
 
@@ -326,19 +337,276 @@ Describe "post-create.sh Codex CLI bootstrap" {
     It "guards against self-referential ~/.local/bin/codex symlink loops" {
         $script:linkCodexBody | Should -Match 'codex_source_path.*codex_link_path'
         $script:linkCodexBody | Should -Match 'readlink\s+"\$\{codex_link_path\}"'
-        $script:linkCodexBody | Should -Match 'Skipping Codex symlink update to avoid self-referential'
-        $script:linkCodexBody | Should -Match 'ln\s+-sf\s+"\$\{codex_source_path\}"\s+"\$\{codex_link_path\}"'
+        $script:linkCodexBody | Should -Match 'E_DEVCONTAINER_CODEX_LINK_FAILED'
+        $script:linkCodexBody | Should -Match 'refusing to use \${codex_link_path} as its own link source'
+        $script:linkCodexBody | Should -Match 'ln\s+-sfn\s+"\$\{codex_source_path\}"\s+"\$\{codex_link_path\}"'
+        $script:linkCodexBody | Should -Match 'points to.*after link.*expected'
+        $script:linkCodexBody | Should -Match 'not executable after linking'
     }
 
-    It "treats ~/.local/bin/codex regular executable source as already valid" {
-        $script:linkCodexBody | Should -Match '(?s)"\$\{codex_source_path\}"\s*==\s*"\$\{codex_link_path\}".*\[\[\s+-x\s+"\$\{codex_link_path\}"\s+\]\]\s*&&\s*\[\[\s+!\s+-L\s+"\$\{codex_link_path\}"\s+\]\].*return\s+0'
+    It "accepts local npm-prefix Codex only when package metadata proves npm ownership" {
+        $script:linkCodexBody | Should -Match 'refusing to use \${codex_link_path} as its own link source'
+        $script:installCodexCliBody | Should -Not -Match '_link_codex_into_local_bin\s+"\$\{codex_path\}"\s+1'
+        $script:resolveCodexNpmPackageBinBody | Should -Match 'npm root --global'
+        $script:resolveCodexNpmPackageBinBody | Should -Match '@openai/codex'
+        $script:resolveCodexNpmGlobalBinBody | Should -Match '_test_codex_local_bin_is_npm_managed'
+        $script:installCodexCliBody | Should -Match '_test_codex_path_is_local_bin_entry'
     }
 
-    It "prefers npm prefix codex resolution before command -v fallback" {
-        $prefixIndex = ($script:installCodexCliBody | Select-String 'prefix_codex_path' -AllMatches).Matches[0].Index
-        $commandVIndex = ($script:installCodexCliBody | Select-String 'command -v codex' -AllMatches).Matches[0].Index
-        $prefixIndex | Should -BeLessThan $commandVIndex `
-            -Because "npm prefix resolution should run before command -v fallback to avoid recursive ~/.local/bin/codex links"
+    It "prefers npm global binary resolution before PATH fallback without ~/.local/bin" {
+        $prefixIndex = ($script:installCodexCliBody | Select-String '_resolve_codex_npm_global_bin' -AllMatches).Matches[0].Index
+        $pathFallbackIndex = ($script:installCodexCliBody | Select-String '_resolve_codex_path_without_local_bin' -AllMatches).Matches[0].Index
+        $prefixIndex | Should -BeLessThan $pathFallbackIndex `
+            -Because "npm global resolution should run before PATH fallback to avoid stale ~/.local/bin/codex links"
+        $pathFallbackIndex | Should -BeGreaterThan $prefixIndex
+        $script:resolveCodexPathWithoutLocalBinBody | Should -Match 'command\s+-v\s+codex'
+        $script:resolveCodexPathWithoutLocalBinBody | Should -Match 'local_bin_path="\$\{HOME\}/\.local/bin"'
+        $script:installCodexCliBody | Should -Not -Match 'command\s+-v\s+codex'
+    }
+
+    It "does not report success from a local-bin npm prefix or symlinked local-bin PATH fallback" {
+        $bash = Get-Command -Name bash -ErrorAction SilentlyContinue
+        if ($null -eq $bash) {
+            Set-ItResult -Skipped -Because "bash is unavailable on this runner."
+            return
+        }
+        if (Test-IsWindowsPlatform) {
+            Set-ItResult -Skipped -Because "Bash-level devcontainer bootstrap regression uses POSIX paths."
+            return
+        }
+
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("codex-link-regression-{0}" -f [guid]::NewGuid().ToString("N"))
+        $homeRoot = Join-Path -Path $tempRoot -ChildPath "home"
+        $localBin = Join-Path -Path $homeRoot -ChildPath ".local/bin"
+        $localBinAlias = Join-Path -Path $tempRoot -ChildPath "local-bin-alias"
+        $fakeBin = Join-Path -Path $tempRoot -ChildPath "fake-bin"
+        $oldBin = Join-Path -Path $tempRoot -ChildPath "old/bin"
+        $localPrefix = Join-Path -Path $homeRoot -ChildPath ".local"
+        $runnerPath = Join-Path -Path $tempRoot -ChildPath "run-codex-install.sh"
+        $fakeNpmPath = Join-Path -Path $fakeBin -ChildPath "npm"
+        $nodeCommand = Get-Command -Name node -ErrorAction SilentlyContinue
+        $oldCodexPath = Join-Path -Path $oldBin -ChildPath "codex"
+        $codexLinkPath = Join-Path -Path $localBin -ChildPath "codex"
+
+        if ($null -eq $nodeCommand) {
+            Set-ItResult -Skipped -Because "node is unavailable on this runner."
+            return
+        }
+
+        try {
+            foreach ($directory in @($localBin, $fakeBin, $oldBin)) {
+                [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+            }
+
+            [System.IO.File]::WriteAllText($oldCodexPath, "#!/usr/bin/env bash`necho old-codex`n", [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText(
+                $fakeNpmPath,
+                @'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "install --global @openai/codex@latest")
+    exit 0
+    ;;
+  "prefix --global"|"config get prefix")
+    printf '%s\n' "${TEST_NPM_PREFIX}"
+    exit 0
+    ;;
+esac
+exit 1
+'@,
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            & chmod +x $oldCodexPath
+            & chmod +x $fakeNpmPath
+            & ln -s $nodeCommand.Source (Join-Path -Path $fakeBin -ChildPath "node")
+            & ln -s $oldCodexPath $codexLinkPath
+            & ln -s $localBin $localBinAlias
+
+            $runnerContent = @(
+                '#!/usr/bin/env bash'
+                'set -euo pipefail'
+                '_log() { echo "[test] $*"; }'
+                '_warn() { echo "[test] WARNING: $*" >&2; }'
+                '_ensure_npm_on_path() { return 0; }'
+                '_run_with_timeout() { shift; "$@"; }'
+                $script:testCodexPathIsLocalBinEntryBody
+                $script:resolveCodexNpmPackageBinBody
+                $script:testCodexLocalBinIsNpmManagedBody
+                $script:resolveCodexNpmGlobalBinBody
+                $script:resolveCodexPathWithoutLocalBinBody
+                $script:linkCodexBody
+                $script:installCodexCliBody
+                'if _install_codex_cli; then'
+                '  install_status=0'
+                'else'
+                '  install_status=$?'
+                'fi'
+                'echo "install_status=${install_status}"'
+                'exit 0'
+            ) -join "`n"
+            [System.IO.File]::WriteAllText($runnerPath, $runnerContent, [System.Text.UTF8Encoding]::new($false))
+            & chmod +x $runnerPath
+
+            $originalHome = $env:HOME
+            $originalPath = $env:PATH
+            $originalPrefix = $env:TEST_NPM_PREFIX
+            try {
+                $env:HOME = $homeRoot
+                $env:PATH = "${fakeBin}:${localBinAlias}:/usr/bin:/bin"
+                $env:TEST_NPM_PREFIX = $localPrefix
+                $output = @(& $bash.Source $runnerPath 2>&1)
+            }
+            finally {
+                $env:HOME = $originalHome
+                $env:PATH = $originalPath
+                if ($null -eq $originalPrefix) {
+                    Remove-Item Env:TEST_NPM_PREFIX -ErrorAction SilentlyContinue
+                }
+                else {
+                    $env:TEST_NPM_PREFIX = $originalPrefix
+                }
+            }
+
+            $outputText = $output -join "`n"
+            $outputText | Should -Match 'install_status=1'
+            $outputText | Should -Match 'E_DEVCONTAINER_CODEX_BINARY_UNRESOLVED'
+            (& readlink $codexLinkPath) | Should -Be $oldCodexPath
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRoot) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force
+            }
+        }
+    }
+
+    It "reports success for a local npm prefix only when ~/.local/bin/codex resolves to the installed package bin" {
+        $bash = Get-Command -Name bash -ErrorAction SilentlyContinue
+        if ($null -eq $bash) {
+            Set-ItResult -Skipped -Because "bash is unavailable on this runner."
+            return
+        }
+        if (Test-IsWindowsPlatform) {
+            Set-ItResult -Skipped -Because "Bash-level devcontainer bootstrap regression uses POSIX paths."
+            return
+        }
+        $nodeCommand = Get-Command -Name node -ErrorAction SilentlyContinue
+        if ($null -eq $nodeCommand) {
+            Set-ItResult -Skipped -Because "node is unavailable on this runner."
+            return
+        }
+
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("codex-local-prefix-valid-{0}" -f [guid]::NewGuid().ToString("N"))
+        $homeRoot = Join-Path -Path $tempRoot -ChildPath "home"
+        $localPrefix = Join-Path -Path $homeRoot -ChildPath ".local"
+        $localBin = Join-Path -Path $localPrefix -ChildPath "bin"
+        $fakeBin = Join-Path -Path $tempRoot -ChildPath "fake-bin"
+        $npmRoot = Join-Path -Path $localPrefix -ChildPath "lib/node_modules"
+        $packageDir = Join-Path -Path $npmRoot -ChildPath "@openai/codex"
+        $packageBinDir = Join-Path -Path $packageDir -ChildPath "bin"
+        $packageBinPath = Join-Path -Path $packageBinDir -ChildPath "codex.js"
+        $packageManifestPath = Join-Path -Path $packageDir -ChildPath "package.json"
+        $runnerPath = Join-Path -Path $tempRoot -ChildPath "run-codex-install.sh"
+        $fakeNpmPath = Join-Path -Path $fakeBin -ChildPath "npm"
+        $codexLinkPath = Join-Path -Path $localBin -ChildPath "codex"
+
+        try {
+            foreach ($directory in @($localBin, $fakeBin, $packageBinDir)) {
+                [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+            }
+
+            [System.IO.File]::WriteAllText($packageBinPath, "#!/usr/bin/env bash`necho package-codex`n", [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText($packageManifestPath, '{"bin":{"codex":"bin/codex.js"}}', [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText(
+                $fakeNpmPath,
+                @'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "install --global @openai/codex@latest")
+    exit 0
+    ;;
+  "prefix --global"|"config get prefix")
+    printf '%s\n' "${TEST_NPM_PREFIX}"
+    exit 0
+    ;;
+  "root --global")
+    printf '%s\n' "${TEST_NPM_ROOT}"
+    exit 0
+    ;;
+esac
+exit 1
+'@,
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            & chmod +x $packageBinPath
+            & chmod +x $fakeNpmPath
+            & ln -s $nodeCommand.Source (Join-Path -Path $fakeBin -ChildPath "node")
+            & ln -s $packageBinPath $codexLinkPath
+
+            $runnerContent = @(
+                '#!/usr/bin/env bash'
+                'set -euo pipefail'
+                '_log() { echo "[test] $*"; }'
+                '_warn() { echo "[test] WARNING: $*" >&2; }'
+                '_ensure_npm_on_path() { return 0; }'
+                '_run_with_timeout() { shift; "$@"; }'
+                $script:testCodexPathIsLocalBinEntryBody
+                $script:resolveCodexNpmPackageBinBody
+                $script:testCodexLocalBinIsNpmManagedBody
+                $script:resolveCodexNpmGlobalBinBody
+                $script:resolveCodexPathWithoutLocalBinBody
+                $script:linkCodexBody
+                $script:installCodexCliBody
+                'if _install_codex_cli; then'
+                '  install_status=0'
+                'else'
+                '  install_status=$?'
+                'fi'
+                'echo "install_status=${install_status}"'
+                'exit 0'
+            ) -join "`n"
+            [System.IO.File]::WriteAllText($runnerPath, $runnerContent, [System.Text.UTF8Encoding]::new($false))
+            & chmod +x $runnerPath
+
+            $originalHome = $env:HOME
+            $originalPath = $env:PATH
+            $originalPrefix = $env:TEST_NPM_PREFIX
+            $originalRoot = $env:TEST_NPM_ROOT
+            try {
+                $env:HOME = $homeRoot
+                $env:PATH = "${fakeBin}:${localBin}:/usr/bin:/bin"
+                $env:TEST_NPM_PREFIX = $localPrefix
+                $env:TEST_NPM_ROOT = $npmRoot
+                $output = @(& $bash.Source $runnerPath 2>&1)
+            }
+            finally {
+                $env:HOME = $originalHome
+                $env:PATH = $originalPath
+                if ($null -eq $originalPrefix) {
+                    Remove-Item Env:TEST_NPM_PREFIX -ErrorAction SilentlyContinue
+                }
+                else {
+                    $env:TEST_NPM_PREFIX = $originalPrefix
+                }
+                if ($null -eq $originalRoot) {
+                    Remove-Item Env:TEST_NPM_ROOT -ErrorAction SilentlyContinue
+                }
+                else {
+                    $env:TEST_NPM_ROOT = $originalRoot
+                }
+            }
+
+            $outputText = $output -join "`n"
+            $outputText | Should -Match 'install_status=0'
+            $outputText | Should -Match 'Codex CLI available at '
+            (& readlink $codexLinkPath) | Should -Be $packageBinPath
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRoot) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force
+            }
+        }
     }
 
     It "invokes Codex install/update as non-blocking in the main flow" {

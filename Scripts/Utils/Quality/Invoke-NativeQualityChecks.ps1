@@ -227,15 +227,8 @@ function Select-NativeQualityToolTargetFiles {
         [string]$RepositoryRoot,
 
         [Parameter(Mandatory = $false)]
-        [string[]]$Files = @(),
-
-        [Parameter(Mandatory = $true)]
-        [bool]$FilterForTool
+        [string[]]$Files = @()
     )
-
-    if (-not $FilterForTool) {
-        return @($Files)
-    }
 
     return @(
         foreach ($file in @($Files)) {
@@ -335,10 +328,9 @@ function Invoke-NativeQualityChecksMain {
             return
         }
 
-        $filterForTool = ($SelectedTool -eq "All")
         $toolTargetMap = @{}
         foreach ($toolName in $toolNames) {
-            $matchingTargets = @(Select-NativeQualityToolTargetFiles -ToolName $toolName -RepositoryRoot $repositoryRoot -Files $targetPaths -FilterForTool $filterForTool)
+            $matchingTargets = @(Select-NativeQualityToolTargetFiles -ToolName $toolName -RepositoryRoot $repositoryRoot -Files $targetPaths)
             if ($matchingTargets.Count -gt 0) {
                 $toolTargetMap[$toolName] = $matchingTargets
             }

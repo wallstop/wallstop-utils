@@ -268,38 +268,297 @@ _ensure_npm_on_path() {
   return 1
 }
 
+_test_codex_path_is_local_bin_entry() {
+  local codex_path="$1"
+  local codex_dir=''
+  local codex_dir_real=''
+  local local_bin_path="${HOME}/.local/bin"
+  local local_bin_real_path=''
+
+  if [[ -z "${codex_path}" || "$(basename "${codex_path}")" != "codex" ]]; then
+    return 1
+  fi
+
+  codex_dir="$(dirname "${codex_path}")"
+  if [[ ! -d "${codex_dir}" || ! -d "${local_bin_path}" ]]; then
+    return 1
+  fi
+
+  codex_dir_real="$(cd -P "${codex_dir}" && pwd -P)"
+  local_bin_real_path="$(cd -P "${local_bin_path}" && pwd -P)"
+  [[ "${codex_dir_real}" == "${local_bin_real_path}" ]]
+}
+
+_resolve_codex_npm_package_bin() {
+  local npm_root_output=''
+  local npm_root=''
+  local package_dir=''
+  local package_manifest_path=''
+  local package_bin_path=''
+
+  if ! command -v node > /dev/null 2>&1; then
+    return 1
+  fi
+
+  if ! npm_root_output="$(npm root --global 2> /dev/null)"; then
+    return 1
+  fi
+
+  while IFS= read -r npm_root; do
+    if [[ -z "${npm_root}" || "${npm_root}" == "undefined" || "${npm_root}" == "null" ]]; then
+      continue
+    fi
+
+    if [[ "${npm_root}" != /* ]]; then
+      npm_root="$(cd "${npm_root}" 2> /dev/null && pwd || true)"
+      if [[ -z "${npm_root}" ]]; then
+        continue
+      fi
+    fi
+
+    package_dir="${npm_root}/@openai/codex"
+    package_manifest_path="${package_dir}/package.json"
+    if [[ ! -f "${package_manifest_path}" ]]; then
+      continue
+    fi
+
+    package_bin_path="$(
+      node -e '
+const fs = require("fs");
+const path = require("path");
+const manifestPath = process.argv[1];
+const packageDir = path.dirname(manifestPath);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const bin = typeof manifest.bin === "string" ? manifest.bin : manifest.bin && manifest.bin.codex;
+if (!bin) {
+  process.exit(1);
+}
+const resolved = path.resolve(packageDir, bin);
+const relative = path.relative(packageDir, resolved);
+if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  process.exit(1);
+}
+process.stdout.write(resolved);
+' "${package_manifest_path}" 2> /dev/null || true
+    )"
+
+    if [[ -n "${package_bin_path}" && -x "${package_bin_path}" ]]; then
+      printf '%s\n' "${package_bin_path}"
+      return 0
+    fi
+  done <<< "${npm_root_output}"
+
+  return 1
+}
+
+_test_codex_local_bin_is_npm_managed() {
+  local codex_path="$1"
+  local package_bin_path=''
+  local codex_real_path=''
+  local package_bin_real_path=''
+
+  if [[ ! -x "${codex_path}" ]]; then
+    return 1
+  fi
+
+  if ! _test_codex_path_is_local_bin_entry "${codex_path}"; then
+    return 1
+  fi
+
+  if ! package_bin_path="$(_resolve_codex_npm_package_bin)"; then
+    return 1
+  fi
+
+  codex_real_path="$(readlink -f "${codex_path}" 2> /dev/null || true)"
+  package_bin_real_path="$(readlink -f "${package_bin_path}" 2> /dev/null || true)"
+  [[ -n "${codex_real_path}" && -n "${package_bin_real_path}" && "${codex_real_path}" == "${package_bin_real_path}" ]]
+}
+
+_resolve_codex_npm_global_bin() {
+  local npm_prefix_output=''
+  local npm_prefix=''
+  local npm_prefix_command=''
+  local existing_prefix=''
+  local prefix_codex_path=''
+  local codex_link_path="${HOME}/.local/bin/codex"
+  local -a npm_prefixes=()
+
+  for npm_prefix_command in "prefix --global" "config get prefix"; do
+    case "${npm_prefix_command}" in
+      "prefix --global")
+        if ! npm_prefix_output="$(npm prefix --global 2> /dev/null)"; then
+          continue
+        fi
+        ;;
+      "config get prefix")
+        if ! npm_prefix_output="$(npm config get prefix 2> /dev/null)"; then
+          continue
+        fi
+        ;;
+    esac
+
+    while IFS= read -r npm_prefix; do
+      if [[ -z "${npm_prefix}" || "${npm_prefix}" == "undefined" || "${npm_prefix}" == "null" ]]; then
+        continue
+      fi
+
+      if [[ "${npm_prefix}" != /* ]]; then
+        npm_prefix="$(cd "${npm_prefix}" 2> /dev/null && pwd || true)"
+        if [[ -z "${npm_prefix}" ]]; then
+          continue
+        fi
+      fi
+
+      for existing_prefix in "${npm_prefixes[@]}"; do
+        if [[ "${existing_prefix}" == "${npm_prefix}" ]]; then
+          continue 2
+        fi
+      done
+
+      npm_prefixes+=("${npm_prefix}")
+    done <<< "${npm_prefix_output}"
+  done
+
+  for npm_prefix in "${npm_prefixes[@]}"; do
+    prefix_codex_path="${npm_prefix}/bin/codex"
+    if _test_codex_path_is_local_bin_entry "${prefix_codex_path}"; then
+      if _test_codex_local_bin_is_npm_managed "${prefix_codex_path}"; then
+        printf '%s\n' "${codex_link_path}"
+        return 0
+      fi
+      continue
+    fi
+
+    if [[ -x "${prefix_codex_path}" ]]; then
+      printf '%s\n' "${prefix_codex_path}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+_resolve_codex_path_without_local_bin() {
+  local codex_link_path="${HOME}/.local/bin/codex"
+  local local_bin_path="${HOME}/.local/bin"
+  local local_bin_real_path="${local_bin_path}"
+  local path_entry=''
+  local path_entry_real=''
+  local filtered_path=''
+  local codex_path=''
+  local codex_path_dir=''
+  local codex_path_dir_real=''
+  local codex_real_path=''
+  local codex_link_real_path=''
+  local old_ifs="${IFS}"
+  local -a path_entries=()
+  local -a filtered_path_entries=()
+
+  if [[ -d "${local_bin_path}" ]]; then
+    local_bin_real_path="$(cd -P "${local_bin_path}" && pwd -P)"
+  fi
+
+  IFS=':' read -r -a path_entries <<< "${PATH:-}"
+  IFS="${old_ifs}"
+  for path_entry in "${path_entries[@]}"; do
+    if [[ -z "${path_entry}" ]]; then
+      continue
+    fi
+
+    path_entry_real="${path_entry}"
+    if [[ -d "${path_entry}" ]]; then
+      path_entry_real="$(cd -P "${path_entry}" && pwd -P)"
+    fi
+
+    if [[ "${path_entry}" == "${local_bin_path}" || "${path_entry_real}" == "${local_bin_real_path}" ]]; then
+      continue
+    fi
+
+    filtered_path_entries+=("${path_entry}")
+  done
+
+  if ((${#filtered_path_entries[@]} == 0)); then
+    return 1
+  fi
+
+  IFS=':'
+  filtered_path="${filtered_path_entries[*]}"
+  IFS="${old_ifs}"
+
+  codex_path="$(PATH="${filtered_path}" command -v codex 2> /dev/null || true)"
+  if [[ -z "${codex_path}" || "${codex_path}" == "${codex_link_path}" || ! -x "${codex_path}" ]]; then
+    return 1
+  fi
+
+  codex_path_dir="$(dirname "${codex_path}")"
+  codex_path_dir_real="${codex_path_dir}"
+  if [[ -d "${codex_path_dir}" ]]; then
+    codex_path_dir_real="$(cd -P "${codex_path_dir}" && pwd -P)"
+  fi
+  if [[ "${codex_path_dir_real}" == "${local_bin_real_path}" ]]; then
+    return 1
+  fi
+
+  codex_real_path="$(readlink -f "${codex_path}" 2> /dev/null || true)"
+  codex_link_real_path="$(readlink -f "${codex_link_path}" 2> /dev/null || true)"
+  if [[ -n "${codex_real_path}" && -n "${codex_link_real_path}" && "${codex_real_path}" == "${codex_link_real_path}" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "${codex_path}"
+  return 0
+}
+
 _link_codex_into_local_bin() {
   local codex_source_path="$1"
   local codex_link_path="${HOME}/.local/bin/codex"
 
   if [[ -z "${codex_source_path}" ]]; then
+    _warn "E_DEVCONTAINER_CODEX_LINK_FAILED: Codex source path is empty; cannot update ${codex_link_path}."
     return 1
   fi
 
-  if [[ "${codex_source_path}" == "${codex_link_path}" ]]; then
-    if [[ -x "${codex_link_path}" ]] && [[ ! -L "${codex_link_path}" ]]; then
-      return 0
+  if [[ "${codex_source_path}" != /* ]]; then
+    local codex_source_dir
+    codex_source_dir="$(cd "$(dirname "${codex_source_path}")" 2> /dev/null && pwd || true)"
+    if [[ -n "${codex_source_dir}" ]]; then
+      codex_source_path="${codex_source_dir}/$(basename "${codex_source_path}")"
     fi
-
-    local existing_target=''
-    existing_target="$(readlink "${codex_link_path}" 2> /dev/null || true)"
-    if [[ -n "${existing_target}" ]] && [[ "${existing_target}" != /* ]]; then
-      existing_target="$(cd "$(dirname "${codex_link_path}")" && pwd)/${existing_target}"
-    fi
-    codex_source_path="${existing_target}"
   fi
 
-  if [[ -z "${codex_source_path}" ]] || [[ "${codex_source_path}" == "${codex_link_path}" ]]; then
-    _warn "Skipping Codex symlink update to avoid self-referential ~/.local/bin/codex link."
+  mkdir -p "${HOME}/.local/bin"
+
+  if [[ "${codex_source_path}" == "${codex_link_path}" ]]; then
+    _warn "E_DEVCONTAINER_CODEX_LINK_FAILED: refusing to use ${codex_link_path} as its own link source."
     return 1
   fi
 
   if [[ ! -x "${codex_source_path}" ]]; then
+    _warn "E_DEVCONTAINER_CODEX_SOURCE_NOT_EXECUTABLE: Codex source '${codex_source_path}' is missing or not executable."
     return 1
   fi
 
-  mkdir -p "${HOME}/.local/bin"
-  ln -sf "${codex_source_path}" "${codex_link_path}"
+  if ! ln -sfn "${codex_source_path}" "${codex_link_path}"; then
+    _warn "E_DEVCONTAINER_CODEX_LINK_FAILED: failed to link ${codex_link_path} to '${codex_source_path}'."
+    return 1
+  fi
+
+  local linked_target=''
+  linked_target="$(readlink "${codex_link_path}" 2> /dev/null || true)"
+  if [[ -n "${linked_target}" && "${linked_target}" != /* ]]; then
+    linked_target="$(cd "$(dirname "${codex_link_path}")" && pwd)/${linked_target}"
+  fi
+
+  if [[ "${linked_target}" != "${codex_source_path}" ]]; then
+    _warn "E_DEVCONTAINER_CODEX_LINK_FAILED: ${codex_link_path} points to '${linked_target}' after link; expected '${codex_source_path}'."
+    return 1
+  fi
+
+  if [[ ! -x "${codex_link_path}" ]]; then
+    _warn "E_DEVCONTAINER_CODEX_LINK_FAILED: ${codex_link_path} is not executable after linking to '${codex_source_path}'."
+    return 1
+  fi
+
   return 0
 }
 
@@ -325,21 +584,25 @@ _install_codex_cli() {
     set -e
 
     if ((install_exit == 0)); then
-      local npm_prefix
-      npm_prefix="$(npm config get prefix 2> /dev/null || true)"
-      local prefix_codex_path="${npm_prefix}/bin/codex"
-      if _link_codex_into_local_bin "${prefix_codex_path}"; then
-        _log "Codex CLI available at ${prefix_codex_path}."
-        return 0
+      local codex_path=''
+      if codex_path="$(_resolve_codex_npm_global_bin)"; then
+        if _test_codex_path_is_local_bin_entry "${codex_path}"; then
+          _log "Codex CLI available at ${codex_path}."
+          return 0
+        fi
+
+        if _link_codex_into_local_bin "${codex_path}"; then
+          _log "Codex CLI available at ${codex_path}."
+          return 0
+        fi
       fi
 
-      local codex_path=''
-      if codex_path="$(command -v codex 2> /dev/null)" && _link_codex_into_local_bin "${codex_path}"; then
+      if codex_path="$(_resolve_codex_path_without_local_bin)" && _link_codex_into_local_bin "${codex_path}"; then
         _log "Codex CLI available at ${codex_path}."
         return 0
       fi
 
-      _warn "Codex CLI install succeeded but codex binary could not be resolved."
+      _warn "E_DEVCONTAINER_CODEX_BINARY_UNRESOLVED: Codex CLI install succeeded but no executable npm-managed codex binary could be resolved outside stale local-bin fallbacks."
       return 1
     fi
 

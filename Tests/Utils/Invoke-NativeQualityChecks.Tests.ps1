@@ -103,8 +103,8 @@ Describe "Invoke-NativeQualityChecks target scoping" {
         $styluaPath = Join-Path -Path $script:repoRoot -ChildPath "Config/Wezterm/wezterm.lua"
         $workflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/script-quality.yml"
 
-        $styluaTargets = @(Select-NativeQualityToolTargetFiles -ToolName stylua -RepositoryRoot $script:repoRoot -Files @($styluaPath, $workflowPath) -FilterForTool $true)
-        $actionlintTargets = @(Select-NativeQualityToolTargetFiles -ToolName actionlint -RepositoryRoot $script:repoRoot -Files @($styluaPath, $workflowPath) -FilterForTool $true)
+        $styluaTargets = @(Select-NativeQualityToolTargetFiles -ToolName stylua -RepositoryRoot $script:repoRoot -Files @($styluaPath, $workflowPath))
+        $actionlintTargets = @(Select-NativeQualityToolTargetFiles -ToolName actionlint -RepositoryRoot $script:repoRoot -Files @($styluaPath, $workflowPath))
 
         $styluaTargets.Count | Should -Be 1
         (ConvertTo-NativeQualityRelativePath -RepositoryRoot $script:repoRoot -Path $styluaTargets[0]) | Should -Be "Config/Wezterm/wezterm.lua"
@@ -121,6 +121,63 @@ Describe "Invoke-NativeQualityChecks target scoping" {
 
         Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
         Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+    }
+
+    It "skips workflow-only targets in stylua mode before reading the manifest or resolving tools" {
+        Mock Read-NativeQualityToolManifest { throw "manifest should not be read for non-stylua targets" }
+        Mock Resolve-NativeQualityToolExecutable { throw "tool resolution should not run for non-stylua targets" }
+        Mock Invoke-StyluaQualityCheck { throw "stylua should not run for workflow-only targets" }
+
+        { Invoke-NativeQualityChecksMain -SelectedTool stylua -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @(".github/workflows/script-quality.yml") } |
+            Should -Not -Throw
+
+        Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
+        Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+        Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 0 -Exactly
+    }
+
+    It "skips Lua-only targets in actionlint mode before reading the manifest or resolving tools" {
+        Mock Read-NativeQualityToolManifest { throw "manifest should not be read for non-workflow targets" }
+        Mock Resolve-NativeQualityToolExecutable { throw "tool resolution should not run for non-workflow targets" }
+        Mock Invoke-ActionlintQualityCheck { throw "actionlint should not run for Lua-only targets" }
+
+        { Invoke-NativeQualityChecksMain -SelectedTool actionlint -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("Config/Wezterm/wezterm.lua") } |
+            Should -Not -Throw
+
+        Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
+        Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+        Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 0 -Exactly
+    }
+
+    It "passes only owned targets to a selected single native tool" {
+        $script:resolvedNativeSingleTools = New-Object System.Collections.Generic.List[string]
+        $script:styluaSingleToolTargets = @()
+
+        Mock Read-NativeQualityToolManifest {
+            return [pscustomobject]@{ tools = [pscustomobject]@{} }
+        }
+        Mock Resolve-NativeQualityToolExecutable {
+            param($Manifest, $ToolName, $RepositoryRoot)
+            $script:resolvedNativeSingleTools.Add($ToolName) | Out-Null
+            return "/tmp/$ToolName"
+        }
+        Mock Invoke-StyluaQualityCheck {
+            param($ExecutablePath, $RepositoryRoot, $Files, $ApplyFix)
+            $script:styluaSingleToolTargets = @($Files)
+        }
+        Mock Invoke-ActionlintQualityCheck { throw "actionlint should not run in stylua mode" }
+
+        Invoke-NativeQualityChecksMain -SelectedTool stylua -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @(
+            ".github/workflows/script-quality.yml",
+            "Config/Wezterm/wezterm.lua"
+        )
+
+        @($script:resolvedNativeSingleTools.ToArray()) | Should -Be @("stylua")
+        $script:styluaSingleToolTargets.Count | Should -Be 1
+        (ConvertTo-NativeQualityRelativePath -RepositoryRoot $script:repoRoot -Path $script:styluaSingleToolTargets[0]) |
+            Should -Be "Config/Wezterm/wezterm.lua"
+        Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 1 -Exactly
+        Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 0 -Exactly
     }
 
     It "resolves only tools with matching targets in All mode" {
