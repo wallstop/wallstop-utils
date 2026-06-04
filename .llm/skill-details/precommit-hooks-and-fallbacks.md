@@ -13,15 +13,27 @@ Shell formatter/linter hooks must stay repo-managed. Use local `shellcheck` and 
 
 Compiled native hooks that publish release assets must also stay repo-managed. Use local `stylua` and `actionlint` hook IDs that invoke `Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1`; do not use remote pre-commit Rust/Go hook repositories for these tools because they compile during hook execution and can fail on host linker/toolchain drift.
 
+## Fast Local Hook Contract
+
+Local hooks optimize for changed-file feedback. They must not run full validation, Pester, or all-files pre-commit flows by default.
+
+`.githooks/pre-push` must parse Git pre-push stdin, resolve changed files from pushed refs, write the resolved list to a temp file owned by the parent hook process, and pass that file through `Invoke-PreCommitWithRecovery.ps1 -HookStage pre-push -FileListPath ...`. Existing remote refs use `remote_oid..local_oid`; new refs choose a baseline from upstream, then `origin/HEAD`, then the pushed commit parent, and fall back to tracked files only when no baseline exists. The temp file path must be visible to the parent `EXIT` trap so recovery and fallback paths clean it up.
+
+The pre-push local hook entry in `.pre-commit-config.yaml` must route through `Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation.ps1` with `pass_filenames: true`. That wrapper captures all pre-commit filenames as remaining positional arguments and then splats them into `Run-PreCommitValidation.ps1 -TargetFiles` as one array; do not append `-TargetFiles` directly in the pre-commit entry because `pwsh -File` misbinds the second filename to later positional parameters.
+
+`Run-PreCommitValidation.ps1` non-`-All` mode is the fast local mode. It may use staged files or explicit target files, but it must avoid Pester, full-repo scans, cross-version compatibility scans, and duplicate shell/native checks already owned by dedicated pre-commit hooks. `-All` remains the deep mode for full validation and CI parity.
+
+Full Pester/full validation belongs to CI and explicit session-close validation via `Scripts/Utils/Quality/Invoke-FullValidation.ps1`.
+
 ## Deterministic Fallback Path
 
 Keep a fallback PowerShell validation path for environments where pre-commit is unavailable.
 
 Always propagate fallback exit status so failures cannot be hidden.
 
-Fallback validation must run staged shell targets through `Invoke-ShellQualityChecks.ps1 -Tool All -Fix` with restage-required diagnostics when formatting changes files. It must skip an empty target set instead of widening to a full-repo shell scan in non-`-All` mode.
+Fallback validation must preserve the same scope contract as the local hook that selected it. Non-`-All` fallback must consume staged or explicit target files without widening to full-repo scans.
 
-In pre-commit mode, keep ScriptAnalyzer scope staged-file targeted for `Scripts/Utils/*.ps1`; reserve full-repo analyzer scans for explicit `-All` flows (pre-push/full validation).
+In fast local mode, keep ScriptAnalyzer scope target-file based for `Scripts/Utils/*.ps1`; reserve full-repo analyzer scans for explicit `-All` flows.
 
 Hook-side validation must not hide stale staged content by mutating only the working tree. If a staged target has unstaged repair drift, fail with an explicit restage-required diagnostic instead of passing.
 
@@ -39,10 +51,10 @@ Keep hook wrappers bounded so stalled commands cannot lock editor-hosted workflo
 
 - `.githooks/pre-commit` must run primary/fallback commands through timeout guards and emit stable timeout diagnostics.
 - `.githooks/pre-commit` must run safe Windows-language auto-repair before pre-commit execution, and skip files with unstaged drift (`W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SKIPPED_UNSTAGED`) instead of staging extra content.
-- `.githooks/pre-push` must run `Invoke-FullValidation.ps1` (or fallback commands) through timeout guards.
+- `.githooks/pre-push` must run changed-file pre-push validation through timeout guards; do not route local pre-push through `Invoke-FullValidation.ps1`, `-All`, or `--all-files`.
 - `.devcontainer/post-create.sh` preflight and pre-commit environment prewarm should stay non-blocking and timeout-bounded.
 - Shell timeout behavior must use `Scripts/Utils/Common/HookTimeout.sh`; `timeout`/`gtimeout` paths should use kill-after cleanup (`-k`) and avoid `--foreground`, while shell watchdog fallbacks must launch commands in an isolated process group/session when possible and clean up lingering descendants after the wrapper returns; never signal only the direct child.
-- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` must be at least 45 seconds because the outer hook budget includes 30s for `Invoke-PreCommitWithRecovery.ps1` plus a 15s shutdown buffer; `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` remains at least 30 seconds.
+- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` must be at least 45 seconds because recovery-backed hook paths reserve 30s for `Invoke-PreCommitWithRecovery.ps1` plus a 15s shutdown buffer.
 - Allow controlled overrides via environment variables when intentionally running slower sessions:
   - `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`
   - `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`
@@ -76,7 +88,7 @@ Track executable bit changes for hook wrapper scripts and keep trailing newline 
 1. Agentic early parity command: `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly`.
 2. Confirm shell/native tools are ready via preflight, or directly with `Invoke-ShellQualityChecks.ps1 -Tool All -EnsureOnly` and `Invoke-NativeQualityChecks.ps1 -Tool All -EnsureOnly`.
 3. Run targeted validators/safe fixers for edited domains before hooks.
-4. Use pre-commit if available for pre-commit and pre-push stages.
+4. Use pre-commit if available for pre-commit and changed-file pre-push stages.
 5. Keep fallback PowerShell validation path available.
 6. Ensure fallback path propagates exit status.
 7. Use `Invoke-GitPushWithUpstream.ps1` for branch pushes.

@@ -8,6 +8,12 @@ param(
     [switch]$AllFiles,
 
     [Parameter(Mandatory = $false)]
+    [string[]]$Files = @(),
+
+    [Parameter(Mandatory = $false)]
+    [string]$FileListPath = "",
+
+    [Parameter(Mandatory = $false)]
     [switch]$InstallHooksOnly,
 
     [Parameter(Mandatory = $false)]
@@ -88,6 +94,38 @@ function Get-PreCommitRecoveryRemainingTimeoutSeconds {
     }
 
     return $remainingSeconds
+}
+
+function Get-PreCommitRecoveryTargetFiles {
+    param(
+        [Parameter(Mandatory = $false)]
+        [string[]]$ExplicitFiles = @(),
+
+        [Parameter(Mandatory = $false)]
+        [string]$ListPath = ""
+    )
+
+    $targetFiles = New-Object System.Collections.Generic.List[string]
+
+    foreach ($explicitFile in @($ExplicitFiles)) {
+        if (-not [string]::IsNullOrWhiteSpace($explicitFile)) {
+            $targetFiles.Add([string]$explicitFile) | Out-Null
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ListPath)) {
+        if (-not (Test-Path -LiteralPath $ListPath -PathType Leaf)) {
+            throw "E_PRECOMMIT_RECOVERY_TARGET_LIST_MISSING: target file list not found at '$ListPath'."
+        }
+
+        foreach ($listedFile in @([System.IO.File]::ReadAllLines($ListPath, [System.Text.Encoding]::UTF8))) {
+            if (-not [string]::IsNullOrWhiteSpace($listedFile)) {
+                $targetFiles.Add([string]$listedFile) | Out-Null
+            }
+        }
+    }
+
+    return @($targetFiles.ToArray())
 }
 
 function New-PreCommitRecoveryTimeoutResult {
@@ -511,13 +549,30 @@ function Get-PreCommitRunArguments {
         [string]$Stage,
 
         [Parameter(Mandatory = $true)]
-        [bool]$UseAllFiles
+        [bool]$UseAllFiles,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$TargetFiles = @()
     )
+
+    $normalizedTargetFiles = @(
+        $TargetFiles |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+
+    if ($UseAllFiles -and $normalizedTargetFiles.Count -gt 0) {
+        throw "E_PRECOMMIT_RECOVERY_ARG_CONFLICT: -AllFiles cannot be combined with explicit -Files targets."
+    }
 
     $arguments = @("run", "--hook-stage", $Stage)
     if ($UseAllFiles) {
         $arguments += "--all-files"
     }
+    elseif ($normalizedTargetFiles.Count -gt 0) {
+        $arguments += "--files"
+        $arguments += @($normalizedTargetFiles)
+    }
+
     $arguments += @("--show-diff-on-failure", "--color", "always")
     return @($arguments)
 }
@@ -530,6 +585,9 @@ function Invoke-PreCommitWithRecoveryMain {
 
         [Parameter(Mandatory = $true)]
         [bool]$UseAllFiles,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$TargetFiles = @(),
 
         [Parameter(Mandatory = $true)]
         [bool]$OnlyInstallHooks,
@@ -560,7 +618,7 @@ function Invoke-PreCommitWithRecoveryMain {
         @("install-hooks")
     }
     else {
-        @(Get-PreCommitRunArguments -Stage $Stage -UseAllFiles $UseAllFiles)
+        @(Get-PreCommitRunArguments -Stage $Stage -UseAllFiles $UseAllFiles -TargetFiles $TargetFiles)
     }
 
     $result = Invoke-PreCommitCapturedCommand -PreCommitExecutable $preCommitExecutable -Arguments $arguments -RepositoryRoot $repositoryRoot -DeadlineUtc $deadlineUtc -OverallTimeoutSeconds $CommandTimeoutSeconds -CommandContext "initial pre-commit run"
@@ -603,6 +661,7 @@ function Invoke-PreCommitWithRecoveryMain {
 }
 
 if (-not $NoInvokeMain) {
-    $exitCode = Invoke-PreCommitWithRecoveryMain -Stage $HookStage -UseAllFiles:$AllFiles.IsPresent -OnlyInstallHooks:$InstallHooksOnly.IsPresent -MaximumRepairAttempts $RepairAttempts -CommandTimeoutSeconds $TimeoutSeconds
+    $targetFiles = @(Get-PreCommitRecoveryTargetFiles -ExplicitFiles $Files -ListPath $FileListPath)
+    $exitCode = Invoke-PreCommitWithRecoveryMain -Stage $HookStage -UseAllFiles:$AllFiles.IsPresent -TargetFiles $targetFiles -OnlyInstallHooks:$InstallHooksOnly.IsPresent -MaximumRepairAttempts $RepairAttempts -CommandTimeoutSeconds $TimeoutSeconds
     exit $exitCode
 }

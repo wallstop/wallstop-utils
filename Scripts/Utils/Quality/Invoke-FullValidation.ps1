@@ -312,13 +312,14 @@ try {
     $statusBeforeValidation = Get-StatusSnapshot -gitExecutable $gitExecutable -RepositoryRoot $repoRoot
 
     $preCommitRecoveryScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1"
+    $preCommitValidationScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
 
     Invoke-NativeCommand -Label "pre-commit stage (all files)" -FailureCode "E_VALIDATION_PRECOMMIT_FAILED" -Remediation "Fix hook findings, then rerun this command." -ScriptBlock {
         pwsh -NoLogo -NoProfile -File $preCommitRecoveryScript -HookStage pre-commit -AllFiles
     }
 
-    Invoke-NativeCommand -Label "pre-push stage (all files)" -FailureCode "E_VALIDATION_PREPUSH_FAILED" -Remediation "Fix failing tests/lint/policy checks, then rerun this command." -ScriptBlock {
-        pwsh -NoLogo -NoProfile -File $preCommitRecoveryScript -HookStage pre-push -AllFiles
+    Invoke-NativeCommand -Label "PowerShell deep validation" -FailureCode "E_VALIDATION_DEEP_POWERSHELL_FAILED" -Remediation "Fix failing tests/lint/policy checks, then rerun this command." -ScriptBlock {
+        pwsh -NoLogo -NoProfile -File $preCommitValidationScript -All
     }
 
     $skillsIndexScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1"

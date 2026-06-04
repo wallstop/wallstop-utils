@@ -116,6 +116,7 @@ BeforeAll {
         "Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1",
         "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1",
         "Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1",
+        "Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation.ps1",
         "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1",
         "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1",
         "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
@@ -815,6 +816,7 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Not -Match 'shfmt[-_]py|shfmt-binary'
         $preCommitConfig | Should -Not -Match 'repo:\s+https://github\.com/JohnnyMorganz/StyLua'
         $preCommitConfig | Should -Not -Match 'repo:\s+https://github\.com/rhysd/actionlint'
+        $preCommitConfig | Should -Not -Match 'mirrors-prettier|prettier-yaml'
         $preCommitConfig | Should -Match 'rev:\s+v\d+\.\d+\.\d+'
 
         $preCommitConfig | Should -Match 'id:\s+check-json'
@@ -839,7 +841,24 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Match 'id:\s+powershell-format[\s\S]*stages:\s+\[pre-commit\]'
         $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
         $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation'
+        $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation[\s\S]*entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation\.ps1'
+        $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation[\s\S]*pass_filenames:\s+true'
+        $preCommitConfig | Should -Not -Match 'id:\s+powershell-prepush-validation[\s\S]*Run-PreCommitValidation\.ps1\s+-All'
+        $preCommitConfig | Should -Not -Match 'id:\s+powershell-prepush-validation[\s\S]*entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Run-PreCommitValidation\.ps1\s+-TargetFiles' -Because (
+            "pwsh -File only binds the first pre-commit filename to a named array parameter; the wrapper must capture filenames positionally and splat them as one array."
+        )
         $preCommitConfig | Should -Match 'stages:\s+\[pre-push\]'
+    }
+
+    It "routes pre-push pre-commit filenames through an array-splat wrapper" {
+        $wrapperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation.ps1'
+        $wrapperContent = Get-Content -Path $wrapperPath -Raw
+
+        $wrapperContent | Should -Match 'ValueFromRemainingArguments\s*=\s*\$true'
+        $wrapperContent | Should -Match '\[string\[\]\]\$TargetFiles\s*=\s*@\(\)'
+        $wrapperContent | Should -Match 'Run-PreCommitValidation\.ps1'
+        $wrapperContent | Should -Match 'TargetFiles\s*=\s*@\(\$TargetFiles\)'
+        $wrapperContent | Should -Match '&\s+\$validationScriptPath\s+@validationArguments'
     }
 
     It "routes LLM harness validation through the precommit orchestrator" {
@@ -881,7 +900,7 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'Get-FileHash\s+-LiteralPath\s+\$Path\s+-Algorithm\s+SHA256'
         $validatorContent | Should -Match '\$allModeFormatterModifiedDirtyFiles'
         $validatorContent | Should -Match 'ScriptSafetyConventions\.Tests\.ps1'
-        $validatorContent | Should -Match '\$runShellSafetySuite\s*=\s*-not\s+\$runUtilsTests\s+-and'
+        $validatorContent | Should -Match '\$runShellSafetySuite\s*=\s*\$All\s+-and\s+-not\s+\$runUtilsTests'
         $validatorContent | Should -Match 'Running Tests/Utils/ScriptSafetyConventions\.Tests\.ps1 Pester suite in isolated process'
         $validatorContent | Should -Match 'PreCommitScriptSafety'
     }
@@ -902,12 +921,13 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'Running Windows language static validation'
     }
 
-    It "runs staged PowerShell compatibility checks through the precommit orchestrator" {
+    It "runs cross-version compatibility checks only through the deep precommit orchestrator mode" {
         $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
         $validatorContent = Get-Content -Path $validatorPath -Raw
 
         $validatorContent | Should -Match '\$compatibilityTargetPattern\s*='
-        $validatorContent | Should -Match '\$runCompatibilityGate\s*='
+        $validatorContent | Should -Match '\$runCompatibilityGate\s*=\s*\$All\s+-and\s+\$compatibilityTargetFiles\.Count\s+-gt\s+0'
+        $validatorContent | Should -Not -Match '\$runCompatibilityGate\s*=\s*-not\s+\$All'
         $validatorContent | Should -Match 'Invoke-CompatibilityChecks\.ps1'
         $validatorContent | Should -Match 'Running cross-version compatibility gate for'
         $validatorContent | Should -Match 'E_PRECOMMIT_COMPATIBILITY_FAILED'
@@ -919,8 +939,8 @@ Describe "Cross-language quality platform conventions" {
 
         $validatorContent | Should -Match '\$utilsPesterPattern\s*=\s*''\^Tests/Utils/.+\\.Tests\\.ps1\$'''
         $validatorContent | Should -Match '\$utilsScriptPattern\s*=\s*''\^Scripts/Utils/.+\\.ps1\$'''
-        $validatorContent | Should -Match 'Skipping Tests/Utils Pester suite for script-only staged changes in pre-commit mode'
-        $validatorContent | Should -Match 'full suite remains enforced in -All/pre-push'
+        $validatorContent | Should -Match 'Skipping Tests/Utils Pester suite for script-only staged changes in fast local mode'
+        $validatorContent | Should -Match 'full suite remains enforced in -All/full validation'
     }
 
     It "routes native Lua and workflow checks through the precommit orchestrator" {
@@ -1007,10 +1027,22 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt "\$minimum_precommit_timeout_seconds" \]\]'
         $preCommitHook | Should -Match 'grep -Ei'
 
-        $prePushHook | Should -Match 'pre-commit run --hook-stage pre-push --all-files'
+        $prePushHook | Should -Not -Match 'pre-commit run --hook-stage pre-push --all-files'
+        $prePushHook | Should -Not -Match '--all-files'
         $prePushHook | Should -Match 'command -v git'
         $prePushHook | Should -Match 'E_PREPUSH_HOOK_GIT_NOT_AVAILABLE'
-        $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -All'
+        $prePushHook | Should -Not -Match 'Invoke-FullValidation\.ps1'
+        $prePushHook | Should -Not -Match 'Run-PreCommitValidation\.ps1"\s+-All'
+        $prePushHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-push'
+        $prePushHook | Should -Match 'prepush_recovery_shutdown_buffer_seconds=15'
+        $prePushHook | Should -Match 'minimum_prepush_timeout_seconds=\$\(\(30 \+ prepush_recovery_shutdown_buffer_seconds\)\)'
+        $prePushHook | Should -Match '30s inner recovery timeout plus \$\{prepush_recovery_shutdown_buffer_seconds\}s shutdown buffer'
+        $prePushHook | Should -Match 'inner_timeout_seconds=\$\(\(remaining_seconds - prepush_recovery_shutdown_buffer_seconds\)\)'
+        $prePushHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-push -TimeoutSeconds "\$inner_timeout_seconds" -FileListPath "\$target_file_list_path"'
+        $prePushHook | Should -Match 'write_changed_file_list'
+        $prePushHook | Should -Not -Match 'target_file_list_path="\$\(write_changed_file_list\)"'
+        $prePushHook | Should -Match 'write_changed_file_list\s*\r?\n\s*target_file_list_path="\$changed_file_list_path"'
+        $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -IncludePreCommitOwnedChecks -TargetFileListPath "\$target_file_list_path"'
         $prePushHook | Should -Match 'pipx install pre-commit'
         $prePushHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $prePushHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
@@ -1228,7 +1260,13 @@ Describe "Cross-language quality platform conventions" {
         $fullValidation | Should -Match '-InstallHooksOnly'
         $fullValidation | Should -Match 'E_VALIDATION_PRECOMMIT_ENV_PREFLIGHT_FAILED'
         $fullValidation | Should -Match '-HookStage\s+pre-commit\s+-AllFiles'
-        $fullValidation | Should -Match '-HookStage\s+pre-push\s+-AllFiles'
+        $fullValidation | Should -Match 'Run-PreCommitValidation\.ps1'
+        $fullValidation | Should -Match 'E_VALIDATION_DEEP_POWERSHELL_FAILED'
+        $fullValidation | Should -Not -Match '-HookStage\s+pre-push\s+-AllFiles'
+
+        $validationWorkflow = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/validation-workflow.md') -Raw
+        $validationWorkflow | Should -Match 'E_VALIDATION_DEEP_POWERSHELL_FAILED'
+        $validationWorkflow | Should -Not -Match 'E_VALIDATION_PREPUSH_FAILED'
     }
 
     It "explicitly propagates pwsh fallback exit status in git hooks" {
@@ -1236,8 +1274,8 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
 
         $preCommitHook | Should -Match 'remaining_timeout_seconds\s+"legacy pre-commit PowerShell validation"'
-        $preCommitHook | Should -Match 'run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-commit PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s*\r?\n\s*return\s+\$\?'
-        $prePushHook | Should -Match 'run_with_timeout\s+"\$prepush_timeout_seconds"\s+"legacy pre-push PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-All\s*\r?\n\s*return\s+\$\?'
+        $preCommitHook | Should -Match 'run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-commit PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-IncludePreCommitOwnedChecks\s+-AllowPreCommitOwnedFixes\s*\r?\n\s*return\s+\$\?'
+        $prePushHook | Should -Match 'run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-push PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-IncludePreCommitOwnedChecks\s+-TargetFileListPath\s+"\$target_file_list_path"\s*\r?\n\s*return\s+\$\?'
         $preCommitHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
         $prePushHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
     }
@@ -1274,8 +1312,8 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook | Should -Not -Match 'timeout_command"\s+--foreground'
         $prePushHook | Should -Not -Match 'kill\s+-TERM\s+"\$command_pid"'
         $prePushHook | Should -Not -Match 'kill\s+-KILL\s+"\$command_pid"'
-        $prePushHook | Should -Match 'pre-push full validation'
-        $prePushHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt 30 \]\]'
+        $prePushHook | Should -Match 'pre-push changed-file pre-commit validation'
+        $prePushHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt "\$minimum_prepush_timeout_seconds" \]\]'
 
         $readme | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS[\s\S]*at least 45 seconds' -Because (
             "README must document the same pre-commit minimum enforced by .githooks/pre-commit."
@@ -1283,8 +1321,8 @@ Describe "Cross-language quality platform conventions" {
         $readme | Should -Match '30s inner recovery timeout plus a 15s shutdown buffer' -Because (
             "README must explain why pre-commit accepts no values below 45 seconds."
         )
-        $readme | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS[\s\S]*at least 30 seconds' -Because (
-            "README must document that pre-push keeps the 30 second minimum."
+        $readme | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS[\s\S]*at least 45 seconds' -Because (
+            "README must document the same pre-push recovery-buffer minimum enforced by .githooks/pre-push."
         )
 
         $postCreate | Should -Match '_run_with_timeout'
@@ -4169,7 +4207,7 @@ $result = "value {0} {1}" -f
         $contextContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
-        $contextContent | Should -Match 'pre-commit outer timeout minimum 45s'
+        $contextContent | Should -Match 'pre-commit and pre-push recovery-backed outer timeout minimums 45s'
         $contextContent | Should -Match 'Diagnostic strings that must preserve stable `E_\*`/`W_\*` codes'
         $contextContent | Should -Match 'Copilot/agent-driven test execution'
         $contextContent | Should -Match 'avoid direct `Invoke-Pester` terminal calls'
@@ -4185,6 +4223,12 @@ $result = "value {0} {1}" -f
         $validationWorkflowContent | Should -Match 'OutputVerbosity None'
 
         $skillDetailContent | Should -Match 'Timeout-Guarded Hook Execution'
+        $skillDetailContent | Should -Match 'Invoke-PreCommitWithRecovery\.ps1 -HookStage pre-push -FileListPath'
+        $skillDetailContent | Should -Not -Match 'Invoke-PreCommitWithRecovery\.ps1 -HookStage pre-push -Files'
+        $skillDetailContent | Should -Match 'parent `EXIT` trap'
+        $skillDetailContent | Should -Match 'Invoke-PrePushPreCommitValidation\.ps1'
+        $skillDetailContent | Should -Match 'Run-PreCommitValidation\.ps1 -TargetFiles'
+        $skillDetailContent | Should -Match 'pwsh -File` misbinds the second filename'
         $skillDetailContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'

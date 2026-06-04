@@ -76,6 +76,25 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
         $arguments | Should -Be @("run", "--hook-stage", "pre-push", "--all-files", "--show-diff-on-failure", "--color", "always")
     }
 
+    It "builds file-scoped hook-stage run arguments without all-files mode" {
+        $arguments = @(Get-PreCommitRunArguments -Stage pre-push -UseAllFiles $false -TargetFiles @("Scripts/Utils/example.ps1", ".githooks/pre-push"))
+
+        $arguments | Should -Be @("run", "--hook-stage", "pre-push", "--files", "Scripts/Utils/example.ps1", ".githooks/pre-push", "--show-diff-on-failure", "--color", "always")
+    }
+
+    It "loads file-scoped hook targets from a list file" {
+        $targetListPath = Join-Path -Path $TestDrive -ChildPath "targets.txt"
+        [System.IO.File]::WriteAllLines(
+            $targetListPath,
+            [string[]]@("README.md", "Scripts/Utils/Run-PreCommitValidation.ps1"),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+
+        $targets = @(Get-PreCommitRecoveryTargetFiles -ListPath $targetListPath)
+
+        $targets | Should -Be @("README.md", "Scripts/Utils/Run-PreCommitValidation.ps1")
+    }
+
     It "bounds stream drain after process timeout or exit" {
         $completedStream = [System.Threading.Tasks.TaskCompletionSource[string]]::new()
         $completedStream.SetResult("captured output")

@@ -166,7 +166,7 @@ run_legacy_validation() {
       return 124
     fi
 
-    run_with_timeout "$remaining_seconds" "legacy pre-commit PowerShell validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1"
+    run_with_timeout "$remaining_seconds" "legacy pre-commit PowerShell validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1" -IncludePreCommitOwnedChecks -AllowPreCommitOwnedFixes
     return $?
   fi
 

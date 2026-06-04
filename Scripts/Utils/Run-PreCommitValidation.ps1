@@ -12,7 +12,19 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateSet("None", "Normal", "Detailed", "Diagnostic")]
-    [string]$PesterOutputVerbosity = "None"
+    [string]$PesterOutputVerbosity = "None",
+
+    [Parameter(Mandatory = $false)]
+    [switch]$IncludePreCommitOwnedChecks,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$AllowPreCommitOwnedFixes,
+
+    [Parameter(Mandatory = $false)]
+    [string]$TargetFileListPath = "",
+
+    [Parameter(Mandatory = $false, ValueFromRemainingArguments = $true)]
+    [string[]]$TargetFiles = @()
 )
 
 Set-StrictMode -Version Latest
@@ -191,6 +203,52 @@ function Get-StagedFilesWithIndexLockRecoveryOrThrow {
 
     $gitErrorText = if ($stagedFileOutput.Count -gt 0) { $stagedFileOutput -join ' ' } else { '(no output)' }
     throw "E_CONFIG_ERROR: Failed to read staged files using '$stagedFileQuery' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"
+}
+
+function ConvertTo-NormalizedRelativeTargetPath {
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    return (([string]$Path).Trim() -replace '[\\/]+', '/') -replace '^\./+', ''
+}
+
+function Get-PreCommitValidationTargetFiles {
+    param(
+        [Parameter(Mandatory = $false)]
+        [string[]]$ExplicitFiles = @(),
+
+        [Parameter(Mandatory = $false)]
+        [string]$ListPath = ""
+    )
+
+    $targetFiles = New-Object System.Collections.Generic.List[string]
+
+    foreach ($explicitFile in @($ExplicitFiles)) {
+        if (-not [string]::IsNullOrWhiteSpace($explicitFile)) {
+            $targetFiles.Add([string]$explicitFile) | Out-Null
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ListPath)) {
+        if (-not (Test-Path -LiteralPath $ListPath -PathType Leaf)) {
+            throw "E_PRECOMMIT_VALIDATION_TARGET_LIST_MISSING: target file list not found at '$ListPath'."
+        }
+
+        foreach ($listedFile in @([System.IO.File]::ReadAllLines($ListPath, [System.Text.Encoding]::UTF8))) {
+            if (-not [string]::IsNullOrWhiteSpace($listedFile)) {
+                $targetFiles.Add([string]$listedFile) | Out-Null
+            }
+        }
+    }
+
+    return @($targetFiles.ToArray())
 }
 
 function Get-FileContentHashOrMissing {
@@ -946,9 +1004,28 @@ Push-Location -LiteralPath $repoRoot
 
 try {
     $gitExecutable = Get-GitExecutableOrThrow
+    $normalizedTargetFiles = @(
+        @(Get-PreCommitValidationTargetFiles -ExplicitFiles $TargetFiles -ListPath $TargetFileListPath) |
+            ForEach-Object { ConvertTo-NormalizedRelativeTargetPath -Path $_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique
+    )
+
+    if ($All -and $normalizedTargetFiles.Count -gt 0) {
+        throw "E_PRECOMMIT_VALIDATION_ARG_CONFLICT: -All cannot be combined with explicit target files."
+    }
+    if ($AllowPreCommitOwnedFixes -and -not $IncludePreCommitOwnedChecks) {
+        throw "E_PRECOMMIT_VALIDATION_ARG_CONFLICT: -AllowPreCommitOwnedFixes requires -IncludePreCommitOwnedChecks."
+    }
+
     $stagedFiles = @()
     if (-not $All) {
-        $stagedFiles = @(Get-StagedFilesWithIndexLockRecoveryOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repoRoot)
+        if ($normalizedTargetFiles.Count -gt 0) {
+            $stagedFiles = @($normalizedTargetFiles)
+        }
+        else {
+            $stagedFiles = @(Get-StagedFilesWithIndexLockRecoveryOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repoRoot)
+        }
     }
 
     $utilsScriptPattern = '^Scripts/Utils/.+\.ps1$'
@@ -983,14 +1060,6 @@ try {
     $githubTestFiles = @($stagedFiles | Where-Object { $_ -match $githubTestPattern })
     $scriptFiles = @($stagedFiles | Where-Object { $_ -match $scriptPattern })
     $compatibilityTargetFiles = @()
-    if (-not $All) {
-        $compatibilityTargetFiles = @(
-            $stagedFiles |
-                Where-Object { $_ -match $compatibilityTargetPattern } |
-                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
-                Sort-Object -Unique
-        )
-    }
     if ($All) {
         $trackedFileOutput = @(& $gitExecutable -C $repoRoot ls-files 2>&1)
         if ($LASTEXITCODE -ne 0) {
@@ -1000,10 +1069,20 @@ try {
 
         $shellQualityFiles = @($trackedFileOutput | Where-Object { $_ -match $shellQualityPattern })
         $nativeQualityFiles = @($trackedFileOutput | Where-Object { $_ -match $nativeQualityPattern })
+        $compatibilityTargetFiles = @(
+            $trackedFileOutput |
+                Where-Object { $_ -match $compatibilityTargetPattern } |
+                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+                Sort-Object -Unique
+        )
     }
-    else {
+    elseif ($IncludePreCommitOwnedChecks) {
         $shellQualityFiles = @($stagedFiles | Where-Object { $_ -match $shellQualityPattern })
         $nativeQualityFiles = @($stagedFiles | Where-Object { $_ -match $nativeQualityPattern })
+    }
+    else {
+        $shellQualityFiles = @()
+        $nativeQualityFiles = @()
     }
     $shellSafetyFiles = @($stagedFiles | Where-Object { $_ -match $shellSafetyTriggerPattern })
     $windowsLanguageFiles = @($stagedFiles | Where-Object { $_ -match $windowsLanguagePattern })
@@ -1014,50 +1093,7 @@ try {
         $utilsTestTargets = @((Join-Path -Path $repoRoot -ChildPath 'Tests/Utils'))
     }
     else {
-        $utilsScriptToTestMap = @{
-            'CompatibilityHelpers'      = @('Tests/Utils/CompatibilityHelpers.Tests.ps1')
-            'DiagnosticsHelpers'        = @('Tests/Utils/DiagnosticsHelpers.Tests.ps1')
-            'Format-PowerShellFiles'    = @('Tests/Utils/Format-PowerShellFiles.Tests.ps1')
-            'Invoke-FullValidation'     = @('Tests/Utils/Invoke-FullValidation.Tests.ps1')
-            'Invoke-NativeQualityChecks' = @('Tests/Utils/Invoke-NativeQualityChecks.Tests.ps1')
-            'Invoke-PreCommitAutoRepair' = @('Tests/Utils/Invoke-PreCommitAutoRepair.Tests.ps1')
-            'Invoke-PreCommitWithRecovery' = @('Tests/Utils/Invoke-PreCommitWithRecovery.Tests.ps1')
-            'Invoke-ShellQualityChecks' = @('Tests/Utils/Invoke-ShellQualityChecks.Tests.ps1')
-            'Invoke-WindowsLanguageChecks' = @('Tests/Utils/Invoke-WindowsLanguageChecks.Tests.ps1')
-            'Remove-BOM'                = @('Tests/Utils/Remove-BOM.Tests.ps1')
-            'Run-PreCommitValidation'   = @(
-                'Tests/Utils/Run-PreCommitValidation.ArrayShape.Tests.ps1',
-                'Tests/Utils/Run-PreCommitValidation.GitRoot.Tests.ps1',
-                'Tests/Utils/Run-PreCommitValidation.NativeQualityRestage.Tests.ps1'
-            )
-        }
-
-        $derivedUtilsTestTargets = New-Object System.Collections.Generic.List[string]
-        foreach ($utilsScriptFile in $utilsScriptFiles) {
-            $scriptBaseName = [System.IO.Path]::GetFileNameWithoutExtension($utilsScriptFile)
-            if ([string]::IsNullOrWhiteSpace($scriptBaseName)) {
-                continue
-            }
-
-            if ($utilsScriptToTestMap.ContainsKey($scriptBaseName)) {
-                foreach ($mappedTestPath in @($utilsScriptToTestMap[$scriptBaseName])) {
-                    if (Test-Path -LiteralPath $mappedTestPath -PathType Leaf) {
-                        $derivedUtilsTestTargets.Add($mappedTestPath) | Out-Null
-                    }
-                }
-            }
-
-            $conventionalTestPath = "Tests/Utils/{0}.Tests.ps1" -f $scriptBaseName
-            if (Test-Path -LiteralPath $conventionalTestPath -PathType Leaf) {
-                $derivedUtilsTestTargets.Add($conventionalTestPath) | Out-Null
-            }
-        }
-
-        $utilsTestTargets = @(
-            @($utilsTestFiles) + @($derivedUtilsTestTargets.ToArray()) |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                Sort-Object -Unique
-        )
+        $utilsTestTargets = @()
     }
 
     $analyzerTargets = @()
@@ -1085,16 +1121,17 @@ try {
         )
     }
 
-    $runUtilsTests = $utilsTestTargets.Count -gt 0
-    $runGitHubTests = $All -or $githubTestFiles.Count -gt 0
+    $runUtilsTests = $All -and $utilsTestTargets.Count -gt 0
+    $runGitHubTests = $All
     $runShellQualityChecks = $All -or $shellQualityFiles.Count -gt 0
     $runNativeQualityChecks = $All -or $nativeQualityFiles.Count -gt 0
-    $runShellSafetySuite = -not $runUtilsTests -and ($All -or $shellSafetyFiles.Count -gt 0)
+    $runShellSafetySuite = $All -and -not $runUtilsTests
     $runWindowsLanguageChecks = $All -or $windowsLanguageFiles.Count -gt 0
-    $runCompatibilityGate = -not $All -and $compatibilityTargetFiles.Count -gt 0
+    $runCompatibilityGate = $All -and $compatibilityTargetFiles.Count -gt 0
     $runAnalyzer = $analyzerTargets.Count -gt 0
-    $runFormatOperatorSafetyCheck = $All -or $scriptFiles.Count -gt 0 -or $utilsTestTargets.Count -gt 0 -or $githubTestFiles.Count -gt 0
+    $runFormatOperatorSafetyCheck = $All -or $scriptFiles.Count -gt 0 -or $utilsTestFiles.Count -gt 0 -or $githubTestFiles.Count -gt 0
     $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
+    $preCommitOwnedFixesEnabled = $All -or $AllowPreCommitOwnedFixes
     $analyzerTargetsText = if ($analyzerTargets.Count -gt 0) { $analyzerTargets -join ', ' } else { '(none)' }
     $utilsTestTargetsText = if ($utilsTestTargets.Count -gt 0) { $utilsTestTargets -join ', ' } else { '(none)' }
     $compatibilityTargetFilesText = if ($compatibilityTargetFiles.Count -gt 0) { $compatibilityTargetFiles -join ', ' } else { '(none)' }
@@ -1125,7 +1162,7 @@ try {
 
     if (-not $All -and $utilsScriptFiles.Count -gt 0 -and $utilsTestTargets.Count -eq 0) {
         Write-Verbose (
-            "Skipping Tests/Utils Pester suite for script-only staged changes in pre-commit mode; full suite remains enforced in -All/pre-push. Staged utils scripts: {0}" -f
+            "Skipping Tests/Utils Pester suite for script-only staged changes in fast local mode; full suite remains enforced in -All/full validation. Staged utils scripts: {0}" -f
             ($utilsScriptFiles -join ', ')
         )
     }
@@ -1211,7 +1248,7 @@ try {
                 )
                 $preShellQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preShellQualityDiffOutput
             }
-            else {
+            elseif ($preCommitOwnedFixesEnabled) {
                 $unstagedShellQualityDiffOutput = @(& $gitExecutable @shellQualityDiffArgs 2>&1)
                 if ($LASTEXITCODE -ne 0) {
                     $diffErrorText = if ($unstagedShellQualityDiffOutput.Count -gt 0) { $unstagedShellQualityDiffOutput -join ' ' } else { '(no output)' }
@@ -1229,66 +1266,74 @@ try {
                 }
             }
 
-            Write-Host "Running shell formatting and lint validation..."
-            & $shellQualityScriptPath -Tool All -Fix @shellQualityFiles
-
-            $postShellQualityDiffOutput = @(& $gitExecutable @shellQualityDiffArgs 2>&1)
-            if ($LASTEXITCODE -ne 0) {
-                $diffErrorText = if ($postShellQualityDiffOutput.Count -gt 0) { $postShellQualityDiffOutput -join ' ' } else { '(no output)' }
-                throw "E_CONFIG_ERROR: Failed to check post-format shell quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+            $shellQualityModeText = if ($preCommitOwnedFixesEnabled) { "formatting and lint" } else { "lint/format-check" }
+            Write-Host "Running shell $shellQualityModeText validation..."
+            if ($preCommitOwnedFixesEnabled) {
+                & $shellQualityScriptPath -Tool All -Fix @shellQualityFiles
+            }
+            else {
+                & $shellQualityScriptPath -Tool All @shellQualityFiles
             }
 
-            $formattedShellQualityFiles = @(
-                $postShellQualityDiffOutput |
-                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                    Sort-Object -Unique
-            )
+            if ($preCommitOwnedFixesEnabled) {
+                $postShellQualityDiffOutput = @(& $gitExecutable @shellQualityDiffArgs 2>&1)
+                if ($LASTEXITCODE -ne 0) {
+                    $diffErrorText = if ($postShellQualityDiffOutput.Count -gt 0) { $postShellQualityDiffOutput -join ' ' } else { '(no output)' }
+                    throw "E_CONFIG_ERROR: Failed to check post-format shell quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+                }
 
-            $allModeFormatterModifiedDirtyFiles = @()
-            if ($All -and $preShellQualityDiffOutput.Count -gt 0) {
-                $postShellQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preShellQualityDiffOutput
-                $allModeFormatterModifiedDirtyFiles = @(
-                    foreach ($relativePath in $preShellQualityDiffOutput) {
-                        $beforeHash = [string]$preShellQualityDirtyFileHashes[$relativePath]
-                        $afterHash = [string]$postShellQualityDirtyFileHashes[$relativePath]
-                        if ($beforeHash -ne $afterHash) {
-                            $relativePath
-                        }
-                    }
-                )
-            }
-
-            if ($All) {
-                Write-Verbose (
-                    "Shell quality all-mode drift snapshots: beforeCount={0}; afterCount={1}; beforeFiles={2}; afterFiles={3}; preDirtyModifiedCount={4}" -f
-                    $preShellQualityDiffOutput.Count,
-                    $formattedShellQualityFiles.Count,
-                    ($(if ($preShellQualityDiffOutput.Count -gt 0) { $preShellQualityDiffOutput -join ', ' } else { '(none)' })),
-                    ($(if ($formattedShellQualityFiles.Count -gt 0) { $formattedShellQualityFiles -join ', ' } else { '(none)' })),
-                    $allModeFormatterModifiedDirtyFiles.Count
-                )
-            }
-
-            $shellFormatterChangedFiles = @(
-                if ($All) {
-                    $allModeNewlyDirtyFiles = @(
-                        Compare-Object -ReferenceObject $preShellQualityDiffOutput -DifferenceObject $formattedShellQualityFiles |
-                            Where-Object { $_.SideIndicator -eq '=>' } |
-                            ForEach-Object { [string]$_.InputObject }
-                    )
-
-                    $allModeNewlyDirtyFiles + $allModeFormatterModifiedDirtyFiles |
+                $formattedShellQualityFiles = @(
+                    $postShellQualityDiffOutput |
                         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
                         Sort-Object -Unique
-                }
-                else {
-                    $formattedShellQualityFiles
-                }
-            )
+                )
 
-            if ($shellFormatterChangedFiles.Count -gt 0) {
-                $formattedShellQualityText = $shellFormatterChangedFiles -join ', '
-                throw "E_PRECOMMIT_SHELL_QUALITY_RESTAGE_REQUIRED: Shell formatter updated file(s): $formattedShellQualityText. Stage the updated files, then rerun pre-commit validation."
+                $allModeFormatterModifiedDirtyFiles = @()
+                if ($All -and $preShellQualityDiffOutput.Count -gt 0) {
+                    $postShellQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preShellQualityDiffOutput
+                    $allModeFormatterModifiedDirtyFiles = @(
+                        foreach ($relativePath in $preShellQualityDiffOutput) {
+                            $beforeHash = [string]$preShellQualityDirtyFileHashes[$relativePath]
+                            $afterHash = [string]$postShellQualityDirtyFileHashes[$relativePath]
+                            if ($beforeHash -ne $afterHash) {
+                                $relativePath
+                            }
+                        }
+                    )
+                }
+
+                if ($All) {
+                    Write-Verbose (
+                        "Shell quality all-mode drift snapshots: beforeCount={0}; afterCount={1}; beforeFiles={2}; afterFiles={3}; preDirtyModifiedCount={4}" -f
+                        $preShellQualityDiffOutput.Count,
+                        $formattedShellQualityFiles.Count,
+                        ($(if ($preShellQualityDiffOutput.Count -gt 0) { $preShellQualityDiffOutput -join ', ' } else { '(none)' })),
+                        ($(if ($formattedShellQualityFiles.Count -gt 0) { $formattedShellQualityFiles -join ', ' } else { '(none)' })),
+                        $allModeFormatterModifiedDirtyFiles.Count
+                    )
+                }
+
+                $shellFormatterChangedFiles = @(
+                    if ($All) {
+                        $allModeNewlyDirtyFiles = @(
+                            Compare-Object -ReferenceObject $preShellQualityDiffOutput -DifferenceObject $formattedShellQualityFiles |
+                                Where-Object { $_.SideIndicator -eq '=>' } |
+                                ForEach-Object { [string]$_.InputObject }
+                        )
+
+                        $allModeNewlyDirtyFiles + $allModeFormatterModifiedDirtyFiles |
+                            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                            Sort-Object -Unique
+                    }
+                    else {
+                        $formattedShellQualityFiles
+                    }
+                )
+
+                if ($shellFormatterChangedFiles.Count -gt 0) {
+                    $formattedShellQualityText = $shellFormatterChangedFiles -join ', '
+                    throw "E_PRECOMMIT_SHELL_QUALITY_RESTAGE_REQUIRED: Shell formatter updated file(s): $formattedShellQualityText. Stage the updated files, then rerun pre-commit validation."
+                }
             }
         }
     }
@@ -1324,7 +1369,7 @@ try {
                 )
                 $preNativeQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preNativeQualityDiffOutput
             }
-            else {
+            elseif ($preCommitOwnedFixesEnabled) {
                 $unstagedNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
                 if ($LASTEXITCODE -ne 0) {
                     $diffErrorText = if ($unstagedNativeQualityDiffOutput.Count -gt 0) { $unstagedNativeQualityDiffOutput -join ' ' } else { '(no output)' }
@@ -1343,65 +1388,72 @@ try {
             }
 
             Write-Host "Running Lua and GitHub workflow native quality validation..."
-            & $nativeQualityScriptPath -Tool All -Fix @nativeQualityFiles
-
-            $postNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
-            if ($LASTEXITCODE -ne 0) {
-                $diffErrorText = if ($postNativeQualityDiffOutput.Count -gt 0) { $postNativeQualityDiffOutput -join ' ' } else { '(no output)' }
-                throw "E_CONFIG_ERROR: Failed to check post-format native quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+            if ($preCommitOwnedFixesEnabled) {
+                & $nativeQualityScriptPath -Tool All -Fix @nativeQualityFiles
+            }
+            else {
+                & $nativeQualityScriptPath -Tool All @nativeQualityFiles
             }
 
-            $formattedNativeQualityFiles = @(
-                $postNativeQualityDiffOutput |
-                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                    Sort-Object -Unique
-            )
+            if ($preCommitOwnedFixesEnabled) {
+                $postNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
+                if ($LASTEXITCODE -ne 0) {
+                    $diffErrorText = if ($postNativeQualityDiffOutput.Count -gt 0) { $postNativeQualityDiffOutput -join ' ' } else { '(no output)' }
+                    throw "E_CONFIG_ERROR: Failed to check post-format native quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
+                }
 
-            $allModeFormatterModifiedDirtyFiles = @()
-            if ($All -and $preNativeQualityDiffOutput.Count -gt 0) {
-                $postNativeQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preNativeQualityDiffOutput
-                $allModeFormatterModifiedDirtyFiles = @(
-                    foreach ($relativePath in $preNativeQualityDiffOutput) {
-                        $beforeHash = [string]$preNativeQualityDirtyFileHashes[$relativePath]
-                        $afterHash = [string]$postNativeQualityDirtyFileHashes[$relativePath]
-                        if ($beforeHash -ne $afterHash) {
-                            $relativePath
-                        }
-                    }
-                )
-            }
-
-            if ($All) {
-                Write-Verbose (
-                    "Native quality all-mode drift snapshots: beforeCount={0}; afterCount={1}; beforeFiles={2}; afterFiles={3}; preDirtyModifiedCount={4}" -f
-                    $preNativeQualityDiffOutput.Count,
-                    $formattedNativeQualityFiles.Count,
-                    ($(if ($preNativeQualityDiffOutput.Count -gt 0) { $preNativeQualityDiffOutput -join ', ' } else { '(none)' })),
-                    ($(if ($formattedNativeQualityFiles.Count -gt 0) { $formattedNativeQualityFiles -join ', ' } else { '(none)' })),
-                    $allModeFormatterModifiedDirtyFiles.Count
-                )
-            }
-
-            $nativeFormatterChangedFiles = @(
-                if ($All) {
-                    $allModeNewlyDirtyFiles = @(
-                        Compare-Object -ReferenceObject $preNativeQualityDiffOutput -DifferenceObject $formattedNativeQualityFiles |
-                            Where-Object { $_.SideIndicator -eq '=>' } |
-                            ForEach-Object { [string]$_.InputObject }
-                    )
-
-                    $allModeNewlyDirtyFiles + $allModeFormatterModifiedDirtyFiles |
+                $formattedNativeQualityFiles = @(
+                    $postNativeQualityDiffOutput |
                         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
                         Sort-Object -Unique
-                }
-                else {
-                    $formattedNativeQualityFiles
-                }
-            )
+                )
 
-            if ($nativeFormatterChangedFiles.Count -gt 0) {
-                $formattedNativeQualityText = $nativeFormatterChangedFiles -join ', '
-                throw "E_PRECOMMIT_NATIVE_QUALITY_RESTAGE_REQUIRED: Native formatter updated file(s): $formattedNativeQualityText. Stage the updated files, then rerun pre-commit validation."
+                $allModeFormatterModifiedDirtyFiles = @()
+                if ($All -and $preNativeQualityDiffOutput.Count -gt 0) {
+                    $postNativeQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preNativeQualityDiffOutput
+                    $allModeFormatterModifiedDirtyFiles = @(
+                        foreach ($relativePath in $preNativeQualityDiffOutput) {
+                            $beforeHash = [string]$preNativeQualityDirtyFileHashes[$relativePath]
+                            $afterHash = [string]$postNativeQualityDirtyFileHashes[$relativePath]
+                            if ($beforeHash -ne $afterHash) {
+                                $relativePath
+                            }
+                        }
+                    )
+                }
+
+                if ($All) {
+                    Write-Verbose (
+                        "Native quality all-mode drift snapshots: beforeCount={0}; afterCount={1}; beforeFiles={2}; afterFiles={3}; preDirtyModifiedCount={4}" -f
+                        $preNativeQualityDiffOutput.Count,
+                        $formattedNativeQualityFiles.Count,
+                        ($(if ($preNativeQualityDiffOutput.Count -gt 0) { $preNativeQualityDiffOutput -join ', ' } else { '(none)' })),
+                        ($(if ($formattedNativeQualityFiles.Count -gt 0) { $formattedNativeQualityFiles -join ', ' } else { '(none)' })),
+                        $allModeFormatterModifiedDirtyFiles.Count
+                    )
+                }
+
+                $nativeFormatterChangedFiles = @(
+                    if ($All) {
+                        $allModeNewlyDirtyFiles = @(
+                            Compare-Object -ReferenceObject $preNativeQualityDiffOutput -DifferenceObject $formattedNativeQualityFiles |
+                                Where-Object { $_.SideIndicator -eq '=>' } |
+                                ForEach-Object { [string]$_.InputObject }
+                        )
+
+                        $allModeNewlyDirtyFiles + $allModeFormatterModifiedDirtyFiles |
+                            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                            Sort-Object -Unique
+                    }
+                    else {
+                        $formattedNativeQualityFiles
+                    }
+                )
+
+                if ($nativeFormatterChangedFiles.Count -gt 0) {
+                    $formattedNativeQualityText = $nativeFormatterChangedFiles -join ', '
+                    throw "E_PRECOMMIT_NATIVE_QUALITY_RESTAGE_REQUIRED: Native formatter updated file(s): $formattedNativeQualityText. Stage the updated files, then rerun pre-commit validation."
+                }
             }
         }
     }
@@ -1411,10 +1463,20 @@ try {
             "Running format-operator safety validation: allMode={0}; scriptCount={1}; utilsTestCount={2}; githubTestCount={3}" -f
             $All.IsPresent,
             $scriptFiles.Count,
-            $utilsTestTargets.Count,
+            $utilsTestFiles.Count,
             $githubTestFiles.Count
         )
-        Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts", "Tests") -ErrorCode "E_PRECOMMIT_FORMAT_OPERATOR_BINDING" -ContextLabel "Pre-commit PowerShell format-operator safety"
+        if ($All) {
+            Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts", "Tests") -ErrorCode "E_PRECOMMIT_FORMAT_OPERATOR_BINDING" -ContextLabel "Pre-commit PowerShell format-operator safety"
+        }
+        else {
+            $formatOperatorTargetFiles = @(
+                @($scriptFiles) + @($utilsTestFiles) + @($githubTestFiles) |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    Sort-Object -Unique
+            )
+            Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -TargetFiles $formatOperatorTargetFiles -ErrorCode "E_PRECOMMIT_FORMAT_OPERATOR_BINDING" -ContextLabel "Pre-commit PowerShell format-operator safety"
+        }
     }
 
     if ($runWindowsLanguageChecks) {

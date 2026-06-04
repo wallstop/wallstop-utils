@@ -13,7 +13,7 @@ Batch smoke checks intentionally remain heuristic, but they now apply uniformly 
 
 - `Invoke-MacOSLanguageChecks.sh`: macOS AppleScript validation with a source-first migration path and `.scpt` fallback.
 - `Assert-CleanGitTree.ps1`: fails when formatting or checks mutate files in CI.
-- `Invoke-FullValidation.ps1`: session-close full validation wrapper (pre-commit stage all-files, pre-push stage all-files, clean-tree assertion, optional PR CI watch).
+- `Invoke-FullValidation.ps1`: session-close full validation wrapper (pre-commit stage all-files, `Run-PreCommitValidation.ps1 -All`, clean-tree assertion, optional PR CI watch).
 - `Update-LlmSkillsIndex.ps1`: deterministically regenerates `.llm/skills-index.md` from `.llm/skills` metadata comments.
 - `Test-LlmHarness.ps1`: validates wrapper pointers, line limits (300), trigger metadata coverage, lightweight skill cards, expanded-guide links, and index freshness (`-Check`).
 

@@ -13,12 +13,12 @@ BeforeAll {
 Describe "Invoke-FullValidation workflow contract" {
     $requiredValidationCommands = @(
         @{ Name = "pre-commit stage all files"; Pattern = 'Invoke-PreCommitWithRecovery\.ps1[\s\S]*-HookStage\s+pre-commit\s+-AllFiles' }
-        @{ Name = "pre-push stage all files"; Pattern = 'Invoke-PreCommitWithRecovery\.ps1[\s\S]*-HookStage\s+pre-push\s+-AllFiles' }
+        @{ Name = "PowerShell deep validation"; Pattern = 'Run-PreCommitValidation\.ps1[\s\S]*-All' }
     )
 
     $requiredFailureCodes = @(
         "E_VALIDATION_PRECOMMIT_FAILED"
-        "E_VALIDATION_PREPUSH_FAILED"
+        "E_VALIDATION_DEEP_POWERSHELL_FAILED"
         "E_VALIDATION_CI_FAILED"
         "E_VALIDATION_PR_MISSING"
         "E_VALIDATION_PREREQ_MISSING"
@@ -139,8 +139,10 @@ Describe "Invoke-FullValidation workflow contract" {
 }
 
 Describe "Pre-push enforcement integration" {
-    It "uses Invoke-FullValidation.ps1 from pre-push when pwsh is available" {
-        $script:prePushHook | Should -Match 'Invoke-FullValidation\.ps1'
+    It "keeps local pre-push scoped away from deep validation paths" {
+        $script:prePushHook | Should -Not -Match 'Invoke-FullValidation\.ps1'
+        $script:prePushHook | Should -Not -Match 'Run-PreCommitValidation\.ps1"\s+-All'
+        $script:prePushHook | Should -Not -Match '--all-files'
     }
 
     It "keeps pre-push wrapper execution bounded by timeout guardrails" {

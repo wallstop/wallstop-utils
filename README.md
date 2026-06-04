@@ -218,7 +218,7 @@ Local hooks are wrapper scripts in `.githooks/` that execute `pre-commit` when a
 Default local behavior is:
 
 - `pre-commit` hook: staged-file checks and auto-fixes where applicable (including deterministic PowerShell formatting, `shellcheck`/`shfmt` for changed shell targets, and pinned native StyLua/actionlint checks)
-- `pre-push` hook: runs `Scripts/Utils/Quality/Invoke-FullValidation.ps1` when `pwsh` is available (full pre-commit + pre-push + harness + drift checks), with legacy fallback when `pre-commit` is unavailable
+- `pre-push` hook: parses pushed refs, resolves changed files, and runs file-scoped pre-push validation through `Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1`, with legacy file-scoped PowerShell fallback when `pre-commit` is unavailable
 
 Shell `shfmt` and `shellcheck` hooks use repo-managed PowerShell wrappers instead of Python-packaged hook environments. `Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1` downloads pinned upstream release assets into ignored `.tools/shell-quality`, verifies SHA256 and tool versions, and reuses the same executables on Linux, macOS, and Windows hosts.
 
@@ -228,7 +228,7 @@ Hook troubleshooting is intentionally automated first:
 
 - When `pwsh` is available, `.githooks/pre-commit` runs `Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1` before pre-commit to safely repair and restage fixable staged AHK/batch drift (`-Fix -StaticOnly`) while skipping files that have unstaged drift.
 - Hook-time git index lock failures (`.git/index.lock`) are auto-detected and recovered in `Invoke-PreCommitAutoRepair.ps1`, `Run-PreCommitValidation.ps1`, and `Invoke-PreCommitWithRecovery.ps1`; recovery emits stable `W_PRECOMMIT_GIT_INDEX_LOCK_*` / `E_PRECOMMIT_GIT_INDEX_LOCK_*` diagnostics and retries once before failing.
-- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` bound hook runtime. Pre-commit values must be integers of at least 45 seconds (30s inner recovery timeout plus a 15s shutdown buffer); pre-push values must be integers of at least 30 seconds.
+- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` bound hook runtime. Values must be integers of at least 45 seconds (30s inner recovery timeout plus a 15s shutdown buffer).
 - Hook wrappers emit `W_HOOK_RUNTIME_BUDGET` when a phase exceeds the fast-path target (`<= 1s`) so slow paths are visible and can be remediated.
 - Index-lock recovery tuning is available via `WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE` (`safe` or `off`), `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, and `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`.
 - `WALLSTOP_NATIVE_TOOL_DOWNLOAD_TIMEOUT_SECONDS` overrides the native binary download timeout when a slow network needs more than the default 300 seconds.
@@ -285,7 +285,7 @@ See [.llm/validation-workflow.md](.llm/validation-workflow.md) for the full reme
 
 ### PowerShell utility gate (retained)
 
-The existing utility validation gate remains and is integrated into pre-commit:
+The existing utility validation gate remains and is integrated into explicit full validation and CI:
 
 - `Tests/Utils` Pester suite (isolated `pwsh -NoProfile -NonInteractive` process)
 - `Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1` Pester suite (when relevant files are staged)
@@ -345,7 +345,7 @@ GitHub Actions workflow `.github/workflows/script-quality.yml` runs full-repo ch
 To avoid a permanently-red baseline while keeping strict enforcement on new changes:
 
 - PRs/pushes enforce `shellcheck` and `shfmt` on changed shell targets only.
-- Local `pre-push` still runs non-shell full-repo quality gates (`pre-commit --hook-stage pre-push --all-files` + PowerShell utility checks).
+- Local `pre-push` stays changed-file scoped; full-repo PowerShell, policy, and Pester checks run in CI and explicit full validation.
 - Full-repo deterministic CI checks exclude shell debt-heavy hooks.
 - A manual non-blocking debt audit job is available in `.github/workflows/script-quality.yml` via `workflow_dispatch` input `run_shell_debt_audit=true`.
 
