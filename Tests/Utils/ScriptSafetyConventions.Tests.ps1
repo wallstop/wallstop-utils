@@ -90,6 +90,21 @@ BeforeAll {
                 }, $true)).Count -gt 0
     }
 
+    function Get-GitHubWorkflowStepBlocks {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$WorkflowContent,
+
+            [Parameter(Mandatory = $true)]
+            [string]$StepName
+        )
+
+        $normalized = $WorkflowContent -replace "`r", ''
+        $escapedName = [regex]::Escape($StepName)
+        $stepBlocks = [regex]::Split($normalized, '(?m)^(?=\s*-\s+name:\s)')
+        return @($stepBlocks | Where-Object { $_ -match "(?m)^[^\S\r\n]*-[^\S\r\n]+name:[^\S\r\n]+$escapedName[^\S\r\n]*$" }) # array-unwrap-safe
+    }
+
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/CompatibilityHelpers.ps1")
     $script:migratedScripts = @(
@@ -622,6 +637,10 @@ Describe "CI scope expansion" {
             Pattern = 'Run Pester with coverage[\s\S]*-EnableCoverage[\s\S]*-CoveragePath\s+\$coveragePath[\s\S]*-MinimumCoveragePercent\s+75'
         }
         @{
+            Name    = "coverage step writes XML result artifact"
+            Pattern = 'Run Pester with coverage[\s\S]*testresults-github\.xml[\s\S]*-TestResultOutputPath\s+\$testResultPath'
+        }
+        @{
             Name    = "coverage step uses explicit timeout"
             Pattern = 'Run Pester with coverage[\s\S]*timeout-minutes:\s+10'
         }
@@ -638,12 +657,20 @@ Describe "CI scope expansion" {
             Pattern = 'Run Utils Pester tests[\s\S]*-DiagnosticsPrefix\s+"Utils Pester"'
         }
         @{
+            Name    = "utils step writes XML result artifact"
+            Pattern = 'Run Utils Pester tests[\s\S]*testresults-utils\.xml[\s\S]*-TestResultOutputPath\s+\$testResultPath'
+        }
+        @{
             Name    = "utils step uses explicit timeout"
             Pattern = 'Run Utils Pester tests[\s\S]*timeout-minutes:\s+10'
         }
         @{
             Name    = "utils step fails clearly when gate script is missing"
             Pattern = 'Run Utils Pester tests[\s\S]*if\s*\(\s*-not\s*\(Test-Path\s+-Path\s+\$pesterGateScript\s+-PathType\s+Leaf\)\s*\)[\s\S]*E_CI_PESTER_GATE_SCRIPT_MISSING'
+        }
+        @{
+            Name    = "matrix workflow uploads XML result artifacts"
+            Pattern = 'Upload Pester test results[\s\S]*if:\s+always\(\)[\s\S]*actions/upload-artifact@v4\.6\.2[\s\S]*testresults-github\.xml[\s\S]*testresults-utils\.xml'
         }
     ) {
         param($Name, $Pattern)
@@ -705,12 +732,49 @@ Describe "CI scope expansion" {
             Name    = "fails coverage gate with explicit error code"
             Pattern = 'E_CI_PESTER_COVERAGE_GATE_FAILED'
         }
+        @{
+            Name    = "supports XML test result artifact output"
+            Pattern = '\$TestResultOutputPath[\s\S]*TestResult\.Enabled\s*=\s*\$true[\s\S]*TestResult\.OutputPath\s*=\s*\$TestResultOutputPath'
+        }
     ) {
         param($Name, $Pattern)
 
         $pesterGateScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1'
         $pesterGateScript = Get-Content -Path $pesterGateScriptPath -Raw
         $pesterGateScript | Should -Match $Pattern -Because $Name
+    }
+
+    It "routes cross-version PowerShell workflow tests through the shared Pester gate" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+
+        $workflow | Should -Match 'Run Pester suite under Windows PowerShell 5\.1[\s\S]*timeout-minutes:\s+10'
+        $workflow | Should -Match 'Run Pester suite under Windows PowerShell 5\.1[\s\S]*Invoke-PesterQualityGate\.ps1[\s\S]*-OutputVerbosity\s+None[\s\S]*-TestResultOutputPath\s+"testresults-winps51\.xml"'
+        $workflow | Should -Match 'Run Pester suite under PowerShell 7\+[\s\S]*timeout-minutes:\s+10'
+        $workflow | Should -Match 'Run Pester suite under PowerShell 7\+[\s\S]*Invoke-PesterQualityGate\.ps1[\s\S]*-OutputVerbosity\s+None[\s\S]*-TestResultOutputPath\s+"testresults-pwsh7\.xml"'
+        $workflow | Should -Match 'Windows PowerShell 5\.1 Pester duration: \$elapsedSeconds seconds'
+        $workflow | Should -Match 'PowerShell 7\+ Pester duration: \$elapsedSeconds seconds'
+    }
+
+    It "keeps each Pester XML artifact upload bound to its own always-run step" {
+        $crossLanguageWorkflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+        $prSummarizerWorkflow = Get-Content -Path $script:workflowPath -Raw
+
+        $crossLanguageUploadBlocks = @(Get-GitHubWorkflowStepBlocks -WorkflowContent $crossLanguageWorkflow -StepName 'Upload test results')
+        $winPsUploadBlocks = @($crossLanguageUploadBlocks | Where-Object { $_ -match '(?m)^[^\S\r\n]*name:[^\S\r\n]+pester-winps51[^\S\r\n]*$' })
+        $pwshUploadBlocks = @($crossLanguageUploadBlocks | Where-Object { $_ -match '(?m)^[^\S\r\n]*name:[^\S\r\n]+pester-pwsh7[^\S\r\n]*$' })
+
+        $winPsUploadBlocks.Count | Should -Be 1 -Because 'The Windows PowerShell 5.1 Pester artifact upload step should be uniquely identifiable.'
+        $pwshUploadBlocks.Count | Should -Be 1 -Because 'The PowerShell 7+ Pester artifact upload step should be uniquely identifiable.'
+        $winPsUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*if:[^\S\r\n]+always\(\)[^\S\r\n]*$'
+        $winPsUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*path:[^\S\r\n]+testresults-winps51\.xml[^\S\r\n]*$'
+        $pwshUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*if:[^\S\r\n]+always\(\)[^\S\r\n]*$'
+        $pwshUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*path:[^\S\r\n]+testresults-pwsh7\.xml[^\S\r\n]*$'
+
+        $prUploadBlocks = @(Get-GitHubWorkflowStepBlocks -WorkflowContent $prSummarizerWorkflow -StepName 'Upload Pester test results')
+        $prUploadBlocks.Count | Should -Be 1 -Because 'The PR summarizer Pester artifact upload step should be uniquely identifiable.'
+        $prUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*if:[^\S\r\n]+always\(\)[^\S\r\n]*$'
+        $prUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*testresults-github\.xml[^\S\r\n]*$'
+        $prUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*testresults-utils\.xml[^\S\r\n]*$'
     }
 
     It "forbids fragile Pester type literals across all GitHub workflows" {
@@ -720,6 +784,16 @@ Describe "CI scope expansion" {
         foreach ($workflowFile in $workflowFiles) {
             $workflow = Get-Content -Path $workflowFile.FullName -Raw
             $workflow | Should -Not -Match '\[PesterConfiguration\]::Default' -Because "$($workflowFile.Name) must use New-PesterConfiguration to avoid module type-loading fragility."
+        }
+    }
+
+    It "forbids direct Invoke-Pester workflow calls outside the shared quality gate" {
+        $workflowFiles = @(Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath '.github/workflows') -Filter '*.yml' -File -Recurse -ErrorAction Stop)
+        $workflowFiles.Count | Should -BeGreaterThan 0 -Because 'Expected at least one GitHub workflow file in .github/workflows.'
+
+        foreach ($workflowFile in $workflowFiles) {
+            $workflow = Get-Content -Path $workflowFile.FullName -Raw
+            $workflow | Should -Not -Match '(?<![\w.-])(?:[A-Za-z0-9_.-]+\\)?Invoke-Pester(?!QualityGate)(?![\w.-])' -Because "$($workflowFile.Name) must route Pester through Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1."
         }
     }
 }

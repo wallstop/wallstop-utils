@@ -27,9 +27,9 @@ Current invariants to preserve:
 3. Keep stale-artifact checks actionable by emitting first-mismatch diagnostics and content hashes when comparisons fail.
 4. Keep cross-platform generated-index checks deterministic by using explicit UTF-8 file reads and normalizing path separators to `/` before generating or validating markdown links.
 5. For multi-OS matrix quality workflows, prefer `fail-fast: false` when preserving complete diagnostics is more valuable than early cancellation.
-6. Prefer `Invoke-Pester -Configuration` in CI over legacy `-Path`/`-CodeCoverage` parameter sets to avoid deprecation drift and warning noise.
-7. In GitHub Actions PowerShell steps, import Pester in every step that configures tests and use `New-PesterConfiguration`; avoid raw `[PesterConfiguration]::Default` type literals because step isolation can leave module types unloaded.
-8. Keep Pester CI wiring centralized through `Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1` so diagnostics, version guards, and coverage-gate behavior stay consistent across workflow steps.
+6. GitHub Actions workflow Pester steps must route through `Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1`; do not call `Invoke-Pester` directly from workflow YAML.
+7. Workflow XML test results must be produced through the gate's `-TestResultOutputPath` parameter and uploaded with `actions/upload-artifact` in an `if: always()` step.
+8. Keep raw Pester configuration construction inside the shared quality gate; workflows must not build ad-hoc Pester configuration objects or pass `Invoke-Pester -Configuration` directly.
 9. Cover extreme test scenarios systematically: empty/null input, maximum-size input, special characters (spaces, brackets, unicode, globs), concurrent access, and platform boundary conditions. See [adversarial-handoff-protocol](adversarial-handoff-protocol.md) for the full checklist.
 10. Keep backup automation deterministic: `Scripts/Backup.ps1` must fail preflight on dirty trees, stage only managed backup outputs (`Config/`), and use bounded commit retries only for hook autofix flows.
 

@@ -36,23 +36,89 @@ function script:ConvertTo-BashPath {
         return $Path
     }
 
+    if ($null -eq $script:bashCommand) {
+        throw "E_TEST_BASH_PATH_CONVERSION_FAILED: bash is unavailable while converting '$Path'."
+    }
+
     $convertedPath = @(& $script:bashCommand.Source -lc @'
 path_value="$1"
-if command -v cygpath > /dev/null 2>&1; then
-  cygpath -u "$path_value"
-  exit $?
+convert_with_tool() {
+  local tool_name="$1"
+  local converted_path=""
+
+  if ! command -v "$tool_name" > /dev/null 2>&1; then
+    return 1
+  fi
+
+  if converted_path="$("$tool_name" -u "$path_value" 2> /dev/null)" && [[ -n "$converted_path" ]]; then
+    printf '%s\n' "$converted_path"
+    exit 0
+  fi
+
+  return 1
+}
+
+convert_with_tool cygpath || true
+convert_with_tool wslpath || true
+
+if [[ "$path_value" =~ ^([A-Za-z]):(.*)$ ]]; then
+  drive_letter="${BASH_REMATCH[1]}"
+  drive_letter="$(printf '%s' "$drive_letter" | tr '[:upper:]' '[:lower:]')"
+  rest="${BASH_REMATCH[2]}"
+  while [[ "$rest" == [\\/]* ]]; do
+    rest="${rest:1}"
+  done
+  rest="${rest//\\//}"
+
+  printf '/%s' "$drive_letter"
+  if [[ -n "$rest" ]]; then
+    printf '/%s' "$rest"
+  fi
+  printf '\n'
+  exit 0
 fi
-if command -v wslpath > /dev/null 2>&1; then
-  wslpath -u "$path_value"
-  exit $?
-fi
+
 exit 127
 '@ -- $Path 2>$null | Select-Object -First 1)
     if ($LASTEXITCODE -eq 0 -and $convertedPath.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($convertedPath[0])) {
         return [string]$convertedPath[0]
     }
 
-    throw "E_TEST_BASH_PATH_CONVERSION_FAILED: selected Bash runtime could not convert '$Path' with cygpath or wslpath."
+    $conversionExitCode = $LASTEXITCODE
+    $diagnostics = Get-BashPathConversionDiagnostics
+    throw "E_TEST_BASH_PATH_CONVERSION_FAILED: selected Bash runtime could not convert '$Path' with cygpath, wslpath, or drive-letter fallback (exitCode=$conversionExitCode; $diagnostics)."
+}
+
+function script:Get-BashPathConversionDiagnostics {
+    if ($null -eq $script:bashCommand) {
+        return "bashCommand=<missing>"
+    }
+
+    $bashPath = [string]$script:bashCommand.Source
+    $probeOutput = @(& $script:bashCommand.Source -lc @'
+printf 'bashVersion=%s\n' "${BASH_VERSION:-unknown}"
+for command_name in cygpath wslpath tr; do
+  if command -v "$command_name" > /dev/null 2>&1; then
+    printf '%s=%s\n' "$command_name" "$(command -v "$command_name")"
+  else
+    printf '%s=<missing>\n' "$command_name"
+  fi
+done
+if pwd -W > /dev/null 2>&1; then
+  printf 'pwdW=%s\n' "$(pwd -W)"
+else
+  printf 'pwdW=<unavailable>\n'
+fi
+'@ 2>$null)
+
+    $probePreview = if ($probeOutput.Count -gt 0) {
+        (($probeOutput | ForEach-Object { [string]$_ }) -join "; ")
+    }
+    else {
+        "<empty>"
+    }
+
+    return "bashCommand='$bashPath'; $probePreview"
 }
 
 function script:Resolve-BashCommandPath {
@@ -89,6 +155,16 @@ function script:Test-BashFileExists {
     )
 
     & $script:bashCommand.Source -lc 'test -f "$1"' -- $Path
+    return ($LASTEXITCODE -eq 0)
+}
+
+function script:Test-BashPathExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    & $script:bashCommand.Source -lc 'test -e "$1"' -- $Path
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -387,6 +463,28 @@ function script:Assert-LoggedFileListPathsWereRemoved {
     }
     finally {
         Remove-BashFiles -Path $paths
+    }
+}
+
+Describe "pre-push Bash harness path conversion" {
+    BeforeEach {
+        if ($null -eq $script:bashCommand) {
+            Set-ItResult -Skipped -Because "bash is unavailable."
+            return
+        }
+    }
+
+    It "converts test-drive paths to paths visible from the selected Bash runtime" {
+        $pathWithSpaces = Join-Path -Path $TestDrive -ChildPath "path conversion target.txt"
+        Write-Utf8NoBomFile -Path $pathWithSpaces -Content "path conversion target"
+
+        $bashPath = ConvertTo-BashPath -Path $pathWithSpaces
+
+        $bashPath | Should -Not -BeNullOrEmpty
+        Test-BashPathExists -Path $bashPath | Should -BeTrue -Because (Get-BashPathConversionDiagnostics)
+        if (-not $script:requiresBashPathConversion) {
+            $bashPath | Should -Be $pathWithSpaces
+        }
     }
 }
 

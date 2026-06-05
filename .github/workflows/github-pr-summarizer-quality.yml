@@ -222,11 +222,12 @@ jobs:
           $pesterGateScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
           $testPath = Join-Path -Path $repoRoot -ChildPath "Tests/GitHub"
           $coveragePath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+          $testResultPath = Join-Path -Path $repoRoot -ChildPath "testresults-github.xml"
           if (-not (Test-Path -Path $pesterGateScript -PathType Leaf)) {
             throw "E_CI_PESTER_GATE_SCRIPT_MISSING: Pester quality gate script not found at '$pesterGateScript'."
           }
 
-          & $pesterGateScript -TestPath $testPath -EnableCoverage -CoveragePath $coveragePath -MinimumCoveragePercent 75 -DiagnosticsPrefix "Pester"
+          & $pesterGateScript -TestPath $testPath -EnableCoverage -CoveragePath $coveragePath -MinimumCoveragePercent 75 -DiagnosticsPrefix "Pester" -TestResultOutputPath $testResultPath
 
       - name: Run Utils Pester tests
         shell: pwsh
@@ -238,8 +239,19 @@ jobs:
           $repoRoot = (Get-Location).Path
           $pesterGateScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
           $utilsTestPath = Join-Path -Path $repoRoot -ChildPath "Tests/Utils"
+          $testResultPath = Join-Path -Path $repoRoot -ChildPath "testresults-utils.xml"
           if (-not (Test-Path -Path $pesterGateScript -PathType Leaf)) {
             throw "E_CI_PESTER_GATE_SCRIPT_MISSING: Pester quality gate script not found at '$pesterGateScript'."
           }
 
-          & $pesterGateScript -TestPath $utilsTestPath -DiagnosticsPrefix "Utils Pester"
+          & $pesterGateScript -TestPath $utilsTestPath -DiagnosticsPrefix "Utils Pester" -TestResultOutputPath $testResultPath
+
+      - name: Upload Pester test results
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: pester-results-${{ matrix.os }}
+          path: |
+            testresults-github.xml
+            testresults-utils.xml
+          if-no-files-found: ignore

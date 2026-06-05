@@ -15,6 +15,9 @@ param(
     [string]$CoveragePath,
 
     [Parameter(Mandatory = $false)]
+    [string]$TestResultOutputPath,
+
+    [Parameter(Mandatory = $false)]
     [ValidateRange(0, 100)]
     [int]$MinimumCoveragePercent = 0,
 
@@ -40,7 +43,7 @@ function Get-FailedTestSummary {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 20)]
-        [int]$MaxCount = 3
+        [int]$MaxCount = 10
     )
 
     if ($null -eq $Result) {
@@ -101,7 +104,7 @@ function Get-FailedContainerSummary {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 20)]
-        [int]$MaxCount = 3
+        [int]$MaxCount = 10
     )
 
     if ($null -eq $Result) {
@@ -274,6 +277,16 @@ if ($null -ne $renderModeProperty) {
 if ($EnableCoverage) {
     $configuration.CodeCoverage.Enabled = $true
     $configuration.CodeCoverage.Path = @($CoveragePath)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($TestResultOutputPath)) {
+    $testResultDirectory = [System.IO.Path]::GetDirectoryName($TestResultOutputPath)
+    if (-not [string]::IsNullOrWhiteSpace($testResultDirectory)) {
+        [void][System.IO.Directory]::CreateDirectory($testResultDirectory)
+    }
+
+    $configuration.TestResult.Enabled = $true
+    $configuration.TestResult.OutputPath = $TestResultOutputPath
 }
 
 $result = Invoke-Pester -Configuration $configuration -ErrorAction Stop
