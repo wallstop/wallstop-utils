@@ -181,8 +181,8 @@ function Redact-SensitiveText {
     }
 
     # Generic token redaction for accidental echoes.
-    $redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"
-    $redacted = $redacted -replace "github_pat_[A-Za-z0-9_]{80,}", "***REDACTED***"
+    $redacted = $redacted -replace "gh[pousr]_[A-Za-z0-9_]{20,}", "***REDACTED***"
+    $redacted = $redacted -replace "github_pat_[A-Za-z0-9_]{20,}", "***REDACTED***"
     $redacted = $redacted -replace "(Bearer|token)\s+[A-Za-z0-9_\-\.]{20,}", '$1 ***REDACTED***'
 
     return $redacted

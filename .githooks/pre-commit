@@ -51,8 +51,10 @@ fi
 . "$hook_timeout_helpers_path"
 
 precommit_timeout_seconds="${WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS:-600}"
+precommit_recovery_inner_timeout_seconds=30
 precommit_recovery_shutdown_buffer_seconds=15
-minimum_precommit_timeout_seconds=$((30 + precommit_recovery_shutdown_buffer_seconds))
+precommit_recovery_setup_slack_seconds=15
+minimum_precommit_timeout_seconds=$((precommit_recovery_inner_timeout_seconds + precommit_recovery_shutdown_buffer_seconds + precommit_recovery_setup_slack_seconds))
 hook_start_seconds="$SECONDS"
 
 validate_timeout_seconds() {
@@ -60,13 +62,35 @@ validate_timeout_seconds() {
   local env_name="$2"
 
   if [[ ! "$timeout_value" =~ ^[0-9]+$ ]] || [[ "$timeout_value" -lt "$minimum_precommit_timeout_seconds" ]]; then
-    emit_diagnostic "E_HOOK_TIMEOUT_CONFIG: ${env_name} must be an integer >= ${minimum_precommit_timeout_seconds} seconds (30s inner recovery timeout plus ${precommit_recovery_shutdown_buffer_seconds}s shutdown buffer; received '${timeout_value}')."
+    emit_diagnostic "E_HOOK_TIMEOUT_CONFIG: ${env_name} must be an integer >= ${minimum_precommit_timeout_seconds} seconds (${precommit_recovery_inner_timeout_seconds}s inner recovery timeout plus ${precommit_recovery_shutdown_buffer_seconds}s shutdown buffer plus ${precommit_recovery_setup_slack_seconds}s setup slack; received '${timeout_value}')."
     exit 2
   fi
 }
 
 resolve_timeout_command() {
   wallstop_resolve_timeout_command
+}
+
+describe_timeout_provider() {
+  local timeout_command
+  if timeout_command="$(resolve_timeout_command)"; then
+    printf '%s\n' "$timeout_command"
+    return 0
+  fi
+
+  printf '%s\n' "shell-watchdog"
+}
+
+emit_recovery_budget_diagnostic() {
+  local phase_label="$1"
+  local remaining_seconds="$2"
+  local required_remaining_seconds="$3"
+  local inner_timeout_seconds="$4"
+  local elapsed_seconds=$((SECONDS - hook_start_seconds))
+  local timeout_provider
+  timeout_provider="$(describe_timeout_provider)"
+
+  emit_diagnostic "E_HOOK_TIMEOUT: ${phase_label} has ${remaining_seconds}s remaining, below required recovery budget. configuredTimeoutSeconds=${precommit_timeout_seconds}; elapsedSetupSeconds=${elapsed_seconds}; remainingSeconds=${remaining_seconds}; requiredRemainingSeconds=${required_remaining_seconds}; innerTimeoutSeconds=${inner_timeout_seconds}; minimumInnerTimeoutSeconds=${precommit_recovery_inner_timeout_seconds}; shutdownBufferSeconds=${precommit_recovery_shutdown_buffer_seconds}; setupSlackSeconds=${precommit_recovery_setup_slack_seconds}; timeoutProvider=${timeout_provider}."
 }
 
 run_with_timeout() {
@@ -150,7 +174,7 @@ remaining_timeout_seconds() {
   local remaining_seconds=$((precommit_timeout_seconds - elapsed_seconds))
 
   if [[ "$remaining_seconds" -lt 1 ]]; then
-    echo "E_HOOK_TIMEOUT: ${phase_label} exceeded total hook budget of ${precommit_timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS." >&2
+    emit_recovery_budget_diagnostic "$phase_label" "$remaining_seconds" 1 0
     return 1
   fi
 
@@ -252,8 +276,9 @@ if command -v pre-commit > /dev/null 2>&1; then
 
     if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
       inner_timeout_seconds=$((remaining_seconds - precommit_recovery_shutdown_buffer_seconds))
-      if [[ "$inner_timeout_seconds" -lt 30 ]]; then
-        emit_diagnostic "E_HOOK_TIMEOUT: pre-commit hook-stage pre-commit has ${remaining_seconds}s remaining, below minimum safe inner timeout (30s) plus shutdown buffer (${precommit_recovery_shutdown_buffer_seconds}s)."
+      required_remaining_seconds=$((precommit_recovery_inner_timeout_seconds + precommit_recovery_shutdown_buffer_seconds))
+      if [[ "$inner_timeout_seconds" -lt "$precommit_recovery_inner_timeout_seconds" ]]; then
+        emit_recovery_budget_diagnostic "pre-commit hook-stage pre-commit" "$remaining_seconds" "$required_remaining_seconds" "$inner_timeout_seconds"
         exit 124
       fi
 

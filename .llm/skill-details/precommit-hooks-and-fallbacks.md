@@ -56,7 +56,7 @@ Keep hook wrappers bounded so stalled commands cannot lock editor-hosted workflo
 - `.githooks/pre-push` must run changed-file pre-push validation through timeout guards; do not route local pre-push through `Invoke-FullValidation.ps1`, `-All`, or `--all-files`.
 - `.devcontainer/post-create.sh` preflight and pre-commit environment prewarm should stay non-blocking and timeout-bounded.
 - Shell timeout behavior must use `Scripts/Utils/Common/HookTimeout.sh`; `timeout`/`gtimeout` paths should use kill-after cleanup (`-k`) and avoid `--foreground`, while shell watchdog fallbacks must launch commands in an isolated process group/session when possible and clean up lingering descendants after the wrapper returns; never signal only the direct child.
-- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` must be at least 45 seconds because recovery-backed hook paths reserve 30s for `Invoke-PreCommitWithRecovery.ps1` plus a 15s shutdown buffer.
+- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` must be at least 60 seconds because recovery-backed hook paths reserve 30s for `Invoke-PreCommitWithRecovery.ps1` plus a 15s shutdown buffer plus 15s setup slack.
 - Allow controlled overrides via environment variables when intentionally running slower sessions:
   - `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`
   - `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`

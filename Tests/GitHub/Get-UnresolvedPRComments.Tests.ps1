@@ -392,7 +392,7 @@ Describe "Test-HasRateLimitHeaders" {
 
 Describe "Redact-SensitiveText" {
     It "redacts exact token occurrences" {
-        $token = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
+        $token = ("gh" + "p_") + "abcdefghijklmnopqrstuvwxyz1234567890"
         $input = "Authorization Bearer $token failed"
 
         $redacted = Redact-SensitiveText -Text $input -SensitiveTokens @($token)
@@ -400,8 +400,12 @@ Describe "Redact-SensitiveText" {
         $redacted | Should -Match "\*\*\*REDACTED\*\*\*"
     }
 
-    $ghpToken = "ghp_" + ("a" * 36)
-    $patToken = "github_pat_" + ("b" * 80)
+    $ghpToken = ("gh" + "p_") + ("a" * 20)
+    $ghoToken = ("gh" + "o_") + ("b" * 20)
+    $ghuToken = ("gh" + "u_") + ("c" * 20)
+    $ghsToken = ("gh" + "s_") + ("d" * 20)
+    $ghrToken = ("gh" + "r_") + ("e" * 20)
+    $patToken = ("github_" + "pat_") + ("f" * 20)
     $headerToken = "abcdefghijklmnopqrstuvwx123456"
 
     $cases = @(
@@ -411,6 +415,38 @@ Describe "Redact-SensitiveText" {
             SensitiveTokens   = @()
             ShouldContain     = "***REDACTED***"
             ShouldNotContain  = @($ghpToken)
+            ShouldBeUnchanged = $false
+        },
+        @{
+            Name              = "redacts generic gho token"
+            CaseInput         = "Detected token: $ghoToken"
+            SensitiveTokens   = @()
+            ShouldContain     = "***REDACTED***"
+            ShouldNotContain  = @($ghoToken)
+            ShouldBeUnchanged = $false
+        },
+        @{
+            Name              = "redacts generic ghu token"
+            CaseInput         = "Detected token: $ghuToken"
+            SensitiveTokens   = @()
+            ShouldContain     = "***REDACTED***"
+            ShouldNotContain  = @($ghuToken)
+            ShouldBeUnchanged = $false
+        },
+        @{
+            Name              = "redacts generic ghs token"
+            CaseInput         = "Detected token: $ghsToken"
+            SensitiveTokens   = @()
+            ShouldContain     = "***REDACTED***"
+            ShouldNotContain  = @($ghsToken)
+            ShouldBeUnchanged = $false
+        },
+        @{
+            Name              = "redacts generic ghr token"
+            CaseInput         = "Detected token: $ghrToken"
+            SensitiveTokens   = @()
+            ShouldContain     = "***REDACTED***"
+            ShouldNotContain  = @($ghrToken)
             ShouldBeUnchanged = $false
         },
         @{
@@ -447,9 +483,9 @@ Describe "Redact-SensitiveText" {
         },
         @{
             Name              = "does not redact regex literal documentation string"
-            CaseInput         = '$redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"'
+            CaseInput         = '$redacted = $redacted -replace "gh[pousr]_[A-Za-z0-9_]{20,}", "***REDACTED***"'
             SensitiveTokens   = @()
-            ShouldContain     = 'ghp_[A-Za-z0-9]{36}'
+            ShouldContain     = 'gh[pousr]_[A-Za-z0-9_]{20,}'
             ShouldNotContain  = @()
             ShouldBeUnchanged = $true
         }
@@ -1900,7 +1936,7 @@ Describe "Get-UnresolvedReviewThreads" {
     }
 
     It "redacts sensitive text in GraphQL errors" {
-        $secret = "ghp_verysecrettoken1234567890"
+        $secret = ("gh" + "p_") + "verysecrettoken1234567890"
         Mock Invoke-GitHubRequestWithRetry {
             return @{ errors = @(@{ message = "failure token=$secret" }) }
         }

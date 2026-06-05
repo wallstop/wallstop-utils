@@ -137,6 +137,239 @@ jobs:
         shell: pwsh
         run: ./Scripts/Utils/Quality/Test-LlmHarness.ps1
 
+      - name: Security pattern checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Security scanner diagnostics:"
+          echo "  rg_available=$(command -v rg >/dev/null 2>&1 && echo yes || echo no)"
+          if grep --version >/dev/null 2>&1; then
+            echo "  grep_version=$(grep --version | head -1)"
+          else
+            echo "  grep_version=BSD_or_non-GNU"
+          fi
+
+          mapfile -d '' scan_files < <(
+            git ls-files -z -- .
+          )
+
+          command_scan_files=()
+          for scan_file in "${scan_files[@]}"; do
+            case "$scan_file" in
+              Tests/**|*.md|.llm/*)
+                continue
+                ;;
+            esac
+
+            command_scan_files+=("$scan_file")
+          done
+
+          echo "  tracked_file_count=${#scan_files[@]}"
+          echo "  command_file_count=${#command_scan_files[@]}"
+          if [[ ${#scan_files[@]} -eq 0 ]]; then
+            echo "No tracked files selected for security pattern scanning."
+            exit 0
+          fi
+
+          token_pattern_rg='gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}'
+          bearer_pattern_rg='Authorization:\s*(Bearer|token)\s+[A-Za-z0-9._-]{20,}'
+          secret_pattern_rg="(${token_pattern_rg}|${bearer_pattern_rg})"
+          invoke_expression_pattern="Invoke-""Expression"
+          iex_alias_pattern="i""ex"
+          # shellcheck disable=SC2016 # Reason: regex intentionally includes a literal end-of-line anchor '$'.
+          dangerous_pattern_rg="${invoke_expression_pattern}"'|(^|[^[:alnum:]_])'"${iex_alias_pattern}"'([^[:alnum:]_]|$)'
+          combined_rg="(${secret_pattern_rg}|${dangerous_pattern_rg})"
+
+          token_pattern_grep='gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}'
+          bearer_pattern_grep='Authorization:[[:space:]]*(Bearer|token)[[:space:]]+[A-Za-z0-9._-]{20,}'
+          secret_pattern_grep="(${token_pattern_grep}|${bearer_pattern_grep})"
+          # shellcheck disable=SC2016 # Reason: regex intentionally includes a literal end-of-line anchor '$'.
+          dangerous_pattern_grep="${invoke_expression_pattern}"'|(^|[^[:alnum:]_])'"${iex_alias_pattern}"'([^[:alnum:]_]|$)'
+          combined_grep="(${secret_pattern_grep}|${dangerous_pattern_grep})"
+
+          if command -v rg >/dev/null 2>&1; then
+            scanner_engine="rg"
+            active_pattern="$combined_rg"
+            secret_pattern="$secret_pattern_rg"
+            dangerous_pattern="$dangerous_pattern_rg"
+          else
+            scanner_engine="grep"
+            active_pattern="$combined_grep"
+            secret_pattern="$secret_pattern_grep"
+            dangerous_pattern="$dangerous_pattern_grep"
+          fi
+
+          run_scan() {
+            local pattern="$1"
+            shift
+
+            if [[ $# -eq 0 ]]; then
+              return 0
+            fi
+
+            if [[ "$scanner_engine" == "rg" ]]; then
+              rg -n "$pattern" -- "$@" || true
+            else
+              grep -InE "$pattern" -- "$@" || true
+            fi
+          }
+
+          security_allowed_count_path="$(mktemp)"
+          printf '0\n' > "$security_allowed_count_path"
+          trap 'rm -f "$security_allowed_count_path"' EXIT
+
+          increment_allowed_security_match_count() {
+            local count
+            count="$(< "$security_allowed_count_path")"
+            printf '%s\n' "$((count + 1))" > "$security_allowed_count_path"
+          }
+
+          is_allowed_security_match() {
+            local match_path="$1"
+            local match_content="$2"
+
+            if [[ "$match_path" == "Tests/Utils/StrictModeHelpers.Tests.ps1" ]]; then
+              local strictmode_token="gh""p_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+              if [[ "$match_content" == "        \$rawToken = \"${strictmode_token}\"" ]]; then
+                return 0
+              fi
+            fi
+
+            return 1
+          }
+
+          filter_allowed_security_matches() {
+            local raw_matches="$1"
+
+            if [[ -z "$raw_matches" ]]; then
+              return 0
+            fi
+
+            while IFS= read -r match_line; do
+              if [[ -z "$match_line" ]]; then
+                continue
+              fi
+
+              local match_path="${match_line%%:*}"
+              local match_remainder="${match_line#*:}"
+              local match_content="${match_remainder#*:}"
+
+              if is_allowed_security_match "$match_path" "$match_content"; then
+                increment_allowed_security_match_count
+                continue
+              fi
+
+              printf '%s\n' "$match_line"
+            done <<< "$raw_matches"
+          }
+
+          raw_secret_matches="$(run_scan "$secret_pattern" "${scan_files[@]}")"
+          raw_dangerous_matches="$(run_scan "$dangerous_pattern" "${command_scan_files[@]}")"
+          secret_matches="$(filter_allowed_security_matches "$raw_secret_matches")"
+          dangerous_matches="$(filter_allowed_security_matches "$raw_dangerous_matches")"
+          matches="$(
+            {
+              printf '%s\n' "$secret_matches"
+              printf '%s\n' "$dangerous_matches"
+            } | sed '/^$/d'
+          )"
+
+          if [[ -n "$dangerous_matches" ]]; then
+            {
+              echo "::group::Command-execution scanner scope"
+              printf '%s\n' "${command_scan_files[@]}"
+              echo "::endgroup::"
+            }
+          fi
+
+          match_count=0
+          if [[ -n "$matches" ]]; then
+            match_count="$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+          fi
+          allowed_match_count="$(< "$security_allowed_count_path")"
+          expected_allowed_match_count=1
+
+          echo "  scanner_engine=$scanner_engine"
+          echo "  active_pattern=$active_pattern"
+          echo "  match_count=$match_count"
+          echo "  allowed_match_count=$allowed_match_count"
+
+          if [[ "$allowed_match_count" -ne "$expected_allowed_match_count" ]]; then
+            echo "Scanner allowlist drift: expected $expected_allowed_match_count allowed fixture match(es), found $allowed_match_count"
+            exit 1
+          fi
+
+          # Engine-level behavior corpus to catch false positives and drift.
+          sample_ghp="gh""p_0123456789abcdef0123456789abcdef0123"
+          sample_ghs="gh""s_0123456789abcdef0123"
+          sample_gho="gh""o_0123456789abcdef0123"
+          sample_ghu="gh""u_0123456789abcdef0123"
+          sample_ghr="gh""r_0123456789abcdef0123"
+          should_detect=(
+            "Authorization: token ${sample_ghp}"
+            "example-token: ${sample_ghs}"
+            "example-token: ${sample_gho}"
+            "example-token: ${sample_ghu}"
+            "example-token: ${sample_ghr}"
+            "${invoke_expression_pattern} \"Write-Host demo\""
+          )
+          # shellcheck disable=SC2016 # Reason: corpus samples are literal PowerShell snippets and must keep '$' unexpanded.
+          should_ignore=(
+            '$redacted = $redacted -replace "gh[pousr]_[A-Za-z0-9_]{20,}", "***REDACTED***"'
+            'Write-Host "hello"'
+          )
+
+          for sample in "${should_detect[@]}"; do
+            if [[ "$scanner_engine" == "rg" ]]; then
+              if ! printf '%s\n' "$sample" | rg -n "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected a match but none was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            else
+              if ! printf '%s\n' "$sample" | grep -nE "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected a match but none was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            fi
+          done
+
+          for sample in "${should_ignore[@]}"; do
+            if [[ "$scanner_engine" == "rg" ]]; then
+              if printf '%s\n' "$sample" | rg -n "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected no match but a match was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            else
+              if printf '%s\n' "$sample" | grep -nE "$active_pattern" >/dev/null; then
+                echo "Scanner corpus failure: expected no match but a match was found"
+                echo "Sample: $sample"
+                exit 1
+              fi
+            fi
+          done
+
+          if [[ -n "$matches" ]]; then
+            echo "Disallowed token or command pattern detected"
+            printf '%s\n' "$matches"
+            exit 1
+          fi
+
+      - name: Generated artifact tracking checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tracked_artifacts="$(git ls-files coverage.xml out.txt || true)"
+          if [[ -n "$tracked_artifacts" ]]; then
+            echo "Generated artifact files must not be tracked in git:"
+            printf '%s\n' "$tracked_artifacts"
+            exit 1
+          fi
+
       - name: Run shell hooks on changed files
         shell: bash
         env:

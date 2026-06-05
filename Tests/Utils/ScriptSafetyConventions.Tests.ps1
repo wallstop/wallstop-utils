@@ -609,68 +609,62 @@ Describe "Scope safety conventions" {
 }
 
 Describe "CI scope expansion" {
-    It "triggers workflow on all script and test changes" {
+    It "keeps the GitHub utility workflow narrowed to GitHub utility coverage" {
         $workflow = Get-Content -Path $script:workflowPath -Raw
 
-        $workflow | Should -Match 'Scripts/\*\*'
-        $workflow | Should -Match 'Tests/\*\*'
-        $workflow | Should -Match '\.githooks/pre-commit'
-        $workflow | Should -Match '\.githooks/pre-push'
-        $workflow | Should -Match '\.editorconfig'
-        $workflow | Should -Match '\.psscriptanalyzer\.format\.psd1'
-        $workflow | Should -Match '\.shellcheckrc'
-        $workflow | Should -Match '\.stylua\.toml'
+        $workflow | Should -Match 'Scripts/Utils/GitHub/\*\*'
+        $workflow | Should -Match 'Tests/GitHub/\*\*'
+        $workflow | Should -Match 'Scripts/Utils/Common/StrictModeHelpers\.ps1'
+        $workflow | Should -Match 'Invoke-PesterQualityGate\.ps1'
+        $workflow | Should -Match 'runs-on:\s+ubuntu-latest'
+        $workflow | Should -Not -Match 'matrix:'
+        $workflow | Should -Not -Match 'windows-latest|macos-latest'
+        $workflow | Should -Not -Match '(?m)^\s*-\s+"Scripts/\*\*"'
+        $workflow | Should -Not -Match '(?m)^\s*-\s+"Tests/\*\*"'
+        $workflow | Should -Not -Match '\.githooks/pre-commit|\.githooks/pre-push|\.shellcheckrc|\.stylua\.toml'
+        $workflow | Should -Not -Match 'Invoke-ScriptAnalyzer|PSScriptAnalyzer|Run Utils Pester tests|Tests/Utils'
+        $workflow | Should -Not -Match 'Security pattern checks|Generated artifact tracking checks|scanner_engine='
     }
 
-    It "runs ScriptAnalyzer against all scripts" {
+    It "triggers GitHub utility coverage when dot-sourced common helpers change" {
         $workflow = Get-Content -Path $script:workflowPath -Raw
-        $workflow | Should -Match 'Invoke-ScriptAnalyzer\s+-Path\s+"Scripts"'
+        $githubUtilityPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $githubUtility = Get-Content -Path $githubUtilityPath -Raw
+
+        $githubUtility | Should -Match 'Common/StrictModeHelpers\.ps1'
+        $githubUtility | Should -Match 'Common/CompatibilityHelpers\.ps1'
+        $workflow | Should -Match 'Scripts/Utils/Common/StrictModeHelpers\.ps1'
+        $workflow | Should -Match 'Scripts/Utils/Common/CompatibilityHelpers\.ps1'
     }
 
     It "keeps robust Pester CI workflow wiring: <Name>" -TestCases @(
         @{
             Name    = "coverage step invokes shared gate script"
-            Pattern = 'Run Pester with coverage[\s\S]*Invoke-PesterQualityGate\.ps1'
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*Invoke-PesterQualityGate\.ps1'
         }
         @{
             Name    = "coverage step passes coverage gate arguments"
-            Pattern = 'Run Pester with coverage[\s\S]*-EnableCoverage[\s\S]*-CoveragePath\s+\$coveragePath[\s\S]*-MinimumCoveragePercent\s+75'
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*-EnableCoverage[\s\S]*-CoveragePath\s+\$coveragePath[\s\S]*-MinimumCoveragePercent\s+75'
         }
         @{
             Name    = "coverage step writes XML result artifact"
-            Pattern = 'Run Pester with coverage[\s\S]*testresults-github\.xml[\s\S]*-TestResultOutputPath\s+\$testResultPath'
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*testresults-github\.xml[\s\S]*-TestResultOutputPath\s+\$testResultPath'
         }
         @{
             Name    = "coverage step uses explicit timeout"
-            Pattern = 'Run Pester with coverage[\s\S]*timeout-minutes:\s+10'
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*timeout-minutes:\s+10'
         }
         @{
             Name    = "coverage step fails clearly when gate script is missing"
-            Pattern = 'Run Pester with coverage[\s\S]*if\s*\(\s*-not\s*\(Test-Path\s+-Path\s+\$pesterGateScript\s+-PathType\s+Leaf\)\s*\)[\s\S]*E_CI_PESTER_GATE_SCRIPT_MISSING'
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*if\s*\(\s*-not\s*\(Test-Path\s+-Path\s+\$pesterGateScript\s+-PathType\s+Leaf\)\s*\)[\s\S]*E_CI_PESTER_GATE_SCRIPT_MISSING'
         }
         @{
-            Name    = "utils step invokes shared gate script"
-            Pattern = 'Run Utils Pester tests[\s\S]*Invoke-PesterQualityGate\.ps1'
+            Name    = "coverage step passes scoped diagnostics prefix"
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*-DiagnosticsPrefix\s+"GitHub Utility Pester"'
         }
         @{
-            Name    = "utils step passes diagnostics prefix"
-            Pattern = 'Run Utils Pester tests[\s\S]*-DiagnosticsPrefix\s+"Utils Pester"'
-        }
-        @{
-            Name    = "utils step writes XML result artifact"
-            Pattern = 'Run Utils Pester tests[\s\S]*testresults-utils\.xml[\s\S]*-TestResultOutputPath\s+\$testResultPath'
-        }
-        @{
-            Name    = "utils step uses explicit timeout"
-            Pattern = 'Run Utils Pester tests[\s\S]*timeout-minutes:\s+10'
-        }
-        @{
-            Name    = "utils step fails clearly when gate script is missing"
-            Pattern = 'Run Utils Pester tests[\s\S]*if\s*\(\s*-not\s*\(Test-Path\s+-Path\s+\$pesterGateScript\s+-PathType\s+Leaf\)\s*\)[\s\S]*E_CI_PESTER_GATE_SCRIPT_MISSING'
-        }
-        @{
-            Name    = "matrix workflow uploads XML result artifacts"
-            Pattern = 'Upload Pester test results[\s\S]*if:\s+always\(\)[\s\S]*actions/upload-artifact@v4\.6\.2[\s\S]*testresults-github\.xml[\s\S]*testresults-utils\.xml'
+            Name    = "workflow uploads only GitHub XML result artifact"
+            Pattern = 'Upload Pester test results[\s\S]*if:\s+always\(\)[\s\S]*actions/upload-artifact@v4\.6\.2[\s\S]*testresults-github\.xml'
         }
     ) {
         param($Name, $Pattern)
@@ -773,8 +767,8 @@ Describe "CI scope expansion" {
         $prUploadBlocks = @(Get-GitHubWorkflowStepBlocks -WorkflowContent $prSummarizerWorkflow -StepName 'Upload Pester test results')
         $prUploadBlocks.Count | Should -Be 1 -Because 'The PR summarizer Pester artifact upload step should be uniquely identifiable.'
         $prUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*if:[^\S\r\n]+always\(\)[^\S\r\n]*$'
-        $prUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*testresults-github\.xml[^\S\r\n]*$'
-        $prUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*testresults-utils\.xml[^\S\r\n]*$'
+        $prUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*(path:[^\S\r\n]+)?testresults-github\.xml[^\S\r\n]*$'
+        $prUploadBlocks[0] | Should -Not -Match 'testresults-utils\.xml'
     }
 
     It "forbids fragile Pester type literals across all GitHub workflows" {
@@ -1134,14 +1128,21 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook | Should -Match 'W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED'
         $preCommitHook | Should -Match 'Invoke-PreCommitAutoRepair\.ps1'
         $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit'
+        $preCommitHook | Should -Match 'precommit_recovery_inner_timeout_seconds=30'
         $preCommitHook | Should -Match 'precommit_recovery_shutdown_buffer_seconds=15'
-        $preCommitHook | Should -Match 'minimum_precommit_timeout_seconds=\$\(\(30 \+ precommit_recovery_shutdown_buffer_seconds\)\)'
-        $preCommitHook | Should -Match '30s inner recovery timeout plus \$\{precommit_recovery_shutdown_buffer_seconds\}s shutdown buffer'
-        $preCommitHook | Should -Match 'exceeded total hook budget of \$\{precommit_timeout_seconds\}s[\s\S]*>&2'
+        $preCommitHook | Should -Match 'precommit_recovery_setup_slack_seconds=15'
+        $preCommitHook | Should -Match 'minimum_precommit_timeout_seconds=\$\(\(precommit_recovery_inner_timeout_seconds \+ precommit_recovery_shutdown_buffer_seconds \+ precommit_recovery_setup_slack_seconds\)\)'
+        $preCommitHook | Should -Match '\$\{precommit_recovery_inner_timeout_seconds\}s inner recovery timeout plus \$\{precommit_recovery_shutdown_buffer_seconds\}s shutdown buffer plus \$\{precommit_recovery_setup_slack_seconds\}s setup slack'
+        $preCommitHook | Should -Match 'emit_recovery_budget_diagnostic'
+        $preCommitHook | Should -Match 'configuredTimeoutSeconds=\$\{precommit_timeout_seconds\}'
+        $preCommitHook | Should -Match 'elapsedSetupSeconds=\$\{elapsed_seconds\}'
+        $preCommitHook | Should -Match 'remainingSeconds=\$\{remaining_seconds\}'
+        $preCommitHook | Should -Match 'requiredRemainingSeconds=\$\{required_remaining_seconds\}'
+        $preCommitHook | Should -Match 'timeoutProvider=\$\{timeout_provider\}'
         $preCommitHook | Should -Match 'inner_timeout_seconds=\$\(\(remaining_seconds - precommit_recovery_shutdown_buffer_seconds\)\)'
         $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit -TimeoutSeconds "\$inner_timeout_seconds"'
-        $preCommitHook | Should -Match '\[\[ "\$inner_timeout_seconds" -lt 30 \]\]'
-        $preCommitHook | Should -Match 'below minimum safe inner timeout \(30s\) plus shutdown buffer'
+        $preCommitHook | Should -Match '\[\[ "\$inner_timeout_seconds" -lt "\$precommit_recovery_inner_timeout_seconds" \]\]'
+        $preCommitHook | Should -Match 'below required recovery budget'
         $preCommitHook | Should -Match 'Run-PreCommitValidation\.ps1'
         $preCommitHook | Should -Match 'pipx install pre-commit'
         $preCommitHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
@@ -1149,7 +1150,9 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook | Should -Match 'run_with_timeout'
         $preCommitHook | Should -Match 'hook_start_seconds='
         $preCommitHook | Should -Match 'remaining_timeout_seconds'
-        $preCommitHook | Should -Match 'total hook budget'
+        $preCommitHook | Should -Match 'minimumInnerTimeoutSeconds=\$\{precommit_recovery_inner_timeout_seconds\}'
+        $preCommitHook | Should -Match 'shutdownBufferSeconds=\$\{precommit_recovery_shutdown_buffer_seconds\}'
+        $preCommitHook | Should -Match 'setupSlackSeconds=\$\{precommit_recovery_setup_slack_seconds\}'
         $preCommitHook | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $preCommitHook | Should -Match 'E_HOOK_TIMEOUT_CONFIG'
         $preCommitHook | Should -Match 'W_HOOK_RUNTIME_BUDGET'
@@ -1174,14 +1177,26 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook | Should -Not -Match 'Invoke-FullValidation\.ps1'
         $prePushHook | Should -Not -Match 'Run-PreCommitValidation\.ps1"\s+-All'
         $prePushHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-push'
+        $prePushHook | Should -Match 'prepush_recovery_inner_timeout_seconds=30'
         $prePushHook | Should -Match 'prepush_recovery_shutdown_buffer_seconds=15'
-        $prePushHook | Should -Match 'minimum_prepush_timeout_seconds=\$\(\(30 \+ prepush_recovery_shutdown_buffer_seconds\)\)'
-        $prePushHook | Should -Match '30s inner recovery timeout plus \$\{prepush_recovery_shutdown_buffer_seconds\}s shutdown buffer'
+        $prePushHook | Should -Match 'prepush_recovery_setup_slack_seconds=15'
+        $prePushHook | Should -Match 'minimum_prepush_timeout_seconds=\$\(\(prepush_recovery_inner_timeout_seconds \+ prepush_recovery_shutdown_buffer_seconds \+ prepush_recovery_setup_slack_seconds\)\)'
+        $prePushHook | Should -Match '\$\{prepush_recovery_inner_timeout_seconds\}s inner recovery timeout plus \$\{prepush_recovery_shutdown_buffer_seconds\}s shutdown buffer plus \$\{prepush_recovery_setup_slack_seconds\}s setup slack'
+        $prePushHook | Should -Match 'emit_recovery_budget_diagnostic'
+        $prePushHook | Should -Match 'configuredTimeoutSeconds=\$\{prepush_timeout_seconds\}'
+        $prePushHook | Should -Match 'elapsedSetupSeconds=\$\{elapsed_seconds\}'
+        $prePushHook | Should -Match 'remainingSeconds=\$\{remaining_seconds\}'
+        $prePushHook | Should -Match 'requiredRemainingSeconds=\$\{required_remaining_seconds\}'
+        $prePushHook | Should -Match 'minimumInnerTimeoutSeconds=\$\{prepush_recovery_inner_timeout_seconds\}'
+        $prePushHook | Should -Match 'shutdownBufferSeconds=\$\{prepush_recovery_shutdown_buffer_seconds\}'
+        $prePushHook | Should -Match 'setupSlackSeconds=\$\{prepush_recovery_setup_slack_seconds\}'
+        $prePushHook | Should -Match 'timeoutProvider=\$\{timeout_provider\}'
+        $prePushHook | Should -Match 'changedFileCount=\$\{#resolved_changed_files\[@\]\}'
         $prePushHook | Should -Match 'inner_timeout_seconds=\$\(\(remaining_seconds - prepush_recovery_shutdown_buffer_seconds\)\)'
         $prePushHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-push -TimeoutSeconds "\$inner_timeout_seconds" -FileListPath "\$target_file_list_path"'
         $prePushHook | Should -Match 'write_changed_file_list'
         $prePushHook | Should -Not -Match 'target_file_list_path="\$\(write_changed_file_list\)"'
-        $prePushHook | Should -Match 'write_changed_file_list\s*\r?\n\s*target_file_list_path="\$changed_file_list_path"'
+        $prePushHook | Should -Match 'write_changed_file_list\s*\r?\n\s*target_file_list_path="\$changed_file_list_path"\s*\r?\n\s*if remaining_seconds="\$\(remaining_timeout_seconds "pre-push changed-file pre-commit validation"\)"'
         $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -IncludePreCommitOwnedChecks -TargetFileListPath "\$target_file_list_path"'
         $prePushHook | Should -Match 'pipx install pre-commit'
         $prePushHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
@@ -1466,13 +1481,13 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook | Should -Match 'pre-push changed-file pre-commit validation'
         $prePushHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt "\$minimum_prepush_timeout_seconds" \]\]'
 
-        $readme | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS[\s\S]*at least 45 seconds' -Because (
+        $readme | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS[\s\S]*at least 60 seconds' -Because (
             "README must document the same pre-commit minimum enforced by .githooks/pre-commit."
         )
-        $readme | Should -Match '30s inner recovery timeout plus a 15s shutdown buffer' -Because (
-            "README must explain why pre-commit accepts no values below 45 seconds."
+        $readme | Should -Match '30s inner recovery timeout plus a 15s shutdown buffer plus 15s setup slack' -Because (
+            "README must explain why pre-commit accepts no values below 60 seconds."
         )
-        $readme | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS[\s\S]*at least 45 seconds' -Because (
+        $readme | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS[\s\S]*at least 60 seconds' -Because (
             "README must document the same pre-push recovery-buffer minimum enforced by .githooks/pre-push."
         )
 
@@ -3322,34 +3337,65 @@ Describe "GitHub API resilience conventions" {
 }
 
 Describe "Workflow security conventions" {
-    It "uses precise token patterns to avoid redaction false positives" {
+    It "does not reintroduce broad security scanning into the GitHub utility coverage workflow" {
         $workflow = Get-Content -Path $script:workflowPath -Raw
 
-        $workflow | Should -Match 'ghp_\[A-Za-z0-9\]\{36\}'
-        $workflow | Should -Match 'github_pat_\[A-Za-z0-9_\]\{80,\}'
-        $workflow | Should -Not -Match '\(ghp_\|github_pat_\|Authorization'
+        $workflow | Should -Not -Match 'Security pattern checks'
+        $workflow | Should -Not -Match 'scanner_engine=|active_pattern=|match_count='
+        $workflow | Should -Not -Match 'should_detect=|should_ignore=|Scanner corpus failure'
+        $workflow | Should -Not -Match 'Generated artifact tracking checks|git ls-files coverage\.xml out\.txt'
     }
 
-    It "keeps redaction token patterns aligned with workflow scanner precision" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+    It "carries broad security and generated-artifact checks in the canonical script-quality workflow" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+
+        $workflow | Should -Match 'Security pattern checks'
+        $workflow | Should -Match 'Generated artifact tracking checks'
+        $workflow | Should -Match 'git ls-files coverage\.xml out\.txt'
+        $workflow | Should -Match 'git ls-files -z --'
+        $workflow | Should -Not -Match "':\(exclude\)Tests/\*\*'"
+        $workflow | Should -Not -Match "':\(exclude\)\.github/workflows/script-quality\.yml'"
+        $workflow | Should -Match 'command_scan_files='
+        $workflow | Should -Match 'Tests/\*\*\|\*\.md\|\.llm/\*'
+        $workflow | Should -Match 'filter_allowed_security_matches'
+        $workflow | Should -Match 'is_allowed_security_match'
+        $workflow | Should -Match 'allowed_match_count='
+        $workflow | Should -Match 'expected_allowed_match_count=1'
+        $workflow | Should -Not -Match '\.github/workflows/script-quality\.yml:\*'
+        $workflow | Should -Not -Match '\*\\"token_pattern_rg='
+    }
+
+    It "uses broad GitHub token patterns in the canonical workflow scanner and pre-commit redaction" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+        $preCommitValidationPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $preCommitValidationContent = Get-Content -Path $preCommitValidationPath -Raw
         $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $scriptContent = Get-Content -Path $scriptPath -Raw
 
-        $workflow | Should -Match 'ghp_\[A-Za-z0-9\]\{36\}'
-        $scriptContent | Should -Match 'ghp_\[A-Za-z0-9\]\{36\}'
+        $workflow | Should -Match 'gh\[pousr\]_\[A-Za-z0-9_\]\{20,\}'
+        $workflow | Should -Match 'github_pat_\[A-Za-z0-9_\]\{20,\}'
+        $workflow | Should -Not -Match '\(ghp_\|github_pat_\|Authorization'
+        $workflow | Should -Not -Match 'gh[pousr]_[A-Za-z0-9_]{20,}'
+        $workflow | Should -Not -Match 'github_pat_[A-Za-z0-9_]{20,}'
 
-        $workflow | Should -Match 'github_pat_\[A-Za-z0-9_\]\{80,\}'
-        $scriptContent | Should -Match 'github_pat_\[A-Za-z0-9_\]\{80,\}'
+        $preCommitValidationContent | Should -Match 'gh\[pousr\]_\[A-Za-z0-9_\]\{20,\}'
+        $preCommitValidationContent | Should -Match 'github_pat_\[A-Za-z0-9_\]\{20,\}'
+
+        $scriptContent | Should -Match 'gh\[pousr\]_\[A-Za-z0-9_\]\{20,\}'
+        $scriptContent | Should -Match 'github_pat_\[A-Za-z0-9_\]\{20,\}'
     }
 
-    It "scans both bearer and token authorization header schemes" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+    It "scans both bearer and token authorization header schemes in the canonical workflow" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+        $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $scriptContent = Get-Content -Path $scriptPath -Raw
 
         $workflow | Should -Match '\(Bearer\|token\)'
+        $scriptContent | Should -Match '\(Bearer\|token\)'
     }
 
     It "keeps scanner and script authorization redaction schemes aligned" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
         $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $scriptContent = Get-Content -Path $scriptPath -Raw
         $redactionPatternLiteral = '(Bearer|token)\s+[A-Za-z0-9_\-\.]{20,}'
@@ -3358,36 +3404,47 @@ Describe "Workflow security conventions" {
         $scriptContent | Should -Match ([regex]::Escape($redactionPatternLiteral))
     }
 
-    It "prints scanner diagnostics and validates behavior corpus" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+    It "prints scanner diagnostics and validates behavior corpus in script-quality" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
 
         $workflow | Should -Match 'scanner_engine='
         $workflow | Should -Match 'active_pattern='
         $workflow | Should -Match 'match_count='
+        $workflow | Should -Match 'tracked_file_count='
+        $workflow | Should -Match 'command_file_count='
+        $workflow | Should -Match 'allowed_match_count='
+        $workflow | Should -Match 'Scanner allowlist drift'
         $workflow | Should -Match 'should_detect='
         $workflow | Should -Match 'should_ignore='
+        $workflow | Should -Match 'sample_ghp="gh""p_0123456789abcdef0123456789abcdef0123"'
+        $workflow | Should -Match 'sample_ghs="gh""s_0123456789abcdef0123"'
+        $workflow | Should -Match 'sample_gho="gh""o_0123456789abcdef0123"'
+        $workflow | Should -Match 'sample_ghu="gh""u_0123456789abcdef0123"'
+        $workflow | Should -Match 'sample_ghr="gh""r_0123456789abcdef0123"'
+        $workflow | Should -Match '"example-token: \$\{sample_ghs\}"'
+        $workflow | Should -Match '"example-token: \$\{sample_gho\}"'
+        $workflow | Should -Match '"example-token: \$\{sample_ghu\}"'
+        $workflow | Should -Match '"example-token: \$\{sample_ghr\}"'
         $workflow | Should -Match 'Scanner corpus failure'
     }
 
-    It "uses equivalent iex boundary patterns in rg and grep paths" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+    It "uses equivalent iex boundary patterns in rg and grep scanner paths" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
 
-        $workflow | Should -Match "dangerous_pattern_rg='Invoke-Expression\|\(\^\|\[\^\[:alnum:\]_\]\)iex\(\[\^\[:alnum:\]_\]\|\$\)'"
-        $workflow | Should -Match "dangerous_pattern_grep='Invoke-Expression\|\(\^\|\[\^\[:alnum:\]_\]\)iex\(\[\^\[:alnum:\]_\]\|\$\)'"
+        $workflow | Should -Match 'invoke_expression_pattern="Invoke-""Expression"'
+        $workflow | Should -Match 'iex_alias_pattern="i""ex"'
+        $workflow | Should -Match 'dangerous_pattern_rg="\$\{invoke_expression_pattern\}"'
+        $workflow | Should -Match 'dangerous_pattern_grep="\$\{invoke_expression_pattern\}"'
+        $workflow | Should -Match '\$\{iex_alias_pattern\}'
+        $workflow | Should -Not -Match "dangerous_pattern_rg='Invoke-Expression"
+        $workflow | Should -Not -Match "dangerous_pattern_grep='Invoke-Expression"
     }
 
     It "documents SC2016 suppressions for literal regex and PowerShell corpus samples" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
 
         $workflow | Should -Match '# shellcheck disable=SC2016 # Reason: regex intentionally includes a literal end-of-line anchor'
         $workflow | Should -Match '# shellcheck disable=SC2016 # Reason: corpus samples are literal PowerShell snippets'
-    }
-
-    It "guards against tracking generated coverage artifacts" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
-
-        $workflow | Should -Match 'Generated artifact tracking checks'
-        $workflow | Should -Match 'git ls-files coverage.xml out.txt'
     }
 }
 
@@ -4368,7 +4425,7 @@ $result = "value {0} {1}" -f
         $contextContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
-        $contextContent | Should -Match 'pre-commit and pre-push recovery-backed outer timeout minimums 45s'
+        $contextContent | Should -Match 'pre-commit and pre-push recovery-backed outer timeout minimums 60s'
         $contextContent | Should -Match 'Diagnostic strings that must preserve stable `E_\*`/`W_\*` codes'
         $contextContent | Should -Match 'Copilot/agent-driven test execution'
         $contextContent | Should -Match 'avoid direct `Invoke-Pester` terminal calls'
@@ -4378,7 +4435,7 @@ $result = "value {0} {1}" -f
         $validationWorkflowContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
-        $validationWorkflowContent | Should -Match 'override minimum is 45s'
+        $validationWorkflowContent | Should -Match 'override minimum is 60s'
         $validationWorkflowContent | Should -Match 'do not call `Invoke-Pester` directly'
         $validationWorkflowContent | Should -Match 'timeout -k 5s 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate\.ps1'
         $validationWorkflowContent | Should -Match 'OutputVerbosity None'
@@ -4394,7 +4451,7 @@ $result = "value {0} {1}" -f
         $skillDetailContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
-        $skillDetailContent | Should -Match 'at least 45 seconds'
+        $skillDetailContent | Should -Match 'at least 60 seconds'
         $skillDetailContent | Should -Match 'do not run direct `Invoke-Pester` terminal commands'
     }
 
