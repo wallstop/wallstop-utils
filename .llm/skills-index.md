@@ -28,7 +28,7 @@ This file is generated. Do not edit generated sections manually.
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
-| [Cross Platform PowerShell](./skills/cross-platform-powershell.md) | [Expanded Guide](./skill-details/cross-platform-powershell.md) | cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity | Write portable PowerShell that runs on Windows, macOS, and Linux |
+| [Cross Platform PowerShell](./skills/cross-platform-powershell.md) | [Expanded Guide](./skill-details/cross-platform-powershell.md) | cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity, git bash, bash_env, processstartinfo path, fake-command harness | Write portable PowerShell that runs on Windows, macOS, and Linux |
 | [Devcontainer Bootstrap](./skills/devcontainer-bootstrap.md) | [Expanded Guide](./skill-details/devcontainer-bootstrap.md) | devcontainer, bootstrap, toolchain, setup parity | Use devcontainer bootstrap for consistent quality tooling |
 | [macOS AppleScript Validation](./skills/macos-applescript-validation.md) | [Expanded Guide](./skill-details/macos-applescript-validation.md) | macos, applescript, osacompile, migration fallback | Keep macOS AppleScript validation migration-safe |
 | [Windows Language Validation](./skills/windows-language-validation.md) | [Expanded Guide](./skill-details/windows-language-validation.md) | windows, autohotkey, batch, fast lane, runtime budget | Preserve Windows PR lane validation contracts |

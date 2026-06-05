@@ -62,7 +62,7 @@ jobs:
 
       - name: Upload Pester test results
         if: always()
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: pester-results-github-utility
           path: testresults-github.xml

@@ -138,6 +138,18 @@ $pathSep = if ($IsWindows) { ';' } else { ':' }
 $entries = $env:PATH -split [regex]::Escape($pathSep)
 ```
 
+## Process And Git Bash Environment Isolation
+
+When tests launch Git Bash from PowerShell on Windows, do not assume a `ProcessStartInfo`
+`PATH` replacement becomes Bash's exact runtime `PATH`. Git Bash/MSYS startup can add
+or reorder entries such as `/mingw64/bin` before the command runs.
+
+For fake-command harnesses, use a non-login shell (`--noprofile --norc`) and make the
+test bin directory win inside Bash after startup, for example with a Bash-visible
+`BASH_ENV` file that prepends the converted fake-bin path. Assert command precedence
+with `command -v`/`type -a` diagnostics rather than assuming the whole `PATH` string
+is identical to the PowerShell environment value.
+
 ## Performance And Pipeline Optimization
 
 These are general best practices that improve script speed on all platforms.

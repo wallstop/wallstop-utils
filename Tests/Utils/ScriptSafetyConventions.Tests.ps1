@@ -664,7 +664,7 @@ Describe "CI scope expansion" {
         }
         @{
             Name    = "workflow uploads only GitHub XML result artifact"
-            Pattern = 'Upload Pester test results[\s\S]*if:\s+always\(\)[\s\S]*actions/upload-artifact@v4\.6\.2[\s\S]*testresults-github\.xml'
+            Pattern = 'Upload Pester test results[\s\S]*if:\s+always\(\)[\s\S]*actions/upload-artifact@v(?:6|7)\.\d+\.\d+[\s\S]*testresults-github\.xml'
         }
     ) {
         param($Name, $Pattern)
@@ -713,6 +713,14 @@ Describe "CI scope expansion" {
         @{
             Name    = "emits discovery count diagnostics"
             Pattern = 'diagnostics: total=\$totalCount failedContainers=\$failedContainersCount result=\$resultState'
+        }
+        @{
+            Name    = "keeps broad failed-test summaries for log-only triage"
+            Pattern = 'function Get-FailedTestSummary[\s\S]*\[int\]\$MaxCount\s*=\s*20'
+        }
+        @{
+            Name    = "reports test result artifact path in failure diagnostics"
+            Pattern = 'TestResultOutputPath=[\s\S]*E_CI_PESTER_TESTS_FAILED|E_CI_PESTER_TESTS_FAILED[\s\S]*TestResultOutputPath='
         }
         @{
             Name    = "fails when coverage properties are empty"
@@ -1635,7 +1643,9 @@ Describe "Cross-language quality platform conventions" {
         $crossLanguageWorkflow | Should -Match 'uses:\s+actions/checkout@v6\.\d+\.\d+'
         $crossLanguageWorkflow | Should -Match 'uses:\s+actions/setup-python@v6\.\d+\.\d+'
         $crossLanguageWorkflow | Should -Match 'uses:\s+actions/cache@v5\.\d+\.\d+'
+        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/upload-artifact@v(?:6|7)\.\d+\.\d+'
         $powerShellWorkflow | Should -Match 'uses:\s+actions/checkout@v6\.\d+\.\d+'
+        $powerShellWorkflow | Should -Match 'uses:\s+actions/upload-artifact@v(?:6|7)\.\d+\.\d+'
     }
 
     It "keeps targeted Windows helper script contract for changed-file validation" {

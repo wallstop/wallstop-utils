@@ -42,8 +42,8 @@ function Get-FailedTestSummary {
         [object]$Result,
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(1, 20)]
-        [int]$MaxCount = 10
+        [ValidateRange(1, 50)]
+        [int]$MaxCount = 20
     )
 
     if ($null -eq $Result) {
@@ -103,8 +103,8 @@ function Get-FailedContainerSummary {
         [object]$Result,
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(1, 20)]
-        [int]$MaxCount = 10
+        [ValidateRange(1, 50)]
+        [int]$MaxCount = 20
     )
 
     if ($null -eq $Result) {
@@ -333,7 +333,13 @@ if ($totalCount -eq 0) {
 
 if ((Get-PesterResultCount -Result $result -PropertyName "FailedCount") -gt 0) {
     $failedSummary = Get-FailedTestSummary -Result $result
-    throw "E_CI_PESTER_TESTS_FAILED: Pester failed with $($result.FailedCount) failed test(s). Failed tests: $failedSummary"
+    $testResultArtifactDiagnostic = if ([string]::IsNullOrWhiteSpace($TestResultOutputPath)) {
+        ""
+    }
+    else {
+        " TestResultOutputPath='$TestResultOutputPath'."
+    }
+    throw "E_CI_PESTER_TESTS_FAILED: Pester failed with $($result.FailedCount) failed test(s). Failed tests: $failedSummary.$testResultArtifactDiagnostic"
 }
 
 if (-not $EnableCoverage) {

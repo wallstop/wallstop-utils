@@ -394,6 +394,20 @@ function script:Invoke-BashHelperScript {
     return Invoke-CapturedProcess -FileName $script:bashCommand.Source -ArgumentList (@($bashScriptPath) + @($ArgumentList)) -TimeoutMilliseconds $TimeoutMilliseconds
 }
 
+function script:Get-BashPathPrependEnvPath {
+    $prependPathScript = @'
+if [[ -n "${WALLSTOP_TEST_PATH_PREPEND:-}" ]]; then
+  case "${PATH:-}" in
+    "$WALLSTOP_TEST_PATH_PREPEND"|"$WALLSTOP_TEST_PATH_PREPEND":*) ;;
+    *) export PATH="${WALLSTOP_TEST_PATH_PREPEND}${PATH:+:$PATH}" ;;
+  esac
+fi
+'@
+
+    $scriptPath = Get-BashHelperScriptPath -Name "prepend-path-env" -Content $prependPathScript
+    return ConvertTo-BashHelperScriptPath -Path $scriptPath
+}
+
 function script:Invoke-BashCommandWithPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -426,8 +440,10 @@ function script:Invoke-BashCommandWithPath {
         $startInfo.WorkingDirectory = $WorkingDirectory
     }
 
-    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-lc", $Command)
+    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("--noprofile", "--norc", "-c", $Command)
     Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value $PathValue
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "WALLSTOP_TEST_PATH_PREPEND" -Value $PathValue
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "BASH_ENV" -Value (Get-BashPathPrependEnvPath)
     foreach ($key in @($Environment.Keys)) {
         Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name ([string]$key) -Value ([string]$Environment[$key])
     }
@@ -649,6 +665,13 @@ function script:Assert-PrePushHarnessCommandResolution {
     )
 
     $preflightScript = @'
+set -euo pipefail
+printf 'BASH_VERSION=%s\n' "${BASH_VERSION:-<unset>}"
+printf 'MSYSTEM=%s\n' "${MSYSTEM:-<unset>}"
+printf 'MSYS2_PATH_TYPE=%s\n' "${MSYS2_PATH_TYPE:-<unset>}"
+printf 'BASH_ENV=%s\n' "${BASH_ENV:-<unset>}"
+printf 'SHELLOPTS=%s\n' "${SHELLOPTS:-<unset>}"
+printf 'PATH=%s\n' "$PATH"
 for command_name in git pre-commit pwsh; do
   if resolved="$(command -v "$command_name" 2> /dev/null)" && [[ -n "$resolved" ]]; then
     printf '%s=%s\n' "$command_name" "$resolved"
@@ -656,7 +679,10 @@ for command_name in git pre-commit pwsh; do
     printf '%s=<missing>\n' "$command_name"
   fi
 done
-printf 'PATH=%s\n' "$PATH"
+for command_name in git pre-commit pwsh; do
+  printf 'type -a %s:\n' "$command_name"
+  type -a "$command_name" || true
+done
 printf 'PWD=%s\n' "$(pwd)"
 '@
 
@@ -665,8 +691,8 @@ printf 'PWD=%s\n' "$(pwd)"
         throw (
             "E_TEST_PREPUSH_COMMAND_PREFLIGHT_FAILED: harness command preflight failed (exitCode={0}; stdout={1}; stderr={2}; path={3}; binRoot={4})." -f @(
                 $preflight.ExitCode,
-                (Get-PreviewText -Text $preflight.Stdout),
-                (Get-PreviewText -Text $preflight.Stderr),
+                (Get-PreviewText -Text $preflight.Stdout -MaximumLength 1600),
+                (Get-PreviewText -Text $preflight.Stderr -MaximumLength 1600),
                 $PathValue,
                 (ConvertTo-BashPath -Path $Harness.BinRoot)
             )
@@ -696,8 +722,8 @@ printf 'PWD=%s\n' "$(pwd)"
                     $commandName,
                     $expectedPath,
                     $actualCommandPath,
-                    (Get-PreviewText -Text $preflight.Stdout),
-                    (Get-PreviewText -Text $preflight.Stderr),
+                    (Get-PreviewText -Text $preflight.Stdout -MaximumLength 1600),
+                    (Get-PreviewText -Text $preflight.Stderr -MaximumLength 1600),
                     $PathValue,
                     $script:bashCommand.Source,
                     $script:bashHostPathMode
@@ -725,8 +751,8 @@ printf 'PWD=%s\n' "$(pwd)"
             "E_TEST_PREPUSH_PRECOMMIT_RESOLUTION_UNEXPECTED: expected pre-commit resolution '{0}', but got '{1}'. Diagnostics: stdout={2}; stderr={3}; path={4}; bash={5}; mode={6}." -f @(
                 $expectedPreCommitPath,
                 $actualPreCommitPath,
-                (Get-PreviewText -Text $preflight.Stdout),
-                (Get-PreviewText -Text $preflight.Stderr),
+                (Get-PreviewText -Text $preflight.Stdout -MaximumLength 1600),
+                (Get-PreviewText -Text $preflight.Stderr -MaximumLength 1600),
                 $PathValue,
                 $script:bashCommand.Source,
                 $script:bashHostPathMode
@@ -1069,16 +1095,18 @@ function script:Invoke-PrePushHookHarness {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $script:bashCommand.Source
     $bashHookPath = ConvertTo-BashPath -Path $script:prePushHookPath
+    $harnessPath = ConvertTo-BashPath -Path $Harness.BinRoot
     $startInfo.WorkingDirectory = $Harness.RepoRoot
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $startInfo.CreateNoWindow = $true
-    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @($bashHookPath)
-    $harnessPath = ConvertTo-BashPath -Path $Harness.BinRoot
+    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("--noprofile", "--norc", $bashHookPath)
     Assert-PrePushHarnessCommandResolution -Harness $Harness -PathValue $harnessPath
     Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value $harnessPath
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "WALLSTOP_TEST_PATH_PREPEND" -Value $harnessPath
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "BASH_ENV" -Value (Get-BashPathPrependEnvPath)
     Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "WALLSTOP_TEST_REPO_ROOT" -Value (ConvertTo-BashPath -Path $Harness.RepoRoot)
     Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "WALLSTOP_TEST_COMMAND_LOG" -Value (ConvertTo-BashPath -Path $Harness.CommandLogPath)
     Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "WALLSTOP_PREPUSH_TIMEOUT_SECONDS" -Value "90"
@@ -1228,7 +1256,7 @@ Describe "pre-push Bash harness path conversion" {
         }
     }
 
-    It "uses a converted test bin directory as the complete Bash PATH" {
+    It "prepends a converted test bin directory after Bash startup" {
         $binRoot = Join-Path -Path $TestDrive -ChildPath "path command bin {target}"
         [void][System.IO.Directory]::CreateDirectory($binRoot)
         $fakeGitPath = Join-Path -Path $binRoot -ChildPath "git"
@@ -1240,12 +1268,12 @@ Describe "pre-push Bash harness path conversion" {
         $result = Invoke-BashCommandWithPath -PathValue $bashBinRoot -Command "command -v git"
 
         $result.ExitCode | Should -Be 0 -Because (
-            "Bash must accept the converted directory as PATH. Diagnostics: {0}" -f @(
+            "Bash must accept the converted directory as a PATH-precedence override. Diagnostics: {0}" -f @(
                 Get-BashPathConversionDiagnostics -Path $binRoot -ConvertedPath $bashBinRoot
             )
         )
         ($result.Stdout.Trim()) | Should -BeExactly $expectedGitPath -Because (
-            "PATH replacement must not leave a Windows Path/PATH duplicate that resolves real Git first. stdout={0}; stderr={1}; path={2}" -f @(
+            "The test harness fake bin must win command resolution after Git Bash startup. stdout={0}; stderr={1}; path={2}" -f @(
                 (Get-PreviewText -Text $result.Stdout),
                 (Get-PreviewText -Text $result.Stderr),
                 $bashBinRoot
