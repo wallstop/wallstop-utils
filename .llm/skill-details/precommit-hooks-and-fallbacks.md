@@ -25,6 +25,8 @@ The pre-push local hook entry in `.pre-commit-config.yaml` must route through `S
 
 `Run-PreCommitValidation.ps1` non-`-All` mode is the fast local mode. It may use staged files or explicit target files, but it must avoid Pester, full-repo scans, cross-version compatibility scans, and duplicate shell/native checks already owned by dedicated pre-commit hooks. `-All` remains the deep mode for full validation and CI parity.
 
+`.githooks/pre-commit` must start its runtime clock before repository-root discovery and exit through a no-staged-files fast path before checking pre-commit availability or spawning PowerShell validation. If staged-file discovery fails, fail open to the normal pre-commit path rather than skipping validation.
+
 Full Pester/full validation belongs to CI and explicit session-close validation via `Scripts/Utils/Quality/Invoke-FullValidation.ps1`.
 
 ## Deterministic Fallback Path
@@ -57,9 +59,14 @@ Keep hook wrappers bounded so stalled commands cannot lock editor-hosted workflo
 - `.devcontainer/post-create.sh` preflight and pre-commit environment prewarm should stay non-blocking and timeout-bounded.
 - Shell timeout behavior must use `Scripts/Utils/Common/HookTimeout.sh`; `timeout`/`gtimeout` paths should use kill-after cleanup (`-k`) and avoid `--foreground`, while shell watchdog fallbacks must launch commands in an isolated process group/session when possible and clean up lingering descendants after the wrapper returns; never signal only the direct child.
 - `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` must be at least 60 seconds because recovery-backed hook paths reserve 30s for `Invoke-PreCommitWithRecovery.ps1` plus a 15s shutdown buffer plus 15s setup slack.
+- `W_HOOK_RUNTIME_BUDGET` uses runtime tiers: no-op/prefiltered paths retain the <=1s target, while active changed-file validation has a separate bounded budget. Do not silence slow no-op paths by broadening them into active validation.
 - Allow controlled overrides via environment variables when intentionally running slower sessions:
   - `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`
   - `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`
+  - `WALLSTOP_PRECOMMIT_ACTIVE_RUNTIME_BUDGET_SECONDS`
+  - `WALLSTOP_PREPUSH_ACTIVE_RUNTIME_BUDGET_SECONDS`
+  - `WALLSTOP_PRECOMMIT_NOOP_RUNTIME_BUDGET_SECONDS`
+  - `WALLSTOP_PREPUSH_NOOP_RUNTIME_BUDGET_SECONDS`
   - `WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS`
   - `WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS`
 - For Copilot/agent ad-hoc tests, do not run direct `Invoke-Pester` terminal commands. Use timeout-bounded `Invoke-PesterQualityGate.ps1` with `-OutputVerbosity None` and a narrow `-TestPath` scope.
@@ -71,6 +78,10 @@ Native tool wrappers must download only manifest-pinned upstream release assets 
 Run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1 -Tool All -EnsureOnly` to pre-warm StyLua/actionlint without running checks. `Invoke-FullValidation.ps1 -PreflightOnly` must call this automatically before hooks.
 
 When pre-commit itself reports cache/environment installation failures, route through `Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1`; it cleans hook environments, runs `pre-commit install-hooks`, and retries once before failing with stable `E_PRECOMMIT_*` diagnostics.
+
+When pre-commit reports `files were modified by this hook`, `Invoke-PreCommitWithRecovery.ps1` should safely auto-stage only formatter-updated files that were already staged and had no pre-existing unstaged drift, then retry once. If a target had unstaged drift before hook execution, it must fail with a stable autofix diagnostic instead of staging unrelated work.
+
+Index-lock recovery must fail closed when process scanning is degraded or any active git/pre-commit command line is ambiguous, even if an active-git override is enabled. Only remove a stale `index.lock` after the lock path matches this repository, the file is stable and old enough, no repo-scoped or ambiguous active git process is present, and the lock can be opened exclusively.
 
 `Invoke-FullValidation.ps1 -PreflightOnly` must also verify local `.githooks` registration and the pinned pre-commit CLI from `requirements.txt`. Agents should publish branches through `Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1` instead of bare `git push`; the helper runs hook registration preflight first and safely applies `push -u origin HEAD` only when the remote branch is absent or an ancestor of `HEAD`.
 

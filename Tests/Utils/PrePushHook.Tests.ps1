@@ -31,6 +31,7 @@ function script:Write-Utf8NoBomFile {
         [string]$Path,
 
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$Content
     )
 
@@ -895,6 +896,9 @@ set -euo pipefail
 } >> "$WALLSTOP_TEST_COMMAND_LOG"
 
 if [[ "$#" -ge 2 && "$1" == "rev-parse" && "$2" == "--show-toplevel" ]]; then
+  if [[ "${WALLSTOP_TEST_REPO_ROOT_DELAY_SECONDS:-0}" =~ ^[0-9]+$ && "${WALLSTOP_TEST_REPO_ROOT_DELAY_SECONDS:-0}" -gt 0 ]]; then
+    sleep "$WALLSTOP_TEST_REPO_ROOT_DELAY_SECONDS"
+  fi
   if [[ -n "${WALLSTOP_TEST_REPO_ROOT_STDERR:-}" ]]; then
     printf '%b' "$WALLSTOP_TEST_REPO_ROOT_STDERR" >&2
   fi
@@ -906,7 +910,7 @@ if [[ "$#" -ge 2 && "$1" == "rev-parse" && "$2" == "--show-toplevel" ]]; then
   exit 0
 fi
 
-if [[ "$#" -ge 4 && "$1" == "rev-parse" && "$2" == "--abbrev-ref" && "$3" == "--symbolic-full-name" ]]; then
+if [[ "$#" -eq 4 && "$1" == "rev-parse" && "$2" == "--abbrev-ref" && "$3" == "--symbolic-full-name" && "$4" == *"@{upstream}" ]]; then
   if [[ -n "${WALLSTOP_TEST_UPSTREAM_REF:-}" ]]; then
     printf '%s\n' "$WALLSTOP_TEST_UPSTREAM_REF"
     exit 0
@@ -963,7 +967,15 @@ if [[ "$1" == "ls-files" ]]; then
   exit "${WALLSTOP_TEST_LS_FILES_EXIT:-0}"
 fi
 
-exit 0
+printf 'E_TEST_UNEXPECTED_FAKE_GIT_COMMAND:' >&2
+printf 'unexpected-git-command' >> "$WALLSTOP_TEST_COMMAND_LOG"
+for arg in "$@"; do
+  printf ' %q' "$arg" >&2
+  printf '\t%s' "$arg" >> "$WALLSTOP_TEST_COMMAND_LOG"
+done
+printf '\n' >&2
+printf '\n' >> "$WALLSTOP_TEST_COMMAND_LOG"
+exit 127
 '@
 
     $fakePreCommit = @'
@@ -1096,13 +1108,16 @@ function script:Invoke-PrePushHookHarness {
     $startInfo.FileName = $script:bashCommand.Source
     $bashHookPath = ConvertTo-BashPath -Path $script:prePushHookPath
     $harnessPath = ConvertTo-BashPath -Path $Harness.BinRoot
+    $stdinPath = Join-Path -Path $Harness.Root -ChildPath "pre-push-stdin.txt"
+    Write-Utf8NoBomFile -Path $stdinPath -Content $Stdin
+    $bashStdinPath = ConvertTo-BashPath -Path $stdinPath
     $startInfo.WorkingDirectory = $Harness.RepoRoot
     $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardInput = $false
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $startInfo.CreateNoWindow = $true
-    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("--noprofile", "--norc", $bashHookPath)
+    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("--noprofile", "--norc", "-c", 'exec "$1" < "$2"', "wallstop-prepush-harness", $bashHookPath, $bashStdinPath)
     Assert-PrePushHarnessCommandResolution -Harness $Harness -PathValue $harnessPath
     Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value $harnessPath
     Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "WALLSTOP_TEST_PATH_PREPEND" -Value $harnessPath
@@ -1121,9 +1136,6 @@ function script:Invoke-PrePushHookHarness {
     }
 
     try {
-        $process.StandardInput.Write($Stdin)
-        $process.StandardInput.Close()
-
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutMilliseconds)) {
@@ -1198,6 +1210,7 @@ function script:Assert-NoDeepPrePushCommand {
     $CommandLog | Should -Not -Match 'Invoke-FullValidation\.ps1'
     $CommandLog | Should -Not -Match '(?m)(^|\s)-All(\s|$)'
     $CommandLog | Should -Not -Match '--all-files'
+    $CommandLog | Should -Not -Match 'unexpected-git-command'
 }
 
 function script:Assert-PrePushHarnessSucceeded {
@@ -1349,6 +1362,50 @@ Describe "pre-push changed-file hook behavior" {
             AssertFileListCleanup = $true
         }
         @{
+            Name                  = "uses origin HEAD merge-base for new branches without upstream"
+            Stdin                 = "refs/heads/feature local456 refs/heads/feature 0000000000000000000000000000000000000000`n"
+            Environment           = @{
+                WALLSTOP_TEST_ORIGIN_HEAD_AVAILABLE = "1"
+                WALLSTOP_TEST_ORIGIN_MERGE_BASE     = "originbase222"
+                WALLSTOP_TEST_DIFF_OUTPUT           = "Scripts/Utils/Origin-Fallback.ps1`n"
+            }
+            RemovePreCommit       = $false
+            ExpectedExitCode      = 0
+            ExpectedStderrPattern = ""
+            ExpectedLogPatterns   = @(
+                'git\trev-parse\t--abbrev-ref\t--symbolic-full-name\tfeature@\{upstream\}',
+                'git\trev-parse\t--verify\t--quiet\torigin/HEAD\^\{commit\}',
+                'git\tmerge-base\tlocal456\torigin/HEAD',
+                'git\tdiff\t--name-only\t--diff-filter=ACMR\toriginbase222\.\.local456\t--',
+                'pwsh-file\tScripts/Utils/Origin-Fallback\.ps1'
+            )
+            UnexpectedLogPattern  = 'W_PREPUSH_CHANGED_FILE_BASELINE_MISSING|git\tls-files'
+            AssertFileListCleanup = $true
+        }
+        @{
+            Name                  = "falls back to origin HEAD when upstream merge-base is unavailable"
+            Stdin                 = "refs/heads/feature local456 refs/heads/feature 0000000000000000000000000000000000000000`n"
+            Environment           = @{
+                WALLSTOP_TEST_UPSTREAM_REF          = "origin/feature"
+                WALLSTOP_TEST_ORIGIN_HEAD_AVAILABLE = "1"
+                WALLSTOP_TEST_ORIGIN_MERGE_BASE     = "originbase333"
+                WALLSTOP_TEST_DIFF_OUTPUT           = "Scripts/Utils/Upstream-Fallback.ps1`n"
+            }
+            RemovePreCommit       = $false
+            ExpectedExitCode      = 0
+            ExpectedStderrPattern = ""
+            ExpectedLogPatterns   = @(
+                'git\trev-parse\t--abbrev-ref\t--symbolic-full-name\tfeature@\{upstream\}',
+                'git\tmerge-base\tlocal456\torigin/feature',
+                'git\trev-parse\t--verify\t--quiet\torigin/HEAD\^\{commit\}',
+                'git\tmerge-base\tlocal456\torigin/HEAD',
+                'git\tdiff\t--name-only\t--diff-filter=ACMR\toriginbase333\.\.local456\t--',
+                'pwsh-file\tScripts/Utils/Upstream-Fallback\.ps1'
+            )
+            UnexpectedLogPattern  = 'W_PREPUSH_CHANGED_FILE_BASELINE_MISSING|git\tls-files'
+            AssertFileListCleanup = $true
+        }
+        @{
             Name                  = "skips validation for delete pushes"
             Stdin                 = "refs/heads/feature 0000000000000000000000000000000000000000 refs/heads/feature remote123`n"
             Environment           = @{}
@@ -1367,6 +1424,32 @@ Describe "pre-push changed-file hook behavior" {
             ExpectedExitCode      = 0
             ExpectedStderrPattern = 'no ref updates received'
             ExpectedLogPatterns   = @()
+            UnexpectedLogPattern  = 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
+            AssertFileListCleanup = $false
+        }
+        @{
+            Name                  = "emits no-op runtime budget warning for slow no-ref setup"
+            Stdin                 = ""
+            Environment           = @{
+                WALLSTOP_TEST_REPO_ROOT_DELAY_SECONDS = "2"
+            }
+            RemovePreCommit       = $false
+            ExpectedExitCode      = 0
+            ExpectedStderrPattern = 'W_HOOK_RUNTIME_BUDGET: pre-push no ref updates took'
+            ExpectedLogPatterns   = @()
+            UnexpectedLogPattern  = 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
+            AssertFileListCleanup = $false
+        }
+        @{
+            Name                  = "emits no-op runtime budget warning for slow no-changed setup"
+            Stdin                 = "refs/heads/main local456 refs/heads/main remote123`n"
+            Environment           = @{
+                WALLSTOP_TEST_REPO_ROOT_DELAY_SECONDS = "2"
+            }
+            RemovePreCommit       = $false
+            ExpectedExitCode      = 0
+            ExpectedStderrPattern = 'W_HOOK_RUNTIME_BUDGET: pre-push no changed files took'
+            ExpectedLogPatterns   = @('git\tdiff\t--name-only\t--diff-filter=ACMR\tremote123\.\.local456\t--')
             UnexpectedLogPattern  = 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
             AssertFileListCleanup = $false
         }

@@ -254,6 +254,58 @@ function Get-GitIndexLockRecoveryConfig {
     }
 }
 
+function Measure-ActiveGitProcessCommandLines {
+    [CmdletBinding()]
+    [OutputType([object])]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string[]]$CommandLines = @(),
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$GitDirectory = '',
+
+        [Parameter(Mandatory = $true)]
+        [System.StringComparison]$PathComparison
+    )
+
+    $activeGitProcessCount = 0
+    $ambiguousGitProcessCount = 0
+
+    foreach ($commandLine in @($CommandLines)) {
+        if ([string]::IsNullOrWhiteSpace($commandLine)) {
+            continue
+        }
+
+        if ($commandLine -notmatch '(?i)\bgit(\.exe)?\b|\bpre-commit\b') {
+            continue
+        }
+
+        if ($commandLine.IndexOf($RepositoryRoot, $PathComparison) -ge 0) {
+            $activeGitProcessCount++
+            continue
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($GitDirectory) -and $commandLine.IndexOf($GitDirectory, $PathComparison) -ge 0) {
+            $activeGitProcessCount++
+            continue
+        }
+
+        $ambiguousGitProcessCount++
+    }
+
+    return [pscustomobject]@{
+        ActiveGitProcessCount    = $activeGitProcessCount
+        AmbiguousGitProcessCount = $ambiguousGitProcessCount
+        ProcessScanDegraded      = ($ambiguousGitProcessCount -gt 0)
+    }
+}
+
 function Get-ActiveGitProcessScanState {
     [CmdletBinding()]
     [OutputType([object])]
@@ -271,30 +323,9 @@ function Get-ActiveGitProcessScanState {
     )
 
     $result = [pscustomobject]@{
-        ActiveGitProcessCount = -1
-        ProcessScanDegraded   = $false
-    }
-
-    $isGitCommandLineMatch = {
-        param([string]$CommandLine)
-
-        if ([string]::IsNullOrWhiteSpace($CommandLine)) {
-            return $false
-        }
-
-        if ($CommandLine -notmatch '(?i)\bgit(\.exe)?\b|\bpre-commit\b') {
-            return $false
-        }
-
-        if ($CommandLine.IndexOf($RepositoryRoot, $PathComparison) -ge 0) {
-            return $true
-        }
-
-        if (-not [string]::IsNullOrWhiteSpace($GitDirectory) -and $CommandLine.IndexOf($GitDirectory, $PathComparison) -ge 0) {
-            return $true
-        }
-
-        return $false
+        ActiveGitProcessCount    = -1
+        AmbiguousGitProcessCount = 0
+        ProcessScanDegraded      = $false
     }
 
     try {
@@ -306,12 +337,10 @@ function Get-ActiveGitProcessScanState {
             }
 
             $processes = @(& $getCimInstanceCommand -ClassName Win32_Process -ErrorAction Stop)
-            $result.ActiveGitProcessCount = @(
-                $processes |
-                    Where-Object {
-                        & $isGitCommandLineMatch -CommandLine ([string]$_.CommandLine)
-                    }
-            ).Count
+            $scanMeasurement = Measure-ActiveGitProcessCommandLines -CommandLines @($processes | ForEach-Object { [string]$_.CommandLine }) -RepositoryRoot $RepositoryRoot -GitDirectory $GitDirectory -PathComparison $PathComparison
+            $result.ActiveGitProcessCount = [int]$scanMeasurement.ActiveGitProcessCount
+            $result.AmbiguousGitProcessCount = [int]$scanMeasurement.AmbiguousGitProcessCount
+            $result.ProcessScanDegraded = [bool]$scanMeasurement.ProcessScanDegraded
 
             return $result
         }
@@ -341,12 +370,10 @@ function Get-ActiveGitProcessScanState {
             return $result
         }
 
-        $result.ActiveGitProcessCount = @(
-            $processLines |
-                Where-Object {
-                    & $isGitCommandLineMatch -CommandLine ([string]$_)
-                }
-        ).Count
+        $scanMeasurement = Measure-ActiveGitProcessCommandLines -CommandLines @($processLines | ForEach-Object { [string]$_ }) -RepositoryRoot $RepositoryRoot -GitDirectory $GitDirectory -PathComparison $PathComparison
+        $result.ActiveGitProcessCount = [int]$scanMeasurement.ActiveGitProcessCount
+        $result.AmbiguousGitProcessCount = [int]$scanMeasurement.AmbiguousGitProcessCount
+        $result.ProcessScanDegraded = [bool]$scanMeasurement.ProcessScanDegraded
 
         return $result
     }
@@ -390,6 +417,7 @@ function Invoke-SafeGitIndexLockRecovery {
         LockPath              = ''
         LockAgeSeconds        = -1
         ActiveGitProcessCount = -1
+        AmbiguousGitProcessCount = 0
         ProcessScanDegraded   = $false
         ElapsedMilliseconds   = 0
         SlowPathThresholdMs   = [int]$recoveryConfig.SlowPathMilliseconds
@@ -495,10 +523,17 @@ function Invoke-SafeGitIndexLockRecovery {
 
         $processScanState = Get-ActiveGitProcessScanState -RepositoryRoot $resolvedRepositoryRoot -GitDirectory $gitDirectory -PathComparison $comparison
         $activeGitProcessCount = [int]$processScanState.ActiveGitProcessCount
+        $ambiguousGitProcessCount = if ($null -ne $processScanState.PSObject.Properties['AmbiguousGitProcessCount']) {
+            [int]$processScanState.AmbiguousGitProcessCount
+        }
+        else {
+            0
+        }
         $result.ProcessScanDegraded = [bool]$processScanState.ProcessScanDegraded
 
         $result.ActiveGitProcessCount = $activeGitProcessCount
-        if (-not $recoveryConfig.AllowActiveGit -and $result.ProcessScanDegraded) {
+        $result.AmbiguousGitProcessCount = $ambiguousGitProcessCount
+        if ($result.ProcessScanDegraded) {
             return & $newSkippedResult -Reason 'process_scan_degraded'
         }
 

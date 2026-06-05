@@ -5,6 +5,84 @@ BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..") -ErrorAction Stop).Path
     $script:preCommitRecoveryScriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1"
     . $script:preCommitRecoveryScriptPath -NoInvokeMain
+
+    function New-TestAutofixGitRepository {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$RootPath,
+
+            [Parameter(Mandatory = $true)]
+            [string]$GitExecutable
+        )
+
+        [void][System.IO.Directory]::CreateDirectory($RootPath)
+        $initOutput = @(& $GitExecutable -C $RootPath init 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ("git init should succeed. Output: {0}" -f ($initOutput -join "`n"))
+
+        $configNameOutput = @(& $GitExecutable -C $RootPath config user.name "Wallstop Test" 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ("git config user.name should succeed. Output: {0}" -f ($configNameOutput -join "`n"))
+
+        $configEmailOutput = @(& $GitExecutable -C $RootPath config user.email "wallstop-test@example.invalid" 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ("git config user.email should succeed. Output: {0}" -f ($configEmailOutput -join "`n"))
+    }
+
+    function Set-TestAutofixFileContent {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$RepositoryRoot,
+
+            [Parameter(Mandatory = $true)]
+            [string]$RelativePath,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Content
+        )
+
+        $targetPath = Join-Path -Path $RepositoryRoot -ChildPath $RelativePath
+        $parentPath = [System.IO.Path]::GetDirectoryName($targetPath)
+        if (-not [string]::IsNullOrWhiteSpace($parentPath)) {
+            [void][System.IO.Directory]::CreateDirectory($parentPath)
+        }
+
+        [System.IO.File]::WriteAllText($targetPath, $Content, [System.Text.UTF8Encoding]::new($false))
+    }
+
+    function Invoke-TestGitOrThrow {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$GitExecutable,
+
+            [Parameter(Mandatory = $true)]
+            [string]$RepositoryRoot,
+
+            [Parameter(Mandatory = $true)]
+            [string[]]$Arguments,
+
+            [Parameter(Mandatory = $false)]
+            [string]$Context = "git command"
+        )
+
+        $output = @(& $GitExecutable -C $RepositoryRoot @Arguments 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ("{0} should succeed. Output: {1}" -f $Context, ($output -join "`n"))
+        return @($output)
+    }
+
+    function Initialize-TestAutofixCommittedFile {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$GitExecutable,
+
+            [Parameter(Mandatory = $true)]
+            [string]$RepositoryRoot,
+
+            [Parameter(Mandatory = $true)]
+            [string]$RelativePath
+        )
+
+        Set-TestAutofixFileContent -RepositoryRoot $RepositoryRoot -RelativePath $RelativePath -Content "Write-Host 'initial'`n"
+        [void](Invoke-TestGitOrThrow -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Arguments @("add", "--", $RelativePath) -Context "initial git add")
+        [void](Invoke-TestGitOrThrow -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Arguments @("commit", "-m", "initial") -Context "initial git commit")
+    }
 }
 
 Describe "Invoke-PreCommitWithRecovery environment failure classification" {
@@ -33,6 +111,7 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
         }
 
         Test-PreCommitEnvironmentFailure -Result $result | Should -BeFalse
+        Test-PreCommitAutofixFailure -Result $result | Should -BeTrue
     }
 
     It "does not classify timed-out commands as repairable environment corruption" {
@@ -326,6 +405,220 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
 
         Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
             Should -Be 7
+    }
+
+    It "uses shared index-lock recovery for autofix git commands" {
+        $script:rawGitInvocationCount = 0
+        Mock Invoke-PreCommitRecoveryRawGitCommand {
+            $script:rawGitInvocationCount++
+            if ($script:rawGitInvocationCount -eq 1) {
+                return [pscustomobject]@{
+                    ExitCode = 1
+                    Stdout   = ""
+                    Stderr   = "fatal: Unable to create '/tmp/repo/.git/index.lock': File exists."
+                    TimedOut = $false
+                }
+            }
+
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = "Scripts/Utils/example.ps1`n"
+                Stderr   = ""
+                TimedOut = $false
+            }
+        }
+        Mock Invoke-SafeGitIndexLockRecovery {
+            return [pscustomobject]@{
+                Recovered            = $true
+                SkippedReason        = ""
+                ErrorMessage         = ""
+                LockPath             = "/tmp/repo/.git/index.lock"
+                LockAgeSeconds       = 30
+                ActiveGitProcessCount = 0
+                ProcessScanDegraded  = $false
+                ElapsedMilliseconds  = 4
+                SlowPathThresholdMs  = 250
+            }
+        }
+
+        $result = Invoke-PreCommitRecoveryGitCommand -GitExecutable "git" -RepositoryRoot "/tmp/repo" -Arguments @("diff", "--name-only") -CommandContext "pre-commit autofix test"
+
+        $result.ExitCode | Should -Be 0
+        $result.Stdout | Should -Be "Scripts/Utils/example.ps1`n"
+        $script:rawGitInvocationCount | Should -Be 2
+        Assert-MockCalled -CommandName Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
+    }
+
+    It "auto-restages formatter-updated clean staged files and retries once" {
+        $script:capturedRunCommands = New-Object System.Collections.Generic.List[string]
+        $script:capturedGitCommands = New-Object System.Collections.Generic.List[string]
+        Mock Get-PreCommitExecutableOrThrow { return "pre-commit" }
+        Mock Get-PreCommitAutofixSnapshot {
+            return [pscustomobject]@{
+                Enabled             = $true
+                StagedFiles         = @("Scripts/Utils/example.ps1")
+                UnstagedStagedFiles = @()
+            }
+        }
+        Mock Write-PreCommitCapturedOutput {}
+        Mock Invoke-PreCommitRecoveryGitCommand {
+            param($GitExecutable, $RepositoryRoot, $Arguments, $TimeoutSeconds, $CommandContext)
+            $script:capturedGitCommands.Add(($Arguments -join " ")) | Out-Null
+            if ($Arguments[0] -eq "diff") {
+                return [pscustomobject]@{
+                    ExitCode = 0
+                    Stdout   = "Scripts/Utils/example.ps1`n"
+                    Stderr   = ""
+                    TimedOut = $false
+                }
+            }
+
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = ""
+                Stderr   = ""
+                TimedOut = $false
+            }
+        }
+        Mock Invoke-PreCommitCapturedCommand {
+            param($PreCommitExecutable, $Arguments, $RepositoryRoot, $DeadlineUtc, $OverallTimeoutSeconds, $CommandContext)
+            $script:capturedRunCommands.Add($CommandContext) | Out-Null
+            if ($script:capturedRunCommands.Count -eq 1) {
+                return [pscustomobject]@{
+                    ExitCode = 1
+                    Stdout   = "files were modified by this hook"
+                    Stderr   = ""
+                    TimedOut = $false
+                }
+            }
+
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = ""
+                Stderr   = ""
+                TimedOut = $false
+            }
+        }
+
+        Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
+            Should -Be 0
+
+        @($script:capturedRunCommands.ToArray()) | Should -Be @("initial pre-commit run", "autofix restage retry")
+        @($script:capturedGitCommands.ToArray()) | Should -Contain "add -- Scripts/Utils/example.ps1"
+    }
+
+    It "does not auto-restage formatter output over pre-existing unstaged edits" {
+        $script:capturedGitCommands = New-Object System.Collections.Generic.List[string]
+        Mock Get-PreCommitExecutableOrThrow { return "pre-commit" }
+        Mock Get-PreCommitAutofixSnapshot {
+            return [pscustomobject]@{
+                Enabled             = $true
+                StagedFiles         = @("Scripts/Utils/example.ps1")
+                UnstagedStagedFiles = @("Scripts/Utils/example.ps1")
+            }
+        }
+        Mock Write-PreCommitCapturedOutput {}
+        Mock Invoke-PreCommitRecoveryGitCommand {
+            param($GitExecutable, $RepositoryRoot, $Arguments, $TimeoutSeconds, $CommandContext)
+            $script:capturedGitCommands.Add(($Arguments -join " ")) | Out-Null
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = "Scripts/Utils/example.ps1`n"
+                Stderr   = ""
+                TimedOut = $false
+            }
+        }
+        Mock Invoke-PreCommitCapturedCommand {
+            return [pscustomobject]@{
+                ExitCode = 1
+                Stdout   = "files were modified by this hook"
+                Stderr   = ""
+                TimedOut = $false
+            }
+        }
+
+        Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
+            Should -Be 1
+
+        @($script:capturedGitCommands.ToArray()) | Should -Not -Contain "add -- Scripts/Utils/example.ps1"
+    }
+
+    It "restages real formatter output only when the staged file had no pre-existing unstaged drift" {
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        if ($null -eq $gitCommand) {
+            Set-ItResult -Skipped -Because "git is not available on PATH."
+            return
+        }
+
+        $repositoryRoot = Join-Path -Path $TestDrive -ChildPath "autofix-clean"
+        $relativePath = "Scripts/Utils/example.ps1"
+        New-TestAutofixGitRepository -RootPath $repositoryRoot -GitExecutable $gitCommand.Source
+        Initialize-TestAutofixCommittedFile -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -RelativePath $relativePath
+
+        Set-TestAutofixFileContent -RepositoryRoot $repositoryRoot -RelativePath $relativePath -Content "Write-Host 'staged'`n"
+        [void](Invoke-TestGitOrThrow -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -Arguments @("add", "--", $relativePath) -Context "stage changed file")
+        $snapshot = Get-PreCommitAutofixSnapshot -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -DeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -OverallTimeoutSeconds 30
+        Set-TestAutofixFileContent -RepositoryRoot $repositoryRoot -RelativePath $relativePath -Content "Write-Host 'formatted'`n"
+
+        Mock Invoke-PreCommitCapturedCommand {
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = ""
+                Stderr   = ""
+                TimedOut = $false
+            }
+        }
+        Mock Write-PreCommitCapturedOutput {}
+
+        $result = Invoke-PreCommitAutofixRecovery -Result ([pscustomobject]@{
+                ExitCode = 1
+                Stdout   = "files were modified by this hook"
+                Stderr   = ""
+                TimedOut = $false
+            }) -PreCommitExecutable "pre-commit" -Arguments @("run") -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -DeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -OverallTimeoutSeconds 30 -Snapshot $snapshot
+
+        $result.Handled | Should -BeTrue
+        $result.ExitCode | Should -Be 0
+        @(Invoke-TestGitOrThrow -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -Arguments @("diff", "--name-only", "--", $relativePath) -Context "post-restage unstaged diff").Count | Should -Be 0
+        $cachedContent = Invoke-TestGitOrThrow -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -Arguments @("show", ":$relativePath") -Context "post-restage cached content"
+        ($cachedContent -join "`n") | Should -Match "formatted"
+    }
+
+    It "refuses real autofix restage when any staged target had pre-existing unstaged drift" {
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        if ($null -eq $gitCommand) {
+            Set-ItResult -Skipped -Because "git is not available on PATH."
+            return
+        }
+
+        $repositoryRoot = Join-Path -Path $TestDrive -ChildPath "autofix-dirty"
+        $cleanRelativePath = "Scripts/Utils/clean.ps1"
+        $dirtyRelativePath = "Scripts/Utils/dirty.ps1"
+        New-TestAutofixGitRepository -RootPath $repositoryRoot -GitExecutable $gitCommand.Source
+        Initialize-TestAutofixCommittedFile -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -RelativePath $cleanRelativePath
+        Initialize-TestAutofixCommittedFile -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -RelativePath $dirtyRelativePath
+
+        Set-TestAutofixFileContent -RepositoryRoot $repositoryRoot -RelativePath $cleanRelativePath -Content "Write-Host 'clean staged'`n"
+        Set-TestAutofixFileContent -RepositoryRoot $repositoryRoot -RelativePath $dirtyRelativePath -Content "Write-Host 'dirty staged'`n"
+        [void](Invoke-TestGitOrThrow -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -Arguments @("add", "--", $cleanRelativePath, $dirtyRelativePath) -Context "stage changed files")
+        Set-TestAutofixFileContent -RepositoryRoot $repositoryRoot -RelativePath $dirtyRelativePath -Content "Write-Host 'dirty unstaged before hook'`n"
+        $snapshot = Get-PreCommitAutofixSnapshot -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -DeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -OverallTimeoutSeconds 30
+        Set-TestAutofixFileContent -RepositoryRoot $repositoryRoot -RelativePath $cleanRelativePath -Content "Write-Host 'clean formatted'`n"
+
+        Mock Invoke-PreCommitCapturedCommand { throw "retry should not run when pre-existing unstaged drift blocks auto-restage" }
+
+        $result = Invoke-PreCommitAutofixRecovery -Result ([pscustomobject]@{
+                ExitCode = 1
+                Stdout   = "files were modified by this hook"
+                Stderr   = ""
+                TimedOut = $false
+            }) -PreCommitExecutable "pre-commit" -Arguments @("run") -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -DeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -OverallTimeoutSeconds 30 -Snapshot $snapshot
+
+        $result.Handled | Should -BeTrue
+        $result.ExitCode | Should -Be 1
+        $cleanCachedContent = Invoke-TestGitOrThrow -GitExecutable $gitCommand.Source -RepositoryRoot $repositoryRoot -Arguments @("show", ":$cleanRelativePath") -Context "blocked clean cached content"
+        ($cleanCachedContent -join "`n") | Should -Match "clean staged"
+        ($cleanCachedContent -join "`n") | Should -Not -Match "clean formatted"
     }
 
     It "preserves timeout exits without environment repair" {

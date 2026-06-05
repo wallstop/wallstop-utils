@@ -10,6 +10,8 @@ if ! command -v git > /dev/null 2>&1; then
   exit 1
 fi
 
+hook_start_seconds="$SECONDS"
+
 if ! repo_root_stderr_path="$(mktemp 2> /dev/null)"; then
   repo_root_stderr_path="/tmp/wallstop-precommit-repo-root.$$.$RANDOM.err"
 fi
@@ -55,7 +57,6 @@ precommit_recovery_inner_timeout_seconds=30
 precommit_recovery_shutdown_buffer_seconds=15
 precommit_recovery_setup_slack_seconds=15
 minimum_precommit_timeout_seconds=$((precommit_recovery_inner_timeout_seconds + precommit_recovery_shutdown_buffer_seconds + precommit_recovery_setup_slack_seconds))
-hook_start_seconds="$SECONDS"
 
 validate_timeout_seconds() {
   local timeout_value="$1"
@@ -79,6 +80,33 @@ describe_timeout_provider() {
   fi
 
   printf '%s\n' "shell-watchdog"
+}
+
+runtime_budget_seconds() {
+  local label="$1"
+  case "$label" in
+    "pre-commit hook-stage pre-commit" | "legacy pre-commit PowerShell validation" | "pre-commit safe auto-repair")
+      printf '%s\n' "${WALLSTOP_PRECOMMIT_ACTIVE_RUNTIME_BUDGET_SECONDS:-30}"
+      ;;
+    *)
+      printf '%s\n' "${WALLSTOP_PRECOMMIT_NOOP_RUNTIME_BUDGET_SECONDS:-1}"
+      ;;
+  esac
+}
+
+emit_runtime_budget_warning() {
+  local label="$1"
+  local elapsed_seconds="$2"
+  local budget_seconds
+  budget_seconds="$(runtime_budget_seconds "$label")"
+
+  if [[ ! "$budget_seconds" =~ ^[0-9]+$ ]] || [[ "$budget_seconds" -lt 1 ]]; then
+    budget_seconds=1
+  fi
+
+  if [[ $elapsed_seconds -gt $budget_seconds ]]; then
+    emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (budget <= ${budget_seconds}s; no-op fast-path target <= 1s)."
+  fi
 }
 
 emit_recovery_budget_diagnostic() {
@@ -112,9 +140,7 @@ run_with_timeout() {
     fi
 
     local elapsed_seconds=$((SECONDS - phase_start_seconds))
-    if [[ $elapsed_seconds -gt 1 ]]; then
-      emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
-    fi
+    emit_runtime_budget_warning "$label" "$elapsed_seconds"
 
     return $command_exit
   fi
@@ -154,17 +180,13 @@ run_with_timeout() {
     rm -f "$timeout_flag_file"
     emit_diagnostic "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
     local elapsed_seconds=$((SECONDS - phase_start_seconds))
-    if [[ $elapsed_seconds -gt 1 ]]; then
-      emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
-    fi
+    emit_runtime_budget_warning "$label" "$elapsed_seconds"
     return 124
   fi
 
   rm -f "$timeout_flag_file"
   local elapsed_seconds=$((SECONDS - phase_start_seconds))
-  if [[ $elapsed_seconds -gt 1 ]]; then
-    emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
-  fi
+  emit_runtime_budget_warning "$label" "$elapsed_seconds"
   return $fallback_exit
 }
 
@@ -247,6 +269,16 @@ has_staged_windows_language_targets() {
   return 1
 }
 
+has_any_staged_files() {
+  local staged_files
+  if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMR -- 2> /dev/null)"; then
+    emit_diagnostic "W_PRECOMMIT_NOOP_PREFILTER_FAILED: unable to read staged files for no-op fast path; running pre-commit."
+    return 0
+  fi
+
+  [[ -n "$staged_files" ]]
+}
+
 run_safe_autorepair() {
   if command -v pwsh > /dev/null 2>&1; then
     if ! has_staged_windows_language_targets; then
@@ -264,6 +296,11 @@ run_safe_autorepair() {
 
   return 0
 }
+
+if ! has_any_staged_files; then
+  emit_runtime_budget_warning "pre-commit no staged files" "$((SECONDS - hook_start_seconds))"
+  exit 0
+fi
 
 if command -v pre-commit > /dev/null 2>&1; then
   if command -v pwsh > /dev/null 2>&1; then

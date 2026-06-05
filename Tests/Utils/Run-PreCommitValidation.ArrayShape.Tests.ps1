@@ -81,6 +81,21 @@ Describe "Run-PreCommitValidation array-shape contract" {
         $result[1] | Should -Be 'access_token: [REDACTED]'
         $result[2] | Should -Be 'safe-line'
     }
+
+    It "accepts multiple direct CLI target files after a named TargetFiles argument" {
+        $global:LASTEXITCODE = 0
+        $output = @(& $script:preCommitPath -TargetFiles .gitattributes .editorconfig *>&1)
+        $exitCode = Get-Variable -Name LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -eq $exitCode) {
+            $exitCode = 0
+        }
+        $outputText = $output -join "`n"
+
+        $exitCode | Should -Be 0 -Because $outputText
+        $outputText | Should -Match 'Running hook governance validation'
+        $outputText | Should -Match 'matchedCount=2'
+        $outputText | Should -Not -Match 'PesterTimeoutSeconds|Cannot convert value'
+    }
 }
 
 Describe "Run-PreCommitValidation call-site and helper ownership contracts" {

@@ -105,6 +105,26 @@ BeforeAll {
         return @($stepBlocks | Where-Object { $_ -match "(?m)^[^\S\r\n]*-[^\S\r\n]+name:[^\S\r\n]+$escapedName[^\S\r\n]*$" }) # array-unwrap-safe
     }
 
+    function Get-PreCommitHookBlock {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$ConfigContent,
+
+            [Parameter(Mandatory = $true)]
+            [string]$HookId
+        )
+
+        $normalized = $ConfigContent -replace "`r", ''
+        $escapedHookId = [regex]::Escape($HookId)
+        $hookBlocks = [regex]::Split($normalized, '(?m)^(?=\s+- id:\s+)')
+        $matches = @($hookBlocks | Where-Object { $_ -match "(?m)^\s+- id:\s+$escapedHookId\s*$" })
+        if ($matches.Count -ne 1) {
+            throw "E_CONFIG_ERROR: Expected exactly one pre-commit hook '$HookId'; found $($matches.Count)."
+        }
+
+        return [string]$matches[0]
+    }
+
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/CompatibilityHelpers.ps1")
     $script:migratedScripts = @(
@@ -145,7 +165,8 @@ BeforeAll {
         ".shellcheckrc",
         ".stylua.toml",
         "requirements.txt",
-        "Scripts/Utils/Quality/native-quality-tools.json"
+        "Scripts/Utils/Quality/native-quality-tools.json",
+        "Scripts/Utils/Quality/shell-quality-tools.json"
     )
     $script:shellConventionScripts = @(
         "Scripts/Mac/Backup.sh",
@@ -411,6 +432,7 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Assert-GitHubHostFormat'
         $content | Should -Match 'function\s+Assert-GitHubOwnerRepoFormat'
         $content | Should -Match 'function\s+Assert-GitHubRequestUri'
+        $content | Should -Match 'function\s+Get-GitHubRequestUriAllowlist'
         $content | Should -Match 'function\s+Assert-GitHubHostInAllowlist'
 
         $content | Should -Match 'function\s+Parse-GitHubPullRequestUrl[\s\S]*Assert-GitHubHostFormat'
@@ -420,6 +442,8 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*Assert-GitHubOwnerRepoFormat'
         $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*GitHubHostProvided'
         $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*Assert-GitHubHostInAllowlist'
+        $content | Should -Match 'function\s+Get-GitHubRequestUriAllowlist[\s\S]*api\.github\.com'
+        $content | Should -Match 'function\s+Assert-GitHubRequestUri[\s\S]*Get-GitHubRequestUriAllowlist'
         $content | Should -Match 'function\s+Invoke-GitHubRequestWithRetry[\s\S]*Assert-GitHubRequestUri'
         $content | Should -Match 'function\s+Validate-GitHubTokenForRepoAccess[\s\S]*Assert-GitHubRequestUri'
 
@@ -497,11 +521,14 @@ Describe "Scope safety conventions" {
         $lowerGitHubLineStartMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineStart\s*=\s*\$githubAnchor\.Start\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerGitHubLineEndMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineEnd\s*=\s*\$githubAnchor\.End\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerEmbeddedLocationsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*embeddedLocations\s*=\s*@\(\$embeddedLocations\)\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerResolutionStateMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*resolutionState\s*=\s*\[string\]\$resolutionState\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*owner\s*=\s*\$Owner\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*repo\s*=\s*\$Repo\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         # Lowercase checks enforce exact contract values; uppercase checks intentionally
         # match any uppercase assignment so any PascalCase regression is caught.
         $upperPathMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Path\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperResolutionStateMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*ResolutionState\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $authSourceMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*authSource\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Owner\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Repo\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
 
@@ -511,9 +538,12 @@ Describe "Scope safety conventions" {
         $lowerGitHubLineStartMatches.Count | Should -Be 1
         $lowerGitHubLineEndMatches.Count | Should -Be 1
         $lowerEmbeddedLocationsMatches.Count | Should -Be 1
+        $lowerResolutionStateMatches.Count | Should -Be 1
         $lowerOwnerMatches.Count | Should -Be 1
         $lowerRepoMatches.Count | Should -Be 1
         $upperPathMatches.Count | Should -Be 0
+        $upperResolutionStateMatches.Count | Should -Be 0
+        $authSourceMatches.Count | Should -Be 0
         $upperOwnerMatches.Count | Should -Be 0
         $upperRepoMatches.Count | Should -Be 0
 
@@ -524,6 +554,7 @@ Describe "Scope safety conventions" {
 
         $testsContent | Should -Match 'Format-UnresolvedThreadsAsJson'
         $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"path"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"resolutionState"\)\s+\|\s+Should\s+-BeTrue'
         $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"Path"\)\s+\|\s+Should\s+-BeFalse'
     }
 
@@ -917,6 +948,15 @@ Describe "Cross-language quality platform conventions" {
 
         $preCommitConfig | Should -Match 'id:\s+powershell-format[\s\S]*stages:\s+\[pre-commit\]'
         $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
+        $powershellPreCommitHookBlock = Get-PreCommitHookBlock -ConfigContent $preCommitConfig -HookId "powershell-precommit-validation"
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.pre-commit-config\.yaml'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.gitattributes'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.editorconfig'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.gitignore'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('requirements\.txt'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.psscriptanalyzer'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('native-quality-tools'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('shell-quality-tools'))
         $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation'
         $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation[\s\S]*entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation\.ps1'
         $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation[\s\S]*pass_filenames:\s+true'
@@ -3249,12 +3289,20 @@ Describe "GitHub API resilience conventions" {
         $content | Should -Match 'E_AUTH_RATE_LIMITED'
     }
 
-    It "uses generic API fallback instead of GraphQL fallback in REST retry path" {
+    It "uses public REST review-comment fallback instead of anonymous GraphQL fallback" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
 
         $content | Should -Not -Match 'throw\s+"E_GRAPHQL_ERROR:\s+\$errorText"'
         $content | Should -Match 'E_GITHUB_API_ERROR\(\$statusCode\): GitHub request failed'
+        $content | Should -Match 'function\s+Get-PublicPullRequestReviewCommentsFallback'
+        $content | Should -Match '/repos/\$Owner/\$Repo/pulls/\$PrNumber/comments\?per_page=\$PerPage&page=\$page&sort=created&direction=asc'
+        $content | Should -Match 'W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN'
+        $content | Should -Match 'resolutionState\s*=\s*"unknown"'
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*Get-PublicPullRequestReviewCommentsFallback'
+        $content | Should -Match '\$allowStoredCredentialRetry\s*=\s*\$allowPromptedLoginFallback\s*-or\s*\(-not\s+\$explicitTokenProvided\)'
+        $content | Should -Match '\$isDirectModeExplicitTokenFailure'
+        $content | Should -Not -Match '\$isDirectModeTokenFailure'
     }
 
     It "keeps GraphQL variable payload keys aligned with declared casing" {
@@ -3316,6 +3364,13 @@ Describe "GitHub API resilience conventions" {
         $invokeMainBodyText | Should -Match 'Get-AuthToken[^\n]*-ExplicitToken\s+\$Token[^\n]*-AllowInteractive:\$false[^\n]*-IncludeSourceMetadata'
         $invokeMainBodyText | Should -Match 'Refresh\s+or\s+unset\s+GH_TOKEN'
         $invokeMainBodyText | Should -Match 'GH_TOKEN\s+takes\s+precedence\s+over\s+GITHUB_TOKEN'
+        $resolveBodyText | Should -Match 'Invoke-GitHubCliAuthCommand\s+-IgnoreEnvironmentTokens\s+-Command' -Because "stored gh token lookup must clear GH_TOKEN/GITHUB_TOKEN after environment tokens have already been handled"
+        $resolveBodyText | Should -Match 'Get-GitCredentialToken\s+-GitHubHost\s+\$GitHubHost'
+        $resolveBodyText | Should -Match 'Source\s+"git-credential"'
+
+        $scriptContent = Get-Content -Path $fullPath -Raw
+        $scriptContent | Should -Match 'function\s+Invoke-GitHubCliAuthCommand[\s\S]*\$originalGhToken\s*=\s*\$env:GH_TOKEN[\s\S]*\$env:GH_TOKEN\s*=\s*\$null[\s\S]*\$env:GITHUB_TOKEN\s*=\s*\$null[\s\S]*\$env:GH_TOKEN\s*=\s*\$originalGhToken[\s\S]*\$env:GITHUB_TOKEN\s*=\s*\$originalGitHubToken'
+        $scriptContent | Should -Match 'function\s+Get-GitCredentialToken[\s\S]*Set-PortableProcessArguments\s+-StartInfo\s+\$startInfo\s+-ArgumentList\s+@\("credential",\s*"fill"\)'
 
         $getAuthTokenCalls = @($invokeMainFunction.Body.FindAll({
                     param($node)

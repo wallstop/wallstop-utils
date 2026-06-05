@@ -157,12 +157,20 @@ function Get-StatusSnapshot {
                     [string]$lockRecovery.SkippedReason
                 }
 
+                $ambiguousGitProcessCount = if ($null -ne $lockRecovery.PSObject.Properties["AmbiguousGitProcessCount"]) {
+                    [int]$lockRecovery.AmbiguousGitProcessCount
+                }
+                else {
+                    0
+                }
+
                 Write-Warning (
-                    "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context='full-validation-status-snapshot'; reason={0}; lockPath='{1}'; lockAgeSeconds={2}; activeGitProcessCount={3}; processScanDegraded={4}." -f
+                    "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context='full-validation-status-snapshot'; reason={0}; lockPath='{1}'; lockAgeSeconds={2}; activeGitProcessCount={3}; ambiguousGitProcessCount={4}; processScanDegraded={5}." -f
                     $skipReason,
                     [string]$lockRecovery.LockPath,
                     [int]$lockRecovery.LockAgeSeconds,
                     [int]$lockRecovery.ActiveGitProcessCount,
+                    $ambiguousGitProcessCount,
                     [bool]$lockRecovery.ProcessScanDegraded
                 )
 

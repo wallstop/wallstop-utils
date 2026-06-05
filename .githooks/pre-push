@@ -10,6 +10,8 @@ if ! command -v git > /dev/null 2>&1; then
   exit 1
 fi
 
+hook_start_seconds="$SECONDS"
+
 if ! repo_root_stderr_path="$(mktemp 2> /dev/null)"; then
   repo_root_stderr_path="/tmp/wallstop-prepush-repo-root.$$.$RANDOM.err"
 fi
@@ -55,7 +57,6 @@ prepush_recovery_inner_timeout_seconds=30
 prepush_recovery_shutdown_buffer_seconds=15
 prepush_recovery_setup_slack_seconds=15
 minimum_prepush_timeout_seconds=$((prepush_recovery_inner_timeout_seconds + prepush_recovery_shutdown_buffer_seconds + prepush_recovery_setup_slack_seconds))
-hook_start_seconds="$SECONDS"
 zero_oid="0000000000000000000000000000000000000000"
 resolved_changed_files=()
 saw_pre_push_ref_update=0
@@ -85,6 +86,33 @@ describe_timeout_provider() {
   fi
 
   printf '%s\n' "shell-watchdog"
+}
+
+runtime_budget_seconds() {
+  local label="$1"
+  case "$label" in
+    "pre-push changed-file pre-commit validation" | "legacy pre-push PowerShell validation")
+      printf '%s\n' "${WALLSTOP_PREPUSH_ACTIVE_RUNTIME_BUDGET_SECONDS:-30}"
+      ;;
+    *)
+      printf '%s\n' "${WALLSTOP_PREPUSH_NOOP_RUNTIME_BUDGET_SECONDS:-1}"
+      ;;
+  esac
+}
+
+emit_runtime_budget_warning() {
+  local label="$1"
+  local elapsed_seconds="$2"
+  local budget_seconds
+  budget_seconds="$(runtime_budget_seconds "$label")"
+
+  if [[ ! "$budget_seconds" =~ ^[0-9]+$ ]] || [[ "$budget_seconds" -lt 1 ]]; then
+    budget_seconds=1
+  fi
+
+  if [[ $elapsed_seconds -gt $budget_seconds ]]; then
+    emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (budget <= ${budget_seconds}s; no-op fast-path target <= 1s)."
+  fi
 }
 
 emit_recovery_budget_diagnostic() {
@@ -118,9 +146,7 @@ run_with_timeout() {
     fi
 
     local elapsed_seconds=$((SECONDS - phase_start_seconds))
-    if [[ $elapsed_seconds -gt 1 ]]; then
-      emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
-    fi
+    emit_runtime_budget_warning "$label" "$elapsed_seconds"
 
     return $command_exit
   fi
@@ -160,17 +186,13 @@ run_with_timeout() {
     rm -f "$timeout_flag_file"
     emit_diagnostic "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PREPUSH_TIMEOUT_SECONDS."
     local elapsed_seconds=$((SECONDS - phase_start_seconds))
-    if [[ $elapsed_seconds -gt 1 ]]; then
-      emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
-    fi
+    emit_runtime_budget_warning "$label" "$elapsed_seconds"
     return 124
   fi
 
   rm -f "$timeout_flag_file"
   local elapsed_seconds=$((SECONDS - phase_start_seconds))
-  if [[ $elapsed_seconds -gt 1 ]]; then
-    emit_diagnostic "W_HOOK_RUNTIME_BUDGET: ${label} took ${elapsed_seconds}s (target <= 1s fast-path)."
-  fi
+  emit_runtime_budget_warning "$label" "$elapsed_seconds"
   return $fallback_exit
 }
 
@@ -430,11 +452,13 @@ run_legacy_validation() {
 resolve_pre_push_changed_files
 
 if [[ $saw_pre_push_ref_update -eq 0 ]]; then
+  emit_runtime_budget_warning "pre-push no ref updates" "$((SECONDS - hook_start_seconds))"
   exit 0
 fi
 
 if [[ ${#resolved_changed_files[@]} -eq 0 ]]; then
   emit_diagnostic "pre-push changed-file validation: no changed files to validate."
+  emit_runtime_budget_warning "pre-push no changed files" "$((SECONDS - hook_start_seconds))"
   exit 0
 fi
 

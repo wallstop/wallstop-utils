@@ -13,7 +13,8 @@ if (-not (Test-Path -LiteralPath $validationScriptPath -PathType Leaf)) {
 }
 
 $validationArguments = @{
-    TargetFiles = @($TargetFiles)
+    IncludePreCommitOwnedChecks = $true
+    TargetFiles                  = @($TargetFiles)
 }
 
 & $validationScriptPath @validationArguments

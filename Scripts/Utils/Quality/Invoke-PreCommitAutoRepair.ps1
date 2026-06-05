@@ -164,13 +164,21 @@ function Invoke-GitCommandOrThrow {
                 [string]$lockRecovery.SkippedReason
             }
 
+            $ambiguousGitProcessCount = if ($null -ne $lockRecovery.PSObject.Properties["AmbiguousGitProcessCount"]) {
+                [int]$lockRecovery.AmbiguousGitProcessCount
+            }
+            else {
+                0
+            }
+
             Write-Warning (
-                "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context={0}; reason={1}; lockPath='{2}'; lockAgeSeconds={3}; activeGitProcessCount={4}; processScanDegraded={5}." -f
+                "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context={0}; reason={1}; lockPath='{2}'; lockAgeSeconds={3}; activeGitProcessCount={4}; ambiguousGitProcessCount={5}; processScanDegraded={6}." -f
                 $FailureContext,
                 $skipReason,
                 [string]$lockRecovery.LockPath,
                 [int]$lockRecovery.LockAgeSeconds,
                 [int]$lockRecovery.ActiveGitProcessCount,
+                $ambiguousGitProcessCount,
                 [bool]$lockRecovery.ProcessScanDegraded
             )
 

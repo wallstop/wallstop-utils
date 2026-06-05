@@ -1,4 +1,4 @@
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Mandatory = $false)]
     [switch]$All,
@@ -23,8 +23,14 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$TargetFileListPath = "",
 
+    [Parameter(Mandatory = $false)]
+    [switch]$NoInvokeMain,
+
+    [Parameter(Mandatory = $false)]
+    [string[]]$TargetFiles = @(),
+
     [Parameter(Mandatory = $false, ValueFromRemainingArguments = $true)]
-    [string[]]$TargetFiles = @()
+    [string[]]$RemainingTargetFiles = @()
 )
 
 Set-StrictMode -Version Latest
@@ -64,6 +70,13 @@ if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
 }
 
 .$compatibilityHelpersPath
+
+$strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
+if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath'."
+}
+
+.$strictModeHelpersPath
 
 function New-LlmHarnessPattern {
     param(
@@ -235,12 +248,20 @@ function Get-StagedFilesWithIndexLockRecoveryOrThrow {
                 [string]$lockRecovery.SkippedReason
             }
 
+            $ambiguousGitProcessCount = if ($null -ne $lockRecovery.PSObject.Properties["AmbiguousGitProcessCount"]) {
+                [int]$lockRecovery.AmbiguousGitProcessCount
+            }
+            else {
+                0
+            }
+
             Write-Warning (
-                "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context='staged-file-discovery'; reason={0}; lockPath='{1}'; lockAgeSeconds={2}; activeGitProcessCount={3}; processScanDegraded={4}." -f
+                "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context='staged-file-discovery'; reason={0}; lockPath='{1}'; lockAgeSeconds={2}; activeGitProcessCount={3}; ambiguousGitProcessCount={4}; processScanDegraded={5}." -f
                 $skipReason,
                 [string]$lockRecovery.LockPath,
                 [int]$lockRecovery.LockAgeSeconds,
                 [int]$lockRecovery.ActiveGitProcessCount,
+                $ambiguousGitProcessCount,
                 [bool]$lockRecovery.ProcessScanDegraded
             )
 
@@ -380,6 +401,259 @@ function Get-RelativeFileHashSnapshot {
     }
 
     return $snapshot
+}
+
+function Assert-GovernanceFileHasTrailingLf {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$RepoRoot,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$GovernanceRelativePath
+    )
+
+    $fullPath = Join-Path -Path $RepoRoot -ChildPath $GovernanceRelativePath
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+        return
+    }
+
+    $bytes = [System.IO.File]::ReadAllBytes($fullPath)
+    if ($bytes.Length -eq 0) {
+        throw "E_PRECOMMIT_GOVERNANCE_EMPTY_FILE: Governance file '$GovernanceRelativePath' must not be empty."
+    }
+
+    if ($bytes[$bytes.Length - 1] -ne 10) {
+        throw "E_PRECOMMIT_GOVERNANCE_TRAILING_NEWLINE: Governance file '$GovernanceRelativePath' must end with LF."
+    }
+}
+
+function Get-RequiredGovernanceObjectProperty {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [object]$GovernanceObject,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$GovernancePropertyName,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$GovernanceContextLabel
+    )
+
+    $property = $GovernanceObject.PSObject.Properties[$GovernancePropertyName]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        throw "E_PRECOMMIT_GOVERNANCE_PROPERTY_MISSING: $GovernanceContextLabel must define '$GovernancePropertyName'."
+    }
+
+    return $property.Value
+}
+
+function Assert-GovernanceQualityManifest {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [object]$GovernanceManifest,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$GovernanceManifestPath,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [hashtable]$GovernanceExpectedToolAssets
+    )
+
+    $toolsObject = Get-RequiredGovernanceObjectProperty -GovernanceObject $GovernanceManifest -GovernancePropertyName "tools" -GovernanceContextLabel $GovernanceManifestPath
+    foreach ($governanceToolName in @($GovernanceExpectedToolAssets.Keys | Sort-Object)) {
+        $toolDefinition = Get-RequiredGovernanceObjectProperty -GovernanceObject $toolsObject -GovernancePropertyName $governanceToolName -GovernanceContextLabel "$GovernanceManifestPath tools"
+
+        foreach ($requiredToolProperty in @("version", "releaseTag", "repository", "versionPattern", "executableBaseName", "assets")) {
+            $requiredToolPropertyValue = Get-RequiredGovernanceObjectProperty -GovernanceObject $toolDefinition -GovernancePropertyName $requiredToolProperty -GovernanceContextLabel "$GovernanceManifestPath tool '$governanceToolName'"
+            if ($requiredToolProperty -ne "assets" -and [string]::IsNullOrWhiteSpace([string]$requiredToolPropertyValue)) {
+                throw "E_PRECOMMIT_GOVERNANCE_QUALITY_MANIFEST_TOOL_INVALID: '$GovernanceManifestPath' tool '$governanceToolName' must define non-empty '$requiredToolProperty'."
+            }
+        }
+
+        $assetsObject = Get-RequiredGovernanceObjectProperty -GovernanceObject $toolDefinition -GovernancePropertyName "assets" -GovernanceContextLabel "$GovernanceManifestPath tool '$governanceToolName'"
+        foreach ($requiredAssetKey in @($GovernanceExpectedToolAssets[$governanceToolName])) {
+            $assetDefinition = Get-RequiredGovernanceObjectProperty -GovernanceObject $assetsObject -GovernancePropertyName $requiredAssetKey -GovernanceContextLabel "$GovernanceManifestPath tool '$governanceToolName' assets"
+            $assetName = [string](Get-RequiredGovernanceObjectProperty -GovernanceObject $assetDefinition -GovernancePropertyName "assetName" -GovernanceContextLabel "$GovernanceManifestPath tool '$governanceToolName' asset '$requiredAssetKey'")
+            $assetKind = [string](Get-RequiredGovernanceObjectProperty -GovernanceObject $assetDefinition -GovernancePropertyName "kind" -GovernanceContextLabel "$GovernanceManifestPath tool '$governanceToolName' asset '$requiredAssetKey'")
+            $assetSha256 = [string](Get-RequiredGovernanceObjectProperty -GovernanceObject $assetDefinition -GovernancePropertyName "sha256" -GovernanceContextLabel "$GovernanceManifestPath tool '$governanceToolName' asset '$requiredAssetKey'")
+
+            if ([string]::IsNullOrWhiteSpace($assetName)) {
+                throw "E_PRECOMMIT_GOVERNANCE_QUALITY_MANIFEST_ASSET_INVALID: '$GovernanceManifestPath' tool '$governanceToolName' asset '$requiredAssetKey' must define assetName."
+            }
+            if ($assetKind -notin @("executable", "zip", "tar.gz")) {
+                throw "E_PRECOMMIT_GOVERNANCE_QUALITY_MANIFEST_ASSET_INVALID: '$GovernanceManifestPath' tool '$governanceToolName' asset '$requiredAssetKey' has unsupported kind '$assetKind'."
+            }
+            if ($assetSha256 -notmatch '^[0-9a-f]{64}$') {
+                throw "E_PRECOMMIT_GOVERNANCE_QUALITY_MANIFEST_ASSET_INVALID: '$GovernanceManifestPath' tool '$governanceToolName' asset '$requiredAssetKey' must define a lowercase 64-character SHA256."
+            }
+        }
+    }
+}
+
+function Assert-ShellCheckGovernanceConfig {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [string]$ShellCheckConfigContent
+    )
+
+    $normalizedShellCheckConfig = $ShellCheckConfigContent -replace "`r", ''
+    foreach ($requiredShellCheckPattern in @(
+            '(?m)^external-sources=true$',
+            '(?m)^source-path=SCRIPTDIR$',
+            '(?m)^severity=style$'
+        )) {
+        if ($normalizedShellCheckConfig -notmatch $requiredShellCheckPattern) {
+            throw "E_PRECOMMIT_GOVERNANCE_SHELLCHECKRC_INVALID: .shellcheckrc must keep required setting pattern '$requiredShellCheckPattern'."
+        }
+    }
+
+    if ($normalizedShellCheckConfig -match '(?m)^\s*disable\s*=\s*all\s*$') {
+        throw "E_PRECOMMIT_GOVERNANCE_SHELLCHECKRC_DISABLE_ALL: .shellcheckrc must not disable all ShellCheck diagnostics."
+    }
+}
+
+function Assert-StyLuaGovernanceConfig {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [string]$StyLuaConfigContent
+    )
+
+    $normalizedStyLuaConfig = $StyLuaConfigContent -replace "`r", ''
+    $requiredStyLuaSettings = @{
+        "call_parentheses" = '"Always"'
+        "column_width"     = "100"
+        "indent_type"      = '"Spaces"'
+        "indent_width"     = "2"
+        "line_endings"     = '"Unix"'
+        "quote_style"      = '"AutoPreferDouble"'
+    }
+
+    foreach ($styLuaSettingName in @($requiredStyLuaSettings.Keys | Sort-Object)) {
+        $styLuaSettingValuePattern = [regex]::Escape([string]$requiredStyLuaSettings[$styLuaSettingName])
+        if ($normalizedStyLuaConfig -notmatch "(?m)^$([regex]::Escape($styLuaSettingName))\s*=\s*$styLuaSettingValuePattern\s*$") {
+            throw "E_PRECOMMIT_GOVERNANCE_STYLUA_INVALID: .stylua.toml must keep '$styLuaSettingName = $($requiredStyLuaSettings[$styLuaSettingName])'."
+        }
+    }
+}
+
+function Invoke-PreCommitGovernanceValidation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$RepoRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$TargetFiles = @()
+    )
+
+    $governanceTargets = @(
+        $TargetFiles |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique
+    )
+
+    foreach ($relativePath in $governanceTargets) {
+        Assert-GovernanceFileHasTrailingLf -RepoRoot $RepoRoot -GovernanceRelativePath $relativePath
+    }
+
+    if ($governanceTargets -contains ".pre-commit-config.yaml") {
+        $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
+        if ($null -eq $preCommitCommand) {
+            throw "E_PRECOMMIT_GOVERNANCE_PRECOMMIT_NOT_AVAILABLE: pre-commit is required to validate .pre-commit-config.yaml but was not found on PATH."
+        }
+
+        $preCommitConfigOutput = @(& $preCommitCommand.Source validate-config 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            $preCommitConfigPreview = Get-OutputPreview -OutputLines $preCommitConfigOutput -CollapseWhitespace
+            throw "E_PRECOMMIT_GOVERNANCE_PRECOMMIT_CONFIG_INVALID: pre-commit validate-config failed. Output: $preCommitConfigPreview"
+        }
+    }
+
+    if ($governanceTargets -contains "requirements.txt") {
+        $requirementsPath = Join-Path -Path $RepoRoot -ChildPath "requirements.txt"
+        $requirements = (Get-Content -LiteralPath $requirementsPath -Raw) -replace "`r", ''
+        if ($requirements -notmatch '(?m)^pre-commit==\d+(?:\.\d+){1,3}$') {
+            throw "E_PRECOMMIT_GOVERNANCE_REQUIREMENTS_PIN: requirements.txt must pin pre-commit with an exact 'pre-commit==x.y.z' requirement."
+        }
+    }
+
+    foreach ($psDataFile in @(".psscriptanalyzer.psd1", ".psscriptanalyzer.format.psd1")) {
+        if ($governanceTargets -contains $psDataFile) {
+            $psDataPath = Join-Path -Path $RepoRoot -ChildPath $psDataFile
+            try {
+                [void](Import-PowerShellDataFile -LiteralPath $psDataPath -ErrorAction Stop)
+            }
+            catch {
+                throw "E_PRECOMMIT_GOVERNANCE_PSD1_INVALID: '$psDataFile' must parse as a PowerShell data file. $($_.Exception.Message)"
+            }
+        }
+    }
+
+    foreach ($jsonConfigFile in @("Scripts/Utils/Quality/native-quality-tools.json", "Scripts/Utils/Quality/shell-quality-tools.json")) {
+        if ($governanceTargets -contains $jsonConfigFile) {
+            $jsonConfigPath = Join-Path -Path $RepoRoot -ChildPath $jsonConfigFile
+            try {
+                $jsonConfigManifest = ConvertFrom-JsonSingleObject -Json (Get-Content -LiteralPath $jsonConfigPath -Raw) -Context $jsonConfigFile
+                if ($jsonConfigFile -eq "Scripts/Utils/Quality/native-quality-tools.json") {
+                    Assert-GovernanceQualityManifest -GovernanceManifest $jsonConfigManifest -GovernanceManifestPath $jsonConfigFile -GovernanceExpectedToolAssets @{
+                        "actionlint" = @("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "windows-arm64", "windows-x64")
+                        "stylua"     = @("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "windows-x64")
+                    }
+                }
+                else {
+                    Assert-GovernanceQualityManifest -GovernanceManifest $jsonConfigManifest -GovernanceManifestPath $jsonConfigFile -GovernanceExpectedToolAssets @{
+                        "shellcheck" = @("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "windows-x64")
+                        "shfmt"      = @("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "windows-x64")
+                    }
+                }
+            }
+            catch {
+                throw "E_PRECOMMIT_GOVERNANCE_JSON_INVALID: '$jsonConfigFile' must be a valid quality-tool manifest. $($_.Exception.Message)"
+            }
+        }
+    }
+
+    if ($governanceTargets -contains ".shellcheckrc") {
+        Assert-ShellCheckGovernanceConfig -ShellCheckConfigContent (Get-Content -LiteralPath (Join-Path -Path $RepoRoot -ChildPath ".shellcheckrc") -Raw)
+    }
+
+    if ($governanceTargets -contains ".stylua.toml") {
+        Assert-StyLuaGovernanceConfig -StyLuaConfigContent (Get-Content -LiteralPath (Join-Path -Path $RepoRoot -ChildPath ".stylua.toml") -Raw)
+    }
+
+    if ($governanceTargets -contains ".gitattributes") {
+        $gitattributes = (Get-Content -LiteralPath (Join-Path -Path $RepoRoot -ChildPath ".gitattributes") -Raw) -replace "`r", ''
+        if ($gitattributes -notmatch '(?m)^\*\s+text=auto\s+eol=lf\s*$') {
+            throw "E_PRECOMMIT_GOVERNANCE_GITATTRIBUTES_LF: .gitattributes must default text files to LF."
+        }
+        if ($gitattributes -notmatch '(?m)^\*\.bat\s+text\s+eol=crlf\s*$' -or $gitattributes -notmatch '(?m)^\*\.cmd\s+text\s+eol=crlf\s*$') {
+            throw "E_PRECOMMIT_GOVERNANCE_GITATTRIBUTES_CMD_CRLF: .gitattributes must keep .bat and .cmd files as CRLF."
+        }
+    }
+
+    if ($governanceTargets -contains ".editorconfig") {
+        $editorconfig = (Get-Content -LiteralPath (Join-Path -Path $RepoRoot -ChildPath ".editorconfig") -Raw) -replace "`r", ''
+        if ($editorconfig -notmatch '(?m)^\[\*\.\{bat,cmd\}\]\s*$' -or $editorconfig -notmatch '(?ms)\[\*\.\{bat,cmd\}\]\s*\n\s*end_of_line\s*=\s*crlf') {
+            throw "E_PRECOMMIT_GOVERNANCE_EDITORCONFIG_CMD_CRLF: .editorconfig must keep .bat and .cmd files as CRLF."
+        }
+    }
+
+    if ($governanceTargets -contains ".gitignore") {
+        $gitignore = (Get-Content -LiteralPath (Join-Path -Path $RepoRoot -ChildPath ".gitignore") -Raw) -replace "`r", ''
+        if ($gitignore -notmatch '(?m)^\.tools/$') {
+            throw "E_PRECOMMIT_GOVERNANCE_GITIGNORE_TOOLS_CACHE: .gitignore must ignore the .tools/ cache."
+        }
+    }
 }
 
 function Get-FirstRootErrorCode {
@@ -1086,13 +1360,17 @@ function Invoke-PesterQualityGateInIsolatedProcess {
     }
 }
 
+if ($NoInvokeMain) {
+    return
+}
+
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
 Push-Location -LiteralPath $repoRoot
 
 try {
     $gitExecutable = Get-GitExecutableOrThrow
     $normalizedTargetFiles = @(
-        @(Get-PreCommitValidationTargetFiles -ExplicitFiles $TargetFiles -ListPath $TargetFileListPath) |
+        @(Get-PreCommitValidationTargetFiles -ExplicitFiles (@($TargetFiles) + @($RemainingTargetFiles)) -ListPath $TargetFileListPath) |
             ForEach-Object { ConvertTo-NormalizedRelativeTargetPath -Path $_ } |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
             Sort-Object -Unique
@@ -1124,6 +1402,20 @@ try {
     $nativeQualityPattern = '^(Config/Wezterm/wezterm\.lua|\.github/workflows/.+\.(yml|yaml))$'
     $windowsLanguagePattern = '^(Scripts/AutoHotKey/.+\.ahk|Config/\.config/.+\.ahk|Scripts/.+\.bat)$'
     $compatibilityTargetPattern = '^(Scripts|Config|Tests)/.+\.(ps1|psm1)$'
+    $governanceConfigFiles = @(
+        ".pre-commit-config.yaml",
+        ".gitattributes",
+        ".editorconfig",
+        ".gitignore",
+        ".psscriptanalyzer.psd1",
+        ".psscriptanalyzer.format.psd1",
+        ".shellcheckrc",
+        ".stylua.toml",
+        "requirements.txt",
+        "Scripts/Utils/Quality/native-quality-tools.json",
+        "Scripts/Utils/Quality/shell-quality-tools.json"
+    )
+    $governanceConfigPattern = '^(\.pre-commit-config\.yaml|\.gitattributes|\.editorconfig|\.gitignore|requirements\.txt|\.psscriptanalyzer(\.format)?\.psd1|\.shellcheckrc|\.stylua\.toml|Scripts/Utils/Quality/(native-quality-tools|shell-quality-tools)\.json)$'
 
     $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
     $llmHarnessPatternSource = 'wrapper-contract'
@@ -1170,6 +1462,14 @@ try {
     $shellSafetyFiles = @($stagedFiles | Where-Object { $_ -match $shellSafetyTriggerPattern })
     $windowsLanguageFiles = @($stagedFiles | Where-Object { $_ -match $windowsLanguagePattern })
     $llmHarnessFiles = @($stagedFiles | Where-Object { $_ -match $llmHarnessPattern })
+    $governanceFiles = @(
+        if ($All) {
+            $governanceConfigFiles | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+        }
+        else {
+            $stagedFiles | Where-Object { $_ -match $governanceConfigPattern }
+        }
+    )
 
     $utilsTestTargets = @()
     if ($All) {
@@ -1214,6 +1514,7 @@ try {
     $runAnalyzer = $analyzerTargets.Count -gt 0
     $runFormatOperatorSafetyCheck = $All -or $scriptFiles.Count -gt 0 -or $utilsTestFiles.Count -gt 0 -or $githubTestFiles.Count -gt 0
     $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
+    $runGovernanceValidation = $All -or $governanceFiles.Count -gt 0
     $preCommitOwnedFixesEnabled = $All -or $AllowPreCommitOwnedFixes
     $analyzerTargetsText = if ($analyzerTargets.Count -gt 0) { $analyzerTargets -join ', ' } else { '(none)' }
     $utilsTestTargetsText = if ($utilsTestTargets.Count -gt 0) { $utilsTestTargets -join ', ' } else { '(none)' }
@@ -1223,9 +1524,10 @@ try {
     $shellSafetyMatchedFilesText = if ($shellSafetyFiles.Count -gt 0) { $shellSafetyFiles -join ', ' } else { '(none)' }
     $windowsLanguageMatchedFilesText = if ($windowsLanguageFiles.Count -gt 0) { $windowsLanguageFiles -join ', ' } else { '(none)' }
     $llmHarnessMatchedFilesText = if ($llmHarnessFiles.Count -gt 0) { $llmHarnessFiles -join ', ' } else { '(none)' }
+    $governanceMatchedFilesText = if ($governanceFiles.Count -gt 0) { $governanceFiles -join ', ' } else { '(none)' }
 
     Write-Verbose (
-        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runShellQualityChecks={4}; runNativeQualityChecks={5}; runShellSafetySuite={6}; runWindowsLanguageChecks={7}; runCompatibilityGate={8}; runAnalyzer={9}; analyzerTargetCount={10}; runLlmHarnessValidation={11}" -f
+        "Validation trigger summary: allMode={0}; stagedCount={1}; runUtilsTests={2}; runGitHubTests={3}; runShellQualityChecks={4}; runNativeQualityChecks={5}; runShellSafetySuite={6}; runWindowsLanguageChecks={7}; runCompatibilityGate={8}; runAnalyzer={9}; analyzerTargetCount={10}; runLlmHarnessValidation={11}; runGovernanceValidation={12}" -f
         $All.IsPresent,
         $stagedFiles.Count,
         $runUtilsTests,
@@ -1237,7 +1539,8 @@ try {
         $runCompatibilityGate,
         $runAnalyzer,
         $analyzerTargets.Count,
-        $runLlmHarnessValidation
+        $runLlmHarnessValidation,
+        $runGovernanceValidation
     )
     Write-Verbose ("ScriptAnalyzer target diagnostics: allMode={0}; targetCount={1}; targets={2}" -f $All.IsPresent, $analyzerTargets.Count, $analyzerTargetsText)
     Write-Verbose ("Utils test target diagnostics: allMode={0}; targetCount={1}; targets={2}" -f $All.IsPresent, $utilsTestTargets.Count, $utilsTestTargetsText)
@@ -1258,9 +1561,15 @@ try {
         Write-Verbose ("Skipping LLM harness validation: allMode={0}; source={1}; matchedCount={2}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count)
     }
 
-    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellQualityChecks -and -not $runNativeQualityChecks -and -not $runShellSafetySuite -and -not $runWindowsLanguageChecks -and -not $runCompatibilityGate -and -not $runAnalyzer -and -not $runLlmHarnessValidation) {
+    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellQualityChecks -and -not $runNativeQualityChecks -and -not $runShellSafetySuite -and -not $runWindowsLanguageChecks -and -not $runCompatibilityGate -and -not $runAnalyzer -and -not $runLlmHarnessValidation -and -not $runGovernanceValidation) {
         Write-Verbose "No staged files requiring utility validation; skipping validation."
         return
+    }
+
+    if ($runGovernanceValidation) {
+        Write-Host ("Running hook governance validation... allMode={0}; matchedCount={1}" -f $All.IsPresent, $governanceFiles.Count)
+        Write-Verbose ("Governance validation trigger diagnostics: allMode={0}; matchedCount={1}; matchedFiles={2}" -f $All.IsPresent, $governanceFiles.Count, $governanceMatchedFilesText)
+        Invoke-PreCommitGovernanceValidation -RepoRoot $repoRoot -TargetFiles $governanceFiles
     }
 
     if ($runWindowsLanguageChecks) {

@@ -27,6 +27,8 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -P
 
 - In devcontainer sessions, `.devcontainer/post-create.sh` runs this preflight automatically once at bootstrap in non-blocking mode; rerun it manually after dependency or quality-tooling updates.
 
+- After domain-specific edits, run the relevant skill-card quick checks immediately. Preflight proves tools are available; targeted skill checks catch behavioral and lint regressions before last-resort hooks.
+
 - Run full local validation:
 
 ```bash
@@ -92,7 +94,7 @@ Use the first failing gate as the active remediation target.
 - `E_CONFIG_ERROR` from PowerShell hooks: install or update required modules using the command in the diagnostic, then rerun in the same session.
 - `E_VALIDATION_ARG_CONFLICT`: remove invalid flag combinations (for example `-PreflightOnly` with `-WatchCi`) and rerun with a valid workflow stage.
 - `E_HOOK_TIMEOUT` / `E_HOOK_TIMEOUT_CONFIG` from hooks or devcontainer bootstrap: raise timeout guardrail values only when needed (`WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`, `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`, `WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS`, `WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS`), then rerun with the same command path. Recovery-backed pre-commit and pre-push hooks must leave 30s for inner recovery plus a 15s shutdown buffer plus 15s setup slack, so their override minimum is 60s.
-- `W_HOOK_RUNTIME_BUDGET` from `.githooks/*`: hook phase exceeded the <=1s fast-path target; treat this as a performance regression signal and investigate the specific phase before widening budgets.
+- `W_HOOK_RUNTIME_BUDGET` from `.githooks/*`: hook phase exceeded its runtime tier. No-op/prefiltered paths target <=1s; active validation has a separate bounded budget so real staged lint/format work is investigated without hiding no-op regressions.
 - Hook-time index-lock recovery knobs: adjust only when needed (`WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE`, `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`), then rerun with the same command path.
 - `E_GIT_PUSH_DETACHED_HEAD`, `E_GIT_PUSH_REMOTE_MISSING`, or `E_GIT_PUSH_REMOTE_BRANCH_DIVERGED` from `Invoke-GitPushWithUpstream.ps1`: fix branch/remote state explicitly; do not force-push from automation.
 

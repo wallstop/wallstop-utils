@@ -21,9 +21,12 @@ Keep diagnostics explicit and maintain coverage for URI safety, retries, and hos
 - Tests should assert serialized request payload key casing for GraphQL variables to prevent silent regressions.
 - Keep a static policy guard in `Tests/Utils/ScriptSafetyConventions.Tests.ps1` that asserts the unresolved-comments script keeps lowercase GraphQL variable keys and invokes the runtime variable-map assertion.
 - Resolve environment tokens in GH CLI precedence order: `GH_TOKEN` before `GITHUB_TOKEN`.
-- In PR URL and interactive flows, recoverable token-auth failures should attempt one anonymous retry before prompting login so public-repo access remains resilient when cached tokens expire.
+- After environment-token handling, stored `gh` lookup must clear `GH_TOKEN`/`GITHUB_TOKEN`; Git credential probing must be bounded and non-interactive.
+- In PR URL and interactive flows, recoverable token-auth failures should retry non-interactive stored credentials, then use public REST fallback before prompting login when exact GraphQL access is still needed.
 - Track rejected token values from recoverable auth failures and exclude them from later token resolution in the same run. Prompted login fallback must bypass environment-token sources and rejected-token values so stale env credentials are not reused in long-running shells.
-- Direct owner/repo mode remains fail-fast: no login prompt fallback in this mode.
+- Direct owner/repo mode remains non-prompting: explicit `-Token` auth failures fail fast, while missing auth or recoverable ambient-token failures may use stored-credential resolution/retry and public REST fallback.
+- Public REST fallback cannot determine review-thread resolution; it must emit `W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN` and output lower-camel `resolutionState = "unknown"`.
+- After editing `Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1`, run targeted agentic validation before hooks: `pwsh -NoLogo -NoProfile -File Scripts/Utils/Run-PreCommitValidation.ps1 -TargetFiles Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1`, `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1 -TestPath Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1 -OutputVerbosity None`, and `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1 -TestPath Tests/Utils/ScriptSafetyConventions.Tests.ps1 -OutputVerbosity None`. This catches ScriptAnalyzer regressions such as unused variables plus behavioral/policy drift while the edit is still in progress.
 
 ## Review Thread Range Rendering
 
@@ -76,12 +79,13 @@ For PowerShell terminal usage, keep value discovery aids in the script parameter
 3. Preserve retry behavior for transient status codes.
 4. Keep GraphQL variable keys aligned with declared variable names and casing.
 5. Assert GraphQL variable-map/query alignment in-script before request dispatch.
-6. Apply source-aware auth recovery: enforce `GH_TOKEN` before `GITHUB_TOKEN`, track rejected token values after recoverable auth failures, and bypass env/rejected values during prompted login fallback.
+6. Apply source-aware auth recovery: enforce `GH_TOKEN` before `GITHUB_TOKEN`, retry stored credentials before public REST fallback, track rejected token values after recoverable auth failures, and bypass env/rejected values during prompted login fallback.
 7. Keep non-global IP blocks and host allowlist checks active.
 8. Preserve copy fallback order and strict mode behavior.
 9. Preserve bot comment cleanup and embedded-location behavior with both behavioral and policy tests.
 10. Preserve output-file write semantics and UTF-8 encoding.
 11. Keep PowerShell completion metadata aligned with supported parameter values.
+12. Run targeted lint, GitHub behavior, and policy Pester checks before relying on hook execution.
 
 ## References
 

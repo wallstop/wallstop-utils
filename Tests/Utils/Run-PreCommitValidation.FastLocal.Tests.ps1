@@ -45,10 +45,11 @@ AfterAll {
 Describe "Run-PreCommitValidation fast local mode" {
     It "accepts explicit target files for pre-push without using staged discovery" {
         $script:preCommitContent | Should -Match '\[string\[\]\]\$TargetFiles\s*=\s*@\(\)'
+        $script:preCommitContent | Should -Match '\[string\[\]\]\$RemainingTargetFiles\s*=\s*@\(\)'
         $script:preCommitContent | Should -Match '\[string\]\$TargetFileListPath\s*=\s*""'
         $script:preCommitContent | Should -Match 'ValueFromRemainingArguments\s*=\s*\$true'
         $script:preCommitContent | Should -Match '\$normalizedTargetFiles\s*=\s*@\('
-        $script:preCommitContent | Should -Match 'Get-PreCommitValidationTargetFiles\s+-ExplicitFiles\s+\$TargetFiles\s+-ListPath\s+\$TargetFileListPath'
+        $script:preCommitContent | Should -Match 'Get-PreCommitValidationTargetFiles\s+-ExplicitFiles\s+\(@\(\$TargetFiles\)\s*\+\s*@\(\$RemainingTargetFiles\)\)\s+-ListPath\s+\$TargetFileListPath'
         $script:preCommitContent | Should -Match 'if\s*\(\$normalizedTargetFiles\.Count\s+-gt\s+0\)\s*\{\s*\$stagedFiles\s*=\s*@\(\$normalizedTargetFiles\)'
         $script:preCommitContent | Should -Match 'E_PRECOMMIT_VALIDATION_ARG_CONFLICT'
         $script:preCommitContent | Should -Match '\[switch\]\$IncludePreCommitOwnedChecks'

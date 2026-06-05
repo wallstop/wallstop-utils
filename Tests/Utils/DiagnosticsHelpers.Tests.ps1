@@ -7,6 +7,24 @@ BeforeAll {
     . $script:diagnosticsHelperPath
 }
 
+Describe "Measure-ActiveGitProcessCommandLines" {
+    It "fails closed for ambiguous native git command lines without a repository path" {
+        $measurement = Measure-ActiveGitProcessCommandLines -CommandLines @("git commit") -RepositoryRoot "/work/repo" -GitDirectory "/work/repo/.git" -PathComparison ([System.StringComparison]::Ordinal)
+
+        $measurement.ActiveGitProcessCount | Should -Be 0
+        $measurement.AmbiguousGitProcessCount | Should -Be 1
+        $measurement.ProcessScanDegraded | Should -BeTrue
+    }
+
+    It "counts repository-scoped git commands as active instead of ambiguous" {
+        $measurement = Measure-ActiveGitProcessCommandLines -CommandLines @("git -C /work/repo status", "pre-commit run --config /work/repo/.pre-commit-config.yaml") -RepositoryRoot "/work/repo" -GitDirectory "/work/repo/.git" -PathComparison ([System.StringComparison]::Ordinal)
+
+        $measurement.ActiveGitProcessCount | Should -Be 2
+        $measurement.AmbiguousGitProcessCount | Should -Be 0
+        $measurement.ProcessScanDegraded | Should -BeFalse
+    }
+}
+
 Describe "Invoke-SafeGitIndexLockRecovery" {
     BeforeEach {
         $script:envSnapshot = @{
@@ -107,6 +125,49 @@ Describe "Invoke-SafeGitIndexLockRecovery" {
         $result.ProcessScanDegraded | Should -BeTrue
         Test-Path -LiteralPath $lockPath -PathType Leaf | Should -BeTrue
         Assert-MockCalled -CommandName Get-ActiveGitProcessScanState -Times 1 -Exactly
+    }
+
+    It "fails closed when process scan is degraded even if active-git override is enabled" {
+        $env:WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE = "safe"
+        $env:WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS = "5"
+        $env:WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT = "1"
+
+        $script:testRepoRoot = Join-Path -Path $TestDrive -ChildPath ([System.Guid]::NewGuid().ToString())
+        $gitDirectoryPath = Join-Path -Path $script:testRepoRoot -ChildPath ".git"
+        [void][System.IO.Directory]::CreateDirectory($gitDirectoryPath)
+
+        $lockPath = Join-Path -Path $gitDirectoryPath -ChildPath "index.lock"
+        Set-Content -LiteralPath $lockPath -Value "lock" -NoNewline
+        (Get-Item -LiteralPath $lockPath -ErrorAction Stop).LastWriteTimeUtc = [datetime]::UtcNow.AddSeconds(-120)
+
+        Mock git {
+            $global:LASTEXITCODE = 0
+            $joinedArgs = $args -join " "
+            if ($joinedArgs -match "--git-path index.lock") {
+                return @(".git/index.lock")
+            }
+
+            if ($joinedArgs -match "--absolute-git-dir") {
+                return @((Join-Path -Path $script:testRepoRoot -ChildPath ".git"))
+            }
+
+            return @()
+        }
+
+        Mock Get-ActiveGitProcessScanState {
+            return [pscustomobject]@{
+                ActiveGitProcessCount    = 0
+                AmbiguousGitProcessCount = 1
+                ProcessScanDegraded      = $true
+            }
+        }
+
+        $result = Invoke-SafeGitIndexLockRecovery -GitExecutable "git" -RepositoryRoot $script:testRepoRoot -OutputLines @("fatal: Unable to create '.git/index.lock': File exists.") -Context "unit-test"
+
+        $result.Recovered | Should -BeFalse
+        $result.SkippedReason | Should -Be "process_scan_degraded"
+        $result.AmbiguousGitProcessCount | Should -Be 1
+        Test-Path -LiteralPath $lockPath -PathType Leaf | Should -BeTrue
     }
 
     It "skips recovery when lock file cannot be opened exclusively" {
