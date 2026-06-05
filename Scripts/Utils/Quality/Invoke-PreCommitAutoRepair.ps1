@@ -33,6 +33,56 @@ function Get-GitExecutableOrThrow {
     return $gitCommand.Source
 }
 
+function Invoke-GitCommandWithSplitOutput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    $gitStderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $stdout = @(& $GitExecutable @Arguments 2> $gitStderrPath)
+        $exitCode = Get-LastExitCodeOrDefault
+        $stderr = if (Test-Path -LiteralPath $gitStderrPath -PathType Leaf) {
+            [System.IO.File]::ReadAllText($gitStderrPath, [System.Text.Encoding]::UTF8)
+        }
+        else {
+            ""
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $gitStderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Stdout   = @($stdout)
+        Stderr   = $stderr
+    }
+}
+
+function Join-GitCommandDiagnosticOutput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [AllowNull()]
+        [string[]]$Stdout,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Stderr = ""
+    )
+
+    $outputLines = @($Stdout)
+    if (-not [string]::IsNullOrWhiteSpace($Stderr)) {
+        $outputLines += @($Stderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
+    return @($outputLines)
+}
+
 function Invoke-GitCommandOrThrow {
     param(
         [Parameter(Mandatory = $true)]
@@ -52,9 +102,11 @@ function Invoke-GitCommandOrThrow {
     )
 
     $gitArgs = @("-C", $RepositoryRoot) + $Arguments
-    $gitOutput = @(& $GitExecutable @gitArgs 2>&1)
-    $gitExitCode = Get-LastExitCodeOrDefault
-    if ($gitExitCode -ne 0 -and (Test-IsGitIndexLockFailure -OutputLines $gitOutput)) {
+    $gitResult = Invoke-GitCommandWithSplitOutput -GitExecutable $GitExecutable -Arguments $gitArgs
+    $gitOutput = @($gitResult.Stdout)
+    $gitDiagnosticOutput = @(Join-GitCommandDiagnosticOutput -Stdout $gitOutput -Stderr $gitResult.Stderr)
+    $gitExitCode = [int]$gitResult.ExitCode
+    if ($gitExitCode -ne 0 -and (Test-IsGitIndexLockFailure -OutputLines $gitDiagnosticOutput)) {
         Write-Warning (
             "W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED: failureCode={0}; failureContext={1}; repositoryRoot='{2}'." -f
             $FailureCode,
@@ -62,7 +114,7 @@ function Invoke-GitCommandOrThrow {
             $RepositoryRoot
         )
 
-        $lockRecovery = Invoke-SafeGitIndexLockRecovery -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -OutputLines $gitOutput -Context $FailureContext
+        $lockRecovery = Invoke-SafeGitIndexLockRecovery -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -OutputLines $gitDiagnosticOutput -Context $FailureContext
         if ($lockRecovery.ElapsedMilliseconds -gt $lockRecovery.SlowPathThresholdMs) {
             Write-Warning (
                 "W_PRECOMMIT_GIT_INDEX_LOCK_SLOW_PATH: context={0}; elapsedMs={1}; thresholdMs={2}." -f
@@ -80,8 +132,10 @@ function Invoke-GitCommandOrThrow {
                 [int]$lockRecovery.LockAgeSeconds
             )
 
-            $gitOutput = @(& $GitExecutable @gitArgs 2>&1)
-            $gitExitCode = Get-LastExitCodeOrDefault
+            $gitResult = Invoke-GitCommandWithSplitOutput -GitExecutable $GitExecutable -Arguments $gitArgs
+            $gitOutput = @($gitResult.Stdout)
+            $gitDiagnosticOutput = @(Join-GitCommandDiagnosticOutput -Stdout $gitOutput -Stderr $gitResult.Stderr)
+            $gitExitCode = [int]$gitResult.ExitCode
             if ($gitExitCode -eq 0) {
                 return @(
                     $gitOutput |
@@ -91,8 +145,8 @@ function Invoke-GitCommandOrThrow {
                 )
             }
 
-            if (Test-IsGitIndexLockFailure -OutputLines $gitOutput) {
-                $retryPreview = Get-OutputPreview -OutputLines $gitOutput
+            if (Test-IsGitIndexLockFailure -OutputLines $gitDiagnosticOutput) {
+                $retryPreview = Get-OutputPreview -OutputLines $gitDiagnosticOutput
                 throw (
                     "E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED: {0} (repositoryRoot='{1}'; lockPath='{2}'; outputPreview={3})." -f
                     $FailureContext,
@@ -133,7 +187,7 @@ function Invoke-GitCommandOrThrow {
     }
 
     if ($gitExitCode -ne 0) {
-        $outputPreview = Get-OutputPreview -OutputLines $gitOutput
+        $outputPreview = Get-OutputPreview -OutputLines $gitDiagnosticOutput
         throw ("{0}: {1} (exitCode={2}; repositoryRoot='{3}'; outputPreview={4})." -f $FailureCode, $FailureContext, $gitExitCode, $RepositoryRoot, $outputPreview)
     }
 
@@ -154,10 +208,28 @@ function Get-GitRepositoryRootOrThrow {
         [string]$StartDirectory
     )
 
-    $repoRootOutput = @(& $GitExecutable -C $StartDirectory rev-parse --show-toplevel 2>&1)
-    $repoRootExitCode = Get-LastExitCodeOrDefault
+    $repoRootStderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $repoRootOutput = @(& $GitExecutable -C $StartDirectory rev-parse --show-toplevel 2> $repoRootStderrPath)
+        $repoRootExitCode = Get-LastExitCodeOrDefault
+        $repoRootStderr = if (Test-Path -LiteralPath $repoRootStderrPath -PathType Leaf) {
+            [System.IO.File]::ReadAllText($repoRootStderrPath, [System.Text.Encoding]::UTF8)
+        }
+        else {
+            ""
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $repoRootStderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $repoRootDiagnosticOutput = @($repoRootOutput)
+    if (-not [string]::IsNullOrWhiteSpace($repoRootStderr)) {
+        $repoRootDiagnosticOutput += @($repoRootStderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
     if ($repoRootExitCode -ne 0 -or $repoRootOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$repoRootOutput[0])) {
-        $outputPreview = Get-OutputPreview -OutputLines $repoRootOutput
+        $outputPreview = Get-OutputPreview -OutputLines $repoRootDiagnosticOutput
         throw (
             "E_PRECOMMIT_AUTOREPAIR_GIT_NOT_REPOSITORY: unable to determine repository root from '{0}' (exitCode={1}; outputPreview={2})." -f
             $StartDirectory,

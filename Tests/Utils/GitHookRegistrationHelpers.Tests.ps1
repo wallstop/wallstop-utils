@@ -91,4 +91,31 @@ Describe "Git hook registration preflight" {
         { Assert-GitHookRegistration -RepositoryRoot $script:repoRoot } |
             Should -Throw -ExpectedMessage "*E_HOOK_REGISTRATION_PATH_MISMATCH*"
     }
+
+    It "uses stdout-only data when repository root discovery has stderr diagnostics" {
+        Mock Invoke-GitHookRegistrationGitCommand {
+            return [pscustomobject]@{
+                ExitCode         = 0
+                Output           = @($script:repoRoot)
+                DiagnosticOutput = @("trace: rev-parse --show-toplevel", $script:repoRoot)
+            }
+        }
+
+        $resolvedRoot = Resolve-GitHookRegistrationRepositoryRoot -GitExecutable "git" -RepositoryRoot $script:repoRoot
+
+        $resolvedRoot | Should -Be $script:repoRoot
+    }
+
+    It "includes stderr diagnostics when repository root discovery fails" {
+        Mock Invoke-GitHookRegistrationGitCommand {
+            return [pscustomobject]@{
+                ExitCode         = 128
+                Output           = @()
+                DiagnosticOutput = @("fatal: not a git repository")
+            }
+        }
+
+        { Resolve-GitHookRegistrationRepositoryRoot -GitExecutable "git" -RepositoryRoot $TestDrive } |
+            Should -Throw -ExpectedMessage "*fatal: not a git repository*"
+    }
 }

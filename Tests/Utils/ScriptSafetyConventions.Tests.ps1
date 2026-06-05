@@ -101,6 +101,7 @@ BeforeAll {
     )
     $script:workflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/github-pr-summarizer-quality.yml"
     $script:crossLanguageWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/script-quality.yml"
+    $script:devcontainerWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/devcontainer-validate.yml"
     $script:dependabotConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".github/dependabot.yml"
     $script:llmContextPath = Join-Path -Path $script:repoRoot -ChildPath ".llm/context.md"
     $script:preCommitConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".pre-commit-config.yaml"
@@ -905,6 +906,55 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'PreCommitScriptSafety'
     }
 
+    It "keeps precommit git path-list probes trace-safe" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = (Get-Content -Path $validatorPath -Raw) -replace "`r", ''
+
+        $validatorContent | Should -Match 'function\s+Invoke-GitCommandWithSplitOutput'
+        $validatorContent | Should -Match '\$stdout\s*=\s*@\(&\s+\$GitExecutable\s+@Arguments\s+2>\s+\$gitStderrPath\)'
+        $validatorContent | Should -Match 'function\s+Join-GitCommandDiagnosticOutput'
+        $validatorContent | Should -Match 'function\s+Invoke-GitStdoutOrThrow'
+        $validatorContent | Should -Match 'Invoke-GitCommandWithSplitOutput\s+-GitExecutable\s+\$GitExecutable\s+-Arguments\s+\$stagedFileArgs'
+        $validatorContent | Should -Match 'Invoke-GitStdoutOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-Arguments\s+@\("-C",\s*\$repoRoot,\s*"ls-files"\)'
+        $validatorContent | Should -Match 'Invoke-GitStdoutOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-Arguments\s+\$windowsLanguageDiffArgs'
+        $validatorContent | Should -Match 'Invoke-GitStdoutOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-Arguments\s+\$shellQualityDiffArgs'
+        $validatorContent | Should -Match 'Invoke-GitStdoutOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-Arguments\s+\$nativeQualityDiffArgs'
+        $validatorContent | Should -Not -Match '@stagedFileArgs\s+2>&1'
+        $validatorContent | Should -Not -Match 'ls-files\s+2>&1'
+        $validatorContent | Should -Not -Match '@(?:windowsLanguage|shellQuality|nativeQuality)DiffArgs\s+2>&1'
+    }
+
+    It "keeps parsed Git command helpers split-output and trace-safe" {
+        $hookRegistration = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/GitHookRegistrationHelpers.ps1') -Raw) -replace "`r", ''
+        $gitPush = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1') -Raw) -replace "`r", ''
+        $removeBom = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1') -Raw) -replace "`r", ''
+
+        $hookRegistration | Should -Match '\$output\s*=\s*@\(&\s+\$GitExecutable\s+-C\s+\$RepositoryRoot\s+@Arguments\s+2>\s+\$stderrPath\)'
+        $hookRegistration | Should -Match 'DiagnosticOutput\s*=\s*@\(\$diagnosticOutput\)'
+        $hookRegistration | Should -Match 'Get-GitHookRegistrationDiagnosticOutput\s+-Result\s+\$rootResult'
+        $hookRegistration | Should -Not -Match '@Arguments\s+2>&1'
+
+        $gitPush | Should -Match '\$output\s*=\s*@\(&\s+\$GitExecutable\s+-C\s+\$RepositoryRoot\s+@Arguments\s+2>\s+\$stderrPath\)'
+        $gitPush | Should -Match 'DiagnosticOutput\s*=\s*@\(\$diagnosticOutput\)'
+        $gitPush | Should -Match 'function\s+Get-GitPushCommandDiagnosticOutput'
+        $gitPush | Should -Match 'Get-GitPushCommandDiagnosticOutput\s+-Result\s+\$Result'
+        $gitPush | Should -Not -Match '@Arguments\s+2>&1'
+
+        $removeBom | Should -Match '\$commandOutput\s*=\s*@\(&\s+\$gitExecutable\s+-C\s+\$workingDirectory\s+@arguments\s+2>\s+\$commandStderrPath\)'
+        $removeBom | Should -Match 'DiagnosticOutput\s*=\s*@\(\$diagnosticOutput\)'
+        $removeBom | Should -Match 'function\s+Get-GitCommandFirstDiagnosticLine'
+        $removeBom | Should -Not -Match '@arguments\s+2>&1'
+    }
+
+    It "keeps devcontainer shell linting on repo-managed shell quality tooling" {
+        $workflow = Get-Content -Path $script:devcontainerWorkflowPath -Raw
+
+        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+-EnsureOnly'
+        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
+        $workflow | Should -Not -Match 'apt-get\s+install[\s\S]*shellcheck'
+        $workflow | Should -Not -Match 'shellcheck\s+--severity'
+    }
+
     It "routes staged Windows language checks through the precommit orchestrator" {
         $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
         $validatorContent = Get-Content -Path $validatorPath -Raw
@@ -996,6 +1046,14 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook | Should -Match 'pre-commit run --hook-stage pre-commit'
         $preCommitHook | Should -Match 'command -v git'
         $preCommitHook | Should -Match 'E_PRECOMMIT_HOOK_GIT_NOT_AVAILABLE'
+        $preCommitHook | Should -Not -Match 'repo_root="\$\(git rev-parse --show-toplevel 2>&1\)"'
+        $preCommitHook | Should -Match 'repo_root_stderr_path="\$\(mktemp 2> /dev/null\)"'
+        $preCommitHook | Should -Match 'repo_root="\$\(git rev-parse --show-toplevel 2>\s*"\$repo_root_stderr_path"\)"'
+        $preCommitHook | Should -Match 'repo_root_exit=\$\?'
+        $preCommitHook | Should -Match 'repo_root_stderr="\$\(< "\$repo_root_stderr_path"\)"'
+        $preCommitHook | Should -Match 'repo_root_output="\$repo_root"'
+        $preCommitHook | Should -Match 'E_PRECOMMIT_REPO_ROOT_UNAVAILABLE'
+        $preCommitHook | Should -Match 'workingDirectory=\$\{working_directory\}; gitCommand=\$\{git_command\}'
         $preCommitHook | Should -Match 'run_safe_autorepair'
         $preCommitHook | Should -Match 'has_staged_windows_language_targets'
         $preCommitHook | Should -Match 'git -C "\$repo_root" diff --cached --name-only --diff-filter=ACMR --'
@@ -1031,6 +1089,14 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook | Should -Not -Match '--all-files'
         $prePushHook | Should -Match 'command -v git'
         $prePushHook | Should -Match 'E_PREPUSH_HOOK_GIT_NOT_AVAILABLE'
+        $prePushHook | Should -Not -Match 'repo_root="\$\(git rev-parse --show-toplevel 2>&1\)"'
+        $prePushHook | Should -Match 'repo_root_stderr_path="\$\(mktemp 2> /dev/null\)"'
+        $prePushHook | Should -Match 'repo_root="\$\(git rev-parse --show-toplevel 2>\s*"\$repo_root_stderr_path"\)"'
+        $prePushHook | Should -Match 'repo_root_exit=\$\?'
+        $prePushHook | Should -Match 'repo_root_stderr="\$\(< "\$repo_root_stderr_path"\)"'
+        $prePushHook | Should -Match 'repo_root_output="\$repo_root"'
+        $prePushHook | Should -Match 'E_PREPUSH_REPO_ROOT_UNAVAILABLE'
+        $prePushHook | Should -Match 'workingDirectory=\$\{working_directory\}; gitCommand=\$\{git_command\}'
         $prePushHook | Should -Not -Match 'Invoke-FullValidation\.ps1'
         $prePushHook | Should -Not -Match 'Run-PreCommitValidation\.ps1"\s+-All'
         $prePushHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-push'
@@ -1226,6 +1292,7 @@ Describe "Cross-language quality platform conventions" {
     It "auto-recovers pre-commit hook environment corruption before falling back to manual triage" {
         $recoveryScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1'
         $recoveryScript = Get-Content -Path $recoveryScriptPath -Raw
+        $autoRepairScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1') -Raw
         $fullValidation = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw
 
         $recoveryScript | Should -Match 'Test-PreCommitEnvironmentFailure'
@@ -1235,6 +1302,16 @@ Describe "Cross-language quality platform conventions" {
         $recoveryScript | Should -Match 'W_PRECOMMIT_ENV_AUTO_REPAIR'
         $recoveryScript | Should -Match 'E_PRECOMMIT_ENV_AUTO_REPAIR_FAILED'
         $recoveryScript | Should -Match 'Resolve-PreCommitRecoveryRepositoryRootOrThrow'
+        $recoveryScript | Should -Not -Match 'rev-parse --show-toplevel 2>&1'
+        $recoveryScript | Should -Match 'repositoryRootStderrPath'
+        $recoveryScript | Should -Match 'rev-parse --show-toplevel 2> \$repositoryRootStderrPath'
+        $autoRepairScript | Should -Not -Match 'rev-parse --show-toplevel 2>&1'
+        $autoRepairScript | Should -Match 'repoRootStderrPath'
+        $autoRepairScript | Should -Match 'rev-parse --show-toplevel 2> \$repoRootStderrPath'
+        $autoRepairScript | Should -Match 'function\s+Invoke-GitCommandWithSplitOutput'
+        $autoRepairScript | Should -Match '\$stdout\s*=\s*@\(&\s+\$GitExecutable\s+@Arguments\s+2>\s+\$gitStderrPath\)'
+        $autoRepairScript | Should -Match 'Join-GitCommandDiagnosticOutput\s+-Stdout\s+\$gitOutput\s+-Stderr\s+\$gitResult\.Stderr'
+        $autoRepairScript | Should -Not -Match '@\(&\s+\$GitExecutable\s+@gitArgs\s+2>&1\)'
         $recoveryScript | Should -Match 'Get-PreCommitRecoveryRemainingTimeoutSeconds'
         $recoveryScript | Should -Match 'Receive-PreCommitCommandStreamText'
         $recoveryScript | Should -Match 'StreamDrainTimeoutMilliseconds'
@@ -1967,6 +2044,10 @@ Describe "Shell quality conventions" {
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+push\s+(?:--force|-f)\b'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+commit\s+-m\s+"Backup for \$current_date"\s*\|\|'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+rev-parse\s+--abbrev-ref\s+HEAD[^\n]*\|\|\s*true'
+        $backupContent | Should -Not -Match 'rev-parse\s+--abbrev-ref\s+HEAD\s+2>&1'
+        $backupContent | Should -Not -Match 'status\s+--porcelain=v1[^\n]*2>&1\)";\s*then'
+        $backupContent | Should -Match 'branch_stderr_path'
+        $backupContent | Should -Match 'outside_status_stderr_path'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+add\s+--all\s*$'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+pull\s+origin\s+main\s*$'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+push\s+origin\s+main\s*$'
@@ -2073,7 +2154,13 @@ Describe "Shell quality conventions" {
         $incrementContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+push\s+(?:--force|-f)\b'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+git\s+rev-parse\s+--is-inside-work-tree\b'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+repo_root_output="\$\(git\s+rev-parse\s+--show-toplevel'
+        $incrementContent | Should -Not -Match 'rev-parse\s+--show-toplevel\s+2>&1'
         $incrementContent | Should -Not -Match '(?m)^\s*branch=\$\(git\s+rev-parse\s+--abbrev-ref\s+HEAD\)'
+        $incrementContent | Should -Not -Match 'rev-parse\s+--abbrev-ref\s+HEAD\s+2>&1'
+        $incrementContent | Should -Not -Match '\$\(\s*git\s+-C\s+"\$repo_root"\s+"\$\{scope_args\[@\]\}"\s+2>&1\)'
+        $incrementContent | Should -Match 'repo_root_stderr_path'
+        $incrementContent | Should -Match 'branch_stderr_path'
+        $incrementContent | Should -Match 'staged_scope_stderr_path'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+!\s+git\s+fetch\s+--prune;\s+then\s*$'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+!\s+git\s+-C\s+"\$repo_root"\s+fetch\s+--prune;\s+then\s*$'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+counts=\$\(git\s+rev-list\s+--left-right\s+--count'
@@ -4263,7 +4350,7 @@ $result = "value {0} {1}" -f
 
     It "uses explicit git availability preflight in git-consuming utility scripts" {
         $gitPreflightCases = @(
-            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '\$stagedFileArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMR"\)[\s\S]*&\s+\$GitExecutable\s+@stagedFileArgs' },
+            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '\$stagedFileArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMR"\)[\s\S]*Invoke-GitCommandWithSplitOutput\s+-GitExecutable\s+\$GitExecutable\s+-Arguments\s+\$stagedFileArgs' },
             @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
             @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
             @{ Path = 'Scripts/Utils/Increment-Version.ps1'; ErrorCode = 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree' }

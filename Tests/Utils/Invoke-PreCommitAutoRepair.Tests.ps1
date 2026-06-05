@@ -121,6 +121,49 @@ Describe "Invoke-PreCommitAutoRepairMain" {
 }
 
 Describe "Invoke-GitCommandOrThrow index lock recovery" {
+    It "ignores successful git stderr when returning path-list stdout" {
+        Mock Invoke-GitCommandWithSplitOutput {
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = @("Scripts/AutoHotKey/window-control.ahk")
+                Stderr   = "trace: diff probe"
+            }
+        }
+
+        $output = Invoke-GitCommandOrThrow -GitExecutable "git" -RepositoryRoot "/tmp/repo" -Arguments @("diff", "--cached", "--name-only") -FailureCode "E_TEST" -FailureContext "test git command"
+
+        $output | Should -Be @("Scripts/AutoHotKey/window-control.ahk")
+        $output | Should -Not -Contain "trace: diff probe"
+    }
+
+    It "allows successful git path-list commands with empty stdout" {
+        Mock Invoke-GitCommandWithSplitOutput {
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = @()
+                Stderr   = ""
+            }
+        }
+
+        $output = @(Invoke-GitCommandOrThrow -GitExecutable "git" -RepositoryRoot "/tmp/repo" -Arguments @("diff", "--name-only") -FailureCode "E_TEST" -FailureContext "test git command")
+
+        $output.Count | Should -Be 0
+    }
+
+    It "includes split stdout and stderr in non-lock failure diagnostics" {
+        Mock Invoke-GitCommandWithSplitOutput {
+            return [pscustomobject]@{
+                ExitCode = 2
+                Stdout   = @("stdout detail")
+                Stderr   = "stderr detail"
+            }
+        }
+
+        {
+            Invoke-GitCommandOrThrow -GitExecutable "git" -RepositoryRoot "/tmp/repo" -Arguments @("diff", "--cached", "--name-only") -FailureCode "E_TEST" -FailureContext "test git command"
+        } | Should -Throw "*stdout detail*stderr detail*"
+    }
+
     It "retries once after successful index lock recovery" {
         $script:gitInvocationCount = 0
         Mock Invoke-SafeGitIndexLockRecovery {

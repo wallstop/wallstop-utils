@@ -13,6 +13,8 @@ Shell formatter/linter hooks must stay repo-managed. Use local `shellcheck` and 
 
 Compiled native hooks that publish release assets must also stay repo-managed. Use local `stylua` and `actionlint` hook IDs that invoke `Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1`; do not use remote pre-commit Rust/Go hook repositories for these tools because they compile during hook execution and can fail on host linker/toolchain drift.
 
+Hook wrappers must capture `git rev-parse --show-toplevel` stdout separately from stderr under `set +e` before `cd`, then emit stage-specific stable diagnostics such as `E_PRECOMMIT_REPO_ROOT_UNAVAILABLE` or `E_PREPUSH_REPO_ROOT_UNAVAILABLE` with `exitCode`, `workingDirectory`, `gitCommand`, and Git output before exiting with the Git status.
+
 ## Fast Local Hook Contract
 
 Local hooks optimize for changed-file feedback. They must not run full validation, Pester, or all-files pre-commit flows by default.

@@ -112,6 +112,87 @@ function Get-PwshExecutableOrThrow {
     return $pwshCommand.Source
 }
 
+function Get-LastNativeExitCodeOrDefault {
+    $lastExitCode = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $lastExitCode) {
+        return 0
+    }
+
+    return [int]$lastExitCode
+}
+
+function Invoke-GitCommandWithSplitOutput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    $gitStderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $stdout = @(& $GitExecutable @Arguments 2> $gitStderrPath)
+        $exitCode = Get-LastNativeExitCodeOrDefault
+        $stderr = if (Test-Path -LiteralPath $gitStderrPath -PathType Leaf) {
+            [System.IO.File]::ReadAllText($gitStderrPath, [System.Text.Encoding]::UTF8)
+        }
+        else {
+            ""
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $gitStderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Stdout   = @($stdout)
+        Stderr   = $stderr
+    }
+}
+
+function Join-GitCommandDiagnosticOutput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [AllowNull()]
+        [string[]]$Stdout,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Stderr = ""
+    )
+
+    $outputLines = @($Stdout)
+    if (-not [string]::IsNullOrWhiteSpace($Stderr)) {
+        $outputLines += @($Stderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
+    return @($outputLines)
+}
+
+function Invoke-GitStdoutOrThrow {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FailureMessage
+    )
+
+    $gitResult = Invoke-GitCommandWithSplitOutput -GitExecutable $GitExecutable -Arguments $Arguments
+    if ([int]$gitResult.ExitCode -eq 0) {
+        return @($gitResult.Stdout)
+    }
+
+    $diagnosticOutput = @(Join-GitCommandDiagnosticOutput -Stdout @($gitResult.Stdout) -Stderr $gitResult.Stderr)
+    $gitOutputPreview = Get-OutputPreview -OutputLines $diagnosticOutput -CollapseWhitespace
+    throw ("{0} (exitCode={1}). Git output: {2}" -f $FailureMessage, [int]$gitResult.ExitCode, $gitOutputPreview)
+}
+
 function Get-StagedFilesWithIndexLockRecoveryOrThrow {
     param(
         [Parameter(Mandatory = $true)]
@@ -123,18 +204,21 @@ function Get-StagedFilesWithIndexLockRecoveryOrThrow {
 
     $stagedFileQuery = 'git -C <repositoryRoot> diff --cached --name-only --diff-filter=ACMR'
     $stagedFileArgs = @("-C", $RepositoryRoot, "diff", "--cached", "--name-only", "--diff-filter=ACMR")
-    $stagedFileOutput = @(& $GitExecutable @stagedFileArgs 2>&1)
-    if ($LASTEXITCODE -eq 0) {
+    $stagedFileResult = Invoke-GitCommandWithSplitOutput -GitExecutable $GitExecutable -Arguments $stagedFileArgs
+    $stagedFileOutput = @($stagedFileResult.Stdout)
+    $stagedFileDiagnosticOutput = @(Join-GitCommandDiagnosticOutput -Stdout $stagedFileOutput -Stderr $stagedFileResult.Stderr)
+    $stagedFileExitCode = [int]$stagedFileResult.ExitCode
+    if ($stagedFileExitCode -eq 0) {
         return @($stagedFileOutput)
     }
 
-    if (Test-IsGitIndexLockFailure -OutputLines $stagedFileOutput) {
+    if (Test-IsGitIndexLockFailure -OutputLines $stagedFileDiagnosticOutput) {
         Write-Warning (
             "W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED: context='staged-file-discovery'; repositoryRoot='{0}'." -f
             $RepositoryRoot
         )
 
-        $lockRecovery = Invoke-SafeGitIndexLockRecovery -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -OutputLines $stagedFileOutput -Context 'staged-file-discovery'
+        $lockRecovery = Invoke-SafeGitIndexLockRecovery -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -OutputLines $stagedFileDiagnosticOutput -Context 'staged-file-discovery'
         if ($lockRecovery.ElapsedMilliseconds -gt $lockRecovery.SlowPathThresholdMs) {
             Write-Warning (
                 "W_PRECOMMIT_GIT_INDEX_LOCK_SLOW_PATH: context='staged-file-discovery'; elapsedMs={0}; thresholdMs={1}." -f
@@ -169,7 +253,7 @@ function Get-StagedFilesWithIndexLockRecoveryOrThrow {
                 )
             }
 
-            $failurePreview = Get-OutputPreview -OutputLines $stagedFileOutput
+            $failurePreview = Get-OutputPreview -OutputLines $stagedFileDiagnosticOutput
             throw (
                 "E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED: staged-file discovery blocked by index lock (repositoryRoot='{0}'; lockPath='{1}'; reason={2}; outputPreview={3})." -f
                 $RepositoryRoot,
@@ -185,13 +269,16 @@ function Get-StagedFilesWithIndexLockRecoveryOrThrow {
             [int]$lockRecovery.LockAgeSeconds
         )
 
-        $stagedFileOutput = @(& $GitExecutable @stagedFileArgs 2>&1)
-        if ($LASTEXITCODE -eq 0) {
+        $stagedFileResult = Invoke-GitCommandWithSplitOutput -GitExecutable $GitExecutable -Arguments $stagedFileArgs
+        $stagedFileOutput = @($stagedFileResult.Stdout)
+        $stagedFileDiagnosticOutput = @(Join-GitCommandDiagnosticOutput -Stdout $stagedFileOutput -Stderr $stagedFileResult.Stderr)
+        $stagedFileExitCode = [int]$stagedFileResult.ExitCode
+        if ($stagedFileExitCode -eq 0) {
             return @($stagedFileOutput)
         }
 
-        if (Test-IsGitIndexLockFailure -OutputLines $stagedFileOutput) {
-            $failurePreview = Get-OutputPreview -OutputLines $stagedFileOutput
+        if (Test-IsGitIndexLockFailure -OutputLines $stagedFileDiagnosticOutput) {
+            $failurePreview = Get-OutputPreview -OutputLines $stagedFileDiagnosticOutput
             throw (
                 "E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED: staged-file discovery still blocked after recovery retry (repositoryRoot='{0}'; lockPath='{1}'; outputPreview={2})." -f
                 $RepositoryRoot,
@@ -201,8 +288,8 @@ function Get-StagedFilesWithIndexLockRecoveryOrThrow {
         }
     }
 
-    $gitErrorText = if ($stagedFileOutput.Count -gt 0) { $stagedFileOutput -join ' ' } else { '(no output)' }
-    throw "E_CONFIG_ERROR: Failed to read staged files using '$stagedFileQuery' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"
+    $gitErrorText = Get-OutputPreview -OutputLines $stagedFileDiagnosticOutput -CollapseWhitespace
+    throw "E_CONFIG_ERROR: Failed to read staged files using '$stagedFileQuery' (exitCode=$stagedFileExitCode). Git output: $gitErrorText"
 }
 
 function ConvertTo-NormalizedRelativeTargetPath {
@@ -1061,11 +1148,7 @@ try {
     $scriptFiles = @($stagedFiles | Where-Object { $_ -match $scriptPattern })
     $compatibilityTargetFiles = @()
     if ($All) {
-        $trackedFileOutput = @(& $gitExecutable -C $repoRoot ls-files 2>&1)
-        if ($LASTEXITCODE -ne 0) {
-            $gitErrorText = if ($trackedFileOutput.Count -gt 0) { $trackedFileOutput -join ' ' } else { '(no output)' }
-            throw "E_CONFIG_ERROR: Failed to read tracked files using 'git ls-files' (exitCode=$LASTEXITCODE). Git output: $gitErrorText"
-        }
+        $trackedFileOutput = @(Invoke-GitStdoutOrThrow -GitExecutable $gitExecutable -Arguments @("-C", $repoRoot, "ls-files") -FailureMessage "E_CONFIG_ERROR: Failed to read tracked files using 'git ls-files'")
 
         $shellQualityFiles = @($trackedFileOutput | Where-Object { $_ -match $shellQualityPattern })
         $nativeQualityFiles = @($trackedFileOutput | Where-Object { $_ -match $nativeQualityPattern })
@@ -1190,11 +1273,7 @@ try {
 
         if (-not $All) {
             $windowsLanguageDiffArgs = @("-C", $repoRoot, "diff", "--name-only", "--") + @($windowsLanguageFiles)
-            $unstagedWindowsLanguageDiffOutput = @(& $gitExecutable @windowsLanguageDiffArgs 2>&1)
-            if ($LASTEXITCODE -ne 0) {
-                $diffErrorText = if ($unstagedWindowsLanguageDiffOutput.Count -gt 0) { $unstagedWindowsLanguageDiffOutput -join ' ' } else { '(no output)' }
-                throw "E_CONFIG_ERROR: Failed to check unstaged Windows language drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
-            }
+            $unstagedWindowsLanguageDiffOutput = @(Invoke-GitStdoutOrThrow -GitExecutable $gitExecutable -Arguments $windowsLanguageDiffArgs -FailureMessage "E_CONFIG_ERROR: Failed to check unstaged Windows language drift with git diff")
 
             $unstagedWindowsLanguageFiles = @(
                 $unstagedWindowsLanguageDiffOutput |
@@ -1235,11 +1314,7 @@ try {
             $preShellQualityDiffOutput = @()
             $preShellQualityDirtyFileHashes = @{}
             if ($All) {
-                $preShellQualityDiffOutput = @(& $gitExecutable @shellQualityDiffArgs 2>&1)
-                if ($LASTEXITCODE -ne 0) {
-                    $diffErrorText = if ($preShellQualityDiffOutput.Count -gt 0) { $preShellQualityDiffOutput -join ' ' } else { '(no output)' }
-                    throw "E_CONFIG_ERROR: Failed to check pre-format shell quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
-                }
+                $preShellQualityDiffOutput = @(Invoke-GitStdoutOrThrow -GitExecutable $gitExecutable -Arguments $shellQualityDiffArgs -FailureMessage "E_CONFIG_ERROR: Failed to check pre-format shell quality drift with git diff")
 
                 $preShellQualityDiffOutput = @(
                     $preShellQualityDiffOutput |
@@ -1249,11 +1324,7 @@ try {
                 $preShellQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preShellQualityDiffOutput
             }
             elseif ($preCommitOwnedFixesEnabled) {
-                $unstagedShellQualityDiffOutput = @(& $gitExecutable @shellQualityDiffArgs 2>&1)
-                if ($LASTEXITCODE -ne 0) {
-                    $diffErrorText = if ($unstagedShellQualityDiffOutput.Count -gt 0) { $unstagedShellQualityDiffOutput -join ' ' } else { '(no output)' }
-                    throw "E_CONFIG_ERROR: Failed to check unstaged shell quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
-                }
+                $unstagedShellQualityDiffOutput = @(Invoke-GitStdoutOrThrow -GitExecutable $gitExecutable -Arguments $shellQualityDiffArgs -FailureMessage "E_CONFIG_ERROR: Failed to check unstaged shell quality drift with git diff")
 
                 $unstagedShellQualityFiles = @(
                     $unstagedShellQualityDiffOutput |
@@ -1276,11 +1347,7 @@ try {
             }
 
             if ($preCommitOwnedFixesEnabled) {
-                $postShellQualityDiffOutput = @(& $gitExecutable @shellQualityDiffArgs 2>&1)
-                if ($LASTEXITCODE -ne 0) {
-                    $diffErrorText = if ($postShellQualityDiffOutput.Count -gt 0) { $postShellQualityDiffOutput -join ' ' } else { '(no output)' }
-                    throw "E_CONFIG_ERROR: Failed to check post-format shell quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
-                }
+                $postShellQualityDiffOutput = @(Invoke-GitStdoutOrThrow -GitExecutable $gitExecutable -Arguments $shellQualityDiffArgs -FailureMessage "E_CONFIG_ERROR: Failed to check post-format shell quality drift with git diff")
 
                 $formattedShellQualityFiles = @(
                     $postShellQualityDiffOutput |
@@ -1356,11 +1423,7 @@ try {
             $preNativeQualityDiffOutput = @()
             $preNativeQualityDirtyFileHashes = @{}
             if ($All) {
-                $preNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
-                if ($LASTEXITCODE -ne 0) {
-                    $diffErrorText = if ($preNativeQualityDiffOutput.Count -gt 0) { $preNativeQualityDiffOutput -join ' ' } else { '(no output)' }
-                    throw "E_CONFIG_ERROR: Failed to check pre-format native quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
-                }
+                $preNativeQualityDiffOutput = @(Invoke-GitStdoutOrThrow -GitExecutable $gitExecutable -Arguments $nativeQualityDiffArgs -FailureMessage "E_CONFIG_ERROR: Failed to check pre-format native quality drift with git diff")
 
                 $preNativeQualityDiffOutput = @(
                     $preNativeQualityDiffOutput |
@@ -1370,11 +1433,7 @@ try {
                 $preNativeQualityDirtyFileHashes = Get-RelativeFileHashSnapshot -RepoRoot $repoRoot -RelativePaths $preNativeQualityDiffOutput
             }
             elseif ($preCommitOwnedFixesEnabled) {
-                $unstagedNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
-                if ($LASTEXITCODE -ne 0) {
-                    $diffErrorText = if ($unstagedNativeQualityDiffOutput.Count -gt 0) { $unstagedNativeQualityDiffOutput -join ' ' } else { '(no output)' }
-                    throw "E_CONFIG_ERROR: Failed to check unstaged native quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
-                }
+                $unstagedNativeQualityDiffOutput = @(Invoke-GitStdoutOrThrow -GitExecutable $gitExecutable -Arguments $nativeQualityDiffArgs -FailureMessage "E_CONFIG_ERROR: Failed to check unstaged native quality drift with git diff")
 
                 $unstagedNativeQualityFiles = @(
                     $unstagedNativeQualityDiffOutput |
@@ -1396,11 +1455,7 @@ try {
             }
 
             if ($preCommitOwnedFixesEnabled) {
-                $postNativeQualityDiffOutput = @(& $gitExecutable @nativeQualityDiffArgs 2>&1)
-                if ($LASTEXITCODE -ne 0) {
-                    $diffErrorText = if ($postNativeQualityDiffOutput.Count -gt 0) { $postNativeQualityDiffOutput -join ' ' } else { '(no output)' }
-                    throw "E_CONFIG_ERROR: Failed to check post-format native quality drift with git diff (exitCode=$LASTEXITCODE). Git output: $diffErrorText"
-                }
+                $postNativeQualityDiffOutput = @(Invoke-GitStdoutOrThrow -GitExecutable $gitExecutable -Arguments $nativeQualityDiffArgs -FailureMessage "E_CONFIG_ERROR: Failed to check post-format native quality drift with git diff")
 
                 $formattedNativeQualityFiles = @(
                     $postNativeQualityDiffOutput |

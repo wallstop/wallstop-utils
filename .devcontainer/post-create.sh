@@ -39,6 +39,11 @@ _validate_timeout_seconds() {
   return 0
 }
 
+_resolve_absolute_directory() (
+  cd "$1" 2> /dev/null || return 1
+  pwd
+)
+
 _run_with_timeout() {
   local timeout_seconds="$1"
   shift
@@ -310,8 +315,7 @@ _resolve_codex_npm_package_bin() {
     fi
 
     if [[ "${npm_root}" != /* ]]; then
-      npm_root="$(cd "${npm_root}" 2> /dev/null && pwd || true)"
-      if [[ -z "${npm_root}" ]]; then
+      if ! npm_root="$(_resolve_absolute_directory "${npm_root}")"; then
         continue
       fi
     fi
@@ -403,8 +407,7 @@ _resolve_codex_npm_global_bin() {
       fi
 
       if [[ "${npm_prefix}" != /* ]]; then
-        npm_prefix="$(cd "${npm_prefix}" 2> /dev/null && pwd || true)"
-        if [[ -z "${npm_prefix}" ]]; then
+        if ! npm_prefix="$(_resolve_absolute_directory "${npm_prefix}")"; then
           continue
         fi
       fi
@@ -520,8 +523,7 @@ _link_codex_into_local_bin() {
 
   if [[ "${codex_source_path}" != /* ]]; then
     local codex_source_dir
-    codex_source_dir="$(cd "$(dirname "${codex_source_path}")" 2> /dev/null && pwd || true)"
-    if [[ -n "${codex_source_dir}" ]]; then
+    if codex_source_dir="$(_resolve_absolute_directory "$(dirname "${codex_source_path}")")"; then
       codex_source_path="${codex_source_dir}/$(basename "${codex_source_path}")"
     fi
   fi

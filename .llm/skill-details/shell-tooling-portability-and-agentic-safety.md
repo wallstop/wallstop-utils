@@ -115,6 +115,7 @@ These patterns are critical when scripts are generated or edited by autonomous a
 | --- | --- | --- |
 | `for f in $(ls)` | null-delimited `find ... -print0` loop | Handles spaces/newlines safely |
 | bare `sed -i` across OSes | temp file rewrite + move | GNU and BSD `sed -i` semantics differ; temp rewrite avoids cross-OS breakage |
+| `cmd1 && cmd2 || cmd3` as an if/else replacement | explicit `if cmd1; then cmd2; else cmd3; fi` or a helper with checked assignment | Avoids ShellCheck SC2015 and preserves semantics when the middle command can fail |
 | `egrep` / `fgrep` | `grep -E` / `grep -F` | Modern, non-deprecated forms |
 | data and logs both on stdout | data stdout + logs stderr | Keeps machine-readable output stable |
 | non-idempotent mutate-once logic | state check + converge semantics | Safe repeated automation runs |

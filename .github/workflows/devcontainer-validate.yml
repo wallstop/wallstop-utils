@@ -40,14 +40,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+      - name: Ensure repo-managed shell quality tools
+        shell: pwsh
+        run: |
+          ./Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All -EnsureOnly
 
       - name: Lint post-create.sh and githook scripts
+        shell: pwsh
         run: |
-          shellcheck --severity=style .devcontainer/post-create.sh
-          shellcheck --severity=style .githooks/pre-commit
-          shellcheck --severity=style .githooks/pre-push
+          ./Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All .devcontainer/post-create.sh .githooks/pre-commit .githooks/pre-push
 
       - name: Snapshot ~/.bashrc state before post-create.sh
         shell: bash

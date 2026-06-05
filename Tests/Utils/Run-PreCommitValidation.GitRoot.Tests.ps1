@@ -39,7 +39,7 @@ BeforeAll {
 
     . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/DiagnosticsHelpers.ps1")
 
-    foreach ($functionName in @("Get-StagedFilesWithIndexLockRecoveryOrThrow")) {
+    foreach ($functionName in @("Get-LastNativeExitCodeOrDefault", "Invoke-GitCommandWithSplitOutput", "Join-GitCommandDiagnosticOutput", "Invoke-GitStdoutOrThrow", "Get-StagedFilesWithIndexLockRecoveryOrThrow")) {
         $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $script:preCommitAst -Name $functionName -Context "git-root tests"
 
         . ([scriptblock]::Create($targetFunction.Extent.Text))
@@ -48,6 +48,10 @@ BeforeAll {
 
 AfterAll {
     Remove-Item -Path Function:Get-StagedFilesWithIndexLockRecoveryOrThrow -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:Invoke-GitStdoutOrThrow -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:Join-GitCommandDiagnosticOutput -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:Invoke-GitCommandWithSplitOutput -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:Get-LastNativeExitCodeOrDefault -ErrorAction SilentlyContinue
     Remove-Item -Path Function:Get-RequiredFunctionDefinitionAst -ErrorAction SilentlyContinue
 }
 
@@ -99,12 +103,12 @@ Describe "Run-PreCommitValidation git repository-root anchoring" {
 
     It "anchors staged-file discovery to the explicit RepositoryRoot parameter" {
         $script:preCommitContent | Should -Match '\$stagedFileArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMR"\)'
-        $script:preCommitContent | Should -Match '&\s+\$GitExecutable\s+@stagedFileArgs'
+        $script:preCommitContent | Should -Match 'Invoke-GitCommandWithSplitOutput\s+-GitExecutable\s+\$GitExecutable\s+-Arguments\s+\$stagedFileArgs'
         $script:preCommitContent | Should -Not -Match '&\s+\$GitExecutable\s+diff\s+--cached'
     }
 
     It "anchors all-mode tracked-file discovery to repoRoot" {
-        $script:preCommitContent | Should -Match '&\s+\$gitExecutable\s+-C\s+\$repoRoot\s+ls-files'
+        $script:preCommitContent | Should -Match 'Invoke-GitStdoutOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-Arguments\s+@\("-C",\s*\$repoRoot,\s*"ls-files"\)'
         $script:preCommitContent | Should -Not -Match '&\s+\$gitExecutable\s+ls-files'
     }
 
@@ -113,5 +117,48 @@ Describe "Run-PreCommitValidation git repository-root anchoring" {
         $script:preCommitContent | Should -Match '\$shellQualityDiffArgs\s*=\s*@\("-C",\s*\$repoRoot,\s*"diff",\s*"--name-only",\s*"--"\)'
         $script:preCommitContent | Should -Match '\$nativeQualityDiffArgs\s*=\s*@\("-C",\s*\$repoRoot,\s*"diff",\s*"--name-only",\s*"--"\)'
         $script:preCommitContent | Should -Not -Match '&\s+\$gitExecutable\s+diff\s+--name-only'
+    }
+
+    It "ignores successful git stderr when reading staged-file stdout" {
+        Mock Invoke-GitCommandWithSplitOutput {
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = @("Scripts/Utils/Run-PreCommitValidation.ps1")
+                Stderr   = "trace: staged-file discovery"
+            }
+        }
+
+        $result = @(Get-StagedFilesWithIndexLockRecoveryOrThrow -GitExecutable "git" -RepositoryRoot "/tmp/repo")
+
+        $result | Should -Be @("Scripts/Utils/Run-PreCommitValidation.ps1")
+        $result | Should -Not -Contain "trace: staged-file discovery"
+    }
+
+    It "allows successful staged-file discovery with empty stdout" {
+        Mock Invoke-GitCommandWithSplitOutput {
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = @()
+                Stderr   = ""
+            }
+        }
+
+        $result = @(Get-StagedFilesWithIndexLockRecoveryOrThrow -GitExecutable "git" -RepositoryRoot "/tmp/repo")
+
+        $result.Count | Should -Be 0
+    }
+
+    It "includes split stdout and stderr in staged-file failure diagnostics" {
+        Mock Invoke-GitCommandWithSplitOutput {
+            return [pscustomobject]@{
+                ExitCode = 2
+                Stdout   = @("stdout detail")
+                Stderr   = "stderr detail"
+            }
+        }
+
+        {
+            Get-StagedFilesWithIndexLockRecoveryOrThrow -GitExecutable "git" -RepositoryRoot "/tmp/repo"
+        } | Should -Throw "*stdout detail*stderr detail*"
     }
 }

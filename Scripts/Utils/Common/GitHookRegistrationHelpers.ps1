@@ -31,11 +31,45 @@ function Invoke-GitHookRegistrationGitCommand {
         [string[]]$Arguments
     )
 
-    $output = @(& $GitExecutable -C $RepositoryRoot @Arguments 2>&1)
-    return [pscustomobject]@{
-        ExitCode = $LASTEXITCODE
-        Output   = $output
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $output = @(& $GitExecutable -C $RepositoryRoot @Arguments 2> $stderrPath)
+        $exitCode = $LASTEXITCODE
+        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
+            [System.IO.File]::ReadAllText($stderrPath, [System.Text.Encoding]::UTF8)
+        }
+        else {
+            ""
+        }
     }
+    finally {
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $diagnosticOutput = @($output)
+    if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+        $diagnosticOutput += @($stderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
+    return [pscustomobject]@{
+        ExitCode         = $exitCode
+        Output           = @($output)
+        DiagnosticOutput = @($diagnosticOutput)
+    }
+}
+
+function Get-GitHookRegistrationDiagnosticOutput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$Result
+    )
+
+    $diagnosticProperty = $Result.PSObject.Properties["DiagnosticOutput"]
+    if ($null -ne $diagnosticProperty) {
+        return @($diagnosticProperty.Value)
+    }
+
+    return @($Result.Output)
 }
 
 function Resolve-GitHookRegistrationRepositoryRoot {
@@ -56,7 +90,7 @@ function Resolve-GitHookRegistrationRepositoryRoot {
 
     $rootResult = Invoke-GitHookRegistrationGitCommand -GitExecutable $GitExecutable -RepositoryRoot $candidateRoot -Arguments @("rev-parse", "--show-toplevel")
     if ($rootResult.ExitCode -ne 0 -or $rootResult.Output.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$rootResult.Output[0])) {
-        $outputPreview = (@($rootResult.Output) -join " | ")
+        $outputPreview = (@(Get-GitHookRegistrationDiagnosticOutput -Result $rootResult) -join " | ")
         throw "E_HOOK_REGISTRATION_NOT_REPOSITORY: unable to determine repository root for hook registration preflight (exitCode=$($rootResult.ExitCode); workingDirectory='$candidateRoot'; outputPreview=$outputPreview)."
     }
 
@@ -145,7 +179,7 @@ function Assert-GitHookRegistration {
 
         $setResult = Invoke-GitHookRegistrationGitCommand -GitExecutable $gitExecutable -RepositoryRoot $resolvedRepositoryRoot -Arguments @("config", "--local", "core.hooksPath", ".githooks")
         if ($setResult.ExitCode -ne 0) {
-            $outputPreview = (@($setResult.Output) -join " | ")
+            $outputPreview = (@(Get-GitHookRegistrationDiagnosticOutput -Result $setResult) -join " | ")
             throw "E_HOOK_REGISTRATION_CONFIG_SET_FAILED: failed to set local core.hooksPath to '.githooks' (exitCode=$($setResult.ExitCode); repositoryRoot='$resolvedRepositoryRoot'; outputPreview=$outputPreview)."
         }
 

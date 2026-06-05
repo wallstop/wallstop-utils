@@ -67,12 +67,32 @@ function Resolve-PreCommitRecoveryRepositoryRootOrThrow {
         [string]$GitExecutable
     )
 
-    $repositoryRootOutput = @(& $GitExecutable -C $script:PreCommitRecoveryScriptRepositoryRoot rev-parse --show-toplevel 2>&1)
-    if ($LASTEXITCODE -ne 0 -or $repositoryRootOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$repositoryRootOutput[0])) {
-        $repositoryRootPreview = Get-OutputPreview -OutputLines $repositoryRootOutput -CollapseWhitespace
+    $repositoryRootStderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $repositoryRootOutput = @(& $GitExecutable -C $script:PreCommitRecoveryScriptRepositoryRoot rev-parse --show-toplevel 2> $repositoryRootStderrPath)
+        $repositoryRootExitCode = $LASTEXITCODE
+        $repositoryRootStderr = if (Test-Path -LiteralPath $repositoryRootStderrPath -PathType Leaf) {
+            [System.IO.File]::ReadAllText($repositoryRootStderrPath, [System.Text.Encoding]::UTF8)
+        }
+        else {
+            ""
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $repositoryRootStderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $repositoryRootDiagnosticOutput = @($repositoryRootOutput)
+    if (-not [string]::IsNullOrWhiteSpace($repositoryRootStderr)) {
+        $repositoryRootDiagnosticOutput += @($repositoryRootStderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
+    if ($repositoryRootExitCode -ne 0 -or $repositoryRootOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$repositoryRootOutput[0])) {
+        $repositoryRootPreview = Get-OutputPreview -OutputLines $repositoryRootDiagnosticOutput -CollapseWhitespace
         throw (
-            "E_PRECOMMIT_RECOVERY_NOT_REPOSITORY: unable to resolve git repository root from script root (scriptRoot='{0}'; outputPreview={1})." -f
+            "E_PRECOMMIT_RECOVERY_NOT_REPOSITORY: unable to resolve git repository root from script root (scriptRoot='{0}'; exitCode={1}; outputPreview={2})." -f
             $script:PreCommitRecoveryScriptRepositoryRoot,
+            $repositoryRootExitCode,
             $repositoryRootPreview
         )
     }

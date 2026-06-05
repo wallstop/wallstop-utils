@@ -60,6 +60,28 @@ Describe "Remove-BOM file discovery" {
         }
     }
 
+    It "keeps git stderr diagnostics out of stdout path data" {
+        function Invoke-RemoveBomGitDetailsFakeGit {
+            param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
+
+            Write-Error "trace: fake git stderr" -ErrorAction Continue
+            "/tmp/remove-bom-repo"
+            $global:LASTEXITCODE = 0
+        }
+
+        try {
+            $result = Get-GitCommandDetails -gitExecutable "Invoke-RemoveBomGitDetailsFakeGit" -WorkingDirectory $script:testRoot -arguments @("rev-parse", "--show-toplevel")
+        }
+        finally {
+            Remove-Item -Path Function:Invoke-RemoveBomGitDetailsFakeGit -ErrorAction SilentlyContinue
+        }
+
+        $result.ExitCode | Should -Be 0
+        $result.Output | Should -Be @("/tmp/remove-bom-repo")
+        $result.FirstLine | Should -Be "/tmp/remove-bom-repo"
+        ($result.DiagnosticOutput -join "`n") | Should -Match "trace: fake git stderr"
+    }
+
     It "canonicalizes existing paths without segment traversal (<Scenario>)" -TestCases @(
         @{ Scenario = "uses item FullName when no link target is available"; UseResolveLinkTarget = $false },
         @{ Scenario = "uses ResolveLinkTarget for terminal symlink paths"; UseResolveLinkTarget = $true }
@@ -617,8 +639,25 @@ Describe "Remove-BOM file discovery" {
                 }
             }
 
-            $realOutput = @(& $gitExecutable -C $workingDirectory @arguments 2>&1)
-            $realExitCode = $LASTEXITCODE
+            $realStderrPath = [System.IO.Path]::GetTempFileName()
+            try {
+                $realOutput = @(& $gitExecutable -C $workingDirectory @arguments 2> $realStderrPath)
+                $realExitCode = $LASTEXITCODE
+                $realStderr = if (Test-Path -LiteralPath $realStderrPath -PathType Leaf) {
+                    [System.IO.File]::ReadAllText($realStderrPath, [System.Text.Encoding]::UTF8)
+                }
+                else {
+                    ""
+                }
+            }
+            finally {
+                Remove-Item -LiteralPath $realStderrPath -Force -ErrorAction SilentlyContinue
+            }
+
+            $realDiagnosticOutput = @($realOutput)
+            if (-not [string]::IsNullOrWhiteSpace($realStderr)) {
+                $realDiagnosticOutput += @($realStderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            }
             $firstLine = $null
             foreach ($line in $realOutput) {
                 $normalized = [string]$line
@@ -629,10 +668,11 @@ Describe "Remove-BOM file discovery" {
             }
 
             return [PSCustomObject]@{
-                ExitCode  = $realExitCode
-                Output    = @($realOutput)
-                FirstLine = $firstLine
-                HasOutput = $null -ne $firstLine
+                ExitCode         = $realExitCode
+                Output           = @($realOutput)
+                DiagnosticOutput = @($realDiagnosticOutput)
+                FirstLine        = $firstLine
+                HasOutput        = $null -ne $firstLine
             }
         }
 
@@ -687,8 +727,25 @@ Describe "Remove-BOM file discovery" {
                 }
             }
 
-            $realOutput = @(& $gitExecutable -C $workingDirectory @arguments 2>&1)
-            $realExitCode = $LASTEXITCODE
+            $realStderrPath = [System.IO.Path]::GetTempFileName()
+            try {
+                $realOutput = @(& $gitExecutable -C $workingDirectory @arguments 2> $realStderrPath)
+                $realExitCode = $LASTEXITCODE
+                $realStderr = if (Test-Path -LiteralPath $realStderrPath -PathType Leaf) {
+                    [System.IO.File]::ReadAllText($realStderrPath, [System.Text.Encoding]::UTF8)
+                }
+                else {
+                    ""
+                }
+            }
+            finally {
+                Remove-Item -LiteralPath $realStderrPath -Force -ErrorAction SilentlyContinue
+            }
+
+            $realDiagnosticOutput = @($realOutput)
+            if (-not [string]::IsNullOrWhiteSpace($realStderr)) {
+                $realDiagnosticOutput += @($realStderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            }
             $firstLine = $null
             foreach ($line in $realOutput) {
                 $normalized = [string]$line
@@ -699,10 +756,11 @@ Describe "Remove-BOM file discovery" {
             }
 
             return [PSCustomObject]@{
-                ExitCode  = $realExitCode
-                Output    = @($realOutput)
-                FirstLine = $firstLine
-                HasOutput = $null -ne $firstLine
+                ExitCode         = $realExitCode
+                Output           = @($realOutput)
+                DiagnosticOutput = @($realDiagnosticOutput)
+                FirstLine        = $firstLine
+                HasOutput        = $null -ne $firstLine
             }
         }
 

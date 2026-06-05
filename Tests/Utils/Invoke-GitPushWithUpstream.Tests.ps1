@@ -308,4 +308,67 @@ Describe "Invoke-GitPushWithUpstream" {
 
         @($script:gitPushCalls.ToArray()) | Should -Not -Contain "push -u missing HEAD"
     }
+
+    It "uses stdout-only data when git discovery commands include stderr diagnostics" {
+        Mock Invoke-GitPushCommand {
+            param($GitExecutable, $RepositoryRoot, $Arguments)
+            $argumentText = $Arguments -join " "
+            $script:gitPushCalls.Add($argumentText) | Out-Null
+
+            switch ($argumentText) {
+                "rev-parse --show-toplevel" {
+                    return [pscustomobject]@{
+                        ExitCode         = 0
+                        Output           = @($script:repoRoot)
+                        DiagnosticOutput = @("trace: rev-parse --show-toplevel", $script:repoRoot)
+                    }
+                }
+                "rev-parse --abbrev-ref --symbolic-full-name @{u}" {
+                    return [pscustomobject]@{
+                        ExitCode         = 1
+                        Output           = @()
+                        DiagnosticOutput = @("fatal: no upstream configured")
+                    }
+                }
+                "symbolic-ref --quiet --short HEAD" {
+                    return [pscustomobject]@{
+                        ExitCode         = 0
+                        Output           = @("feature/test")
+                        DiagnosticOutput = @("trace: symbolic-ref", "feature/test")
+                    }
+                }
+                "rev-parse --verify HEAD" {
+                    return [pscustomobject]@{
+                        ExitCode         = 0
+                        Output           = @("abc123")
+                        DiagnosticOutput = @("trace: verify HEAD", "abc123")
+                    }
+                }
+                "remote get-url origin" {
+                    return [pscustomobject]@{
+                        ExitCode         = 0
+                        Output           = @("git@example.com:owner/repo.git")
+                        DiagnosticOutput = @("trace: remote get-url", "git@example.com:owner/repo.git")
+                    }
+                }
+                "ls-remote --heads origin feature/test" {
+                    return [pscustomobject]@{
+                        ExitCode         = 0
+                        Output           = @()
+                        DiagnosticOutput = @("trace: ls-remote")
+                    }
+                }
+                "push -u origin HEAD" {
+                    return [pscustomobject]@{ ExitCode = 0; Output = @("set upstream"); DiagnosticOutput = @("set upstream") }
+                }
+                default {
+                    throw "unexpected git command: $argumentText"
+                }
+            }
+        }
+
+        Invoke-GitPushWithUpstreamMain -SelectedRemote origin -RequestedRepositoryRoot $script:repoRoot | Should -Be 0
+
+        @($script:gitPushCalls.ToArray()) | Should -Contain "push -u origin HEAD"
+    }
 }

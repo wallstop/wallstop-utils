@@ -50,13 +50,31 @@ assert_backup_git_branch() {
   local expected_branch="$2"
   local current_branch
   local branch_output
+  local branch_stderr
+  local branch_stderr_path
   local branch_exit
   local branch_preview
 
-  if branch_output="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>&1)"; then
+  if ! branch_stderr_path="$(mktemp 2> /dev/null)"; then
+    branch_stderr_path="/tmp/wallstop-backup-branch.$$.$RANDOM.err"
+  fi
+  if branch_output="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2> "$branch_stderr_path")"; then
+    rm -f "$branch_stderr_path" > /dev/null 2>&1 || true
     :
   else
     branch_exit=$?
+    branch_stderr=""
+    if [[ -f "$branch_stderr_path" ]]; then
+      branch_stderr="$(< "$branch_stderr_path")"
+    fi
+    rm -f "$branch_stderr_path" > /dev/null 2>&1 || true
+    if [[ -n "$branch_stderr" ]]; then
+      if [[ -n "$branch_output" ]]; then
+        branch_output="${branch_output}"$'\n'"${branch_stderr}"
+      else
+        branch_output="$branch_stderr"
+      fi
+    fi
     branch_preview="$(get_output_preview "$branch_output")"
     echo "E_BACKUP_GIT_BRANCH_DETECTION_FAILED: Unable to determine current branch (exitCode=$branch_exit; repositoryRoot='$repo_root'; outputPreview='$branch_preview')." >&2
     return "$branch_exit"
@@ -82,14 +100,32 @@ assert_backup_managed_scope_clean() {
   local repo_root="$1"
   local managed_path="$2"
   local outside_status_output
+  local outside_status_stderr
+  local outside_status_stderr_path
   local outside_count
   local outside_preview
   local status_exit
 
-  if outside_status_output="$(git -C "$repo_root" status --porcelain=v1 --untracked-files=all -- . ":(exclude)$managed_path" 2>&1)"; then
+  if ! outside_status_stderr_path="$(mktemp 2> /dev/null)"; then
+    outside_status_stderr_path="/tmp/wallstop-backup-status.$$.$RANDOM.err"
+  fi
+  if outside_status_output="$(git -C "$repo_root" status --porcelain=v1 --untracked-files=all -- . ":(exclude)$managed_path" 2> "$outside_status_stderr_path")"; then
+    rm -f "$outside_status_stderr_path" > /dev/null 2>&1 || true
     :
   else
     status_exit=$?
+    outside_status_stderr=""
+    if [[ -f "$outside_status_stderr_path" ]]; then
+      outside_status_stderr="$(< "$outside_status_stderr_path")"
+    fi
+    rm -f "$outside_status_stderr_path" > /dev/null 2>&1 || true
+    if [[ -n "$outside_status_stderr" ]]; then
+      if [[ -n "$outside_status_output" ]]; then
+        outside_status_output="${outside_status_output}"$'\n'"${outside_status_stderr}"
+      else
+        outside_status_output="$outside_status_stderr"
+      fi
+    fi
     outside_preview="$(get_output_preview "$outside_status_output")"
     echo "E_BACKUP_GIT_STATUS_FAILED: Unable to inspect out-of-scope repository changes (exitCode=$status_exit; repositoryRoot='$repo_root'; pathspec='.:(exclude)$managed_path'; outputPreview='$outside_preview')." >&2
     return "$status_exit"

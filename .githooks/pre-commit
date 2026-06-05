@@ -10,7 +10,35 @@ if ! command -v git > /dev/null 2>&1; then
   exit 1
 fi
 
-repo_root="$(git rev-parse --show-toplevel)"
+if ! repo_root_stderr_path="$(mktemp 2> /dev/null)"; then
+  repo_root_stderr_path="/tmp/wallstop-precommit-repo-root.$$.$RANDOM.err"
+fi
+set +e
+repo_root="$(git rev-parse --show-toplevel 2> "$repo_root_stderr_path")"
+repo_root_exit=$?
+repo_root_stderr=""
+if [[ -f "$repo_root_stderr_path" ]]; then
+  repo_root_stderr="$(< "$repo_root_stderr_path")"
+fi
+rm -f "$repo_root_stderr_path" > /dev/null 2>&1 || true
+set -e
+if [[ $repo_root_exit -ne 0 || -z "$repo_root" ]]; then
+  if [[ $repo_root_exit -eq 0 ]]; then
+    repo_root_exit=1
+  fi
+  repo_root_output="$repo_root"
+  if [[ -n "$repo_root_stderr" ]]; then
+    if [[ -n "$repo_root_output" ]]; then
+      repo_root_output="${repo_root_output}"$'\n'"${repo_root_stderr}"
+    else
+      repo_root_output="$repo_root_stderr"
+    fi
+  fi
+  git_command="$(command -v git 2> /dev/null || printf '<unresolved>')"
+  working_directory="$(pwd 2> /dev/null || printf '<unresolved>')"
+  emit_diagnostic "E_PRECOMMIT_REPO_ROOT_UNAVAILABLE: failed to resolve repository root (exitCode=${repo_root_exit}; workingDirectory=${working_directory}; gitCommand=${git_command}). Git output: ${repo_root_output}"
+  exit "$repo_root_exit"
+fi
 cd "$repo_root"
 
 hook_timeout_helpers_path="${repo_root}/Scripts/Utils/Common/HookTimeout.sh"

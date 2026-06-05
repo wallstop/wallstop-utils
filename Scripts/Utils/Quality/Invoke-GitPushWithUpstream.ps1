@@ -47,11 +47,45 @@ function Invoke-GitPushCommand {
         [string[]]$Arguments
     )
 
-    $output = @(& $GitExecutable -C $RepositoryRoot @Arguments 2>&1)
-    return [pscustomobject]@{
-        ExitCode = $LASTEXITCODE
-        Output   = $output
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $output = @(& $GitExecutable -C $RepositoryRoot @Arguments 2> $stderrPath)
+        $exitCode = $LASTEXITCODE
+        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
+            [System.IO.File]::ReadAllText($stderrPath, [System.Text.Encoding]::UTF8)
+        }
+        else {
+            ""
+        }
     }
+    finally {
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $diagnosticOutput = @($output)
+    if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+        $diagnosticOutput += @($stderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
+    return [pscustomobject]@{
+        ExitCode         = $exitCode
+        Output           = @($output)
+        DiagnosticOutput = @($diagnosticOutput)
+    }
+}
+
+function Get-GitPushCommandDiagnosticOutput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$Result
+    )
+
+    $diagnosticProperty = $Result.PSObject.Properties["DiagnosticOutput"]
+    if ($null -ne $diagnosticProperty) {
+        return @($diagnosticProperty.Value)
+    }
+
+    return @($Result.Output)
 }
 
 function Write-GitPushCommandOutput {
@@ -60,7 +94,7 @@ function Write-GitPushCommandOutput {
         [pscustomobject]$Result
     )
 
-    foreach ($line in @($Result.Output)) {
+    foreach ($line in @(Get-GitPushCommandDiagnosticOutput -Result $Result)) {
         Write-Host $line
     }
 }
@@ -84,7 +118,7 @@ function Assert-GitPushCommandSucceeded {
         return
     }
 
-    $outputPreview = Get-OutputPreview -OutputLines @($Result.Output)
+    $outputPreview = Get-OutputPreview -OutputLines @(Get-GitPushCommandDiagnosticOutput -Result $Result)
     throw "${FailureCode}: $FailureContext failed (exitCode=$($Result.ExitCode); repositoryRoot='$RepositoryRoot'; outputPreview=$outputPreview)."
 }
 
@@ -162,7 +196,7 @@ function Get-GitPushUpstreamRemoteOrThrow {
 
     $remoteResult = Invoke-GitPushCommand -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Arguments @("config", "--get", "branch.$BranchName.remote")
     if ($remoteResult.ExitCode -ne 0 -or $remoteResult.Output.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$remoteResult.Output[0])) {
-        $outputPreview = Get-OutputPreview -OutputLines @($remoteResult.Output)
+        $outputPreview = Get-OutputPreview -OutputLines @(Get-GitPushCommandDiagnosticOutput -Result $remoteResult)
         throw "E_GIT_PUSH_UPSTREAM_REMOTE_UNRESOLVED: unable to resolve upstream remote for branch '$BranchName' (repositoryRoot='$RepositoryRoot'; outputPreview=$outputPreview)."
     }
 
@@ -183,7 +217,7 @@ function Assert-GitPushRemoteExists {
 
     $remoteResult = Invoke-GitPushCommand -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Arguments @("remote", "get-url", $Remote)
     if ($remoteResult.ExitCode -ne 0) {
-        $outputPreview = Get-OutputPreview -OutputLines @($remoteResult.Output)
+        $outputPreview = Get-OutputPreview -OutputLines @(Get-GitPushCommandDiagnosticOutput -Result $remoteResult)
         throw "E_GIT_PUSH_REMOTE_MISSING: remote '$Remote' was not found (repositoryRoot='$RepositoryRoot'; outputPreview=$outputPreview)."
     }
 }
@@ -237,7 +271,7 @@ function Assert-GitPushRemoteBranchAncestor {
         throw "E_GIT_PUSH_REMOTE_BRANCH_DIVERGED: remote branch '$Remote/$BranchName' is not an ancestor of HEAD; refusing to set upstream or push (repositoryRoot='$RepositoryRoot')."
     }
 
-    $outputPreview = Get-OutputPreview -OutputLines @($ancestorResult.Output)
+    $outputPreview = Get-OutputPreview -OutputLines @(Get-GitPushCommandDiagnosticOutput -Result $ancestorResult)
     throw "E_GIT_PUSH_ANCESTRY_FAILED: unable to compare remote branch '$Remote/$BranchName' with HEAD (exitCode=$($ancestorResult.ExitCode); repositoryRoot='$RepositoryRoot'; outputPreview=$outputPreview)."
 }
 

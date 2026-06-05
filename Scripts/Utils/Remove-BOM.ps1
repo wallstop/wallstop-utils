@@ -464,8 +464,25 @@ function Get-GitCommandDetails {
         [string[]]$arguments
     )
 
-    $commandOutput = @(& $gitExecutable -C $workingDirectory @arguments 2>&1)
-    $commandExitCode = $LASTEXITCODE
+    $commandStderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $commandOutput = @(& $gitExecutable -C $workingDirectory @arguments 2> $commandStderrPath)
+        $commandExitCode = $LASTEXITCODE
+        $commandStderr = if (Test-Path -LiteralPath $commandStderrPath -PathType Leaf) {
+            [System.IO.File]::ReadAllText($commandStderrPath, [System.Text.Encoding]::UTF8)
+        }
+        else {
+            ""
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $commandStderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $diagnosticOutput = @($commandOutput)
+    if (-not [string]::IsNullOrWhiteSpace($commandStderr)) {
+        $diagnosticOutput += @($commandStderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
 
     $firstOutputLine = $null
     foreach ($line in $commandOutput) {
@@ -476,12 +493,42 @@ function Get-GitCommandDetails {
         }
     }
 
-    return [pscustomobject]@{
-        ExitCode  = $commandExitCode
-        Output    = @($commandOutput)
-        FirstLine = $firstOutputLine
-        HasOutput = $null -ne $firstOutputLine
+    $firstDiagnosticLine = $null
+    foreach ($line in $diagnosticOutput) {
+        $normalizedLine = [string]$line
+        if (-not [string]::IsNullOrWhiteSpace($normalizedLine)) {
+            $firstDiagnosticLine = $normalizedLine.Trim()
+            break
+        }
     }
+
+    return [pscustomobject]@{
+        ExitCode              = $commandExitCode
+        Output                = @($commandOutput)
+        DiagnosticOutput      = @($diagnosticOutput)
+        FirstLine             = $firstOutputLine
+        HasOutput             = $null -ne $firstOutputLine
+        FirstDiagnosticLine   = $firstDiagnosticLine
+        HasDiagnosticOutput   = $null -ne $firstDiagnosticLine
+    }
+}
+
+function Get-GitCommandFirstDiagnosticLine {
+    param(
+        [pscustomobject]$result
+    )
+
+    $firstDiagnosticLineProperty = $result.PSObject.Properties["FirstDiagnosticLine"]
+    if ($null -ne $firstDiagnosticLineProperty -and -not [string]::IsNullOrWhiteSpace([string]$firstDiagnosticLineProperty.Value)) {
+        return [string]$firstDiagnosticLineProperty.Value
+    }
+
+    $firstLineProperty = $result.PSObject.Properties["FirstLine"]
+    if ($null -ne $firstLineProperty -and -not [string]::IsNullOrWhiteSpace([string]$firstLineProperty.Value)) {
+        return [string]$firstLineProperty.Value
+    }
+
+    return ""
 }
 
 function Resolve-CanonicalFileSystemPath {
@@ -627,8 +674,9 @@ function Resolve-ScannableFileDiscovery {
                 }
             }
             else {
-                $gitPrefixFailureDetails = if ($gitPrefixResult.HasOutput) {
-                    " First output: '$($gitPrefixResult.FirstLine)'."
+                $gitPrefixFirstDiagnosticLine = Get-GitCommandFirstDiagnosticLine -result $gitPrefixResult
+                $gitPrefixFailureDetails = if (-not [string]::IsNullOrWhiteSpace($gitPrefixFirstDiagnosticLine)) {
+                    " First diagnostic output: '$gitPrefixFirstDiagnosticLine'."
                 }
                 else {
                     ""
@@ -699,8 +747,9 @@ function Resolve-ScannableFileDiscovery {
             }
         }
         else {
-            $gitRootFailureDetails = if ($gitRootResult.HasOutput) {
-                " first output: '$($gitRootResult.FirstLine)'"
+            $gitRootFirstDiagnosticLine = Get-GitCommandFirstDiagnosticLine -result $gitRootResult
+            $gitRootFailureDetails = if (-not [string]::IsNullOrWhiteSpace($gitRootFirstDiagnosticLine)) {
+                " first diagnostic output: '$gitRootFirstDiagnosticLine'"
             }
             else {
                 ""
@@ -786,8 +835,9 @@ function Get-ScannableFileStream {
         $streamExitCode = $LASTEXITCODE
         if ($streamExitCode -ne 0) {
             $failureProbe = Get-GitCommandDetails -gitExecutable $scanPlan.GitExecutable -WorkingDirectory $scanPlan.GitRoot -arguments @($scanPlan.GitListArguments)
-            $failureDetails = if ($failureProbe.HasOutput) {
-                " First output: '$($failureProbe.FirstLine)'."
+            $failureFirstDiagnosticLine = Get-GitCommandFirstDiagnosticLine -result $failureProbe
+            $failureDetails = if (-not [string]::IsNullOrWhiteSpace($failureFirstDiagnosticLine)) {
+                " First diagnostic output: '$failureFirstDiagnosticLine'."
             }
             else {
                 ""

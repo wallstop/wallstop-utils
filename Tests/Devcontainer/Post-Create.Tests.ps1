@@ -617,9 +617,20 @@ exit 1
 Describe "devcontainer-validate.yml Codex verification contract" {
     BeforeAll {
         $script:runPostCreateStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Run post-create.sh"
+        $script:ensureShellQualityStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Ensure repo-managed shell quality tools"
+        $script:lintShellQualityStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Lint post-create.sh and githook scripts"
         $script:verifyFirstCodexStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Verify Codex CLI is discoverable now and in fresh shells"
         $script:confirmIdempotenceStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Confirm idempotence (run post-create.sh a second time)"
         $script:verifySecondCodexStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Verify Codex CLI after second post-create run"
+    }
+
+    It "uses repo-managed pinned shell quality tooling for shell linting" {
+        $script:ensureShellQualityStep | Should -Match 'shell:\s+pwsh'
+        $script:ensureShellQualityStep | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+-EnsureOnly'
+        $script:lintShellQualityStep | Should -Match 'shell:\s+pwsh'
+        $script:lintShellQualityStep | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
+        $script:devcontainerWorkflowContent | Should -Not -Match 'apt-get\s+install[\s\S]*shellcheck'
+        $script:devcontainerWorkflowContent | Should -Not -Match 'shellcheck\s+--severity'
     }
 
     It "captures first-run post-create output for Codex-aware assertions" {
