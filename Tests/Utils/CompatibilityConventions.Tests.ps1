@@ -19,7 +19,8 @@ Describe "Cross-version compatibility infrastructure" {
         $content = Get-Content -LiteralPath $script:helperPath -Raw
         foreach ($fn in @(
                 'Test-IsWindowsPlatform', 'Test-IsMacOSPlatform', 'Test-IsLinuxPlatform',
-                'Get-RelativePathCompat', 'ConvertTo-JsonArrayCompat', 'ConvertFrom-JsonCompat')) {
+                'Get-RelativePathCompat', 'ConvertTo-JsonArrayCompat', 'ConvertFrom-JsonCompat',
+                'Set-PortableProcessEnvironmentVariable')) {
             $content | Should -Match ("function\s+" + [regex]::Escape($fn) + "\b")
         }
     }

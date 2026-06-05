@@ -169,7 +169,7 @@ be populated when the cmdlet returns, especially under heavy I/O.
 
 `Start-Process -ArgumentList` on Windows mangles arguments containing curly braces,
 double quotes, and other special characters. Prefer `System.Diagnostics.Process` with
-`ProcessStartInfo.ArgumentList.Add()` which properly escapes arguments on all platforms.
+`Set-PortableProcessArguments`, which escapes arguments portably across supported editions.
 
 ## PowerShell Empty Array Return Safety
 
@@ -206,6 +206,7 @@ Portable idioms are single-sourced in `Scripts/Utils/Common/CompatibilityHelpers
 - `ConvertTo-Json -AsArray` (6+) → `ConvertTo-JsonArrayCompat`; `ConvertFrom-Json -Depth/-NoEnumerate`
   (6+) → `ConvertFrom-JsonCompat`. `New-Item -LiteralPath` is invalid on every edition; create
   directories with `[System.IO.Directory]::CreateDirectory($path)` (literal, idempotent).
+- `ProcessStartInfo` argument and environment mutations must use `Set-PortableProcessArguments` / `Set-PortableProcessEnvironmentVariable`; PATH-shim harnesses must preflight `command -v` for fake commands.
 - `[ArgumentCompletions()]`, ternary `?:`, `??`/`??=`, `&&`/`||`, `clean{}`, `$PSStyle` are 7+-only;
   use `[ValidateSet]`, `if/else`, `try/finally`. Interactive profiles must guard PSReadLine 2.2+
   options (`-PredictionSource`/`-PredictionViewStyle`) behind a capability probe.

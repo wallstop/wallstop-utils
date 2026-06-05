@@ -349,6 +349,32 @@ Describe "Set-PortableProcessArguments" {
     }
 }
 
+Describe "Set-PortableProcessEnvironmentVariable" {
+    It "replaces existing case variants when case-insensitive environment matching is active" {
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.Environment["Path"] = "real-tools"
+        $startInfo.Environment["OTHER"] = "keep"
+
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value "fake-tools" -CaseInsensitive
+
+        $pathKeys = @($startInfo.Environment.Keys | Where-Object { [string]::Equals([string]$_, "PATH", [System.StringComparison]::OrdinalIgnoreCase) })
+        $pathKeys.Count | Should -Be 1
+        $pathKeys[0] | Should -BeExactly "PATH"
+        $startInfo.Environment["PATH"] | Should -BeExactly "fake-tools"
+        $startInfo.Environment["OTHER"] | Should -BeExactly "keep"
+    }
+
+    It "removes existing case variants when a null value is supplied" {
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.Environment["Path"] = "real-tools"
+
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value $null -CaseInsensitive
+
+        @($startInfo.Environment.Keys | Where-Object { [string]::Equals([string]$_, "PATH", [System.StringComparison]::OrdinalIgnoreCase) }).Count |
+            Should -Be 0
+    }
+}
+
 Describe "Get-PortableLinkTarget" {
     BeforeAll {
         $script:linkRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("compat-link-{0}" -f ([System.Guid]::NewGuid().ToString("N")))

@@ -174,77 +174,11 @@ function script:Invoke-CapturedProcess {
     }
 
     foreach ($key in @($Environment.Keys)) {
-        $startInfo.Environment[[string]$key] = [string]$Environment[$key]
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name ([string]$key) -Value ([string]$Environment[$key])
     }
 
     Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList $ArgumentList
-
-    $process = [System.Diagnostics.Process]::new()
-    $process.StartInfo = $startInfo
-    try {
-        if (-not $process.Start()) {
-            return [pscustomobject]@{
-                ExitCode = -1
-                Stdout   = ""
-                Stderr   = "process failed to start"
-                TimedOut = $false
-            }
-        }
-
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
-            $stopDiagnostic = ""
-            try {
-                Stop-ProcessTreePortably -Process $process
-            }
-            catch {
-                $stopDiagnostic = "E_TEST_CAPTURE_FAILED: process tree cleanup failed: $($_.Exception.Message)"
-            }
-
-            $postKillExited = Wait-ProcessExitBounded -Process $process -TimeoutMilliseconds 2000
-            $stdoutCapture = Read-ProcessStreamTaskBounded -Task $stdoutTask -StreamName "stdout" -TimeoutMilliseconds 2000
-            $stderrCapture = Read-ProcessStreamTaskBounded -Task $stderrTask -StreamName "stderr" -TimeoutMilliseconds 2000
-            $diagnostics = @(
-                $(if (-not $postKillExited) { "E_TEST_CAPTURE_TIMEOUT: process did not exit after timeout cleanup within 2000 ms." }),
-                $stopDiagnostic,
-                $stdoutCapture.Diagnostic,
-                $stderrCapture.Diagnostic
-            )
-            $captureDiagnostics = Join-CapturedProcessDiagnostics -Diagnostics $diagnostics
-            $stderrText = $stderrCapture.Text
-            if (-not [string]::IsNullOrWhiteSpace($captureDiagnostics)) {
-                $stderrText = (@($stderrText, $captureDiagnostics) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
-            }
-
-            return [pscustomobject]@{
-                ExitCode        = 124
-                Stdout          = $stdoutCapture.Text
-                Stderr          = $stderrText
-                TimedOut        = $true
-                CaptureTimedOut = (-not $postKillExited) -or $stdoutCapture.TimedOut -or $stderrCapture.TimedOut
-            }
-        }
-
-        $stdoutCapture = Read-ProcessStreamTaskBounded -Task $stdoutTask -StreamName "stdout" -TimeoutMilliseconds 2000
-        $stderrCapture = Read-ProcessStreamTaskBounded -Task $stderrTask -StreamName "stderr" -TimeoutMilliseconds 2000
-        $captureDiagnostics = Join-CapturedProcessDiagnostics -Diagnostics @($stdoutCapture.Diagnostic, $stderrCapture.Diagnostic)
-        $stderrText = $stderrCapture.Text
-        if (-not [string]::IsNullOrWhiteSpace($captureDiagnostics)) {
-            $stderrText = (@($stderrText, $captureDiagnostics) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
-        }
-
-        return [pscustomobject]@{
-            ExitCode        = $process.ExitCode
-            Stdout          = $stdoutCapture.Text
-            Stderr          = $stderrText
-            TimedOut        = $false
-            CaptureTimedOut = $stdoutCapture.TimedOut -or $stderrCapture.TimedOut
-        }
-    }
-    finally {
-        $process.Dispose()
-    }
+    return Invoke-CapturedProcessStartInfo -StartInfo $startInfo -TimeoutMilliseconds $TimeoutMilliseconds
 }
 
 function script:Add-BashCandidate {
@@ -460,6 +394,47 @@ function script:Invoke-BashHelperScript {
     return Invoke-CapturedProcess -FileName $script:bashCommand.Source -ArgumentList (@($bashScriptPath) + @($ArgumentList)) -TimeoutMilliseconds $TimeoutMilliseconds
 }
 
+function script:Invoke-BashCommandWithPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+
+        [Parameter(Mandatory = $false)]
+        [string]$WorkingDirectory = "",
+
+        [Parameter(Mandatory = $false)]
+        [hashtable]$Environment = @{},
+
+        [Parameter(Mandatory = $false)]
+        [int]$TimeoutMilliseconds = 10000
+    )
+
+    if ($null -eq $script:bashCommand) {
+        throw "E_TEST_BASH_UNAVAILABLE: bash is unavailable. $script:bashResolutionDiagnostics"
+    }
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $script:bashCommand.Source
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        $startInfo.WorkingDirectory = $WorkingDirectory
+    }
+
+    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-lc", $Command)
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value $PathValue
+    foreach ($key in @($Environment.Keys)) {
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name ([string]$key) -Value ([string]$Environment[$key])
+    }
+
+    return Invoke-CapturedProcessStartInfo -StartInfo $startInfo -TimeoutMilliseconds $TimeoutMilliseconds
+}
+
 function script:ConvertTo-BashPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -662,6 +637,180 @@ test -e "$1"
 '@
     $testResult = Invoke-BashHelperScript -Name "test-path" -Content $testPathScript -ArgumentList @($Path)
     return ($testResult.ExitCode -eq 0)
+}
+
+function script:Assert-PrePushHarnessCommandResolution {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$Harness,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue
+    )
+
+    $preflightScript = @'
+for command_name in git pre-commit pwsh; do
+  if resolved="$(command -v "$command_name" 2> /dev/null)" && [[ -n "$resolved" ]]; then
+    printf '%s=%s\n' "$command_name" "$resolved"
+  else
+    printf '%s=<missing>\n' "$command_name"
+  fi
+done
+printf 'PATH=%s\n' "$PATH"
+printf 'PWD=%s\n' "$(pwd)"
+'@
+
+    $preflight = Invoke-BashCommandWithPath -PathValue $PathValue -Command $preflightScript -WorkingDirectory $Harness.RepoRoot
+    if ($preflight.ExitCode -ne 0) {
+        throw (
+            "E_TEST_PREPUSH_COMMAND_PREFLIGHT_FAILED: harness command preflight failed (exitCode={0}; stdout={1}; stderr={2}; path={3}; binRoot={4})." -f @(
+                $preflight.ExitCode,
+                (Get-PreviewText -Text $preflight.Stdout),
+                (Get-PreviewText -Text $preflight.Stderr),
+                $PathValue,
+                (ConvertTo-BashPath -Path $Harness.BinRoot)
+            )
+        )
+    }
+
+    $resolvedCommands = @{}
+    foreach ($line in @($preflight.Stdout -split "`r?`n")) {
+        $match = [regex]::Match([string]$line, '^(?<Name>git|pre-commit|pwsh)=(?<Path>.*)$')
+        if ($match.Success) {
+            $resolvedCommands[$match.Groups["Name"].Value] = $match.Groups["Path"].Value
+        }
+    }
+
+    foreach ($commandName in @("git", "pwsh")) {
+        $expectedPath = (ConvertTo-BashPath -Path (Join-Path -Path $Harness.BinRoot -ChildPath $commandName))
+        if (-not $resolvedCommands.ContainsKey($commandName) -or $resolvedCommands[$commandName] -ne $expectedPath) {
+            $actualCommandPath = if ($resolvedCommands.ContainsKey($commandName)) {
+                $resolvedCommands[$commandName]
+            }
+            else {
+                "<missing>"
+            }
+
+            throw (
+                "E_TEST_PREPUSH_FAKE_COMMAND_NOT_SELECTED: expected '{0}' to resolve to harness shim '{1}', but got '{2}'. Diagnostics: stdout={3}; stderr={4}; path={5}; bash={6}; mode={7}." -f @(
+                    $commandName,
+                    $expectedPath,
+                    $actualCommandPath,
+                    (Get-PreviewText -Text $preflight.Stdout),
+                    (Get-PreviewText -Text $preflight.Stderr),
+                    $PathValue,
+                    $script:bashCommand.Source,
+                    $script:bashHostPathMode
+                )
+            )
+        }
+    }
+
+    $preCommitShimPath = Join-Path -Path $Harness.BinRoot -ChildPath "pre-commit"
+    $expectedPreCommitPath = if (Test-Path -LiteralPath $preCommitShimPath -PathType Leaf) {
+        ConvertTo-BashPath -Path $preCommitShimPath
+    }
+    else {
+        "<missing>"
+    }
+    $actualPreCommitPath = if ($resolvedCommands.ContainsKey("pre-commit")) {
+        $resolvedCommands["pre-commit"]
+    }
+    else {
+        "<missing>"
+    }
+
+    if ($actualPreCommitPath -ne $expectedPreCommitPath) {
+        throw (
+            "E_TEST_PREPUSH_PRECOMMIT_RESOLUTION_UNEXPECTED: expected pre-commit resolution '{0}', but got '{1}'. Diagnostics: stdout={2}; stderr={3}; path={4}; bash={5}; mode={6}." -f @(
+                $expectedPreCommitPath,
+                $actualPreCommitPath,
+                (Get-PreviewText -Text $preflight.Stdout),
+                (Get-PreviewText -Text $preflight.Stderr),
+                $PathValue,
+                $script:bashCommand.Source,
+                $script:bashHostPathMode
+            )
+        )
+    }
+}
+
+function script:Invoke-CapturedProcessStartInfo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Diagnostics.ProcessStartInfo]$StartInfo,
+
+        [Parameter(Mandatory = $false)]
+        [int]$TimeoutMilliseconds = 10000
+    )
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $StartInfo
+    try {
+        if (-not $process.Start()) {
+            return [pscustomobject]@{
+                ExitCode        = -1
+                Stdout          = ""
+                Stderr          = "process failed to start"
+                TimedOut        = $false
+                CaptureTimedOut = $false
+            }
+        }
+
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+            $stopDiagnostic = ""
+            try {
+                Stop-ProcessTreePortably -Process $process
+            }
+            catch {
+                $stopDiagnostic = "E_TEST_CAPTURE_FAILED: process tree cleanup failed: $($_.Exception.Message)"
+            }
+
+            $postKillExited = Wait-ProcessExitBounded -Process $process -TimeoutMilliseconds 2000
+            $stdoutCapture = Read-ProcessStreamTaskBounded -Task $stdoutTask -StreamName "stdout" -TimeoutMilliseconds 2000
+            $stderrCapture = Read-ProcessStreamTaskBounded -Task $stderrTask -StreamName "stderr" -TimeoutMilliseconds 2000
+            $diagnostics = @(
+                $(if (-not $postKillExited) { "E_TEST_CAPTURE_TIMEOUT: process did not exit after timeout cleanup within 2000 ms." }),
+                $stopDiagnostic,
+                $stdoutCapture.Diagnostic,
+                $stderrCapture.Diagnostic
+            )
+            $captureDiagnostics = Join-CapturedProcessDiagnostics -Diagnostics $diagnostics
+            $stderrText = $stderrCapture.Text
+            if (-not [string]::IsNullOrWhiteSpace($captureDiagnostics)) {
+                $stderrText = (@($stderrText, $captureDiagnostics) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+            }
+
+            return [pscustomobject]@{
+                ExitCode        = 124
+                Stdout          = $stdoutCapture.Text
+                Stderr          = $stderrText
+                TimedOut        = $true
+                CaptureTimedOut = (-not $postKillExited) -or $stdoutCapture.TimedOut -or $stderrCapture.TimedOut
+            }
+        }
+
+        $stdoutCapture = Read-ProcessStreamTaskBounded -Task $stdoutTask -StreamName "stdout" -TimeoutMilliseconds 2000
+        $stderrCapture = Read-ProcessStreamTaskBounded -Task $stderrTask -StreamName "stderr" -TimeoutMilliseconds 2000
+        $captureDiagnostics = Join-CapturedProcessDiagnostics -Diagnostics @($stdoutCapture.Diagnostic, $stderrCapture.Diagnostic)
+        $stderrText = $stderrCapture.Text
+        if (-not [string]::IsNullOrWhiteSpace($captureDiagnostics)) {
+            $stderrText = (@($stderrText, $captureDiagnostics) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        }
+
+        return [pscustomobject]@{
+            ExitCode        = $process.ExitCode
+            Stdout          = $stdoutCapture.Text
+            Stderr          = $stderrText
+            TimedOut        = $false
+            CaptureTimedOut = $stdoutCapture.TimedOut -or $stderrCapture.TimedOut
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
 }
 
 function script:Remove-BashFiles {
@@ -927,13 +1076,15 @@ function script:Invoke-PrePushHookHarness {
     $startInfo.RedirectStandardError = $true
     $startInfo.CreateNoWindow = $true
     Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @($bashHookPath)
-    $startInfo.Environment["PATH"] = ConvertTo-BashPath -Path $Harness.BinRoot
-    $startInfo.Environment["WALLSTOP_TEST_REPO_ROOT"] = ConvertTo-BashPath -Path $Harness.RepoRoot
-    $startInfo.Environment["WALLSTOP_TEST_COMMAND_LOG"] = ConvertTo-BashPath -Path $Harness.CommandLogPath
-    $startInfo.Environment["WALLSTOP_PREPUSH_TIMEOUT_SECONDS"] = "90"
+    $harnessPath = ConvertTo-BashPath -Path $Harness.BinRoot
+    Assert-PrePushHarnessCommandResolution -Harness $Harness -PathValue $harnessPath
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value $harnessPath
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "WALLSTOP_TEST_REPO_ROOT" -Value (ConvertTo-BashPath -Path $Harness.RepoRoot)
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "WALLSTOP_TEST_COMMAND_LOG" -Value (ConvertTo-BashPath -Path $Harness.CommandLogPath)
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "WALLSTOP_PREPUSH_TIMEOUT_SECONDS" -Value "90"
 
     foreach ($key in $Environment.Keys) {
-        $startInfo.Environment[[string]$key] = [string]$Environment[$key]
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name ([string]$key) -Value ([string]$Environment[$key])
     }
 
     $process = [System.Diagnostics.Process]::Start($startInfo)
@@ -1075,6 +1226,31 @@ Describe "pre-push Bash harness path conversion" {
         if (-not $script:requiresBashPathConversion) {
             $bashPath | Should -Be $pathWithSpaces
         }
+    }
+
+    It "uses a converted test bin directory as the complete Bash PATH" {
+        $binRoot = Join-Path -Path $TestDrive -ChildPath "path command bin {target}"
+        [void][System.IO.Directory]::CreateDirectory($binRoot)
+        $fakeGitPath = Join-Path -Path $binRoot -ChildPath "git"
+        Write-Utf8NoBomFile -Path $fakeGitPath -Content "#!/usr/bin/env bash`nprintf 'fake git selected`n'`n"
+        Set-BashExecutableBit -Path @($fakeGitPath)
+
+        $bashBinRoot = ConvertTo-BashPath -Path $binRoot
+        $expectedGitPath = ConvertTo-BashPath -Path $fakeGitPath
+        $result = Invoke-BashCommandWithPath -PathValue $bashBinRoot -Command "command -v git"
+
+        $result.ExitCode | Should -Be 0 -Because (
+            "Bash must accept the converted directory as PATH. Diagnostics: {0}" -f @(
+                Get-BashPathConversionDiagnostics -Path $binRoot -ConvertedPath $bashBinRoot
+            )
+        )
+        ($result.Stdout.Trim()) | Should -BeExactly $expectedGitPath -Because (
+            "PATH replacement must not leave a Windows Path/PATH duplicate that resolves real Git first. stdout={0}; stderr={1}; path={2}" -f @(
+                (Get-PreviewText -Text $result.Stdout),
+                (Get-PreviewText -Text $result.Stderr),
+                $bashBinRoot
+            )
+        )
     }
 }
 

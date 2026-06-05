@@ -911,7 +911,7 @@ function Invoke-PesterQualityGateInIsolatedProcess {
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true
 
-        $startInfo.Environment["PSModulePath"] = $env:PSModulePath
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PSModulePath" -Value $env:PSModulePath
         $pathSeparator = [System.IO.Path]::PathSeparator
         $modulePathEntryCount = @($env:PSModulePath -split [regex]::Escape([string]$pathSeparator) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
         Write-Verbose ("Isolated Pester environment diagnostics: inheritedModulePathEntryCount={0}" -f $modulePathEntryCount)

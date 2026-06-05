@@ -539,6 +539,49 @@ function Set-PortableProcessArguments {
     $StartInfo.Arguments = ConvertTo-ProcessArgumentString -ArgumentList $normalizedArguments
 }
 
+function Set-PortableProcessEnvironmentVariable {
+    # Sets/removes a ProcessStartInfo environment variable while avoiding duplicate
+    # case variants on Windows, where child process environment names are case-insensitive.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [System.Diagnostics.ProcessStartInfo]$StartInfo,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Name,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [object]$Value,
+
+        # Test-only: force Windows-style matching on non-Windows runners.
+        [Parameter(Mandatory = $false)]
+        [switch]$CaseInsensitive
+    )
+
+    if ($CaseInsensitive -or (Test-IsWindowsPlatform)) {
+        $comparison = [System.StringComparison]::OrdinalIgnoreCase
+    } else {
+        $comparison = [System.StringComparison]::Ordinal
+    }
+
+    $keysToRemove = @(
+        $StartInfo.Environment.Keys |
+            Where-Object { [string]::Equals([string]$_, $Name, $comparison) } |
+            ForEach-Object { [string]$_ }
+    )
+
+    foreach ($existingName in $keysToRemove) {
+        [void]$StartInfo.Environment.Remove($existingName)
+    }
+
+    if ($null -ne $Value) {
+        $StartInfo.Environment[$Name] = [string]$Value
+    }
+}
+
 function Get-ChildProcessIdsPortably {
     [CmdletBinding()]
     [OutputType([int[]])]

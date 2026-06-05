@@ -3768,6 +3768,224 @@ Describe "JSON parsing conventions" {
 }
 
 Describe "Utility configuration safety conventions" {
+    It "routes ProcessStartInfo environment mutations through the portable helper" {
+        function Test-IsProcessStartInfoTypeName {
+            param(
+                [Parameter(Mandatory = $true)]
+                $TypeName
+            )
+
+            $typeNames = @(
+                [string]$TypeName.FullName
+                [string]$TypeName.Name
+            ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+            return @($typeNames | Where-Object {
+                    $_ -in @("System.Diagnostics.ProcessStartInfo", "Diagnostics.ProcessStartInfo", "ProcessStartInfo")
+                }).Count -gt 0
+        }
+
+        function Test-IsProcessStartInfoCreationAst {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.Ast]$Ast
+            )
+
+            $constructorCalls = @($Ast.FindAll({
+                        param($node)
+                        return (
+                            $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                            $node.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+                            $node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                            $node.Member.Value -eq "new" -and
+                            (Test-IsProcessStartInfoTypeName -TypeName $node.Expression.TypeName)
+                        )
+                    }, $true))
+            if ($constructorCalls.Count -gt 0) {
+                return $true
+            }
+
+            $newObjectCommands = @($Ast.FindAll({
+                        param($node)
+                        return (
+                            $node -is [System.Management.Automation.Language.CommandAst] -and
+                            $node.GetCommandName() -in @("New-Object") -and
+                            $node.Extent.Text -match '\b(System\.Diagnostics\.)?ProcessStartInfo\b'
+                        )
+                    }, $true))
+            return ($newObjectCommands.Count -gt 0)
+        }
+
+        function Get-UnqualifiedVariableName {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.VariableExpressionAst]$VariableAst
+            )
+
+            $name = [string]$VariableAst.VariablePath.UserPath
+            if ($name -match '^[^:]+:(?<Name>.+)$') {
+                return $matches.Name
+            }
+
+            return $name
+        }
+
+        function Get-ProcessStartInfoVariableNames {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.Ast]$Ast
+            )
+
+            $names = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+            $assignments = @($Ast.FindAll({
+                        param($node)
+                        return (
+                            $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                            $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                            (Test-IsProcessStartInfoCreationAst -Ast $node.Right)
+                        )
+                    }, $true))
+            foreach ($assignment in $assignments) {
+                [void]$names.Add((Get-UnqualifiedVariableName -VariableAst $assignment.Left))
+            }
+
+            $typedParameters = @($Ast.FindAll({
+                        param($node)
+                        if (-not ($node -is [System.Management.Automation.Language.ParameterAst])) {
+                            return $false
+                        }
+
+                        $typeConstraints = @($node.Attributes | Where-Object {
+                                $_ -is [System.Management.Automation.Language.TypeConstraintAst] -and
+                                (Test-IsProcessStartInfoTypeName -TypeName $_.TypeName)
+                            })
+                        return ($typeConstraints.Count -gt 0)
+                    }, $true))
+            foreach ($parameter in $typedParameters) {
+                [void]$names.Add((Get-UnqualifiedVariableName -VariableAst $parameter.Name))
+            }
+
+            return , $names
+        }
+
+        function Test-IsProcessStartInfoEnvironmentMemberAst {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.Ast]$Ast,
+
+                [Parameter(Mandatory = $true)]
+                [AllowEmptyCollection()]
+                [System.Collections.Generic.HashSet[string]]$ProcessStartInfoVariableNames
+            )
+
+            if (
+                -not (
+                    $Ast -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                    $Ast.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $Ast.Member.Value -in @("Environment", "EnvironmentVariables")
+                )
+            ) {
+                return $false
+            }
+
+            if (-not ($Ast.Expression -is [System.Management.Automation.Language.VariableExpressionAst])) {
+                return $false
+            }
+
+            return $ProcessStartInfoVariableNames.Contains((Get-UnqualifiedVariableName -VariableAst $Ast.Expression))
+        }
+
+        function Get-ProcessStartInfoEnvironmentMutationAsts {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.Ast]$Ast,
+
+                [Parameter(Mandatory = $true)]
+                [AllowEmptyCollection()]
+                [System.Collections.Generic.HashSet[string]]$ProcessStartInfoVariableNames
+            )
+
+            $environmentAssignments = @($Ast.FindAll({
+                        param($node)
+
+                        if (-not ($node -is [System.Management.Automation.Language.AssignmentStatementAst])) {
+                            return $false
+                        }
+
+                        $environmentTargets = @($node.Left.FindAll({
+                                    param($leftNode)
+                                    return (Test-IsProcessStartInfoEnvironmentMemberAst -Ast $leftNode -ProcessStartInfoVariableNames $ProcessStartInfoVariableNames)
+                                }, $true))
+                        return ($environmentTargets.Count -gt 0)
+                    }, $true))
+
+            $mutatingMethods = @("Add", "Clear", "Remove", "set_Item")
+            $environmentMethodCalls = @($Ast.FindAll({
+                        param($node)
+
+                        return (
+                            $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                            $node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                            $node.Member.Value -in $mutatingMethods -and
+                            (Test-IsProcessStartInfoEnvironmentMemberAst -Ast $node.Expression -ProcessStartInfoVariableNames $ProcessStartInfoVariableNames)
+                        )
+                    }, $true))
+
+            return @($environmentAssignments + $environmentMethodCalls) # array-unwrap-safe: call sites wrap in @(...)
+        }
+
+        $excludedRelativePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        [void]$excludedRelativePaths.Add("Scripts/Utils/Common/CompatibilityHelpers.ps1")
+        [void]$excludedRelativePaths.Add("Tests/Utils/CompatibilityHelpers.Tests.ps1")
+
+        $fixture = @'
+$startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+$startInfo.Environment["PATH"] = "x"
+$startInfo.EnvironmentVariables["PATH"] = "x"
+$startInfo.Environment.Add("PATH", "x")
+$startInfo.EnvironmentVariables.Clear()
+$notProcessStartInfo.Environment["PATH"] = "allowed"
+Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value "x"
+'@
+        $fixtureAst = [System.Management.Automation.Language.Parser]::ParseInput($fixture, [ref]$null, [ref]$null)
+        $fixtureVariables = Get-ProcessStartInfoVariableNames -Ast $fixtureAst
+        $fixtureMutations = @(Get-ProcessStartInfoEnvironmentMutationAsts -Ast $fixtureAst -ProcessStartInfoVariableNames $fixtureVariables)
+        $fixtureMutations.Count | Should -Be 4 -Because "the policy detector must catch Environment/EnvironmentVariables index writes plus Add/Clear calls and ignore non-ProcessStartInfo look-alikes."
+
+        $scanRoots = @("Scripts", "Tests") |
+            ForEach-Object { Join-Path -Path $script:repoRoot -ChildPath $_ } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+        $scriptFiles = @(Get-ChildItem -Path $scanRoots -Recurse -File -Include *.ps1, *.psm1)
+        $violations = [System.Collections.Generic.List[string]]::new()
+
+        foreach ($scriptFile in $scriptFiles) {
+            $relativePath = (Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName) -replace '[\\/]+', '/'
+            if ($excludedRelativePaths.Contains($relativePath)) {
+                continue
+            }
+
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptFile.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+                throw "E_CONFIG_ERROR: Failed to parse '$relativePath' for ProcessStartInfo environment mutation checks."
+            }
+
+            $processStartInfoVariableNames = Get-ProcessStartInfoVariableNames -Ast $ast
+            if ($processStartInfoVariableNames.Count -eq 0) {
+                continue
+            }
+
+            foreach ($mutation in @(Get-ProcessStartInfoEnvironmentMutationAsts -Ast $ast -ProcessStartInfoVariableNames $processStartInfoVariableNames)) {
+                $violations.Add(("{0}:{1} {2}" -f $relativePath, $mutation.Extent.StartLineNumber, $mutation.Extent.Text)) | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Use Set-PortableProcessEnvironmentVariable for ProcessStartInfo Environment/EnvironmentVariables mutations; direct writes can leave Windows Path/PATH case variants. Violations: " + ($violations -join '; '))
+    }
+
     It "keeps formatter settings and tab-normalization fail-fast diagnostics in Format-PowerShellFiles" {
         $formatterPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Format-PowerShellFiles.ps1"
         $formatterContent = Get-Content -Path $formatterPath -Raw
@@ -3806,7 +4024,8 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'Invoke-PesterQualityGateInIsolatedProcess'
         $content | Should -Match 'Invoke-PesterQualityGate\.ps1'
         $content | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $content | Should -Match '\$startInfo\.Environment\["PSModulePath"\]\s*=\s*\$env:PSModulePath'
+        $content | Should -Match 'Set-PortableProcessEnvironmentVariable\s+-StartInfo\s+\$startInfo\s+-Name\s+"PSModulePath"\s+-Value\s+\$env:PSModulePath'
+        $content | Should -Not -Match '\$startInfo\.Environment\["PSModulePath"\]\s*='
         $content | Should -Match 'BeginOutputReadLine\(\)'
         $content | Should -Match 'BeginErrorReadLine\(\)'
         $content | Should -Match '\$maxCapturedOutputLinesPerStream\s*=\s*2000'
