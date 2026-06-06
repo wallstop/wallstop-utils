@@ -74,6 +74,8 @@ done < <(find . -type f -print0)
 - Data output on stdout.
 - Warnings and errors on stderr.
 - This is mandatory for composable pipelines and predictable parsing.
+- In Bash `case` pattern matching, `*` matches `/`; use comments/tests when path-scope
+  filters depend on that behavior (for example `Tests/*` covering nested test files).
 
 ### Prefer explicit cleanup
 

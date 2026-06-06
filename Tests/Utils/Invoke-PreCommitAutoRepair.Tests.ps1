@@ -55,7 +55,7 @@ Describe "Invoke-PreCommitAutoRepairMain" {
         { Invoke-PreCommitAutoRepairMain } | Should -Not -Throw
 
         $script:gitCallIndex | Should -Be 4
-        $script:recordedGitArguments[0] | Should -Match 'diff --cached --name-only --diff-filter=ACMR'
+        $script:recordedGitArguments[0] | Should -Match 'diff --cached --name-only --diff-filter=ACMRD'
         $script:recordedGitArguments[1] | Should -Match 'diff --name-only -- Scripts/AutoHotKey/window-control\.ahk'
         $script:recordedGitArguments[2] | Should -Match 'diff --name-only -- Scripts/AutoHotKey/window-control\.ahk'
         $script:recordedGitArguments[3] | Should -Match 'add -- Scripts/AutoHotKey/window-control\.ahk'

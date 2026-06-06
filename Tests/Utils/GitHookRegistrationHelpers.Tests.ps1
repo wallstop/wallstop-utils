@@ -14,12 +14,18 @@ Describe "Git hook registration preflight" {
             return
         }
 
+        $chmodCommand = @(Get-Command -Name "chmod" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($null -eq $chmodCommand) {
+            Set-ItResult -Skipped -Because "chmod is unavailable for executable-bit setup."
+            return
+        }
+
         $repoRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString("N"))
         $hookRoot = Join-Path -Path $repoRoot -ChildPath ".githooks"
         [System.IO.Directory]::CreateDirectory($hookRoot) | Out-Null
         $hookPath = Join-Path -Path $hookRoot -ChildPath "pre-commit"
         [System.IO.File]::WriteAllText($hookPath, "#!/usr/bin/env bash`n", [System.Text.UTF8Encoding]::new($false))
-        chmod 755 $hookPath
+        & $chmodCommand.Path 755 $hookPath
 
         Mock Get-Item { return [pscustomobject]@{} }
 
@@ -38,12 +44,49 @@ Describe "Git hook registration preflight" {
         [System.IO.Directory]::CreateDirectory($hookRoot) | Out-Null
         $hookPath = Join-Path -Path $hookRoot -ChildPath "pre-commit"
         [System.IO.File]::WriteAllText($hookPath, "#!/usr/bin/env bash`n", [System.Text.UTF8Encoding]::new($false))
-        chmod 644 $hookPath
+        $chmodCommand = @(Get-Command -Name "chmod" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($null -eq $chmodCommand) {
+            Set-ItResult -Skipped -Because "chmod is unavailable for executable-bit setup."
+            return
+        }
+        & $chmodCommand.Path 644 $hookPath
 
         Mock Get-Item { return [pscustomobject]@{} }
 
         { Assert-GitHookRegistrationWrapper -RepositoryRoot $repoRoot -HookName "pre-commit" } |
             Should -Throw -ExpectedMessage "*E_HOOK_REGISTRATION_WRAPPER_NOT_EXECUTABLE*"
+    }
+
+    It "ignores a shadowing PowerShell test function when using test -x fallback" {
+        if (Test-IsWindowsPlatform) {
+            Set-ItResult -Skipped -Because "Executable-bit fallback applies only on non-Windows platforms."
+            return
+        }
+
+        $chmodCommand = @(Get-Command -Name "chmod" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+        $testCommand = @(Get-Command -Name "test" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($null -eq $chmodCommand -or $null -eq $testCommand) {
+            Set-ItResult -Skipped -Because "chmod or POSIX test is unavailable for executable-bit fallback setup."
+            return
+        }
+
+        $repoRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString("N"))
+        $hookRoot = Join-Path -Path $repoRoot -ChildPath ".githooks"
+        [System.IO.Directory]::CreateDirectory($hookRoot) | Out-Null
+        $hookPath = Join-Path -Path $hookRoot -ChildPath "pre-push"
+        [System.IO.File]::WriteAllText($hookPath, "#!/usr/bin/env bash`n", [System.Text.UTF8Encoding]::new($false))
+        & $chmodCommand.Path 755 $hookPath
+
+        Mock Get-Item { return [pscustomobject]@{} }
+        function test { throw "shadowed PowerShell test function should not be invoked" }
+
+        try {
+            { Assert-GitHookRegistrationWrapper -RepositoryRoot $repoRoot -HookName "pre-push" } |
+                Should -Not -Throw
+        }
+        finally {
+            Remove-Item -Path Function:test -ErrorAction SilentlyContinue
+        }
     }
 
     It "repairs unset core.hooksPath with local .githooks config and verifies it" {

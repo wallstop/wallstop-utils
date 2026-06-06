@@ -109,6 +109,9 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 Avoid `Out-File` and `Set-Content` default encoding which varies by platform and PowerShell version.
 Prefer `[System.IO.File]` methods for deterministic encoding control.
+When reading redirected native process stderr from a temp file, use `Read-RedirectedProcessText`
+from `CompatibilityHelpers.ps1` instead of fixed UTF-8 `ReadAllText`; Windows PowerShell 5.1
+can write UTF-16LE with a BOM while PowerShell 7+ normally writes UTF-8.
 
 ## Case Sensitivity And File System Differences
 
@@ -130,6 +133,9 @@ if ($fileName.Equals('README.md', [System.StringComparison]::OrdinalIgnoreCase))
 
 When creating files programmatically, use consistent lowercase or match existing conventions exactly.
 File permission differences: Unix requires `chmod +x` for executable scripts; use platform checks before setting permissions.
+When resolving POSIX/native tools from PowerShell (`chmod`, `readlink`, `test`), use
+`Get-Command -CommandType Application` and invoke `.Path` with `.Source` fallback; do not
+allow functions, aliases, or Pester helpers to shadow the external executable.
 
 Environment variable `$env:PATH` uses `;` as separator on Windows and `:` on Unix:
 

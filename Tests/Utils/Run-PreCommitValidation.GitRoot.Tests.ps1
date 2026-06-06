@@ -102,7 +102,7 @@ Describe "Run-PreCommitValidation git repository-root anchoring" {
     }
 
     It "anchors staged-file discovery to the explicit RepositoryRoot parameter" {
-        $script:preCommitContent | Should -Match '\$stagedFileArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMR"\)'
+        $script:preCommitContent | Should -Match '\$stagedFileArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMRD"\)'
         $script:preCommitContent | Should -Match 'Invoke-GitCommandWithSplitOutput\s+-GitExecutable\s+\$GitExecutable\s+-Arguments\s+\$stagedFileArgs'
         $script:preCommitContent | Should -Not -Match '&\s+\$GitExecutable\s+diff\s+--cached'
     }

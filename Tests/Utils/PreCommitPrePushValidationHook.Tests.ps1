@@ -38,10 +38,18 @@ Describe "powershell pre-push pre-commit validation hook" {
                 ($readTreeOutput -join "`n")
             )
 
-            $addOutput = @(& $gitCommand.Source -C $script:repoRoot add -- .pre-commit-config.yaml 2>&1)
+            $preCommitConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".pre-commit-config.yaml"
+            $governanceBlobContent = ([System.IO.File]::ReadAllText($preCommitConfigPath, [System.Text.Encoding]::UTF8)) + "`n# temp-index governance trigger`n"
+            $blobOutput = @($governanceBlobContent | & $gitCommand.Source -C $script:repoRoot hash-object -w --stdin 2>&1)
+            $LASTEXITCODE | Should -Be 0 -Because (
+                "temp-index blob creation should succeed before pre-commit governance test. Output: {0}" -f
+                ($blobOutput -join "`n")
+            )
+            $blobSha = [string]($blobOutput | Select-Object -First 1)
+            $updateIndexOutput = @(& $gitCommand.Source -C $script:repoRoot update-index --add --cacheinfo 100644 $blobSha .pre-commit-config.yaml 2>&1)
             $LASTEXITCODE | Should -Be 0 -Because (
                 "temp-index staging should make .pre-commit-config.yaml visible to validation. Output: {0}" -f
-                ($addOutput -join "`n")
+                ($updateIndexOutput -join "`n")
             )
 
             Push-Location -LiteralPath $script:repoRoot
@@ -236,12 +244,12 @@ fi
 exec "$($gitCommand.Source)" "`$@"
 "@
             [System.IO.File]::WriteAllText($gitWrapperPath, $gitWrapper.Replace("`r", "") + "`n", [System.Text.UTF8Encoding]::new($false))
-            $chmodCommand = Get-Command -Name "chmod" -ErrorAction SilentlyContinue
+            $chmodCommand = @(Get-Command -Name "chmod" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
             if ($null -eq $chmodCommand) {
                 Set-ItResult -Skipped -Because "chmod is unavailable for test git wrapper."
                 return
             }
-            & $chmodCommand.Source +x $gitWrapperPath
+            & $chmodCommand.Path +x $gitWrapperPath
 
             $env:GIT_INDEX_FILE = $tempIndexPath
             $readTreeOutput = @(& $gitCommand.Source -C $script:repoRoot read-tree HEAD 2>&1)

@@ -392,19 +392,32 @@ function Resolve-TopLevelPathAlias {
                 # /var -> /private/var, where readlink returns relative target "private/var").
                 if (-not (Test-IsWindowsPlatform) -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
                     try {
-                        $readlinkOutput = (& readlink $topLevelSegment 2>$null)
-                        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($readlinkOutput)) {
-                            $readlinkPath = ([string]$readlinkOutput).Trim()
-                            if (-not [System.IO.Path]::IsPathRooted($readlinkPath)) {
-                                $readlinkParent = Split-Path -Path $topLevelSegment -Parent
-                                if ([string]::IsNullOrWhiteSpace($readlinkParent)) {
-                                    $readlinkParent = "/"
+                        $readlinkCommand = @(Get-Command -Name "readlink" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+                        $readlinkCommandPath = if ($null -ne $readlinkCommand -and -not [string]::IsNullOrWhiteSpace([string]$readlinkCommand.Path)) {
+                            [string]$readlinkCommand.Path
+                        }
+                        elseif ($null -ne $readlinkCommand -and -not [string]::IsNullOrWhiteSpace([string]$readlinkCommand.Source)) {
+                            [string]$readlinkCommand.Source
+                        }
+                        else {
+                            ""
+                        }
+
+                        if (-not [string]::IsNullOrWhiteSpace($readlinkCommandPath)) {
+                            $readlinkOutput = (& $readlinkCommandPath $topLevelSegment 2>$null)
+                            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($readlinkOutput)) {
+                                $readlinkPath = ([string]$readlinkOutput).Trim()
+                                if (-not [System.IO.Path]::IsPathRooted($readlinkPath)) {
+                                    $readlinkParent = Split-Path -Path $topLevelSegment -Parent
+                                    if ([string]::IsNullOrWhiteSpace($readlinkParent)) {
+                                        $readlinkParent = "/"
+                                    }
+                                    $readlinkPath = [System.IO.Path]::GetFullPath((Join-Path -Path $readlinkParent -ChildPath $readlinkPath))
                                 }
-                                $readlinkPath = [System.IO.Path]::GetFullPath((Join-Path -Path $readlinkParent -ChildPath $readlinkPath))
-                            }
-                            if (-not $readlinkPath.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
-                                $resolvedTopLevelAliasTarget = $readlinkPath
-                                $aliasResolutionSource = "readlink"
+                                if (-not $readlinkPath.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                                    $resolvedTopLevelAliasTarget = $readlinkPath
+                                    $aliasResolutionSource = "readlink"
+                                }
                             }
                         }
                     }
@@ -468,12 +481,7 @@ function Get-GitCommandDetails {
     try {
         $commandOutput = @(& $gitExecutable -C $workingDirectory @arguments 2> $commandStderrPath)
         $commandExitCode = $LASTEXITCODE
-        $commandStderr = if (Test-Path -LiteralPath $commandStderrPath -PathType Leaf) {
-            [System.IO.File]::ReadAllText($commandStderrPath, [System.Text.Encoding]::UTF8)
-        }
-        else {
-            ""
-        }
+        $commandStderr = Read-RedirectedProcessText -Path $commandStderrPath
     }
     finally {
         Remove-Item -LiteralPath $commandStderrPath -Force -ErrorAction SilentlyContinue

@@ -1314,7 +1314,7 @@ Describe "pre-push changed-file hook behavior" {
             ExpectedExitCode      = 0
             ExpectedStderrPattern = ""
             ExpectedLogPatterns   = @(
-                'git\tdiff\t--name-only\t--diff-filter=ACMR\tremote123\.\.local456\t--',
+                'git\tdiff\t--name-only\t--diff-filter=ACMRD\tremote123\.\.local456\t--',
                 'pwsh[\s\S]*Invoke-PreCommitWithRecovery\.ps1[\s\S]*-HookStage[\s\S]*pre-push[\s\S]*-FileListPath',
                 'pwsh-file\tScripts/Utils/Run-PreCommitValidation\.ps1',
                 'pwsh-file\tREADME\.md'
@@ -1333,12 +1333,43 @@ Describe "pre-push changed-file hook behavior" {
             ExpectedExitCode      = 0
             ExpectedStderrPattern = ""
             ExpectedLogPatterns   = @(
-                'git\tdiff\t--name-only\t--diff-filter=ACMR\tremote123\.\.local456\t--',
+                'git\tdiff\t--name-only\t--diff-filter=ACMRD\tremote123\.\.local456\t--',
                 'pwsh-file\tScripts/Utils/Run-PreCommitValidation\.ps1',
                 'pwsh-file\tREADME\.md'
             )
             UnexpectedLogPattern  = 'trace: diff probe|pwsh-file\ttrace:'
             AssertFileListCleanup = $true
+        }
+        @{
+            Name                  = "validates deletion-only file diffs"
+            Stdin                 = "refs/heads/main local456 refs/heads/main remote123`n"
+            Environment           = @{
+                WALLSTOP_TEST_DIFF_OUTPUT = "Scripts/Utils/Deleted-Utility.ps1`n"
+            }
+            RemovePreCommit       = $false
+            ExpectedExitCode      = 0
+            ExpectedStderrPattern = ""
+            ExpectedLogPatterns   = @(
+                'git\tdiff\t--name-only\t--diff-filter=ACMRD\tremote123\.\.local456\t--',
+                'pwsh[\s\S]*Invoke-PreCommitWithRecovery\.ps1[\s\S]*-HookStage[\s\S]*pre-push[\s\S]*-FileListPath',
+                'pwsh-file\tScripts/Utils/Deleted-Utility\.ps1'
+            )
+            UnexpectedLogPattern  = 'no changed files to validate'
+            AssertFileListCleanup = $true
+        }
+        @{
+            Name                  = "fails closed when existing-ref diff discovery fails"
+            Stdin                 = "refs/heads/main local456 refs/heads/main remote123`n"
+            Environment           = @{
+                WALLSTOP_TEST_DIFF_EXIT   = "128"
+                WALLSTOP_TEST_DIFF_STDERR = "fatal: bad revision`n"
+            }
+            RemovePreCommit       = $false
+            ExpectedExitCode      = 128
+            ExpectedStderrPattern = 'E_PREPUSH_CHANGED_FILE_DISCOVERY_FAILED: failed to resolve changed files for ''remote123\.\.local456'' \(exitCode=128\)\. Git output: fatal: bad revision'
+            ExpectedLogPatterns   = @('git\tdiff\t--name-only\t--diff-filter=ACMRD\tremote123\.\.local456\t--')
+            UnexpectedLogPattern  = 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1|no changed files to validate'
+            AssertFileListCleanup = $false
         }
         @{
             Name                  = "uses a resolved upstream merge-base for new branches"
@@ -1354,7 +1385,7 @@ Describe "pre-push changed-file hook behavior" {
             ExpectedLogPatterns   = @(
                 'git\trev-parse\t--abbrev-ref\t--symbolic-full-name\tfeature@\{upstream\}',
                 'git\tmerge-base\tlocal456\torigin/main',
-                'git\tdiff\t--name-only\t--diff-filter=ACMR\tbase111\.\.local456\t--',
+                'git\tdiff\t--name-only\t--diff-filter=ACMRD\tbase111\.\.local456\t--',
                 'pwsh[\s\S]*-FileListPath',
                 'pwsh-file\tScripts/Utils/New-Thing\.ps1'
             )
@@ -1376,7 +1407,7 @@ Describe "pre-push changed-file hook behavior" {
                 'git\trev-parse\t--abbrev-ref\t--symbolic-full-name\tfeature@\{upstream\}',
                 'git\trev-parse\t--verify\t--quiet\torigin/HEAD\^\{commit\}',
                 'git\tmerge-base\tlocal456\torigin/HEAD',
-                'git\tdiff\t--name-only\t--diff-filter=ACMR\toriginbase222\.\.local456\t--',
+                'git\tdiff\t--name-only\t--diff-filter=ACMRD\toriginbase222\.\.local456\t--',
                 'pwsh-file\tScripts/Utils/Origin-Fallback\.ps1'
             )
             UnexpectedLogPattern  = 'W_PREPUSH_CHANGED_FILE_BASELINE_MISSING|git\tls-files'
@@ -1399,7 +1430,7 @@ Describe "pre-push changed-file hook behavior" {
                 'git\tmerge-base\tlocal456\torigin/feature',
                 'git\trev-parse\t--verify\t--quiet\torigin/HEAD\^\{commit\}',
                 'git\tmerge-base\tlocal456\torigin/HEAD',
-                'git\tdiff\t--name-only\t--diff-filter=ACMR\toriginbase333\.\.local456\t--',
+                'git\tdiff\t--name-only\t--diff-filter=ACMRD\toriginbase333\.\.local456\t--',
                 'pwsh-file\tScripts/Utils/Upstream-Fallback\.ps1'
             )
             UnexpectedLogPattern  = 'W_PREPUSH_CHANGED_FILE_BASELINE_MISSING|git\tls-files'
@@ -1415,6 +1446,22 @@ Describe "pre-push changed-file hook behavior" {
             ExpectedLogPatterns   = @()
             UnexpectedLogPattern  = 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
             AssertFileListCleanup = $false
+        }
+        @{
+            Name                  = "validates normal updates when the same pre-push input also deletes a remote ref"
+            Stdin                 = "refs/heads/deleted 0000000000000000000000000000000000000000 refs/heads/deleted remote999`nrefs/heads/main local456 refs/heads/main remote123`n"
+            Environment           = @{
+                WALLSTOP_TEST_DIFF_OUTPUT = "Scripts/Utils/Mixed-Update.ps1`n"
+            }
+            RemovePreCommit       = $false
+            ExpectedExitCode      = 0
+            ExpectedStderrPattern = 'skipping delete push'
+            ExpectedLogPatterns   = @(
+                'git\tdiff\t--name-only\t--diff-filter=ACMRD\tremote123\.\.local456\t--',
+                'pwsh-file\tScripts/Utils/Mixed-Update\.ps1'
+            )
+            UnexpectedLogPattern  = 'no changed files to validate'
+            AssertFileListCleanup = $true
         }
         @{
             Name                  = "skips validation when pre-push receives no stdin ref updates"
@@ -1449,7 +1496,7 @@ Describe "pre-push changed-file hook behavior" {
             RemovePreCommit       = $false
             ExpectedExitCode      = 0
             ExpectedStderrPattern = 'W_HOOK_RUNTIME_BUDGET: pre-push no changed files took'
-            ExpectedLogPatterns   = @('git\tdiff\t--name-only\t--diff-filter=ACMR\tremote123\.\.local456\t--')
+            ExpectedLogPatterns   = @('git\tdiff\t--name-only\t--diff-filter=ACMRD\tremote123\.\.local456\t--')
             UnexpectedLogPattern  = 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
             AssertFileListCleanup = $false
         }
@@ -1501,6 +1548,20 @@ Describe "pre-push changed-file hook behavior" {
             )
             UnexpectedLogPattern  = 'trace: ls-files probe|pwsh-file\ttrace:'
             AssertFileListCleanup = $true
+        }
+        @{
+            Name                  = "fails closed when tracked-file fallback discovery fails"
+            Stdin                 = "refs/heads/root local456 refs/heads/root 0000000000000000000000000000000000000000`n"
+            Environment           = @{
+                WALLSTOP_TEST_LS_FILES_EXIT   = "129"
+                WALLSTOP_TEST_LS_FILES_STDERR = "fatal: ls-files unavailable`n"
+            }
+            RemovePreCommit       = $false
+            ExpectedExitCode      = 129
+            ExpectedStderrPattern = 'E_PREPUSH_CHANGED_FILE_FALLBACK_FAILED: failed to list tracked files for missing-baseline fallback \(exitCode=129\)\. Git output: fatal: ls-files unavailable'
+            ExpectedLogPatterns   = @('git\tls-files')
+            UnexpectedLogPattern  = 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1|no changed files to validate'
+            AssertFileListCleanup = $false
         }
         @{
             Name                  = "uses legacy PowerShell target-file checks when pre-commit is unavailable"
@@ -1602,7 +1663,7 @@ Describe "pre-push changed-file hook behavior" {
         $result.Stderr | Should -Match 'requiredRemainingSeconds=45'
         $result.Stderr | Should -Match 'timeoutProvider=(timeout|gtimeout|shell-watchdog)'
         $result.Stderr | Should -Match 'changedFileCount=2\.'
-        $result.Log | Should -Match 'git\tdiff\t--name-only\t--diff-filter=ACMR\tremote123\.\.local456\t--'
+        $result.Log | Should -Match 'git\tdiff\t--name-only\t--diff-filter=ACMRD\tremote123\.\.local456\t--'
         $result.Log | Should -Not -Match 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
         Assert-NoDeepPrePushCommand -CommandLog $result.Log
     }

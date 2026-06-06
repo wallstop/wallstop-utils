@@ -14,6 +14,20 @@ BeforeAll {
     $script:prePushHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-push"
     $script:preCommitHookContent = Get-Content -Path $script:preCommitHookPath -Raw
     $script:prePushHookContent = Get-Content -Path $script:prePushHookPath -Raw
+    function Resolve-RequiredTestApplication {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$Name
+        )
+
+        $command = @(Get-Command -Name $Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($null -eq $command -or [string]::IsNullOrWhiteSpace([string]$command.Path)) {
+            return $null
+        }
+
+        return [string]$command.Path
+    }
+
     $script:getBashFunctionBlock = {
         param(
             [Parameter(Mandatory = $true)]
@@ -385,11 +399,17 @@ Describe "post-create.sh Codex CLI bootstrap" {
         $runnerPath = Join-Path -Path $tempRoot -ChildPath "run-codex-install.sh"
         $fakeNpmPath = Join-Path -Path $fakeBin -ChildPath "npm"
         $nodeCommand = Get-Command -Name node -ErrorAction SilentlyContinue
+        $chmodPath = Resolve-RequiredTestApplication -Name "chmod"
+        $readlinkPath = Resolve-RequiredTestApplication -Name "readlink"
         $oldCodexPath = Join-Path -Path $oldBin -ChildPath "codex"
         $codexLinkPath = Join-Path -Path $localBin -ChildPath "codex"
 
         if ($null -eq $nodeCommand) {
             Set-ItResult -Skipped -Because "node is unavailable on this runner."
+            return
+        }
+        if ([string]::IsNullOrWhiteSpace($chmodPath) -or [string]::IsNullOrWhiteSpace($readlinkPath)) {
+            Set-ItResult -Skipped -Because "chmod or readlink is unavailable on this runner."
             return
         }
 
@@ -417,8 +437,8 @@ exit 1
 '@,
                 [System.Text.UTF8Encoding]::new($false)
             )
-            & chmod +x $oldCodexPath
-            & chmod +x $fakeNpmPath
+            & $chmodPath +x $oldCodexPath
+            & $chmodPath +x $fakeNpmPath
             & ln -s $nodeCommand.Source (Join-Path -Path $fakeBin -ChildPath "node")
             & ln -s $oldCodexPath $codexLinkPath
             & ln -s $localBin $localBinAlias
@@ -446,7 +466,7 @@ exit 1
                 'exit 0'
             ) -join "`n"
             [System.IO.File]::WriteAllText($runnerPath, $runnerContent, [System.Text.UTF8Encoding]::new($false))
-            & chmod +x $runnerPath
+            & $chmodPath +x $runnerPath
 
             $originalHome = $env:HOME
             $originalPath = $env:PATH
@@ -471,7 +491,7 @@ exit 1
             $outputText = $output -join "`n"
             $outputText | Should -Match 'install_status=1'
             $outputText | Should -Match 'E_DEVCONTAINER_CODEX_BINARY_UNRESOLVED'
-            (& readlink $codexLinkPath) | Should -Be $oldCodexPath
+            (& $readlinkPath $codexLinkPath) | Should -Be $oldCodexPath
         }
         finally {
             if (Test-Path -LiteralPath $tempRoot) {
@@ -509,6 +529,13 @@ exit 1
         $runnerPath = Join-Path -Path $tempRoot -ChildPath "run-codex-install.sh"
         $fakeNpmPath = Join-Path -Path $fakeBin -ChildPath "npm"
         $codexLinkPath = Join-Path -Path $localBin -ChildPath "codex"
+        $chmodPath = Resolve-RequiredTestApplication -Name "chmod"
+        $readlinkPath = Resolve-RequiredTestApplication -Name "readlink"
+
+        if ([string]::IsNullOrWhiteSpace($chmodPath) -or [string]::IsNullOrWhiteSpace($readlinkPath)) {
+            Set-ItResult -Skipped -Because "chmod or readlink is unavailable on this runner."
+            return
+        }
 
         try {
             foreach ($directory in @($localBin, $fakeBin, $packageBinDir)) {
@@ -539,8 +566,8 @@ exit 1
 '@,
                 [System.Text.UTF8Encoding]::new($false)
             )
-            & chmod +x $packageBinPath
-            & chmod +x $fakeNpmPath
+            & $chmodPath +x $packageBinPath
+            & $chmodPath +x $fakeNpmPath
             & ln -s $nodeCommand.Source (Join-Path -Path $fakeBin -ChildPath "node")
             & ln -s $packageBinPath $codexLinkPath
 
@@ -567,7 +594,7 @@ exit 1
                 'exit 0'
             ) -join "`n"
             [System.IO.File]::WriteAllText($runnerPath, $runnerContent, [System.Text.UTF8Encoding]::new($false))
-            & chmod +x $runnerPath
+            & $chmodPath +x $runnerPath
 
             $originalHome = $env:HOME
             $originalPath = $env:PATH
@@ -600,7 +627,7 @@ exit 1
             $outputText = $output -join "`n"
             $outputText | Should -Match 'install_status=0'
             $outputText | Should -Match 'Codex CLI available at '
-            (& readlink $codexLinkPath) | Should -Be $packageBinPath
+            (& $readlinkPath $codexLinkPath) | Should -Be $packageBinPath
         }
         finally {
             if (Test-Path -LiteralPath $tempRoot) {

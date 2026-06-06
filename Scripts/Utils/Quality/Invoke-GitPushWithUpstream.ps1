@@ -51,12 +51,7 @@ function Invoke-GitPushCommand {
     try {
         $output = @(& $GitExecutable -C $RepositoryRoot @Arguments 2> $stderrPath)
         $exitCode = $LASTEXITCODE
-        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
-            [System.IO.File]::ReadAllText($stderrPath, [System.Text.Encoding]::UTF8)
-        }
-        else {
-            ""
-        }
+        $stderr = Read-RedirectedProcessText -Path $stderrPath
     }
     finally {
         Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue

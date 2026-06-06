@@ -142,6 +142,59 @@ function Resolve-PowerShellExecutablePath {
     )
 }
 
+function Read-RedirectedProcessText {
+    # PowerShell redirection encoding differs by edition: Windows PowerShell 5.1 writes
+    # redirected native stderr as UTF-16LE with a BOM, while pwsh normally writes UTF-8.
+    # Decode BOM-marked files first, then use strict UTF-8 for normal no-BOM output.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return ""
+    }
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -eq 0) {
+        return ""
+    }
+
+    if ($bytes.Length -ge 4) {
+        if ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE -and $bytes[2] -eq 0x00 -and $bytes[3] -eq 0x00) {
+            return ([System.Text.UTF32Encoding]::new($false, $true, $true)).GetString($bytes, 4, $bytes.Length - 4)
+        }
+
+        if ($bytes[0] -eq 0x00 -and $bytes[1] -eq 0x00 -and $bytes[2] -eq 0xFE -and $bytes[3] -eq 0xFF) {
+            return ([System.Text.UTF32Encoding]::new($true, $true, $true)).GetString($bytes, 4, $bytes.Length - 4)
+        }
+    }
+
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        return ([System.Text.UTF8Encoding]::new($true, $true)).GetString($bytes, 3, $bytes.Length - 3)
+    }
+
+    if ($bytes.Length -ge 2) {
+        if ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+            return ([System.Text.UnicodeEncoding]::new($false, $true, $true)).GetString($bytes, 2, $bytes.Length - 2)
+        }
+
+        if ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+            return ([System.Text.UnicodeEncoding]::new($true, $true, $true)).GetString($bytes, 2, $bytes.Length - 2)
+        }
+    }
+
+    try {
+        return ([System.Text.UTF8Encoding]::new($false, $true)).GetString($bytes)
+    }
+    catch [System.Text.DecoderFallbackException] {
+        return [System.Text.Encoding]::Default.GetString($bytes)
+    }
+}
+
 function Get-RelativePathFallback {
     # .NET Framework fallback for [System.IO.Path]::GetRelativePath. Mirrors the native
     # algorithm: normalize both paths, confirm a shared root, diff the path segments, and

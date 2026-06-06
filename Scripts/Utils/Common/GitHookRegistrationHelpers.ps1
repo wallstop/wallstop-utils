@@ -35,12 +35,7 @@ function Invoke-GitHookRegistrationGitCommand {
     try {
         $output = @(& $GitExecutable -C $RepositoryRoot @Arguments 2> $stderrPath)
         $exitCode = $LASTEXITCODE
-        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
-            [System.IO.File]::ReadAllText($stderrPath, [System.Text.Encoding]::UTF8)
-        }
-        else {
-            ""
-        }
+        $stderr = Read-RedirectedProcessText -Path $stderrPath
     }
     finally {
         Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
@@ -139,9 +134,19 @@ function Assert-GitHookRegistrationWrapper {
         }
 
         if (-not $isExecutable) {
-            $testCommand = Get-Command -Name "test" -ErrorAction SilentlyContinue
-            if ($null -ne $testCommand) {
-                & $testCommand.Source -x $hookPath
+            $testCommand = @(Get-Command -Name "test" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+            $testCommandPath = if ($null -ne $testCommand -and -not [string]::IsNullOrWhiteSpace([string]$testCommand.Path)) {
+                [string]$testCommand.Path
+            }
+            elseif ($null -ne $testCommand -and -not [string]::IsNullOrWhiteSpace([string]$testCommand.Source)) {
+                [string]$testCommand.Source
+            }
+            else {
+                ""
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($testCommandPath)) {
+                & $testCommandPath -x $hookPath
                 $isExecutable = ($LASTEXITCODE -eq 0)
             }
         }

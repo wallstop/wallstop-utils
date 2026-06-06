@@ -115,6 +115,69 @@ Describe "Resolve-PowerShellExecutablePath" {
     }
 }
 
+Describe "Read-RedirectedProcessText" {
+    BeforeEach {
+        $script:redirectedTextPath = Join-Path -Path $TestDrive -ChildPath ("redirected-{0}.txt" -f [guid]::NewGuid().ToString("N"))
+    }
+
+    It "decodes redirected process text with BOM detection (<Name>)" -ForEach @(
+        @{
+            Name       = "utf8-no-bom"
+            Encoding   = [System.Text.UTF8Encoding]::new($false, $true)
+            IncludeBom = $false
+        },
+        @{
+            Name       = "utf8-bom"
+            Encoding   = [System.Text.UTF8Encoding]::new($true, $true)
+            IncludeBom = $true
+        },
+        @{
+            Name       = "utf16le-bom"
+            Encoding   = [System.Text.UnicodeEncoding]::new($false, $true, $true)
+            IncludeBom = $true
+        },
+        @{
+            Name       = "utf16be-bom"
+            Encoding   = [System.Text.UnicodeEncoding]::new($true, $true, $true)
+            IncludeBom = $true
+        },
+        @{
+            Name       = "utf32le-bom"
+            Encoding   = [System.Text.UTF32Encoding]::new($false, $true, $true)
+            IncludeBom = $true
+        },
+        @{
+            Name       = "utf32be-bom"
+            Encoding   = [System.Text.UTF32Encoding]::new($true, $true, $true)
+            IncludeBom = $true
+        }
+    ) {
+        param(
+            [string]$Name,
+            [System.Text.Encoding]$Encoding,
+            [bool]$IncludeBom
+        )
+
+        $text = "fatal: diagnostics for $Name"
+        $preamble = if ($IncludeBom) { $Encoding.GetPreamble() } else { [byte[]]@() }
+        [byte[]]$bytes = @($preamble + $Encoding.GetBytes($text))
+        [System.IO.File]::WriteAllBytes($script:redirectedTextPath, $bytes)
+
+        Read-RedirectedProcessText -Path $script:redirectedTextPath | Should -Be $text
+    }
+
+    It "falls back without throwing for malformed no-BOM bytes" {
+        [System.IO.File]::WriteAllBytes($script:redirectedTextPath, [byte[]](0xC3, 0x28))
+
+        { $script:malformedText = Read-RedirectedProcessText -Path $script:redirectedTextPath } | Should -Not -Throw
+        [string]$script:malformedText | Should -Not -BeNullOrEmpty
+    }
+
+    It "returns empty text for missing redirected files" {
+        Read-RedirectedProcessText -Path $script:redirectedTextPath | Should -Be ""
+    }
+}
+
 Describe "Get-RelativePathCompat" {
     # Expected values use '/' separators; the actual result is normalized to '/' so the
     # contract is asserted identically on Windows ('\') and Unix ('/'). These expectations

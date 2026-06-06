@@ -330,13 +330,24 @@ Describe "Remove-BOM file discovery" {
             [PSCustomObject]@{ FullName = $aliasRoot }
         }
 
-        # readlink provides the only working resolution path.
-        # Set $global:LASTEXITCODE because the production code checks it after
-        # invoking the native command, and PowerShell functions do not set it.
-        function readlink { $global:LASTEXITCODE = 0; "private/var" }
+        Mock -CommandName Get-Command -ParameterFilter {
+            $Name -eq "readlink" -and $CommandType -contains [System.Management.Automation.CommandTypes]::Application
+        } -MockWith {
+            [PSCustomObject]@{ Path = "Invoke-RemoveBomReadlinkFake"; Source = "Invoke-RemoveBomReadlinkFake" }
+        }
 
-        $actualCanonicalPath = Resolve-CanonicalFileSystemPath -path "ignored-by-mocks"
-        $actualCanonicalPath | Should -Be "/private/var/folders/canonical-test-root" -Because "readlink fallback should resolve top-level aliases when .NET providers fail."
+        # readlink provides the only working resolution path. The production code
+        # resolves only application commands; this application-like mock preserves
+        # the behavior contract without depending on host /var symlink metadata.
+        function Invoke-RemoveBomReadlinkFake { $global:LASTEXITCODE = 0; "private/var" }
+
+        try {
+            $actualCanonicalPath = Resolve-CanonicalFileSystemPath -path "ignored-by-mocks"
+            $actualCanonicalPath | Should -Be "/private/var/folders/canonical-test-root" -Because "readlink fallback should resolve top-level aliases when .NET providers fail."
+        }
+        finally {
+            Remove-Item -Path Function:Invoke-RemoveBomReadlinkFake -ErrorAction SilentlyContinue
+        }
     }
 
     It "treats top-level alias and canonical roots as equivalent for scope checks (<Scenario>)" -TestCases @(
@@ -655,12 +666,7 @@ Describe "Remove-BOM file discovery" {
             try {
                 $realOutput = @(& $gitExecutable -C $workingDirectory @arguments 2> $realStderrPath)
                 $realExitCode = $LASTEXITCODE
-                $realStderr = if (Test-Path -LiteralPath $realStderrPath -PathType Leaf) {
-                    [System.IO.File]::ReadAllText($realStderrPath, [System.Text.Encoding]::UTF8)
-                }
-                else {
-                    ""
-                }
+                $realStderr = Read-RedirectedProcessText -Path $realStderrPath
             }
             finally {
                 Remove-Item -LiteralPath $realStderrPath -Force -ErrorAction SilentlyContinue
@@ -743,12 +749,7 @@ Describe "Remove-BOM file discovery" {
             try {
                 $realOutput = @(& $gitExecutable -C $workingDirectory @arguments 2> $realStderrPath)
                 $realExitCode = $LASTEXITCODE
-                $realStderr = if (Test-Path -LiteralPath $realStderrPath -PathType Leaf) {
-                    [System.IO.File]::ReadAllText($realStderrPath, [System.Text.Encoding]::UTF8)
-                }
-                else {
-                    ""
-                }
+                $realStderr = Read-RedirectedProcessText -Path $realStderrPath
             }
             finally {
                 Remove-Item -LiteralPath $realStderrPath -Force -ErrorAction SilentlyContinue

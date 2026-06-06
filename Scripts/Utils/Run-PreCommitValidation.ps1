@@ -147,12 +147,7 @@ function Invoke-GitCommandWithSplitOutput {
     try {
         $stdout = @(& $GitExecutable @Arguments 2> $gitStderrPath)
         $exitCode = Get-LastNativeExitCodeOrDefault
-        $stderr = if (Test-Path -LiteralPath $gitStderrPath -PathType Leaf) {
-            [System.IO.File]::ReadAllText($gitStderrPath, [System.Text.Encoding]::UTF8)
-        }
-        else {
-            ""
-        }
+        $stderr = Read-RedirectedProcessText -Path $gitStderrPath
     }
     finally {
         Remove-Item -LiteralPath $gitStderrPath -Force -ErrorAction SilentlyContinue
@@ -215,8 +210,8 @@ function Get-StagedFilesWithIndexLockRecoveryOrThrow {
         [string]$RepositoryRoot
     )
 
-    $stagedFileQuery = 'git -C <repositoryRoot> diff --cached --name-only --diff-filter=ACMR'
-    $stagedFileArgs = @("-C", $RepositoryRoot, "diff", "--cached", "--name-only", "--diff-filter=ACMR")
+    $stagedFileQuery = 'git -C <repositoryRoot> diff --cached --name-only --diff-filter=ACMRD'
+    $stagedFileArgs = @("-C", $RepositoryRoot, "diff", "--cached", "--name-only", "--diff-filter=ACMRD")
     $stagedFileResult = Invoke-GitCommandWithSplitOutput -GitExecutable $GitExecutable -Arguments $stagedFileArgs
     $stagedFileOutput = @($stagedFileResult.Stdout)
     $stagedFileDiagnosticOutput = @(Join-GitCommandDiagnosticOutput -Stdout $stagedFileOutput -Stderr $stagedFileResult.Stderr)

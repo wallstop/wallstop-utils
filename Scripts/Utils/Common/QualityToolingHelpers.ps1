@@ -723,12 +723,22 @@ function Set-QualityToolingExecutableMode {
         return
     }
 
-    $chmodCommand = Get-Command -Name "chmod" -ErrorAction SilentlyContinue
-    if ($null -eq $chmodCommand) {
+    $chmodCommand = @(Get-Command -Name "chmod" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+    $chmodCommandPath = if ($null -ne $chmodCommand -and -not [string]::IsNullOrWhiteSpace([string]$chmodCommand.Path)) {
+        [string]$chmodCommand.Path
+    }
+    elseif ($null -ne $chmodCommand -and -not [string]::IsNullOrWhiteSpace([string]$chmodCommand.Source)) {
+        [string]$chmodCommand.Source
+    }
+    else {
+        ""
+    }
+
+    if ([string]::IsNullOrWhiteSpace($chmodCommandPath)) {
         throw "E_$($Context.DiagnosticPrefix)_CHMOD_NOT_AVAILABLE: chmod is required to mark '$ExecutablePath' executable on this platform."
     }
 
-    $chmodResult = Invoke-QualityToolingCapturedProcess -Context $Context -FilePath $chmodCommand.Source -ArgumentList @("755", $ExecutablePath) -TimeoutSeconds 30
+    $chmodResult = Invoke-QualityToolingCapturedProcess -Context $Context -FilePath $chmodCommandPath -ArgumentList @("755", $ExecutablePath) -TimeoutSeconds 30
     if ($chmodResult.ExitCode -ne 0) {
         $combinedOutput = @($chmodResult.Stdout, $chmodResult.Stderr) -join [Environment]::NewLine
         throw "E_$($Context.DiagnosticPrefix)_CHMOD_FAILED: chmod failed for '$ExecutablePath' (exitCode=$($chmodResult.ExitCode); output=$combinedOutput)."

@@ -14,6 +14,13 @@ if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
 
 . $diagnosticsHelpersPath
 
+$compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_PRECOMMIT_AUTOREPAIR_COMPATIBILITY_HELPER_MISSING: compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+. $compatibilityHelpersPath
+
 function Get-LastExitCodeOrDefault {
     $lastExitCode = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
     if ($null -eq $lastExitCode) {
@@ -46,12 +53,7 @@ function Invoke-GitCommandWithSplitOutput {
     try {
         $stdout = @(& $GitExecutable @Arguments 2> $gitStderrPath)
         $exitCode = Get-LastExitCodeOrDefault
-        $stderr = if (Test-Path -LiteralPath $gitStderrPath -PathType Leaf) {
-            [System.IO.File]::ReadAllText($gitStderrPath, [System.Text.Encoding]::UTF8)
-        }
-        else {
-            ""
-        }
+        $stderr = Read-RedirectedProcessText -Path $gitStderrPath
     }
     finally {
         Remove-Item -LiteralPath $gitStderrPath -Force -ErrorAction SilentlyContinue
@@ -220,12 +222,7 @@ function Get-GitRepositoryRootOrThrow {
     try {
         $repoRootOutput = @(& $GitExecutable -C $StartDirectory rev-parse --show-toplevel 2> $repoRootStderrPath)
         $repoRootExitCode = Get-LastExitCodeOrDefault
-        $repoRootStderr = if (Test-Path -LiteralPath $repoRootStderrPath -PathType Leaf) {
-            [System.IO.File]::ReadAllText($repoRootStderrPath, [System.Text.Encoding]::UTF8)
-        }
-        else {
-            ""
-        }
+        $repoRootStderr = Read-RedirectedProcessText -Path $repoRootStderrPath
     }
     finally {
         Remove-Item -LiteralPath $repoRootStderrPath -Force -ErrorAction SilentlyContinue
@@ -272,7 +269,7 @@ function Invoke-PreCommitAutoRepairMain {
     $gitExecutable = Get-GitExecutableOrThrow
     $repositoryRoot = Get-GitRepositoryRootOrThrow -GitExecutable $gitExecutable -StartDirectory (Get-Location).Path
 
-    $stagedFiles = @(Invoke-GitCommandOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -Arguments @("diff", "--cached", "--name-only", "--diff-filter=ACMR") -FailureCode "E_PRECOMMIT_AUTOREPAIR_STAGED_DISCOVERY_FAILED" -FailureContext "failed to discover staged files")
+    $stagedFiles = @(Invoke-GitCommandOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -Arguments @("diff", "--cached", "--name-only", "--diff-filter=ACMRD") -FailureCode "E_PRECOMMIT_AUTOREPAIR_STAGED_DISCOVERY_FAILED" -FailureContext "failed to discover staged files")
     if ($stagedFiles.Count -eq 0) {
         Write-Verbose "Pre-commit auto-repair: no staged files found; skipping."
         return

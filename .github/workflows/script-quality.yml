@@ -156,8 +156,10 @@ jobs:
 
           command_scan_files=()
           for scan_file in "${scan_files[@]}"; do
+            # Bash case patterns are string matches; Tests/* intentionally covers the
+            # whole root Tests tree because * matches / here.
             case "$scan_file" in
-              Tests/**|*.md|.llm/*)
+              Tests/*|*.md|.llm/*)
                 continue
                 ;;
             esac

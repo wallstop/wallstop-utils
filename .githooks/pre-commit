@@ -253,7 +253,7 @@ run_legacy_validation() {
 
 has_staged_windows_language_targets() {
   local staged_files
-  if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMR -- 2> /dev/null)"; then
+  if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMRD -- 2> /dev/null)"; then
     emit_diagnostic "W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED: unable to read staged files for auto-repair prefilter; running pwsh auto-repair fallback."
     return 0
   fi
@@ -271,7 +271,7 @@ has_staged_windows_language_targets() {
 
 has_any_staged_files() {
   local staged_files
-  if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMR -- 2> /dev/null)"; then
+  if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMRD -- 2> /dev/null)"; then
     emit_diagnostic "W_PRECOMMIT_NOOP_PREFILTER_FAILED: unable to read staged files for no-op fast path; running pre-commit."
     return 0
   fi

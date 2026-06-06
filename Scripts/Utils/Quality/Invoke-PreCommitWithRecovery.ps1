@@ -71,12 +71,7 @@ function Resolve-PreCommitRecoveryRepositoryRootOrThrow {
     try {
         $repositoryRootOutput = @(& $GitExecutable -C $script:PreCommitRecoveryScriptRepositoryRoot rev-parse --show-toplevel 2> $repositoryRootStderrPath)
         $repositoryRootExitCode = $LASTEXITCODE
-        $repositoryRootStderr = if (Test-Path -LiteralPath $repositoryRootStderrPath -PathType Leaf) {
-            [System.IO.File]::ReadAllText($repositoryRootStderrPath, [System.Text.Encoding]::UTF8)
-        }
-        else {
-            ""
-        }
+        $repositoryRootStderr = Read-RedirectedProcessText -Path $repositoryRootStderrPath
     }
     finally {
         Remove-Item -LiteralPath $repositoryRootStderrPath -Force -ErrorAction SilentlyContinue
@@ -832,12 +827,12 @@ function Get-PreCommitAutofixSnapshot {
         [int]$OverallTimeoutSeconds = 900
     )
 
-    $stagedFiles = @(Invoke-PreCommitGitPathListOrThrow -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--cached", "--name-only", "--diff-filter=ACMR", "--") -FailureCode "E_PRECOMMIT_AUTOFIX_STAGED_DISCOVERY_FAILED" -CommandContext "pre-commit autofix staged-file discovery" -DeadlineUtc $DeadlineUtc -OverallTimeoutSeconds $OverallTimeoutSeconds)
+    $stagedFiles = @(Invoke-PreCommitGitPathListOrThrow -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--cached", "--name-only", "--diff-filter=ACMRD", "--") -FailureCode "E_PRECOMMIT_AUTOFIX_STAGED_DISCOVERY_FAILED" -CommandContext "pre-commit autofix staged-file discovery" -DeadlineUtc $DeadlineUtc -OverallTimeoutSeconds $OverallTimeoutSeconds)
     if ($stagedFiles.Count -eq 0) {
         return New-PreCommitAutofixSnapshot -Enabled $true
     }
 
-    $unstagedArgs = @("diff", "--name-only", "--diff-filter=ACMR", "--") + @($stagedFiles)
+    $unstagedArgs = @("diff", "--name-only", "--diff-filter=ACMRD", "--") + @($stagedFiles)
     $unstagedFiles = @(Invoke-PreCommitGitPathListOrThrow -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Arguments $unstagedArgs -FailureCode "E_PRECOMMIT_AUTOFIX_UNSTAGED_DISCOVERY_FAILED" -CommandContext "pre-commit autofix unstaged-file discovery" -DeadlineUtc $DeadlineUtc -OverallTimeoutSeconds $OverallTimeoutSeconds)
     return New-PreCommitAutofixSnapshot -Enabled $true -StagedFiles $stagedFiles -UnstagedStagedFiles $unstagedFiles
 }
@@ -903,7 +898,7 @@ function Invoke-PreCommitAutofixRecovery {
         }
     }
 
-    $afterUnstagedArgs = @("diff", "--name-only", "--diff-filter=ACMR", "--") + @($stagedFiles)
+    $afterUnstagedArgs = @("diff", "--name-only", "--diff-filter=ACMRD", "--") + @($stagedFiles)
     $afterUnstagedFiles = @(Invoke-PreCommitGitPathListOrThrow -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Arguments $afterUnstagedArgs -FailureCode "E_PRECOMMIT_AUTOFIX_POST_DISCOVERY_FAILED" -CommandContext "pre-commit autofix post-format discovery" -DeadlineUtc $DeadlineUtc -OverallTimeoutSeconds $OverallTimeoutSeconds)
     $preExistingUnstaged = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($path in @($Snapshot.UnstagedStagedFiles)) {

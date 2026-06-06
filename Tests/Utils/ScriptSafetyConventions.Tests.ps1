@@ -1044,22 +1044,44 @@ Describe "Cross-language quality platform conventions" {
         $hookRegistration = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/GitHookRegistrationHelpers.ps1') -Raw) -replace "`r", ''
         $gitPush = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1') -Raw) -replace "`r", ''
         $removeBom = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1') -Raw) -replace "`r", ''
+        $preCommitValidation = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1') -Raw) -replace "`r", ''
+        $preCommitAutoRepair = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1') -Raw) -replace "`r", ''
+        $preCommitRecovery = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1') -Raw) -replace "`r", ''
+        $qualityTooling = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/QualityToolingHelpers.ps1') -Raw) -replace "`r", ''
+        $compatibilityHelpers = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/CompatibilityHelpers.ps1') -Raw) -replace "`r", ''
+
+        $compatibilityHelpers | Should -Match 'function\s+Read-RedirectedProcessText'
+        $compatibilityHelpers | Should -Match 'DecoderFallbackException'
 
         $hookRegistration | Should -Match '\$output\s*=\s*@\(&\s+\$GitExecutable\s+-C\s+\$RepositoryRoot\s+@Arguments\s+2>\s+\$stderrPath\)'
+        $hookRegistration | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$stderrPath'
+        $hookRegistration | Should -Match 'Get-Command\s+-Name\s+"test"\s+-CommandType\s+Application'
         $hookRegistration | Should -Match 'DiagnosticOutput\s*=\s*@\(\$diagnosticOutput\)'
         $hookRegistration | Should -Match 'Get-GitHookRegistrationDiagnosticOutput\s+-Result\s+\$rootResult'
         $hookRegistration | Should -Not -Match '@Arguments\s+2>&1'
 
         $gitPush | Should -Match '\$output\s*=\s*@\(&\s+\$GitExecutable\s+-C\s+\$RepositoryRoot\s+@Arguments\s+2>\s+\$stderrPath\)'
+        $gitPush | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$stderrPath'
         $gitPush | Should -Match 'DiagnosticOutput\s*=\s*@\(\$diagnosticOutput\)'
         $gitPush | Should -Match 'function\s+Get-GitPushCommandDiagnosticOutput'
         $gitPush | Should -Match 'Get-GitPushCommandDiagnosticOutput\s+-Result\s+\$Result'
         $gitPush | Should -Not -Match '@Arguments\s+2>&1'
 
         $removeBom | Should -Match '\$commandOutput\s*=\s*@\(&\s+\$gitExecutable\s+-C\s+\$workingDirectory\s+@arguments\s+2>\s+\$commandStderrPath\)'
+        $removeBom | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$commandStderrPath'
+        $removeBom | Should -Match 'Get-Command\s+-Name\s+"readlink"\s+-CommandType\s+Application'
         $removeBom | Should -Match 'DiagnosticOutput\s*=\s*@\(\$diagnosticOutput\)'
         $removeBom | Should -Match 'function\s+Get-GitCommandFirstDiagnosticLine'
         $removeBom | Should -Not -Match '@arguments\s+2>&1'
+
+        $qualityTooling | Should -Match 'Get-Command\s+-Name\s+"chmod"\s+-CommandType\s+Application'
+        $preCommitValidation | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$gitStderrPath'
+        $preCommitAutoRepair | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$gitStderrPath'
+        $preCommitAutoRepair | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$repoRootStderrPath'
+        $preCommitRecovery | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$repositoryRootStderrPath'
+        foreach ($content in @($hookRegistration, $gitPush, $removeBom, $preCommitValidation, $preCommitAutoRepair, $preCommitRecovery)) {
+            $content | Should -Not -Match 'ReadAllText\(\$[A-Za-z]*(?:Stderr|stderr)[A-Za-z]*Path,\s*\[System\.Text\.Encoding\]::UTF8\)'
+        }
     }
 
     It "keeps devcontainer shell linting on repo-managed shell quality tooling" {
@@ -1172,7 +1194,7 @@ Describe "Cross-language quality platform conventions" {
         $preCommitHook | Should -Match 'workingDirectory=\$\{working_directory\}; gitCommand=\$\{git_command\}'
         $preCommitHook | Should -Match 'run_safe_autorepair'
         $preCommitHook | Should -Match 'has_staged_windows_language_targets'
-        $preCommitHook | Should -Match 'git -C "\$repo_root" diff --cached --name-only --diff-filter=ACMR --'
+        $preCommitHook | Should -Match 'git -C "\$repo_root" diff --cached --name-only --diff-filter=ACMRD --'
         $preCommitHook | Should -Match 'W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED'
         $preCommitHook | Should -Match 'Invoke-PreCommitAutoRepair\.ps1'
         $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit'
@@ -1255,6 +1277,11 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook | Should -Match 'HookTimeout\.sh'
         $prePushHook | Should -Match 'wallstop_resolve_timeout_command'
         $prePushHook | Should -Match 'wallstop_start_timeout_command'
+        $prePushHook | Should -Match 'git diff --name-only --diff-filter=ACMRD'
+        $prePushHook | Should -Match 'changed_file_discovery_exit=\$\?'
+        $prePushHook | Should -Match 'pre-push changed-file discovery failed'
+        $prePushHook | Should -Match 'E_PREPUSH_CHANGED_FILE_DISCOVERY_FAILED'
+        $prePushHook | Should -Match 'E_PREPUSH_CHANGED_FILE_FALLBACK_FAILED'
     }
 
     It "provides a hook-preflighted push helper for branches without upstreams" {
@@ -1278,7 +1305,7 @@ Describe "Cross-language quality platform conventions" {
         $autoRepairPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1'
         $autoRepair = (Get-Content -Path $autoRepairPath -Raw) -replace "`r", ''
 
-        $autoRepair | Should -Match 'diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMR"'
+        $autoRepair | Should -Match 'diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMRD"'
         $autoRepair | Should -Match 'Scripts/AutoHotKey/.+\\\.ahk'
         $autoRepair | Should -Match 'Config/\\\.config/.+\\\.ahk'
         $autoRepair | Should -Match 'Scripts/.+\\\.bat'
@@ -3421,13 +3448,39 @@ Describe "Workflow security conventions" {
         $workflow | Should -Not -Match "':\(exclude\)Tests/\*\*'"
         $workflow | Should -Not -Match "':\(exclude\)\.github/workflows/script-quality\.yml'"
         $workflow | Should -Match 'command_scan_files='
-        $workflow | Should -Match 'Tests/\*\*\|\*\.md\|\.llm/\*'
+        $workflow | Should -Match 'Tests/\*\|\*\.md\|\.llm/\*'
+        $workflow | Should -Match 'Bash case patterns are string matches'
+        $workflow | Should -Match 'because \* matches / here'
+        $workflow | Should -Not -Match 'Tests/\*\*'
         $workflow | Should -Match 'filter_allowed_security_matches'
         $workflow | Should -Match 'is_allowed_security_match'
         $workflow | Should -Match 'allowed_match_count='
         $workflow | Should -Match 'expected_allowed_match_count=1'
         $workflow | Should -Not -Match '\.github/workflows/script-quality\.yml:\*'
         $workflow | Should -Not -Match '\*\\"token_pattern_rg='
+    }
+
+    It "documents command-execution scanner path-scope semantics" {
+        $commandScannerExcludedPatterns = @('Tests/*', '*.md', '.llm/*')
+        $shouldSkip = @(
+            'Tests/Utils/StrictModeHelpers.Tests.ps1',
+            'Tests/Utils/Nested/Policy.Tests.ps1',
+            'README.md',
+            '.llm/context.md'
+        )
+        $shouldScan = @(
+            'Scripts/Utils/Run-PreCommitValidation.ps1',
+            'Config/Tests/Fixture.ps1',
+            '.github/workflows/script-quality.yml'
+        )
+
+        foreach ($path in $shouldSkip) {
+            (@($commandScannerExcludedPatterns | Where-Object { $path -like $_ }).Count -gt 0) | Should -BeTrue -Because "$path should be excluded from command-execution pattern scanning."
+        }
+
+        foreach ($path in $shouldScan) {
+            (@($commandScannerExcludedPatterns | Where-Object { $path -like $_ }).Count -gt 0) | Should -BeFalse -Because "$path should remain in command-execution pattern scanning."
+        }
     }
 
     It "uses broad GitHub token patterns in the canonical workflow scanner and pre-commit redaction" {
@@ -4765,7 +4818,7 @@ $result = "value {0} {1}" -f
 
     It "uses explicit git availability preflight in git-consuming utility scripts" {
         $gitPreflightCases = @(
-            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '\$stagedFileArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMR"\)[\s\S]*Invoke-GitCommandWithSplitOutput\s+-GitExecutable\s+\$GitExecutable\s+-Arguments\s+\$stagedFileArgs' },
+            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '\$stagedFileArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMRD"\)[\s\S]*Invoke-GitCommandWithSplitOutput\s+-GitExecutable\s+\$GitExecutable\s+-Arguments\s+\$stagedFileArgs' },
             @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
             @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
             @{ Path = 'Scripts/Utils/Increment-Version.ps1'; ErrorCode = 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree' }
