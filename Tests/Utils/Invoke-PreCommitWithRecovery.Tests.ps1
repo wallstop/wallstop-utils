@@ -19,6 +19,16 @@ BeforeAll {
         $initOutput = @(& $GitExecutable -C $RootPath init 2>&1)
         $LASTEXITCODE | Should -Be 0 -Because ("git init should succeed. Output: {0}" -f ($initOutput -join "`n"))
 
+        $lineEndingConfig = @(
+            [pscustomobject]@{ Name = "core.autocrlf"; Value = "false" },
+            [pscustomobject]@{ Name = "core.eol"; Value = "lf" },
+            [pscustomobject]@{ Name = "core.safecrlf"; Value = "false" }
+        )
+        foreach ($configEntry in $lineEndingConfig) {
+            $configOutput = @(& $GitExecutable -C $RootPath config $configEntry.Name $configEntry.Value 2>&1)
+            $LASTEXITCODE | Should -Be 0 -Because ("git config {0} should succeed. Output: {1}" -f $configEntry.Name, ($configOutput -join "`n"))
+        }
+
         $configNameOutput = @(& $GitExecutable -C $RootPath config user.name "Wallstop Test" 2>&1)
         $LASTEXITCODE | Should -Be 0 -Because ("git config user.name should succeed. Output: {0}" -f ($configNameOutput -join "`n"))
 
@@ -62,9 +72,19 @@ BeforeAll {
             [string]$Context = "git command"
         )
 
-        $output = @(& $GitExecutable -C $RepositoryRoot @Arguments 2>&1)
-        $LASTEXITCODE | Should -Be 0 -Because ("{0} should succeed. Output: {1}" -f $Context, ($output -join "`n"))
-        return @($output)
+        $result = Invoke-PreCommitRecoveryRawGitCommand -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Arguments $Arguments -CommandContext $Context
+        $result.ExitCode | Should -Be 0 -Because (
+            "{0} should succeed. Stdout: {1}; Stderr: {2}" -f $Context, [string]$result.Stdout, [string]$result.Stderr
+        )
+
+        if ([string]::IsNullOrEmpty([string]$result.Stdout)) {
+            return @() # array-unwrap-safe: callers either discard output or wrap with @().
+        }
+
+        return @(
+            [string]$result.Stdout -split "\r?\n" |
+                Where-Object { -not [string]::IsNullOrEmpty($_) }
+        ) # array-unwrap-safe: callers either discard output or wrap with @().
     }
 
     function Initialize-TestAutofixCommittedFile {

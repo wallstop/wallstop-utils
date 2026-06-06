@@ -36,6 +36,18 @@ BeforeAll {
         if ($LASTEXITCODE -ne 0) {
             throw "E_TEST_SETUP_FAILED: git init failed for '$RepositoryRoot'."
         }
+
+        $configEntries = @(
+            [pscustomobject]@{ Name = "core.autocrlf"; Value = "false" },
+            [pscustomobject]@{ Name = "core.eol"; Value = "lf" },
+            [pscustomobject]@{ Name = "core.safecrlf"; Value = "false" }
+        )
+        foreach ($configEntry in $configEntries) {
+            & $script:gitCommand.Source -C $RepositoryRoot config $configEntry.Name $configEntry.Value | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "E_TEST_SETUP_FAILED: git config $($configEntry.Name) failed for '$RepositoryRoot'."
+            }
+        }
     }
 }
 
