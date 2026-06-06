@@ -64,15 +64,23 @@ Describe "Run-PreCommitValidation fast local mode" {
         $script:preCommitContent | Should -Match 'Invoke-PesterQualityGateInIsolatedProcess'
     }
 
-    It "keeps cross-version compatibility checks in all-mode deep validation" {
+    It "runs cross-version compatibility checks for targeted PowerShell files without enabling Pester fast-lane work" {
         $script:preCommitContent | Should -Match '\$compatibilityTargetFiles\s*=\s*@\(\s*\$trackedFileOutput[\s\S]*?\$compatibilityTargetPattern'
-        $script:preCommitContent | Should -Match '\$runCompatibilityGate\s*=\s*\$All\s+-and\s+\$compatibilityTargetFiles\.Count\s+-gt\s+0'
-        $script:preCommitContent | Should -Not -Match '\$runCompatibilityGate\s*=\s*-not\s+\$All'
+        $script:preCommitContent | Should -Match '\$stagedFiles[\s\S]*?\$compatibilityTargetPattern[\s\S]*?Test-Path\s+-LiteralPath\s+\$_\s+-PathType\s+Leaf'
+        $script:preCommitContent | Should -Match '\$runCompatibilityGate\s*=\s*\$compatibilityTargetFiles\.Count\s+-gt\s+0'
+        $script:preCommitContent | Should -Match '\$requiresCompatibilityAnalyzerModule\s*=\s*\$runCompatibilityGate'
+        $script:preCommitContent | Should -Match '\$requiresLintAnalyzerModule\s*=\s*\(-not\s+\$SkipAnalyzer\)\s+-and\s+\$runAnalyzer'
+        $script:preCommitContent | Should -Match '\$requiresScriptAnalyzerModule\s*=\s*\$requiresCompatibilityAnalyzerModule\s+-or\s+\$requiresLintAnalyzerModule'
+        $script:preCommitContent | Should -Match 'SkipAnalyzer to skip only the ScriptAnalyzer lint step'
+        $script:preCommitContent.IndexOf('$requiresCompatibilityAnalyzerModule = $runCompatibilityGate') | Should -BeLessThan $script:preCommitContent.IndexOf('if ($runCompatibilityGate)')
         $script:preCommitContent | Should -Match 'Invoke-CompatibilityChecks\.ps1'
+        $script:preCommitContent | Should -Match 'Running cross-version compatibility gate for \{0\} staged target\(s\)'
     }
 
     It "keeps shell and native quality checks as all-mode-only orchestrator work" {
-        $script:preCommitContent | Should -Match '(?s)if\s*\(\$All\)\s*\{.*?\$shellQualityFiles\s*=.*?\$nativeQualityFiles\s*=.*?\}\s*elseif\s*\(\$IncludePreCommitOwnedChecks\)\s*\{.*?\$shellQualityFiles\s*=.*?\$nativeQualityFiles\s*=.*?\}\s*else\s*\{\s*\$shellQualityFiles\s*=\s*@\(\)\s*\$nativeQualityFiles\s*=\s*@\(\)\s*\}'
+        $script:preCommitContent | Should -Match '(?s)if\s*\(\$All\)\s*\{.*?\$shellQualityFiles\s*=.*?\$nativeQualityFiles\s*='
+        $script:preCommitContent | Should -Match '(?s)elseif\s*\(\$IncludePreCommitOwnedChecks\)\s*\{.*?\$shellQualityFiles\s*=.*?\$nativeQualityFiles\s*='
+        $script:preCommitContent | Should -Match '(?s)else\s*\{.*?\$shellQualityFiles\s*=\s*@\(\).*?\$nativeQualityFiles\s*=\s*@\(\)'
         $script:preCommitContent | Should -Match '\$runShellQualityChecks\s*=\s*\$All\s+-or\s+\$shellQualityFiles\.Count\s+-gt\s+0'
         $script:preCommitContent | Should -Match '\$runNativeQualityChecks\s*=\s*\$All\s+-or\s+\$nativeQualityFiles\.Count\s+-gt\s+0'
         $script:preCommitContent | Should -Match 'Invoke-ShellQualityChecks\.ps1'

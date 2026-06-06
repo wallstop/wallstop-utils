@@ -1,16 +1,63 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+BeforeDiscovery {
+    $compatibilityRepoRootForDiscovery = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
+    $profileSnapshotCases = @(
+        Get-ChildItem -LiteralPath (Join-Path -Path $compatibilityRepoRootForDiscovery -ChildPath 'Config/Powershell') -Filter '*profile*.ps1' -File |
+            Sort-Object -Property Name |
+            ForEach-Object {
+                @{
+                    RelativePath = ("Config/Powershell/{0}" -f $_.Name)
+                }
+            }
+    )
+    $profileStartupHostCases = @()
+    $profileStartupHostDefinitions = @(
+        @{ HostName = 'PowerShell 7+'; CommandName = 'pwsh' },
+        @{ HostName = 'Windows PowerShell 5.1'; CommandName = 'powershell.exe' }
+    )
+    foreach ($hostDefinition in $profileStartupHostDefinitions) {
+        $hostCommand = Get-Command -Name $hostDefinition.CommandName -ErrorAction SilentlyContinue
+        if ($null -eq $hostCommand) {
+            continue
+        }
+
+        foreach ($profileSnapshotCase in $profileSnapshotCases) {
+            $profileStartupHostCases += @{
+                HostName     = $hostDefinition.HostName
+                CommandPath  = $hostCommand.Source
+                RelativePath = $profileSnapshotCase.RelativePath
+            }
+        }
+    }
+}
+
 BeforeAll {
+    function Resolve-CanonicalTempRoot {
+        param([string]$Path)
+
+        $resolvedItem = Get-Item -LiteralPath $Path -ErrorAction Stop
+        return $resolvedItem.FullName
+    }
+
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     $script:helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1"
+    $script:psReadLineProfileHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1"
     $script:gatePath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-CompatibilityChecks.ps1"
     $script:allowlistPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/compatibility-allowlist.psd1"
+    $script:profileSnapshotCount = @(
+        Get-ChildItem -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath 'Config/Powershell') -Filter '*profile*.ps1' -File
+    ).Count
+    if (Test-Path -LiteralPath $script:psReadLineProfileHelperPath -PathType Leaf) {
+        . $script:psReadLineProfileHelperPath
+    }
 }
 
 Describe "Cross-version compatibility infrastructure" {
     It "ships the keystone compatibility helper, gate, and allowlist" {
         Test-Path -LiteralPath $script:helperPath -PathType Leaf | Should -BeTrue
+        Test-Path -LiteralPath $script:psReadLineProfileHelperPath -PathType Leaf | Should -BeTrue
         Test-Path -LiteralPath $script:gatePath -PathType Leaf | Should -BeTrue
         Test-Path -LiteralPath $script:allowlistPath -PathType Leaf | Should -BeTrue
     }
@@ -48,24 +95,293 @@ Describe "Cross-version compatibility infrastructure" {
         }
     }
 
-    It "keeps Config PowerShell profile snapshots guarded for PSReadLine prediction options" {
-        $profileSnapshots = @(
-            'Config/Powershell/CurrentUserCurrentHost_Microsoft.PowerShell_profile.ps1',
-            'Config/Powershell/Microsoft.PowerShell_profile.ps1',
-            'Config/Powershell/WindowsPowerShellFallback_Microsoft.PowerShell_profile.ps1'
+    It "discovers Config PowerShell profile files for PSReadLine guard coverage" {
+        $script:profileSnapshotCount | Should -BeGreaterThan 0
+    }
+
+    It "keeps <RelativePath> guarded for PSReadLine capability differences" -TestCases $profileSnapshotCases {
+        param([string]$RelativePath)
+
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath $RelativePath
+        Test-Path -LiteralPath $fullPath -PathType Leaf | Should -BeTrue
+
+        $content = [System.IO.File]::ReadAllText($fullPath, [System.Text.Encoding]::UTF8) -replace "`r", ''
+        $violations = @(Get-PSReadLineProfilePortabilityViolation -Path $fullPath)
+        $violations.Count | Should -Be 0 -Because "$RelativePath PSReadLine setup must be structurally guarded. Violations: $($violations -join ', ')"
+        $content | Should -Match '\$setPSReadLineOption\s*=\s*Get-Command\s+Set-PSReadLineOption' -Because "$RelativePath must probe Set-PSReadLineOption before using version-specific parameters."
+        $content | Should -Match "Parameters\.ContainsKey\('PredictionSource'\)" -Because "$RelativePath must guard PSReadLine 2.2+ prediction source support."
+        $content | Should -Match "Parameters\.ContainsKey\('PredictionViewStyle'\)" -Because "$RelativePath must guard PSReadLine 2.2+ prediction view support."
+        $content | Should -Match '\$canConfigurePSReadLinePrediction\s*=' -Because "$RelativePath must skip prediction setup when the host cannot render it."
+        $content | Should -Match '\[Console\]::IsOutputRedirected' -Because "$RelativePath must skip PSReadLine prediction setup for redirected output."
+        $content | Should -Match '\$Host\.UI\.SupportsVirtualTerminal' -Because "$RelativePath must skip PSReadLine prediction setup when VT rendering is unavailable."
+        $content | Should -Match '\$setPSReadLineKeyHandler\s*=\s*Get-Command\s+Set-PSReadLineKeyHandler' -Because "$RelativePath must not fail profile startup when PSReadLine is unavailable."
+        $content | Should -Not -Match '\[Diagnostics\.CodeAnalysis\.SuppressMessageAttribute\(''PSUseCompatibleCommands''' -Because "$RelativePath must rely on structural guard filtering, not a file-wide compatibility suppression."
+        $content | Should -Not -Match '(?m)(?-i)^\s*Set-PSReadLineOption\s+-PredictionViewStyle\s+InLineView\b'
+    }
+
+    It "classifies synthetic PSReadLine profile guard case: <Name>" -TestCases @(
+        @{
+            Name               = 'valid guarded profile'
+            ExpectedViolations = @()
+            Content            = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionSource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin -ErrorAction SilentlyContinue
+}
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionViewStyle')) {
+    Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
+}
+$setPSReadLineKeyHandler = Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue
+if ($setPSReadLineKeyHandler) { Set-PSReadLineKeyHandler -Key Tab -Function Complete -ErrorAction SilentlyContinue }
+'@
+        }
+        @{
+            Name               = 'unguarded prediction source'
+            ExpectedViolations = @('unguarded-PredictionSource')
+            Content            = @'
+Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+'@
+        }
+        @{
+            Name               = 'wrong parameter guard target'
+            ExpectedViolations = @('unguarded-PredictionSource')
+            Content            = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+$other = @{ Parameters = @{} }
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $other.Parameters.ContainsKey('PredictionSource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+}
+'@
+        }
+        @{
+            Name               = 'unsafe prediction host guard variable'
+            ExpectedViolations = @('unguarded-PredictionViewStyle')
+            Content            = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = $true
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionViewStyle')) {
+    Set-PSReadLineOption -PredictionViewStyle InlineView
+}
+'@
+        }
+        @{
+            Name               = 'unsafe boolean host guard composition'
+            ExpectedViolations = @('unguarded-PredictionSource')
+            Content            = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = $true -or ([Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal)
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionSource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+}
+'@
+        }
+        @{
+            Name               = 'post-probe virtual terminal overwrite'
+            ExpectedViolations = @('unguarded-PredictionViewStyle')
+            Content            = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$supportsVirtualTerminal = $true
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionViewStyle')) {
+    Set-PSReadLineOption -PredictionViewStyle InlineView
+}
+'@
+        }
+        @{
+            Name               = 'missing standalone command probe'
+            ExpectedViolations = @('unguarded-PredictionSource')
+            Content            = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption.Parameters.ContainsKey('PredictionSource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+}
+'@
+        }
+        @{
+            Name               = 'unguarded key handler'
+            ExpectedViolations = @('unguarded-Set-PSReadLineKeyHandler')
+            Content            = @'
+Set-PSReadLineKeyHandler -Key Tab -Function Complete
+'@
+        }
+        @{
+            Name               = 'guard assignment after command'
+            ExpectedViolations = @('unguarded-PredictionSource')
+            Content            = @'
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionSource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+}
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+'@
+        }
+        @{
+            Name               = 'noncanonical prediction view spelling'
+            ExpectedViolations = @('noncanonical-InLineView')
+            Content            = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionViewStyle')) {
+    Set-PSReadLineOption -PredictionViewStyle InLineView
+}
+'@
+        }
+    ) {
+        param(
+            [string]$Name,
+            [string]$Content,
+            [string[]]$ExpectedViolations
         )
 
-        foreach ($relativePath in $profileSnapshots) {
-            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $relativePath
-            Test-Path -LiteralPath $fullPath -PathType Leaf | Should -BeTrue
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("psreadline-profile-{0}" -f [guid]::NewGuid().ToString('N'))
+        [System.IO.Directory]::CreateDirectory($tempRoot) | Out-Null
+        $tempRoot = Resolve-CanonicalTempRoot -Path $tempRoot
+        $tempPath = Join-Path -Path $tempRoot -ChildPath 'profile.ps1'
+        try {
+            [System.IO.File]::WriteAllText($tempPath, $Content, [System.Text.UTF8Encoding]::new($false))
+            $violations = @(Get-PSReadLineProfilePortabilityViolation -Path $tempPath)
 
-            $content = (Get-Content -LiteralPath $fullPath -Raw) -replace "`r", ''
-            $content | Should -Match '\$setPSReadLineOption\s*=\s*Get-Command\s+Set-PSReadLineOption'
-            $content | Should -Match "Parameters\.ContainsKey\('PredictionSource'\)"
-            $content | Should -Match "Parameters\.ContainsKey\('PredictionViewStyle'\)"
-            $content | Should -Match '\[Diagnostics\.CodeAnalysis\.SuppressMessageAttribute\(''PSUseCompatibleCommands'''
-            $content | Should -Not -Match '(?m)(?-i)^\s*Set-PSReadLineOption\s+-PredictionViewStyle\s+InLineView\b'
+            foreach ($expectedViolation in @($ExpectedViolations)) {
+                $violations | Should -Contain $expectedViolation -Because "$Name should report $expectedViolation."
+            }
+
+            $unexpectedViolations = @(
+                $violations |
+                    Where-Object { @($ExpectedViolations) -notcontains $_ }
+            )
+            $unexpectedViolations.Count | Should -Be 0 -Because "$Name should not report unexpected violations. Actual: $($violations -join ', ')"
         }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "classifies PSReadLine compatibility finding guard case: <Name>" -TestCases @(
+        @{
+            Name            = 'valid guarded prediction source finding'
+            ParameterName   = 'PredictionSource'
+            ExpectedGuarded = $true
+            Content         = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionSource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+}
+'@
+        }
+        @{
+            Name            = 'rejects missing standalone command probe'
+            ParameterName   = 'PredictionSource'
+            ExpectedGuarded = $false
+            Content         = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption.Parameters.ContainsKey('PredictionSource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+}
+'@
+        }
+        @{
+            Name            = 'rejects unsafe boolean host guard composition'
+            ParameterName   = 'PredictionSource'
+            ExpectedGuarded = $false
+            Content         = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = $true -or ([Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal)
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionSource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+}
+'@
+        }
+        @{
+            Name            = 'rejects post-probe virtual terminal overwrite'
+            ParameterName   = 'PredictionViewStyle'
+            ExpectedGuarded = $false
+            Content         = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$supportsVirtualTerminal = $true
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionViewStyle')) {
+    Set-PSReadLineOption -PredictionViewStyle InlineView
+}
+'@
+        }
+    ) {
+        param(
+            [string]$Name,
+            [string]$Content,
+            [string]$ParameterName,
+            [bool]$ExpectedGuarded
+        )
+
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("psreadline-compat-finding-{0}" -f [guid]::NewGuid().ToString('N'))
+        [System.IO.Directory]::CreateDirectory($tempRoot) | Out-Null
+        $tempRoot = Resolve-CanonicalTempRoot -Path $tempRoot
+        $tempPath = Join-Path -Path $tempRoot -ChildPath 'profile.ps1'
+        try {
+            [System.IO.File]::WriteAllText($tempPath, $Content, [System.Text.UTF8Encoding]::new($false))
+            $lines = @($Content -split "`r?`n")
+            $commandLine = 0
+            for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++) {
+                if ($lines[$lineIndex] -match ('Set-PSReadLineOption\s+-{0}\b' -f [regex]::Escape($ParameterName))) {
+                    $commandLine = $lineIndex + 1
+                    break
+                }
+            }
+
+            $commandLine | Should -BeGreaterThan 0 -Because "$Name must include a Set-PSReadLineOption -$ParameterName command."
+            $guarded = Test-PSReadLineCompatibilityFindingGuarded -Path $tempPath -Line $commandLine -ParameterName $ParameterName
+            $guarded | Should -Be $ExpectedGuarded -Because "$Name should return guarded=$ExpectedGuarded for the compatibility-gate filter."
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps Config PowerShell profiles quiet when output is redirected under <HostName>: <RelativePath>" -TestCases $profileStartupHostCases {
+        param(
+            [string]$HostName,
+            [string]$CommandPath,
+            [string]$RelativePath
+        )
+
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath $RelativePath
+        $output = @(& $CommandPath -NoLogo -NoProfile -File $fullPath 2>&1)
+        $exitCode = $LASTEXITCODE
+        $psReadLineErrors = @(
+            $output |
+                Where-Object { [string]$_ -match 'predictive suggestion feature cannot be enabled|Set-PSReadLineOption|PredictionSource|PredictionViewStyle' }
+        )
+
+        $exitCode | Should -Be 0 -Because "$RelativePath must not fail in redirected/non-interactive $HostName validation hosts."
+        $psReadLineErrors.Count | Should -Be 0 -Because "$RelativePath must not emit PSReadLine prediction errors under $HostName when output is redirected. Output: $($output -join '; ')"
     }
 }
 
@@ -105,28 +421,31 @@ Describe "Cross-version compatibility - automatic variable scan (dependency-free
     }
 }
 
-Describe "Cross-version compatibility gate (PSScriptAnalyzer)" {
-    It "reports zero cross-version incompatibilities across the repository" {
-        # The full static gate depends on pwsh + PSScriptAnalyzer. When either is unavailable
-        # (for example the runtime-only Windows PowerShell 5.1 test lane) this is covered by
-        # the dedicated powershell-compat-analyzer CI lane instead.
-        if ($null -eq (Get-Command pwsh -ErrorAction SilentlyContinue)) {
-            Set-ItResult -Skipped -Because "pwsh is unavailable; the compat gate is enforced by the powershell-compat-analyzer CI lane."
-            return
-        }
-        $analyzerAvailable = & pwsh -NoProfile -Command "[bool](Get-Module -ListAvailable -Name PSScriptAnalyzer)"
-        if ($analyzerAvailable -ne 'True' -and $analyzerAvailable -ne $true) {
-            Set-ItResult -Skipped -Because "PSScriptAnalyzer is not available; the compat gate is enforced by the powershell-compat-analyzer CI lane."
-            return
-        }
+Describe "Cross-version compatibility gate wiring" {
+    It "keeps the static compatibility rules and diagnostics wired into the gate" {
+        $gateContent = [System.IO.File]::ReadAllText($script:gatePath, [System.Text.Encoding]::UTF8) -replace "`r", ''
 
-        $gateJson = & pwsh -NoProfile -File $script:gatePath -OutputFormat json
-        $gateResult = ($gateJson | Out-String) | ConvertFrom-Json
-        $messages = @($gateResult.findings | ForEach-Object { "$($_.file):$($_.line) [$($_.ruleName)]" })
-        $gateResult.findingCount | Should -Be 0 -Because (
-            "All PowerShell scripts must run on Windows PowerShell 5.1 and PowerShell 7+. Remaining findings: " + ($messages -join '; '))
-        # Sanity check that the allowlist is actually engaged (external exes / Pester DSL).
-        $gateResult.allowedFindingCount | Should -BeGreaterThan 0
+        $gateContent | Should -Match 'PSUseCompatibleSyntax'
+        $gateContent | Should -Match 'PSUseCompatibleCommands'
+        $gateContent | Should -Match 'PSUseCompatibleTypes'
+        $gateContent | Should -Match 'E_COMPAT_INCOMPATIBILITY'
+    }
+
+    It "filters PSReadLine prediction findings only through structural guards" {
+        $gateContent = [System.IO.File]::ReadAllText($script:gatePath, [System.Text.Encoding]::UTF8) -replace "`r", ''
+        $helperContent = [System.IO.File]::ReadAllText($script:psReadLineProfileHelperPath, [System.Text.Encoding]::UTF8) -replace "`r", ''
+
+        $gateContent | Should -Match 'PSReadLineProfilePortabilityHelpers\.ps1'
+        $gateContent | Should -Match 'Get-FindingParameterName'
+        $gateContent | Should -Match 'Test-PSReadLineCompatibilityFindingGuarded'
+        $helperContent | Should -Match 'Get-PSReadLineGuardConditionAstForCommand'
+        $helperContent | Should -Match 'Test-PSReadLineCommandGuardedForPredictionParameter'
+        $helperContent | Should -Match 'Test-PSReadLineAstContainsPSReadLineOptionParameterGuard'
+        $helperContent | Should -Match 'Test-PSReadLineAstHasSafePredictionHostGuard'
+        $helperContent | Should -Match 'Test-PSReadLineAstContainsHostUISupportsVirtualTerminalAccess'
+        $helperContent | Should -Match "ContainsKey"
+        $helperContent | Should -Match "PredictionSource"
+        $helperContent | Should -Match "PredictionViewStyle"
     }
 }
 

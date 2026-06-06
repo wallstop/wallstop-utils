@@ -789,9 +789,9 @@ jobs:
           restore-keys: |
             psmodules-${{ runner.os }}-winps51-
 
-      - name: Install Pester 5 and PSScriptAnalyzer (Windows PowerShell 5.1)
+      - name: Install Pester 5 (Windows PowerShell 5.1)
         shell: powershell
-        run: ./Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester,PSScriptAnalyzer
+        run: ./Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester
 
       - name: Run Pester suite under Windows PowerShell 5.1
         shell: powershell
@@ -848,9 +848,9 @@ jobs:
           restore-keys: |
             psmodules-${{ runner.os }}-pwsh7-
 
-      - name: Install Pester 5 and PSScriptAnalyzer (PowerShell 7+)
+      - name: Install Pester 5 (PowerShell 7+)
         shell: pwsh
-        run: ./Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester,PSScriptAnalyzer
+        run: ./Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules Pester
 
       - name: Run Pester suite under PowerShell 7+
         shell: pwsh

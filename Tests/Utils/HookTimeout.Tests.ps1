@@ -5,6 +5,38 @@ BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     $script:hookTimeoutHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/HookTimeout.sh"
     . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1")
+
+    function ConvertTo-BashPathForTest {
+        param([string]$Path)
+
+        if (-not (Test-IsWindowsPlatform)) {
+            return $Path
+        }
+
+        $cygpathCommand = Get-Command -Name cygpath -ErrorAction SilentlyContinue
+        if ($null -ne $cygpathCommand) {
+            $global:LASTEXITCODE = 0
+            $convertedPath = @(& $cygpathCommand.Source -u $Path 2>$null | Select-Object -First 1)
+            if ($global:LASTEXITCODE -eq 0 -and $convertedPath.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($convertedPath[0])) {
+                return [string]$convertedPath[0]
+            }
+        }
+
+        $wslCommand = Get-Command -Name wsl.exe -ErrorAction SilentlyContinue
+        if ($null -ne $wslCommand) {
+            $wslInputPath = $Path -replace '\\', '/'
+            $global:LASTEXITCODE = 0
+            $convertedPath = @(& $wslCommand.Source wslpath -a $wslInputPath 2>$null | Select-Object -First 1)
+            if ($global:LASTEXITCODE -eq 0 -and $convertedPath.Count -gt 0) {
+                $convertedPathText = [string]$convertedPath[0]
+                if (-not [string]::IsNullOrWhiteSpace($convertedPathText) -and $convertedPathText.StartsWith('/')) {
+                    return $convertedPathText
+                }
+            }
+        }
+
+        return $null
+    }
 }
 
 Describe "HookTimeout shell watchdog behavior" {
@@ -41,6 +73,13 @@ printf '%s\n' "stdout-data"
 
         $process = $null
         try {
+            $driverPathForBash = ConvertTo-BashPathForTest -Path $driverPath
+            $helperPathForBash = ConvertTo-BashPathForTest -Path $script:hookTimeoutHelperPath
+            if ([string]::IsNullOrWhiteSpace($driverPathForBash) -or [string]::IsNullOrWhiteSpace($helperPathForBash)) {
+                Set-ItResult -Skipped -Because "bash is available, but no Windows-to-bash path converter is available."
+                return
+            }
+
             $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
             $startInfo.FileName = $bashCommand.Source
             $startInfo.RedirectStandardOutput = $true
@@ -48,8 +87,8 @@ printf '%s\n' "stdout-data"
             $startInfo.UseShellExecute = $false
             $startInfo.CreateNoWindow = $true
             Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @(
-                $driverPath,
-                $script:hookTimeoutHelperPath
+                $driverPathForBash,
+                $helperPathForBash
             )
 
             $process = [System.Diagnostics.Process]::new()
