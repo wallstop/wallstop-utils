@@ -289,7 +289,7 @@ function Test-PSReadLineAstContainsPSReadLineOptionParameterGuard {
                 if (-not ($node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst])) {
                     return $false
                 }
-                if ($node.Member.Value -ne 'ContainsKey') {
+                if ($node.Member.Value -ine 'ContainsKey') {
                     return $false
                 }
                 if (-not ($node.Expression -is [System.Management.Automation.Language.MemberExpressionAst])) {
@@ -306,7 +306,7 @@ function Test-PSReadLineAstContainsPSReadLineOptionParameterGuard {
 
                 foreach ($argument in @($node.Arguments)) {
                     if ($argument -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
-                        $argument.Value -eq $ParameterName) {
+                        $argument.Value -ieq $ParameterName) {
                         return $true
                     }
                 }

@@ -139,6 +139,22 @@ if ($setPSReadLineKeyHandler) { Set-PSReadLineKeyHandler -Key Tab -Function Comp
 '@
         }
         @{
+            Name               = 'valid guarded profile with case-insensitive PSReadLine guard spelling'
+            ExpectedViolations = @()
+            Content            = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [environment]::UserInteractive -and -not [console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setpsreadlineoption -and $setpsreadlineoption.parameters.containskey('predictionsource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin -ErrorAction SilentlyContinue
+}
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.PARAMETERS.CONTAINSKEY('predictionviewstyle')) {
+    Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
+}
+'@
+        }
+        @{
             Name               = 'unguarded prediction source'
             ExpectedViolations = @('unguarded-PredictionSource')
             Content            = @'
@@ -287,6 +303,34 @@ $canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Co
 $setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
 if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionSource')) {
     Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+}
+'@
+        }
+        @{
+            Name            = 'valid guarded prediction source finding with case-insensitive guard spelling'
+            ParameterName   = 'PredictionSource'
+            ExpectedGuarded = $true
+            Content         = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [environment]::UserInteractive -and -not [console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setpsreadlineoption -and $setpsreadlineoption.parameters.containskey('predictionsource')) {
+    Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+}
+'@
+        }
+        @{
+            Name            = 'valid guarded prediction view finding with case-insensitive guard spelling'
+            ParameterName   = 'PredictionViewStyle'
+            ExpectedGuarded = $true
+            Content         = @'
+$supportsVirtualTerminal = $false
+try { $supportsVirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal } catch { $supportsVirtualTerminal = $false }
+$canConfigurePSReadLinePrediction = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $supportsVirtualTerminal
+$setPSReadLineOption = Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue
+if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadLineOption.PARAMETERS.CONTAINSKEY('predictionviewstyle')) {
+    Set-PSReadLineOption -PredictionViewStyle InlineView
 }
 '@
         }

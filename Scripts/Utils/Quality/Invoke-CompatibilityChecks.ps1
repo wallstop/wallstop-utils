@@ -9,7 +9,7 @@
     (Core). Any finding that is not a known false positive fails the gate with a stable
     E_COMPAT_INCOMPATIBILITY diagnostic.
 
-    False positives are handled in exactly two sanctioned ways:
+    False positives are handled in these sanctioned ways:
       - Inline [Diagnostics.CodeAnalysis.SuppressMessageAttribute] with a justification,
         for guarded native calls (honored natively by PSScriptAnalyzer).
       - The AllowedCommands list in compatibility-allowlist.psd1, for external
