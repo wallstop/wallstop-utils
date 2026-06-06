@@ -2,6 +2,7 @@
 
 This expanded guide supports the lightweight skill stub in `.llm/skills/cross-platform-powershell.md`.
 Applies to shared scripts (e.g., `Scripts/Utils/`); platform-specific directories like `Scripts/Komorebi/` are exempt.
+Shared repository PowerShell must run on both Windows PowerShell 5.1 and PowerShell 7+.
 
 ## Path Handling And Separator Safety
 
@@ -72,24 +73,29 @@ Use `-FollowSymlink` only when that behavior is explicitly intended.
 
 ## OS Detection And Conditional Logic
 
-Use PowerShell 7+ automatic variables for OS detection:
+Use the repository compatibility helpers for OS detection. `$IsWindows`, `$IsMacOS`,
+and `$IsLinux` do not exist on Windows PowerShell 5.1 and throw under strict mode.
 
 ```powershell
-if ($IsWindows) {
+if (Test-IsWindowsPlatform) {
     # Windows-specific logic
-} elseif ($IsMacOS) {
+} elseif (Test-IsMacOSPlatform) {
     # macOS-specific logic
-} elseif ($IsLinux) {
+} elseif (Test-IsLinuxPlatform) {
     # Linux-specific logic
 }
 ```
 
-Do not use `[System.Runtime.InteropServices.RuntimeInformation]` or `$env:OS` checks when the automatic variables are available. They are cleaner and more reliable in PowerShell 7+.
+Dot-source `Scripts/Utils/Common/CompatibilityHelpers.ps1` before using these helpers.
+Do not use `[System.Runtime.InteropServices.RuntimeInformation]`, `$env:OS`, or bare
+PowerShell 7+ automatic variables for OS detection in shared scripts. For other runtime
+facts that require .NET APIs, follow the compatibility guard and justified
+`SuppressMessageAttribute` guidance in `.llm/context.md`.
 
 For commands that differ by platform, use a lookup pattern:
 
 ```powershell
-$openCmd = if ($IsWindows) { 'start' } elseif ($IsMacOS) { 'open' } else { 'xdg-open' }
+$openCmd = if (Test-IsWindowsPlatform) { 'start' } elseif (Test-IsMacOSPlatform) { 'open' } else { 'xdg-open' }
 ```
 
 ## Line Ending And Encoding Safety
@@ -131,6 +137,12 @@ When comparing file names or paths, use `[System.StringComparison]::OrdinalIgnor
 if ($fileName.Equals('README.md', [System.StringComparison]::OrdinalIgnoreCase)) { ... }
 ```
 
+PowerShell command names, parameter names, variable names, type/member names, and member
+invocation are generally case-insensitive. AST-backed policy checks that model PowerShell
+language behavior should use case-insensitive comparisons (`-ieq`/`-ine`, helper functions,
+or case-insensitive collections) for those identifiers, while keeping file/path comparisons
+platform-appropriate.
+
 When creating files programmatically, use consistent lowercase or match existing conventions exactly.
 File permission differences: Unix requires `chmod +x` for executable scripts; use platform checks before setting permissions.
 When resolving POSIX/native tools from PowerShell (`chmod`, `readlink`, `test`), use
@@ -140,7 +152,7 @@ allow functions, aliases, or Pester helpers to shadow the external executable.
 Environment variable `$env:PATH` uses `;` as separator on Windows and `:` on Unix:
 
 ```powershell
-$pathSep = if ($IsWindows) { ';' } else { ':' }
+$pathSep = if (Test-IsWindowsPlatform) { ';' } else { ':' }
 $entries = $env:PATH -split [regex]::Escape($pathSep)
 ```
 
@@ -178,7 +190,7 @@ Avoid `Where-Object` and `ForEach-Object` in tight loops. Use `foreach` statemen
 # Fast: foreach statement
 foreach ($item in $collection) { ... }
 
-# Fast: method syntax (PS 7+)
+# Fast: PowerShell collection method syntax
 $filtered = $collection.Where({ $_.Status -eq 'Active' })
 
 # Slower: pipeline cmdlets in tight loops
@@ -255,7 +267,7 @@ Emit structured error codes (`E_PREFIX_DETAIL`) for actionable diagnostics.
 ## Workflow
 
 1. Use `Join-Path` and `[System.IO.Path]` for all path construction.
-2. Use `$IsWindows`, `$IsMacOS`, `$IsLinux` for platform branching.
+2. Use `Test-IsWindowsPlatform`, `Test-IsMacOSPlatform`, and `Test-IsLinuxPlatform` for platform branching.
 3. Normalize line endings before regex or string comparison.
 4. Use exact file name casing; test on case-sensitive file systems.
 5. Write files with explicit UTF-8 no-BOM encoding.

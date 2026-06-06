@@ -1449,10 +1449,22 @@ try {
     elseif ($IncludePreCommitOwnedChecks) {
         $shellQualityFiles = @($stagedFiles | Where-Object { $_ -match $shellQualityPattern })
         $nativeQualityFiles = @($stagedFiles | Where-Object { $_ -match $nativeQualityPattern })
+        $compatibilityTargetFiles = @(
+            $stagedFiles |
+                Where-Object { $_ -match $compatibilityTargetPattern } |
+                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+                Sort-Object -Unique
+        )
     }
     else {
         $shellQualityFiles = @()
         $nativeQualityFiles = @()
+        $compatibilityTargetFiles = @(
+            $stagedFiles |
+                Where-Object { $_ -match $compatibilityTargetPattern } |
+                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+                Sort-Object -Unique
+        )
     }
     $shellSafetyFiles = @($stagedFiles | Where-Object { $_ -match $shellSafetyTriggerPattern })
     $windowsLanguageFiles = @($stagedFiles | Where-Object { $_ -match $windowsLanguagePattern })
@@ -1505,7 +1517,7 @@ try {
     $runNativeQualityChecks = $All -or $nativeQualityFiles.Count -gt 0
     $runShellSafetySuite = $All -and -not $runUtilsTests
     $runWindowsLanguageChecks = $All -or $windowsLanguageFiles.Count -gt 0
-    $runCompatibilityGate = $All -and $compatibilityTargetFiles.Count -gt 0
+    $runCompatibilityGate = $compatibilityTargetFiles.Count -gt 0
     $runAnalyzer = $analyzerTargets.Count -gt 0
     $runFormatOperatorSafetyCheck = $All -or $scriptFiles.Count -gt 0 -or $utilsTestFiles.Count -gt 0 -or $githubTestFiles.Count -gt 0
     $runLlmHarnessValidation = $All -or $llmHarnessFiles.Count -gt 0
@@ -1853,6 +1865,15 @@ try {
         }
     }
 
+    $requiresPesterModule = $runUtilsTests -or $runGitHubTests -or $runShellSafetySuite
+    $requiresCompatibilityAnalyzerModule = $runCompatibilityGate
+    $requiresLintAnalyzerModule = (-not $SkipAnalyzer) -and $runAnalyzer
+    $requiresScriptAnalyzerModule = $requiresCompatibilityAnalyzerModule -or $requiresLintAnalyzerModule
+    if ($requiresPesterModule -or $requiresScriptAnalyzerModule) {
+        Write-Host "Running PowerShell module prerequisite validation..."
+        Assert-PreCommitPowerShellModuleAvailability -RequirePester:$requiresPesterModule -RequireScriptAnalyzer:$requiresScriptAnalyzerModule
+    }
+
     if ($runCompatibilityGate) {
         $compatibilityGatePath = Join-Path -Path $repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-CompatibilityChecks.ps1'
         if (-not (Test-Path -LiteralPath $compatibilityGatePath -PathType Leaf)) {
@@ -1888,13 +1909,6 @@ try {
         finally {
             Remove-Item -LiteralPath $compatibilityTargetListPath -Force -ErrorAction SilentlyContinue
         }
-    }
-
-    $requiresPesterModule = $runUtilsTests -or $runGitHubTests -or $runShellSafetySuite
-    $requiresScriptAnalyzerModule = (-not $SkipAnalyzer) -and $runAnalyzer
-    if ($requiresPesterModule -or $requiresScriptAnalyzerModule) {
-        Write-Host "Running PowerShell module prerequisite validation..."
-        Assert-PreCommitPowerShellModuleAvailability -RequirePester:$requiresPesterModule -RequireScriptAnalyzer:$requiresScriptAnalyzerModule
     }
 
     if ($runUtilsTests -or $runGitHubTests -or $runShellSafetySuite) {
@@ -1955,7 +1969,7 @@ try {
         if ($null -eq $scriptAnalyzerCommand) {
             $installedScriptAnalyzerVersions = Get-AvailableModuleVersionsText -ModuleName "PSScriptAnalyzer"
             throw (
-                "E_CONFIG_ERROR: Invoke-ScriptAnalyzer from PSScriptAnalyzer {0} or newer is required but unavailable. Installed versions: {1}. Run 'pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules PSScriptAnalyzer' (or install manually with 'Install-Module PSScriptAnalyzer -Repository PSGallery -Scope CurrentUser -MinimumVersion {0} -Force') or re-run with -SkipAnalyzer." -f
+                "E_CONFIG_ERROR: Invoke-ScriptAnalyzer from PSScriptAnalyzer {0} or newer is required but unavailable. Installed versions: {1}. Run 'pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1 -Modules PSScriptAnalyzer' (or install manually with 'Install-Module PSScriptAnalyzer -Repository PSGallery -Scope CurrentUser -MinimumVersion {0} -Force') or re-run with -SkipAnalyzer to skip only the ScriptAnalyzer lint step; the cross-version compatibility gate still requires PSScriptAnalyzer when PowerShell targets are present." -f
                 $minimumScriptAnalyzerVersion,
                 $installedScriptAnalyzerVersions
             )

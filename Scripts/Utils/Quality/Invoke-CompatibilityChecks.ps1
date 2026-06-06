@@ -9,11 +9,13 @@
     (Core). Any finding that is not a known false positive fails the gate with a stable
     E_COMPAT_INCOMPATIBILITY diagnostic.
 
-    False positives are handled in exactly two sanctioned ways:
+    False positives are handled in these sanctioned ways:
       - Inline [Diagnostics.CodeAnalysis.SuppressMessageAttribute] with a justification,
         for guarded native calls (honored natively by PSScriptAnalyzer).
       - The AllowedCommands list in compatibility-allowlist.psd1, for external
         executables and runtime-installed module commands (for example Pester 5).
+      - Narrow structural filters in shared helpers for repository-owned guarded
+        compatibility idioms that PSScriptAnalyzer cannot model.
 
     This script must itself remain runnable on Windows PowerShell 5.1: no ternary,
     null-coalescing, pipeline-chain operators, $IsWindows/$IsMacOS/$IsLinux references,
@@ -54,6 +56,12 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 # Repo root is three levels up: Scripts/Utils/Quality -> repo root.
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path -Path $scriptRoot -ChildPath "../../..")).Path
+$psReadLineProfilePortabilityHelpersPath = Join-Path -Path $scriptRoot -ChildPath "../Common/PSReadLineProfilePortabilityHelpers.ps1"
+if (-not (Test-Path -LiteralPath $psReadLineProfilePortabilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: PSReadLine profile portability helper file not found at '$psReadLineProfilePortabilityHelpersPath'."
+}
+
+. $psReadLineProfilePortabilityHelpersPath
 
 if ([string]::IsNullOrWhiteSpace($Path)) {
     $Path = $repositoryRoot
@@ -446,6 +454,24 @@ function Get-FindingCommandName {
     return ''
 }
 
+function Get-FindingParameterName {
+    # Extracts the parameter name from a PSUseCompatibleCommands diagnostic message, which
+    # contains "parameter '<name>'" for parameter-level incompatibilities.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    $match = [regex]::Match($Message, "parameter '([^']+)'")
+    if ($match.Success) {
+        return $match.Groups[1].Value
+    }
+
+    return ''
+}
+
 # --- Resolve configuration -------------------------------------------------------------
 
 $allowlistPath = Join-Path -Path $scriptRoot -ChildPath "compatibility-allowlist.psd1"
@@ -516,7 +542,17 @@ foreach ($target in $targets) {
                 $isParameterFinding = $finding.Message.TrimStart().StartsWith('The parameter ')
                 $isModuleCommand = $allowedModuleCommands -contains $commandName
                 $isExternalExecutable = $allowedExternalExecutables -contains $commandName
-                if ($isModuleCommand -or ($isExternalExecutable -and -not $isParameterFinding)) {
+                $parameterName = ''
+                if ($isParameterFinding) {
+                    $parameterName = Get-FindingParameterName -Message $finding.Message
+                }
+                $isGuardedPSReadLinePredictionFinding = $false
+                if ($isParameterFinding -and
+                    $commandName -ieq 'Set-PSReadLineOption' -and
+                    @('PredictionSource', 'PredictionViewStyle') -contains $parameterName) {
+                    $isGuardedPSReadLinePredictionFinding = Test-PSReadLineCompatibilityFindingGuarded -Path $target -Line $finding.Line -ParameterName $parameterName
+                }
+                if ($isModuleCommand -or ($isExternalExecutable -and -not $isParameterFinding) -or $isGuardedPSReadLinePredictionFinding) {
                     $allowedFindingCount = $allowedFindingCount + 1
                     continue
                 }
@@ -578,7 +614,7 @@ if ($OutputFormat -eq 'json') {
     Write-Host "Cross-version compatibility gate (Windows PowerShell 5.1 + PowerShell 7+)"
     Write-Host "  Targets scanned : $($targets.Count)"
     Write-Host "  Profiles        : $([string]::Join(', ', $targetProfiles))"
-    Write-Host "  Allowed (noise) : $allowedFindingCount finding(s) filtered via allowlist/suppression"
+    Write-Host "  Allowed (noise) : $allowedFindingCount finding(s) filtered via allowlist/suppression/structural guards"
     if ($sortedFindings.Count -eq 0) {
         Write-Host "  Result          : PASS - no cross-version incompatibilities detected."
     } else {

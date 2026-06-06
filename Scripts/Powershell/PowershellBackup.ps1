@@ -8,10 +8,49 @@ if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
 
 . $compatibilityHelpersPath
 
+$psReadLineProfilePortabilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath '../Utils/Common/PSReadLineProfilePortabilityHelpers.ps1'
+if (-not (Test-Path -LiteralPath $psReadLineProfilePortabilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: PSReadLine profile portability helper file not found at '$psReadLineProfilePortabilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."
+}
+
+. $psReadLineProfilePortabilityHelpersPath
+
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 $backupFolder = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Config") -ChildPath "Powershell"
 Push-Location -LiteralPath $baseDirectory
+
+function Assert-PowerShellProfileBackupPortability {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProfileName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    try {
+        $violations = @(Get-PSReadLineProfilePortabilityViolation -Path $resolvedPath)
+    }
+    catch {
+        throw (
+            "E_POWERSHELL_BACKUP_PROFILE_PARSE_FAILED: PowerShell profile '{0}' at '{1}' could not be parsed before backup. error={2}" -f
+            $ProfileName,
+            $resolvedPath,
+            $_.Exception.Message
+        )
+    }
+
+    if ($violations.Count -gt 0) {
+        throw (
+            "E_POWERSHELL_BACKUP_PROFILE_PORTABILITY: PowerShell profile '{0}' at '{1}' contains PSReadLine setup that is not guarded for Windows PowerShell 5.1 and older PSReadLine versions. violations={2}. Restore the repository profile or update the source profile before backup." -f
+            $ProfileName,
+            $resolvedPath,
+            ($violations -join ',')
+        )
+    }
+}
 
 try {
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
@@ -61,6 +100,12 @@ try {
                 Name = $candidate.Name
                 Path = $trimmedPath
             })
+    }
+
+    foreach ($candidate in $normalizedCandidates) {
+        if (Test-Path -LiteralPath $candidate.Path -PathType Leaf) {
+            Assert-PowerShellProfileBackupPortability -ProfileName $candidate.Name -Path $candidate.Path
+        }
     }
 
     Write-Verbose (

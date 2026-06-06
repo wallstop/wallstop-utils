@@ -59,7 +59,7 @@ repos:
         name: powershell-format
         entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Format-PowerShellFiles.ps1
         language: system
-        files: '^(Scripts|Tests)/.*\.ps1$'
+        files: '^(Scripts|Tests|Config/Powershell)/.*\.ps1$'
         pass_filenames: true
         require_serial: true
         stages: [pre-commit]
@@ -67,7 +67,7 @@ repos:
         name: powershell-precommit-validation
         entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Run-PreCommitValidation.ps1
         language: system
-        files: '^(Scripts/Utils/.*\.ps1|Tests/Utils/.*\.Tests\.ps1|Tests/GitHub/.*\.ps1|Scripts/AutoHotKey/.*\.ahk|Config/\.config/.*\.ahk|Scripts/.*\.bat|Scripts/.*\.sh|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push)|Config/Wezterm/wezterm\.lua|\.github/workflows/.*\.(yml|yaml)|\.llm/.*\.md|AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|\.github/dependabot\.yml|\.pre-commit-config\.yaml|\.gitattributes|\.editorconfig|\.gitignore|requirements\.txt|\.psscriptanalyzer(\.format)?\.psd1|\.shellcheckrc|\.stylua\.toml|Scripts/Utils/Quality/(native-quality-tools|shell-quality-tools)\.json)$'
+        files: '^(Scripts/Utils/.*\.ps1|Tests/Utils/.*\.Tests\.ps1|Tests/GitHub/.*\.ps1|Config/Powershell/.*\.ps1|Scripts/AutoHotKey/.*\.ahk|Config/\.config/.*\.ahk|Scripts/.*\.bat|Scripts/.*\.sh|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push)|Config/Wezterm/wezterm\.lua|\.github/workflows/.*\.(yml|yaml)|\.llm/.*\.md|AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|\.github/dependabot\.yml|\.pre-commit-config\.yaml|\.gitattributes|\.editorconfig|\.gitignore|requirements\.txt|\.psscriptanalyzer(\.format)?\.psd1|\.shellcheckrc|\.stylua\.toml|Scripts/Utils/Quality/(native-quality-tools|shell-quality-tools)\.json)$'
         pass_filenames: false
         stages: [pre-commit]
       - id: powershell-prepush-validation

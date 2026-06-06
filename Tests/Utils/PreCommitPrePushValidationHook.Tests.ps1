@@ -3,6 +3,64 @@ $ErrorActionPreference = "Stop"
 
 BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
+    . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1")
+
+    function Invoke-GitStdoutForHookTest {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$GitPath,
+
+            [Parameter(Mandatory = $true)]
+            [string[]]$Arguments
+        )
+
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $GitPath
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList $Arguments
+
+        $process = [System.Diagnostics.Process]::new()
+        try {
+            $process.StartInfo = $startInfo
+            $process.Start() | Out-Null
+            if (-not $process.WaitForExit(30000)) {
+                Stop-ProcessTreePortably -Process $process
+                throw "git command exceeded 30s. args=$($Arguments -join ' ')"
+            }
+
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            if ($process.ExitCode -ne 0) {
+                throw "git command failed (exitCode=$($process.ExitCode); args=$($Arguments -join ' '); stderr=$stderr)"
+            }
+
+            return @(
+                $stdout -split '\r?\n' |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            )
+        }
+        finally {
+            $process.Dispose()
+        }
+    }
+
+    function Test-IsWindowsNativeBashForHookTest {
+        param([string]$BashPath)
+
+        if ([System.IO.Path]::DirectorySeparatorChar -ne '\') {
+            return $true
+        }
+
+        $unameOutput = @(& $BashPath --noprofile --norc -c 'uname -s' 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -ne 0 -or $unameOutput.Count -eq 0) {
+            return $false
+        }
+
+        return ([string]$unameOutput[0] -match '^(MINGW|MSYS|CYGWIN)')
+    }
 }
 
 Describe "powershell pre-push pre-commit validation hook" {
@@ -141,6 +199,10 @@ Describe "powershell pre-push pre-commit validation hook" {
         $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable."
+            return
+        }
+        if (-not (Test-IsWindowsNativeBashForHookTest -BashPath $bashCommand.Source)) {
+            Set-ItResult -Skipped -Because "bash is not Windows-native; WSL bash cannot reliably execute the Windows worktree hook in this test."
             return
         }
 
@@ -313,11 +375,8 @@ exec "$($gitCommand.Source)" "`$@"
                 ($readTreeOutput -join "`n")
             )
 
-            $modifiedFiles = @(& $gitCommand.Source -C $script:repoRoot diff --name-only 2>$null)
-            $LASTEXITCODE | Should -Be 0 -Because "temp-index modified-file discovery should succeed."
-
-            $untrackedFiles = @(& $gitCommand.Source -C $script:repoRoot ls-files --others --exclude-standard 2>$null)
-            $LASTEXITCODE | Should -Be 0 -Because "temp-index untracked-file discovery should succeed."
+            $modifiedFiles = @(Invoke-GitStdoutForHookTest -GitPath $gitCommand.Source -Arguments @("-C", $script:repoRoot, "diff", "--name-only"))
+            $untrackedFiles = @(Invoke-GitStdoutForHookTest -GitPath $gitCommand.Source -Arguments @("-C", $script:repoRoot, "ls-files", "--others", "--exclude-standard"))
 
             $filesToStage = @(
                 $modifiedFiles + $untrackedFiles |

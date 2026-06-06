@@ -786,6 +786,11 @@ Describe "CI scope expansion" {
         $workflow | Should -Match 'Run Pester suite under PowerShell 7\+[\s\S]*Invoke-PesterQualityGate\.ps1[\s\S]*-OutputVerbosity\s+None[\s\S]*-TestResultOutputPath\s+"testresults-pwsh7\.xml"'
         $workflow | Should -Match 'Windows PowerShell 5\.1 Pester duration: \$elapsedSeconds seconds'
         $workflow | Should -Match 'PowerShell 7\+ Pester duration: \$elapsedSeconds seconds'
+        $workflow | Should -Match 'Install Pester 5 \(Windows PowerShell 5\.1\)[\s\S]*Install-PowerShellQualityModules\.ps1 -Modules Pester'
+        $workflow | Should -Match 'Install Pester 5 \(PowerShell 7\+\)[\s\S]*Install-PowerShellQualityModules\.ps1 -Modules Pester'
+        $workflow | Should -Match 'powershell-compat-analyzer:[\s\S]*Install-PowerShellQualityModules\.ps1 -Modules PSScriptAnalyzer'
+        $workflow | Should -Not -Match 'Install Pester 5[^\r\n]*PSScriptAnalyzer'
+        $workflow | Should -Not -Match 'Install-PowerShellQualityModules\.ps1 -Modules Pester,PSScriptAnalyzer'
     }
 
     It "keeps each Pester XML artifact upload bound to its own always-run step" {
@@ -948,7 +953,9 @@ Describe "Cross-language quality platform conventions" {
 
         $preCommitConfig | Should -Match 'id:\s+powershell-format[\s\S]*stages:\s+\[pre-commit\]'
         $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
+        $preCommitConfig | Should -Match 'id:\s+powershell-format[\s\S]*files:\s+''\^\(Scripts\|Tests\|Config/Powershell\)/\.\*\\\.ps1\$'''
         $powershellPreCommitHookBlock = Get-PreCommitHookBlock -ConfigContent $preCommitConfig -HookId "powershell-precommit-validation"
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('Config/Powershell/.*\.ps1'))
         $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.pre-commit-config\.yaml'))
         $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.gitattributes'))
         $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.editorconfig'))
@@ -1109,13 +1116,18 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'Running Windows language static validation'
     }
 
-    It "runs cross-version compatibility checks only through the deep precommit orchestrator mode" {
+    It "runs cross-version compatibility checks in deep mode and for staged PowerShell targets" {
         $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
         $validatorContent = Get-Content -Path $validatorPath -Raw
 
         $validatorContent | Should -Match '\$compatibilityTargetPattern\s*='
-        $validatorContent | Should -Match '\$runCompatibilityGate\s*=\s*\$All\s+-and\s+\$compatibilityTargetFiles\.Count\s+-gt\s+0'
-        $validatorContent | Should -Not -Match '\$runCompatibilityGate\s*=\s*-not\s+\$All'
+        $validatorContent | Should -Match 'Where-Object\s+\{\s+\$_\s+-match\s+\$compatibilityTargetPattern\s+\}'
+        $validatorContent | Should -Match '\$runCompatibilityGate\s*=\s*\$compatibilityTargetFiles\.Count\s+-gt\s+0'
+        $validatorContent | Should -Match '\$requiresCompatibilityAnalyzerModule\s*=\s*\$runCompatibilityGate'
+        $validatorContent | Should -Match '\$requiresLintAnalyzerModule\s*=\s*\(-not\s+\$SkipAnalyzer\)\s+-and\s+\$runAnalyzer'
+        $validatorContent | Should -Match '\$requiresScriptAnalyzerModule\s*=\s*\$requiresCompatibilityAnalyzerModule\s+-or\s+\$requiresLintAnalyzerModule'
+        $validatorContent | Should -Match 'SkipAnalyzer to skip only the ScriptAnalyzer lint step'
+        $validatorContent.IndexOf('$requiresCompatibilityAnalyzerModule = $runCompatibilityGate') | Should -BeLessThan $validatorContent.IndexOf('if ($runCompatibilityGate)')
         $validatorContent | Should -Match 'Invoke-CompatibilityChecks\.ps1'
         $validatorContent | Should -Match 'Running cross-version compatibility gate for'
         $validatorContent | Should -Match 'E_PRECOMMIT_COMPATIBILITY_FAILED'
@@ -1913,9 +1925,13 @@ Describe "Quality script executable guardrails" {
                 }
             }
             elseif (Get-Command -Name wsl.exe -ErrorAction SilentlyContinue) {
-                $convertedPath = @(& wsl.exe wslpath -a $macChecksPath 2>$null | Select-Object -First 1)
-                if ($global:LASTEXITCODE -eq 0 -and $convertedPath.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($convertedPath[0])) {
-                    $bashPathArgument = [string]$convertedPath[0]
+                $wslInputPath = $macChecksPath -replace '\\', '/'
+                $convertedPath = @(& wsl.exe wslpath -a $wslInputPath 2>$null | Select-Object -First 1)
+                if ($global:LASTEXITCODE -eq 0 -and $convertedPath.Count -gt 0) {
+                    $convertedPathText = [string]$convertedPath[0]
+                    if (-not [string]::IsNullOrWhiteSpace($convertedPathText) -and $convertedPathText.StartsWith('/')) {
+                        $bashPathArgument = $convertedPathText
+                    }
                 }
             }
 
@@ -3039,6 +3055,7 @@ Describe "Backup script safety conventions" {
 
     It "uses profile-driven path-safe backup and fails when no PowerShell profiles are available" {
         $powershellBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Powershell/PowershellBackup.ps1') -Raw) -replace "`r", ''
+        $psReadLineHelper = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1') -Raw) -replace "`r", ''
 
         $powershellBackup | Should -Match 'Join-Path\s+-Path\s+\(Join-Path\s+-Path\s+\$baseDirectory\s+-ChildPath\s+"Config"\)\s+-ChildPath\s+"Powershell"'
         $powershellBackup | Should -Match '\$PROFILE\.CurrentUserCurrentHost'
@@ -3051,6 +3068,20 @@ Describe "Backup script safety conventions" {
         $powershellBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$candidate\.Path\s+-Destination\s+\$canonicalBackupFile\s+-Force'
         $powershellBackup | Should -Match 'PowerShell canonical backup diagnostics:'
         $powershellBackup | Should -Match 'PowerShell backup output diagnostics:'
+        $powershellBackup | Should -Match 'function\s+Assert-PowerShellProfileBackupPortability'
+        $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_PROFILE_PORTABILITY'
+        $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_PROFILE_PARSE_FAILED'
+        $powershellBackup | Should -Match 'Assert-PowerShellProfileBackupPortability\s+-ProfileName\s+\$candidate\.Name\s+-Path\s+\$candidate\.Path'
+        $powershellBackup | Should -Match 'PSReadLineProfilePortabilityHelpers\.ps1'
+        $powershellBackup | Should -Match 'Get-PSReadLineProfilePortabilityViolation\s+-Path\s+\$resolvedPath'
+        $psReadLineHelper | Should -Match '\[System\.Management\.Automation\.Language\.Parser\]::ParseFile'
+        $psReadLineHelper | Should -Match 'CommandAst'
+        $psReadLineHelper | Should -Match 'Get-PSReadLineGuardConditionAstForCommand'
+        $psReadLineHelper | Should -Match 'Test-PSReadLineAstContainsPSReadLineOptionParameterGuard'
+        $psReadLineHelper | Should -Match 'Test-PSReadLineAstHasSafePredictionHostGuard'
+        $psReadLineHelper | Should -Match 'Test-PSReadLineAstContainsHostUISupportsVirtualTerminalAccess'
+        $psReadLineHelper | Should -Match 'Test-PSReadLineCompatibilityFindingGuarded'
+        $psReadLineHelper | Should -Match 'E_PSREADLINE_PROFILE_PARSE_FAILED'
         $powershellBackup | Should -Not -Match '\$backupFolder\s*=\s*"\$baseDirectory\\Config\\Powershell"'
         $powershellBackup | Should -Not -Match '\$HOME\\Documents\\PowerShell'
         $powershellBackup | Should -Not -Match '\$HOME\\Documents\\WindowsPowerShell'
