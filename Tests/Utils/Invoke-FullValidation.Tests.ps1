@@ -13,12 +13,12 @@ BeforeAll {
 Describe "Invoke-FullValidation workflow contract" {
     $requiredValidationCommands = @(
         @{ Name = "pre-commit stage all files"; Pattern = 'Invoke-PreCommitWithRecovery\.ps1[\s\S]*-HookStage\s+pre-commit\s+-AllFiles' }
-        @{ Name = "pre-push stage all files"; Pattern = 'Invoke-PreCommitWithRecovery\.ps1[\s\S]*-HookStage\s+pre-push\s+-AllFiles' }
+        @{ Name = "PowerShell deep validation"; Pattern = 'Run-PreCommitValidation\.ps1[\s\S]*-All' }
     )
 
     $requiredFailureCodes = @(
         "E_VALIDATION_PRECOMMIT_FAILED"
-        "E_VALIDATION_PREPUSH_FAILED"
+        "E_VALIDATION_DEEP_POWERSHELL_FAILED"
         "E_VALIDATION_CI_FAILED"
         "E_VALIDATION_PR_MISSING"
         "E_VALIDATION_PREREQ_MISSING"
@@ -26,9 +26,12 @@ Describe "Invoke-FullValidation workflow contract" {
         "E_VALIDATION_POWERSHELL_MODULES_MISSING"
         "E_VALIDATION_MODULE_HELPER_MISSING"
         "E_VALIDATION_DIAGNOSTICS_HELPER_MISSING"
+        "E_VALIDATION_HOOK_REGISTRATION_HELPER_MISSING"
+        "E_VALIDATION_PRECOMMIT_CLI_HELPER_MISSING"
         "E_VALIDATION_NATIVE_TOOL_SCRIPT_MISSING"
         "E_VALIDATION_PRECOMMIT_RECOVERY_SCRIPT_MISSING"
         "E_VALIDATION_PRECOMMIT_ENV_PREFLIGHT_FAILED"
+        "E_VALIDATION_PRECOMMIT_VERSION_MISMATCH"
         "E_VALIDATION_STATUS_BEFORE_NULL"
         "E_VALIDATION_STATUS_AFTER_NULL"
     )
@@ -89,6 +92,24 @@ Describe "Invoke-FullValidation workflow contract" {
         $script:validationScript | Should -Match 'pre-commit hook environment preflight'
     }
 
+    It "preflights and repairs local git hook registration before hook environment warming" {
+        $script:validationScript | Should -Match 'Common/GitHookRegistrationHelpers\.ps1'
+        $script:validationScript | Should -Match 'Assert-GitHookRegistration\s+-RepositoryRoot\s+\$repoRoot\s+-Repair'
+        $script:validationScript | Should -Match 'git hook registration preflight'
+        $script:validationScript | Should -Match 'E_VALIDATION_HOOK_REGISTRATION_HELPER_MISSING'
+    }
+
+    It "verifies the pinned pre-commit CLI version before running hook stages" {
+        $script:validationScript | Should -Match 'Common/PreCommitCliHelpers\.ps1'
+        $script:validationScript | Should -Match 'Assert-PreCommitCliAvailability'
+        $script:validationScript | Should -Match 'Assert-PreCommitCliVersion'
+        $script:validationScript | Should -Match 'Get-PreCommitBootstrapVersionGuidance'
+        $script:validationScript | Should -Match 'requirementsPinDiagnostic='
+        $script:validationScript | Should -Not -Match '\$\(Get-RequiredPreCommitVersion'
+        $script:validationScript | Should -Match 'pre-commit CLI version check'
+        $script:validationScript | Should -Match 'E_VALIDATION_PRECOMMIT_VERSION_MISMATCH'
+    }
+
     It "reuses shared diagnostics helper for output previews" {
         $script:validationScript | Should -Match 'Common/DiagnosticsHelpers\.ps1'
         $script:validationScript | Should -Not -Match 'function\s+Get-OutputPreview'
@@ -118,8 +139,10 @@ Describe "Invoke-FullValidation workflow contract" {
 }
 
 Describe "Pre-push enforcement integration" {
-    It "uses Invoke-FullValidation.ps1 from pre-push when pwsh is available" {
-        $script:prePushHook | Should -Match 'Invoke-FullValidation\.ps1'
+    It "keeps local pre-push scoped away from deep validation paths" {
+        $script:prePushHook | Should -Not -Match 'Invoke-FullValidation\.ps1'
+        $script:prePushHook | Should -Not -Match 'Run-PreCommitValidation\.ps1"\s+-All'
+        $script:prePushHook | Should -Not -Match '--all-files'
     }
 
     It "keeps pre-push wrapper execution bounded by timeout guardrails" {

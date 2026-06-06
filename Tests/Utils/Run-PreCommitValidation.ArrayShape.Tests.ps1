@@ -14,23 +14,41 @@ BeforeAll {
         throw "E_CONFIG_ERROR: Failed to parse Run-PreCommitValidation.ps1 for array-shape tests."
     }
 
-    foreach ($functionName in @("Get-RedactedFailureLine", "Convert-ToRedactedOutputLines")) {
-        $targetFunction = @($script:preCommitAst.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
-                }, $true) | Select-Object -First 1)
+    function Get-RequiredFunctionDefinitionAst {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast,
 
-        if ($targetFunction.Count -ne 1) {
-            throw "E_CONFIG_ERROR: Expected function '$functionName' in Run-PreCommitValidation.ps1."
+            [Parameter(Mandatory = $true)]
+            [string]$Name,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Context
+        )
+
+        $matches = @($Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name
+                }, $true))
+
+        if ($matches.Count -ne 1) {
+            throw "E_CONFIG_ERROR: Expected exactly one function '$Name' for $Context; found $($matches.Count)."
         }
 
-        . ([scriptblock]::Create($targetFunction[0].Extent.Text))
+        return $matches[0]
+    }
+
+    foreach ($functionName in @("Get-RedactedFailureLine", "Convert-ToRedactedOutputLines")) {
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $script:preCommitAst -Name $functionName -Context "array-shape tests"
+
+        . ([scriptblock]::Create($targetFunction.Extent.Text))
     }
 }
 
 AfterAll {
     Remove-Item -Path Function:Convert-ToRedactedOutputLines -ErrorAction SilentlyContinue
     Remove-Item -Path Function:Get-RedactedFailureLine -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:Get-RequiredFunctionDefinitionAst -ErrorAction SilentlyContinue
 }
 
 Describe "Run-PreCommitValidation array-shape contract" {
@@ -62,6 +80,21 @@ Describe "Run-PreCommitValidation array-shape contract" {
         $result[0] | Should -Be 'Authorization: [REDACTED]'
         $result[1] | Should -Be 'access_token: [REDACTED]'
         $result[2] | Should -Be 'safe-line'
+    }
+
+    It "accepts multiple direct CLI target files after a named TargetFiles argument" {
+        $global:LASTEXITCODE = 0
+        $output = @(& $script:preCommitPath -TargetFiles .gitattributes .editorconfig *>&1)
+        $exitCode = Get-Variable -Name LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -eq $exitCode) {
+            $exitCode = 0
+        }
+        $outputText = $output -join "`n"
+
+        $exitCode | Should -Be 0 -Because $outputText
+        $outputText | Should -Match 'Running hook governance validation'
+        $outputText | Should -Match 'matchedCount=2'
+        $outputText | Should -Not -Match 'PesterTimeoutSeconds|Cannot convert value'
     }
 }
 
@@ -98,13 +131,9 @@ Describe "Run-PreCommitValidation call-site and helper ownership contracts" {
     }
 
     It "keeps Convert-ToRedactedOutputLines return paths wrapper-safe and non-nested" {
-        $targetFunction = @($script:preCommitAst.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Convert-ToRedactedOutputLines"
-                }, $true) | Select-Object -First 1)
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $script:preCommitAst -Name "Convert-ToRedactedOutputLines" -Context "array-shape return path checks"
 
-        $targetFunction.Count | Should -Be 1
-        $functionText = ($targetFunction[0].Extent.Text -replace "`r", "")
+        $functionText = ($targetFunction.Extent.Text -replace "`r", "")
 
         $functionText | Should -Match 'return\s+@\(\)\s+#\s*array-unwrap-safe:\s*callers always wrap with @\(\)'
         $functionText | Should -Match 'return\s+@\(\$redactedLines\.ToArray\(\)\)\s+#\s*array-unwrap-safe:\s*callers always wrap with @\(\)'
@@ -151,7 +180,6 @@ Describe "Run-PreCommitValidation call-site and helper ownership contracts" {
                 continue
             }
 
-            $functionByName = @{}
             $riskyFunctions = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
             $functionDefinitions = @($ast.FindAll({
                         param($node)
@@ -159,7 +187,6 @@ Describe "Run-PreCommitValidation call-site and helper ownership contracts" {
                     }, $true))
 
             foreach ($functionDefinition in $functionDefinitions) {
-                $functionByName[$functionDefinition.Name] = $functionDefinition
                 $functionText = ($functionDefinition.Extent.Text -replace "`r", "")
                 if ($functionText -match '(?m)^\s*return\s*,\s*@\(\s*(?!\))') {
                     [void]$riskyFunctions.Add($functionDefinition.Name)

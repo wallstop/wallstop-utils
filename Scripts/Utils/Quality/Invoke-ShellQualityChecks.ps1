@@ -125,10 +125,13 @@ function Invoke-ShellQualityInstallLock {
         [string]$LockPath,
 
         [Parameter(Mandatory = $true)]
-        [scriptblock]$ScriptBlock
+        [scriptblock]$ScriptBlock,
+
+        [Parameter(Mandatory = $false)]
+        [object[]]$ArgumentList = @()
     )
 
-    Invoke-QualityToolingInstallLock -Context $script:ShellQualityContext -LockPath $LockPath -ScriptBlock $ScriptBlock -LockTimeoutSeconds $script:ShellQualityLockTimeoutSeconds -LockRetryMilliseconds $script:ShellQualityLockRetryMilliseconds
+    Invoke-QualityToolingInstallLock -Context $script:ShellQualityContext -LockPath $LockPath -ScriptBlock $ScriptBlock -LockTimeoutSeconds $script:ShellQualityLockTimeoutSeconds -LockRetryMilliseconds $script:ShellQualityLockRetryMilliseconds -ArgumentList $ArgumentList
 }
 
 function Test-ShellQualityArchiveEntryPath {
@@ -213,6 +216,37 @@ function ConvertTo-ShellQualityRelativePath {
     return ConvertTo-QualityToolingRelativePath -RepositoryRoot $RepositoryRoot -Path $Path
 }
 
+function Test-ShellQualityTargetMatchesSuite {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $relativePath = ConvertTo-ShellQualityRelativePath -RepositoryRoot $RepositoryRoot -Path $Path
+    return ($relativePath -match '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push))$')
+}
+
+function Select-ShellQualityTargetFiles {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$Files = @()
+    )
+
+    return @(
+        foreach ($file in @($Files)) {
+            if (Test-ShellQualityTargetMatchesSuite -RepositoryRoot $RepositoryRoot -Path $file) {
+                $file
+            }
+        }
+    )
+}
+
 function Invoke-ShfmtQualityCheck {
     param(
         [Parameter(Mandatory = $true)]
@@ -294,6 +328,15 @@ function Invoke-ShellQualityChecksMain {
     )
 
     $repositoryRoot = Get-ShellQualityRepositoryRoot
+    if (-not $OnlyEnsureTools) {
+        $resolvedTargetPaths = @(Resolve-ShellQualityTargetFiles -RepositoryRoot $repositoryRoot -InputFiles $InputFiles)
+        $targetPaths = @(Select-ShellQualityTargetFiles -RepositoryRoot $repositoryRoot -Files $resolvedTargetPaths)
+        if ($targetPaths.Count -eq 0) {
+            Write-Host "[shell-quality] No existing shell targets selected; skipping."
+            return
+        }
+    }
+
     $manifest = Read-ShellQualityToolManifest
     $toolNames = if ($SelectedTool -eq "All") { @("shfmt", "shellcheck") } else { @($SelectedTool) }
     $toolExecutables = @{}
@@ -304,12 +347,6 @@ function Invoke-ShellQualityChecksMain {
 
     if ($OnlyEnsureTools) {
         Write-Host "[shell-quality] Shell quality tools are ready."
-        return
-    }
-
-    $targetPaths = @(Resolve-ShellQualityTargetFiles -RepositoryRoot $repositoryRoot -InputFiles $InputFiles)
-    if ($targetPaths.Count -eq 0) {
-        Write-Host "[shell-quality] No existing shell targets selected; skipping."
         return
     }
 

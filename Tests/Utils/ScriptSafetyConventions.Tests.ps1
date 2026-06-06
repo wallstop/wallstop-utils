@@ -9,6 +9,122 @@ BeforeAll {
         return $resolvedItem.FullName
     }
 
+    function Get-RequiredFunctionDefinitionAst {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Name,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Context
+        )
+
+        $matches = @($Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name
+                }, $true))
+
+        if ($matches.Count -ne 1) {
+            throw "E_CONFIG_ERROR: Expected exactly one function '$Name' for $Context; found $($matches.Count)."
+        }
+
+        return $matches[0]
+    }
+
+    function Test-IsSelectObjectFirstOneCommandAst {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.CommandAst]$CommandAst
+        )
+
+        $commandName = $CommandAst.GetCommandName()
+        if ($commandName -notin @("Select-Object", "Select")) {
+            return $false
+        }
+
+        $sawFirstParameter = $false
+        foreach ($element in @($CommandAst.CommandElements | Select-Object -Skip 1)) {
+            if ($element -is [System.Management.Automation.Language.VariableExpressionAst] -and $element.Splatted) {
+                return $true
+            }
+
+            if ($element -is [System.Management.Automation.Language.CommandParameterAst]) {
+                $parameterName = $element.ParameterName
+                if (-not [string]::IsNullOrWhiteSpace($parameterName) -and "First".StartsWith($parameterName, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    if ($null -ne $element.Argument) {
+                        return ($element.Argument.Extent.Text -eq "1")
+                    }
+
+                    $sawFirstParameter = $true
+                    continue
+                }
+
+                $sawFirstParameter = $false
+                continue
+            }
+
+            if ($sawFirstParameter) {
+                return ($element.Extent.Text -eq "1")
+            }
+        }
+
+        return $false
+    }
+
+    function Test-HasFunctionDefinitionAstTypeReference {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+
+        return @($Ast.FindAll({
+                    param($node)
+                    if (-not ($node -is [System.Management.Automation.Language.TypeExpressionAst])) {
+                        return $false
+                    }
+
+                    return ($node.TypeName.FullName -eq "System.Management.Automation.Language.FunctionDefinitionAst" -or
+                        $node.TypeName.Name -eq "FunctionDefinitionAst")
+                }, $true)).Count -gt 0
+    }
+
+    function Get-GitHubWorkflowStepBlocks {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$WorkflowContent,
+
+            [Parameter(Mandatory = $true)]
+            [string]$StepName
+        )
+
+        $normalized = $WorkflowContent -replace "`r", ''
+        $escapedName = [regex]::Escape($StepName)
+        $stepBlocks = [regex]::Split($normalized, '(?m)^(?=\s*-\s+name:\s)')
+        return @($stepBlocks | Where-Object { $_ -match "(?m)^[^\S\r\n]*-[^\S\r\n]+name:[^\S\r\n]+$escapedName[^\S\r\n]*$" }) # array-unwrap-safe
+    }
+
+    function Get-PreCommitHookBlock {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$ConfigContent,
+
+            [Parameter(Mandatory = $true)]
+            [string]$HookId
+        )
+
+        $normalized = $ConfigContent -replace "`r", ''
+        $escapedHookId = [regex]::Escape($HookId)
+        $hookBlocks = [regex]::Split($normalized, '(?m)^(?=\s+- id:\s+)')
+        $matches = @($hookBlocks | Where-Object { $_ -match "(?m)^\s+- id:\s+$escapedHookId\s*$" })
+        if ($matches.Count -ne 1) {
+            throw "E_CONFIG_ERROR: Expected exactly one pre-commit hook '$HookId'; found $($matches.Count)."
+        }
+
+        return [string]$matches[0]
+    }
+
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/CompatibilityHelpers.ps1")
     $script:migratedScripts = @(
@@ -20,18 +136,23 @@ BeforeAll {
     )
     $script:workflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/github-pr-summarizer-quality.yml"
     $script:crossLanguageWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/script-quality.yml"
+    $script:devcontainerWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/devcontainer-validate.yml"
     $script:dependabotConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".github/dependabot.yml"
     $script:llmContextPath = Join-Path -Path $script:repoRoot -ChildPath ".llm/context.md"
     $script:preCommitConfigPath = Join-Path -Path $script:repoRoot -ChildPath ".pre-commit-config.yaml"
     $script:preCommitHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-commit"
     $script:prePushHookPath = Join-Path -Path $script:repoRoot -ChildPath ".githooks/pre-push"
     $script:qualityPowerShellScripts = @(
+        "Scripts/Utils/Common/GitHookRegistrationHelpers.ps1",
+        "Scripts/Utils/Common/PreCommitCliHelpers.ps1",
         "Scripts/Utils/Common/QualityToolingHelpers.ps1",
         "Scripts/Utils/Quality/Assert-CleanGitTree.ps1",
         "Scripts/Utils/Quality/Format-PowerShellFiles.ps1",
         "Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1",
         "Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1",
         "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1",
+        "Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1",
+        "Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation.ps1",
         "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1",
         "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1",
         "Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
@@ -43,7 +164,9 @@ BeforeAll {
         ".psscriptanalyzer.psd1",
         ".shellcheckrc",
         ".stylua.toml",
-        "Scripts/Utils/Quality/native-quality-tools.json"
+        "requirements.txt",
+        "Scripts/Utils/Quality/native-quality-tools.json",
+        "Scripts/Utils/Quality/shell-quality-tools.json"
     )
     $script:shellConventionScripts = @(
         "Scripts/Mac/Backup.sh",
@@ -64,6 +187,93 @@ BeforeAll {
     $script:wrapperContractFiles = @(
         Get-WrapperContractEntries -ContextFilePath $script:llmContextPath -DefaultFallback @()
     )
+}
+
+Describe "PowerShell test harness conventions" {
+    It "does not truncate FunctionDefinitionAst matches before exact-cardinality assertions" {
+        $testsRoot = Join-Path -Path $script:repoRoot -ChildPath "Tests"
+        $testFiles = @(Get-ChildItem -Path $testsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop)
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($testFile in $testFiles) {
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($testFile.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+                continue
+            }
+
+            $functionAstMatchVariables = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $functionAstAssignments = @($ast.FindAll({
+                        param($node)
+                        if (-not ($node -is [System.Management.Automation.Language.AssignmentStatementAst])) {
+                            return $false
+                        }
+
+                        if (-not ($node.Left -is [System.Management.Automation.Language.VariableExpressionAst])) {
+                            return $false
+                        }
+
+                        return (Test-HasFunctionDefinitionAstTypeReference -Ast $node.Right)
+                    }, $true))
+
+            foreach ($assignment in $functionAstAssignments) {
+                $variableName = $assignment.Left.VariablePath.UserPath
+                if (-not [string]::IsNullOrWhiteSpace($variableName)) {
+                    [void]$functionAstMatchVariables.Add($variableName)
+                }
+            }
+
+            $violatingPipelines = @($ast.FindAll({
+                        param($node)
+                        if (-not ($node -is [System.Management.Automation.Language.PipelineAst])) {
+                            return $false
+                        }
+
+                        $hasSelectFirstOne = $false
+                        foreach ($pipelineElement in $node.PipelineElements) {
+                            if ($pipelineElement -is [System.Management.Automation.Language.CommandAst] -and
+                                (Test-IsSelectObjectFirstOneCommandAst -CommandAst $pipelineElement)) {
+                                $hasSelectFirstOne = $true
+                                break
+                            }
+                        }
+
+                        if ($hasSelectFirstOne) {
+                            foreach ($pipelineElement in $node.PipelineElements) {
+                                $variableReferences = @($pipelineElement.FindAll({
+                                            param($innerNode)
+                                            if (-not ($innerNode -is [System.Management.Automation.Language.VariableExpressionAst])) {
+                                                return $false
+                                            }
+
+                                            return $functionAstMatchVariables.Contains($innerNode.VariablePath.UserPath)
+                                        }, $true))
+
+                                if ($variableReferences.Count -gt 0) {
+                                    return $true
+                                }
+                            }
+                        }
+
+                        if (-not $hasSelectFirstOne) {
+                            return $false
+                        }
+
+                        return (Test-HasFunctionDefinitionAstTypeReference -Ast $node)
+                    }, $true))
+
+            foreach ($pipeline in $violatingPipelines) {
+                $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $testFile.FullName
+                $portableRelativePath = $relativePath -replace '\\', '/'
+                $violations.Add("${portableRelativePath}:$($pipeline.Extent.StartLineNumber)") | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "FunctionDefinitionAst extraction tests must collect all matches and assert Count -eq 1 before dot-sourcing or inspecting a function. Violations: {0}" -f ($violations -join ", ")
+        )
+    }
 }
 
 Describe "Shared helper migration" {
@@ -222,6 +432,7 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Assert-GitHubHostFormat'
         $content | Should -Match 'function\s+Assert-GitHubOwnerRepoFormat'
         $content | Should -Match 'function\s+Assert-GitHubRequestUri'
+        $content | Should -Match 'function\s+Get-GitHubRequestUriAllowlist'
         $content | Should -Match 'function\s+Assert-GitHubHostInAllowlist'
 
         $content | Should -Match 'function\s+Parse-GitHubPullRequestUrl[\s\S]*Assert-GitHubHostFormat'
@@ -231,6 +442,8 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*Assert-GitHubOwnerRepoFormat'
         $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*GitHubHostProvided'
         $content | Should -Match 'function\s+Resolve-PullRequestTarget[\s\S]*Assert-GitHubHostInAllowlist'
+        $content | Should -Match 'function\s+Get-GitHubRequestUriAllowlist[\s\S]*api\.github\.com'
+        $content | Should -Match 'function\s+Assert-GitHubRequestUri[\s\S]*Get-GitHubRequestUriAllowlist'
         $content | Should -Match 'function\s+Invoke-GitHubRequestWithRetry[\s\S]*Assert-GitHubRequestUri'
         $content | Should -Match 'function\s+Validate-GitHubTokenForRepoAccess[\s\S]*Assert-GitHubRequestUri'
 
@@ -308,11 +521,14 @@ Describe "Scope safety conventions" {
         $lowerGitHubLineStartMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineStart\s*=\s*\$githubAnchor\.Start\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerGitHubLineEndMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineEnd\s*=\s*\$githubAnchor\.End\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerEmbeddedLocationsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*embeddedLocations\s*=\s*@\(\$embeddedLocations\)\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerResolutionStateMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*resolutionState\s*=\s*\[string\]\$resolutionState\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*owner\s*=\s*\$Owner\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*repo\s*=\s*\$Repo\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         # Lowercase checks enforce exact contract values; uppercase checks intentionally
         # match any uppercase assignment so any PascalCase regression is caught.
         $upperPathMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Path\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperResolutionStateMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*ResolutionState\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $authSourceMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*authSource\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Owner\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Repo\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
 
@@ -322,9 +538,12 @@ Describe "Scope safety conventions" {
         $lowerGitHubLineStartMatches.Count | Should -Be 1
         $lowerGitHubLineEndMatches.Count | Should -Be 1
         $lowerEmbeddedLocationsMatches.Count | Should -Be 1
+        $lowerResolutionStateMatches.Count | Should -Be 1
         $lowerOwnerMatches.Count | Should -Be 1
         $lowerRepoMatches.Count | Should -Be 1
         $upperPathMatches.Count | Should -Be 0
+        $upperResolutionStateMatches.Count | Should -Be 0
+        $authSourceMatches.Count | Should -Be 0
         $upperOwnerMatches.Count | Should -Be 0
         $upperRepoMatches.Count | Should -Be 0
 
@@ -335,6 +554,7 @@ Describe "Scope safety conventions" {
 
         $testsContent | Should -Match 'Format-UnresolvedThreadsAsJson'
         $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"path"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"resolutionState"\)\s+\|\s+Should\s+-BeTrue'
         $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"Path"\)\s+\|\s+Should\s+-BeFalse'
     }
 
@@ -420,56 +640,62 @@ Describe "Scope safety conventions" {
 }
 
 Describe "CI scope expansion" {
-    It "triggers workflow on all script and test changes" {
+    It "keeps the GitHub utility workflow narrowed to GitHub utility coverage" {
         $workflow = Get-Content -Path $script:workflowPath -Raw
 
-        $workflow | Should -Match 'Scripts/\*\*'
-        $workflow | Should -Match 'Tests/\*\*'
-        $workflow | Should -Match '\.githooks/pre-commit'
-        $workflow | Should -Match '\.githooks/pre-push'
-        $workflow | Should -Match '\.editorconfig'
-        $workflow | Should -Match '\.psscriptanalyzer\.format\.psd1'
-        $workflow | Should -Match '\.shellcheckrc'
-        $workflow | Should -Match '\.stylua\.toml'
+        $workflow | Should -Match 'Scripts/Utils/GitHub/\*\*'
+        $workflow | Should -Match 'Tests/GitHub/\*\*'
+        $workflow | Should -Match 'Scripts/Utils/Common/StrictModeHelpers\.ps1'
+        $workflow | Should -Match 'Invoke-PesterQualityGate\.ps1'
+        $workflow | Should -Match 'runs-on:\s+ubuntu-latest'
+        $workflow | Should -Not -Match 'matrix:'
+        $workflow | Should -Not -Match 'windows-latest|macos-latest'
+        $workflow | Should -Not -Match '(?m)^\s*-\s+"Scripts/\*\*"'
+        $workflow | Should -Not -Match '(?m)^\s*-\s+"Tests/\*\*"'
+        $workflow | Should -Not -Match '\.githooks/pre-commit|\.githooks/pre-push|\.shellcheckrc|\.stylua\.toml'
+        $workflow | Should -Not -Match 'Invoke-ScriptAnalyzer|PSScriptAnalyzer|Run Utils Pester tests|Tests/Utils'
+        $workflow | Should -Not -Match 'Security pattern checks|Generated artifact tracking checks|scanner_engine='
     }
 
-    It "runs ScriptAnalyzer against all scripts" {
+    It "triggers GitHub utility coverage when dot-sourced common helpers change" {
         $workflow = Get-Content -Path $script:workflowPath -Raw
-        $workflow | Should -Match 'Invoke-ScriptAnalyzer\s+-Path\s+"Scripts"'
+        $githubUtilityPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $githubUtility = Get-Content -Path $githubUtilityPath -Raw
+
+        $githubUtility | Should -Match 'Common/StrictModeHelpers\.ps1'
+        $githubUtility | Should -Match 'Common/CompatibilityHelpers\.ps1'
+        $workflow | Should -Match 'Scripts/Utils/Common/StrictModeHelpers\.ps1'
+        $workflow | Should -Match 'Scripts/Utils/Common/CompatibilityHelpers\.ps1'
     }
 
     It "keeps robust Pester CI workflow wiring: <Name>" -TestCases @(
         @{
             Name    = "coverage step invokes shared gate script"
-            Pattern = 'Run Pester with coverage[\s\S]*Invoke-PesterQualityGate\.ps1'
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*Invoke-PesterQualityGate\.ps1'
         }
         @{
             Name    = "coverage step passes coverage gate arguments"
-            Pattern = 'Run Pester with coverage[\s\S]*-EnableCoverage[\s\S]*-CoveragePath\s+\$coveragePath[\s\S]*-MinimumCoveragePercent\s+75'
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*-EnableCoverage[\s\S]*-CoveragePath\s+\$coveragePath[\s\S]*-MinimumCoveragePercent\s+75'
+        }
+        @{
+            Name    = "coverage step writes XML result artifact"
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*testresults-github\.xml[\s\S]*-TestResultOutputPath\s+\$testResultPath'
         }
         @{
             Name    = "coverage step uses explicit timeout"
-            Pattern = 'Run Pester with coverage[\s\S]*timeout-minutes:\s+10'
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*timeout-minutes:\s+10'
         }
         @{
             Name    = "coverage step fails clearly when gate script is missing"
-            Pattern = 'Run Pester with coverage[\s\S]*if\s*\(\s*-not\s*\(Test-Path\s+-Path\s+\$pesterGateScript\s+-PathType\s+Leaf\)\s*\)[\s\S]*E_CI_PESTER_GATE_SCRIPT_MISSING'
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*if\s*\(\s*-not\s*\(Test-Path\s+-Path\s+\$pesterGateScript\s+-PathType\s+Leaf\)\s*\)[\s\S]*E_CI_PESTER_GATE_SCRIPT_MISSING'
         }
         @{
-            Name    = "utils step invokes shared gate script"
-            Pattern = 'Run Utils Pester tests[\s\S]*Invoke-PesterQualityGate\.ps1'
+            Name    = "coverage step passes scoped diagnostics prefix"
+            Pattern = 'Run GitHub utility Pester with coverage[\s\S]*-DiagnosticsPrefix\s+"GitHub Utility Pester"'
         }
         @{
-            Name    = "utils step passes diagnostics prefix"
-            Pattern = 'Run Utils Pester tests[\s\S]*-DiagnosticsPrefix\s+"Utils Pester"'
-        }
-        @{
-            Name    = "utils step uses explicit timeout"
-            Pattern = 'Run Utils Pester tests[\s\S]*timeout-minutes:\s+10'
-        }
-        @{
-            Name    = "utils step fails clearly when gate script is missing"
-            Pattern = 'Run Utils Pester tests[\s\S]*if\s*\(\s*-not\s*\(Test-Path\s+-Path\s+\$pesterGateScript\s+-PathType\s+Leaf\)\s*\)[\s\S]*E_CI_PESTER_GATE_SCRIPT_MISSING'
+            Name    = "workflow uploads only GitHub XML result artifact"
+            Pattern = 'Upload Pester test results[\s\S]*if:\s+always\(\)[\s\S]*actions/upload-artifact@v(?:6|7)\.\d+\.\d+[\s\S]*testresults-github\.xml'
         }
     ) {
         param($Name, $Pattern)
@@ -520,6 +746,14 @@ Describe "CI scope expansion" {
             Pattern = 'diagnostics: total=\$totalCount failedContainers=\$failedContainersCount result=\$resultState'
         }
         @{
+            Name    = "keeps broad failed-test summaries for log-only triage"
+            Pattern = 'function Get-FailedTestSummary[\s\S]*\[int\]\$MaxCount\s*=\s*20'
+        }
+        @{
+            Name    = "reports test result artifact path in failure diagnostics"
+            Pattern = 'TestResultOutputPath=[\s\S]*E_CI_PESTER_TESTS_FAILED|E_CI_PESTER_TESTS_FAILED[\s\S]*TestResultOutputPath='
+        }
+        @{
             Name    = "fails when coverage properties are empty"
             Pattern = 'E_CI_PESTER_COVERAGE_PROPS_EMPTY'
         }
@@ -531,12 +765,49 @@ Describe "CI scope expansion" {
             Name    = "fails coverage gate with explicit error code"
             Pattern = 'E_CI_PESTER_COVERAGE_GATE_FAILED'
         }
+        @{
+            Name    = "supports XML test result artifact output"
+            Pattern = '\$TestResultOutputPath[\s\S]*TestResult\.Enabled\s*=\s*\$true[\s\S]*TestResult\.OutputPath\s*=\s*\$TestResultOutputPath'
+        }
     ) {
         param($Name, $Pattern)
 
         $pesterGateScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1'
         $pesterGateScript = Get-Content -Path $pesterGateScriptPath -Raw
         $pesterGateScript | Should -Match $Pattern -Because $Name
+    }
+
+    It "routes cross-version PowerShell workflow tests through the shared Pester gate" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+
+        $workflow | Should -Match 'Run Pester suite under Windows PowerShell 5\.1[\s\S]*timeout-minutes:\s+10'
+        $workflow | Should -Match 'Run Pester suite under Windows PowerShell 5\.1[\s\S]*Invoke-PesterQualityGate\.ps1[\s\S]*-OutputVerbosity\s+None[\s\S]*-TestResultOutputPath\s+"testresults-winps51\.xml"'
+        $workflow | Should -Match 'Run Pester suite under PowerShell 7\+[\s\S]*timeout-minutes:\s+10'
+        $workflow | Should -Match 'Run Pester suite under PowerShell 7\+[\s\S]*Invoke-PesterQualityGate\.ps1[\s\S]*-OutputVerbosity\s+None[\s\S]*-TestResultOutputPath\s+"testresults-pwsh7\.xml"'
+        $workflow | Should -Match 'Windows PowerShell 5\.1 Pester duration: \$elapsedSeconds seconds'
+        $workflow | Should -Match 'PowerShell 7\+ Pester duration: \$elapsedSeconds seconds'
+    }
+
+    It "keeps each Pester XML artifact upload bound to its own always-run step" {
+        $crossLanguageWorkflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+        $prSummarizerWorkflow = Get-Content -Path $script:workflowPath -Raw
+
+        $crossLanguageUploadBlocks = @(Get-GitHubWorkflowStepBlocks -WorkflowContent $crossLanguageWorkflow -StepName 'Upload test results')
+        $winPsUploadBlocks = @($crossLanguageUploadBlocks | Where-Object { $_ -match '(?m)^[^\S\r\n]*name:[^\S\r\n]+pester-winps51[^\S\r\n]*$' })
+        $pwshUploadBlocks = @($crossLanguageUploadBlocks | Where-Object { $_ -match '(?m)^[^\S\r\n]*name:[^\S\r\n]+pester-pwsh7[^\S\r\n]*$' })
+
+        $winPsUploadBlocks.Count | Should -Be 1 -Because 'The Windows PowerShell 5.1 Pester artifact upload step should be uniquely identifiable.'
+        $pwshUploadBlocks.Count | Should -Be 1 -Because 'The PowerShell 7+ Pester artifact upload step should be uniquely identifiable.'
+        $winPsUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*if:[^\S\r\n]+always\(\)[^\S\r\n]*$'
+        $winPsUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*path:[^\S\r\n]+testresults-winps51\.xml[^\S\r\n]*$'
+        $pwshUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*if:[^\S\r\n]+always\(\)[^\S\r\n]*$'
+        $pwshUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*path:[^\S\r\n]+testresults-pwsh7\.xml[^\S\r\n]*$'
+
+        $prUploadBlocks = @(Get-GitHubWorkflowStepBlocks -WorkflowContent $prSummarizerWorkflow -StepName 'Upload Pester test results')
+        $prUploadBlocks.Count | Should -Be 1 -Because 'The PR summarizer Pester artifact upload step should be uniquely identifiable.'
+        $prUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*if:[^\S\r\n]+always\(\)[^\S\r\n]*$'
+        $prUploadBlocks[0] | Should -Match '(?m)^[^\S\r\n]*(path:[^\S\r\n]+)?testresults-github\.xml[^\S\r\n]*$'
+        $prUploadBlocks[0] | Should -Not -Match 'testresults-utils\.xml'
     }
 
     It "forbids fragile Pester type literals across all GitHub workflows" {
@@ -547,6 +818,99 @@ Describe "CI scope expansion" {
             $workflow = Get-Content -Path $workflowFile.FullName -Raw
             $workflow | Should -Not -Match '\[PesterConfiguration\]::Default' -Because "$($workflowFile.Name) must use New-PesterConfiguration to avoid module type-loading fragility."
         }
+    }
+
+    It "forbids direct Invoke-Pester workflow calls outside the shared quality gate" {
+        $workflowFiles = @(Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath '.github/workflows') -Filter '*.yml' -File -Recurse -ErrorAction Stop)
+        $workflowFiles.Count | Should -BeGreaterThan 0 -Because 'Expected at least one GitHub workflow file in .github/workflows.'
+
+        foreach ($workflowFile in $workflowFiles) {
+            $workflow = Get-Content -Path $workflowFile.FullName -Raw
+            $workflow | Should -Not -Match '(?<![\w.-])(?:[A-Za-z0-9_.-]+\\)?Invoke-Pester(?!QualityGate)(?![\w.-])' -Because "$($workflowFile.Name) must route Pester through Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1."
+        }
+    }
+}
+
+Describe "Workflow PowerShell module bootstrap routing" {
+    It "forbids inline gallery/module bootstrap in workflow YAML: <Label>" -TestCases @(
+        @{ Label = 'Set-PSRepository'; Pattern = '(?m)^\s*Set-PSRepository\b' }
+        @{ Label = 'Register-PSRepository'; Pattern = '(?m)^\s*Register-PSRepository\b' }
+        @{ Label = 'Get-PackageProvider'; Pattern = '(?m)^\s*Get-PackageProvider\b' }
+        @{ Label = 'Install-Module Pester'; Pattern = '(?m)^\s*Install-Module\b[^\r\n]*\bPester\b' }
+        @{ Label = 'Install-Module PSScriptAnalyzer'; Pattern = '(?m)^\s*Install-Module\b[^\r\n]*\bPSScriptAnalyzer\b' }
+    ) {
+        param($Label, $Pattern)
+
+        # Scope strictly to .github/workflows/*.yml. The shared bootstrap helper
+        # (Install-PowerShellQualityModules.ps1) and ModuleHelpers.ps1 legitimately
+        # contain Set-PSRepository / Register-PSRepository / Install-Module and must
+        # never be flagged; directory-scoping is the clean allowlist.
+        $workflowFiles = @(Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath '.github/workflows') -Filter '*.yml' -File -Recurse -ErrorAction Stop)
+        $workflowFiles.Count | Should -BeGreaterThan 0 -Because 'Expected at least one GitHub workflow file in .github/workflows.'
+
+        foreach ($workflowFile in $workflowFiles) {
+            $normalized = (Get-Content -Path $workflowFile.FullName -Raw) -replace "`r", ''
+            $normalized | Should -Not -Match $Pattern -Because "$($workflowFile.Name) must route module installation through Install-PowerShellQualityModules.ps1 instead of inline $Label."
+        }
+    }
+
+    It "requires module-consuming workflow lanes to route through the shared bootstrap script: <Name>" -TestCases @(
+        @{ Name = 'cross-language quality workflow'; Path = '.github/workflows/script-quality.yml' }
+        @{ Name = 'pr summarizer quality workflow'; Path = '.github/workflows/github-pr-summarizer-quality.yml' }
+    ) {
+        param($Name, $Path)
+
+        $workflowFullPath = Join-Path -Path $script:repoRoot -ChildPath $Path
+        $raw = (Get-Content -Path $workflowFullPath -Raw) -replace "`r", ''
+        $raw | Should -Match 'Install-PowerShellQualityModules\.ps1' -Because "$Name must invoke the shared module bootstrap script."
+    }
+
+    It "writes GITHUB_OUTPUT UTF-8 no-BOM in Windows PowerShell 5.1 steps (shell: powershell)" {
+        # Windows PowerShell 5.1 (shell: powershell, NOT pwsh) routes the '>' / '>>' redirection
+        # operators and Out-File through UTF-16LE, and 'Out-File -Encoding utf8' prepends a UTF-8
+        # BOM. GitHub Actions reads $GITHUB_OUTPUT as UTF-8, so either form corrupts the key=value
+        # line and silently breaks the step output (here: the actions/cache module path -> a broken
+        # or failing cache step). WinPS 5.1 steps must write GITHUB_OUTPUT via the no-BOM idiom:
+        #   [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "...`n", [System.Text.UTF8Encoding]::new($false))
+        # PowerShell 7+ (shell: pwsh) defaults to UTF-8 no-BOM, so '>>' under shell: pwsh stays allowed.
+        $workflowFiles = @(Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath '.github/workflows') -Filter '*.yml' -File -Recurse -ErrorAction Stop)
+        $workflowFiles.Count | Should -BeGreaterThan 0 -Because 'Expected at least one GitHub workflow file in .github/workflows.'
+
+        foreach ($workflowFile in $workflowFiles) {
+            $normalized = (Get-Content -Path $workflowFile.FullName -Raw) -replace "`r", ''
+
+            # Split into per-step blocks at YAML list-item boundaries so each step's shell is
+            # evaluated in isolation (a step's shell directive does not leak to sibling steps).
+            $stepBlocks = [regex]::Split($normalized, '(?m)^(?=\s*-\s+name:\s)')
+            foreach ($stepBlock in $stepBlocks) {
+                if ($stepBlock -notmatch '(?m)^\s*shell:\s*powershell\s*$') { continue }
+
+                $offendingLines = @(
+                    ($stepBlock -split "`n") | Where-Object {
+                        $_ -match '>\s*\$env:GITHUB_OUTPUT' -or ($_ -match '\bOut-File\b' -and $_ -match 'GITHUB_OUTPUT')
+                    }
+                )
+
+                $offendingLines.Count | Should -Be 0 -Because "$($workflowFile.Name): a Windows PowerShell 5.1 step (shell: powershell) writes GITHUB_OUTPUT via redirection/Out-File (UTF-16LE/BOM corruption). Use [System.IO.File]::AppendAllText(`$env:GITHUB_OUTPUT, ..., [System.Text.UTF8Encoding]::new(`$false)). Offending: $($offendingLines.ForEach({ $_.Trim() }) -join ' | ')"
+            }
+        }
+    }
+
+    It "resolves module-cache paths with the UTF-8 no-BOM GITHUB_OUTPUT idiom: <Name>" -TestCases @(
+        @{ Name = 'winps51 lane'; StepName = 'Resolve Windows PowerShell 5.1 user module path' }
+        @{ Name = 'pwsh7 lane'; StepName = 'Resolve PowerShell 7+ user module path' }
+    ) {
+        param($Name, $StepName)
+
+        $raw = (Get-Content -Path $script:crossLanguageWorkflowPath -Raw) -replace "`r", ''
+        $escapedName = [regex]::Escape($StepName)
+        $raw | Should -Match $escapedName -Because "Expected the '$StepName' step to exist."
+
+        # Isolate the named step block (up to the next list item or end of file).
+        $stepBlock = [regex]::Match($raw, "(?ms)-\s+name:\s*$escapedName\b.*?(?=^\s*-\s+name:\s|\z)").Value
+        $stepBlock | Should -Match '\[System\.IO\.File\]::AppendAllText\(\s*\$env:GITHUB_OUTPUT' -Because "$Name must write GITHUB_OUTPUT via [System.IO.File]::AppendAllText for UTF-8 no-BOM safety."
+        $stepBlock | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\s*\$false\s*\)' -Because "$Name must use a BOM-free UTF-8 encoding."
+        $stepBlock | Should -Not -Match '>\s*\$env:GITHUB_OUTPUT' -Because "$Name must not use '>'/'>>' redirection to GITHUB_OUTPUT."
     }
 }
 
@@ -560,6 +924,7 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Not -Match 'shfmt[-_]py|shfmt-binary'
         $preCommitConfig | Should -Not -Match 'repo:\s+https://github\.com/JohnnyMorganz/StyLua'
         $preCommitConfig | Should -Not -Match 'repo:\s+https://github\.com/rhysd/actionlint'
+        $preCommitConfig | Should -Not -Match 'mirrors-prettier|prettier-yaml'
         $preCommitConfig | Should -Match 'rev:\s+v\d+\.\d+\.\d+'
 
         $preCommitConfig | Should -Match 'id:\s+check-json'
@@ -583,8 +948,34 @@ Describe "Cross-language quality platform conventions" {
 
         $preCommitConfig | Should -Match 'id:\s+powershell-format[\s\S]*stages:\s+\[pre-commit\]'
         $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
+        $powershellPreCommitHookBlock = Get-PreCommitHookBlock -ConfigContent $preCommitConfig -HookId "powershell-precommit-validation"
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.pre-commit-config\.yaml'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.gitattributes'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.editorconfig'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.gitignore'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('requirements\.txt'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('\.psscriptanalyzer'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('native-quality-tools'))
+        $powershellPreCommitHookBlock | Should -Match ([regex]::Escape('shell-quality-tools'))
         $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation'
+        $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation[\s\S]*entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation\.ps1'
+        $preCommitConfig | Should -Match 'id:\s+powershell-prepush-validation[\s\S]*pass_filenames:\s+true'
+        $preCommitConfig | Should -Not -Match 'id:\s+powershell-prepush-validation[\s\S]*Run-PreCommitValidation\.ps1\s+-All'
+        $preCommitConfig | Should -Not -Match 'id:\s+powershell-prepush-validation[\s\S]*entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Run-PreCommitValidation\.ps1\s+-TargetFiles' -Because (
+            "pwsh -File only binds the first pre-commit filename to a named array parameter; the wrapper must capture filenames positionally and splat them as one array."
+        )
         $preCommitConfig | Should -Match 'stages:\s+\[pre-push\]'
+    }
+
+    It "routes pre-push pre-commit filenames through an array-splat wrapper" {
+        $wrapperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation.ps1'
+        $wrapperContent = Get-Content -Path $wrapperPath -Raw
+
+        $wrapperContent | Should -Match 'ValueFromRemainingArguments\s*=\s*\$true'
+        $wrapperContent | Should -Match '\[string\[\]\]\$TargetFiles\s*=\s*@\(\)'
+        $wrapperContent | Should -Match 'Run-PreCommitValidation\.ps1'
+        $wrapperContent | Should -Match 'TargetFiles\s*=\s*@\(\$TargetFiles\)'
+        $wrapperContent | Should -Match '&\s+\$validationScriptPath\s+@validationArguments'
     }
 
     It "routes LLM harness validation through the precommit orchestrator" {
@@ -592,6 +983,20 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig | Should -Match 'id:\s+powershell-precommit-validation'
         $preCommitConfig | Should -Match 'entry:\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+Scripts/Utils/Run-PreCommitValidation\.ps1'
         $preCommitConfig | Should -Not -Match 'id:\s+llm-harness-validation' -Because 'LLM harness checks should run once via the orchestrator to avoid duplicate execution'
+    }
+
+    It "pins and verifies the pre-commit CLI itself" {
+        $requirementsPath = Join-Path -Path $script:repoRoot -ChildPath 'requirements.txt'
+        $requirements = (Get-Content -Path $requirementsPath -Raw) -replace "`r", ''
+        $fullValidation = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw
+        $recoveryScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1') -Raw
+        $cliHelper = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/PreCommitCliHelpers.ps1') -Raw
+
+        $requirements | Should -Match '(?m)^pre-commit==\d+(?:\.\d+){1,3}$'
+        $cliHelper | Should -Match 'Get-RequiredPreCommitVersion'
+        $cliHelper | Should -Match 'E_VALIDATION_PRECOMMIT_VERSION_MISMATCH'
+        $fullValidation | Should -Match 'Assert-PreCommitCliVersion'
+        $recoveryScript | Should -Match 'Assert-PreCommitCliVersion'
     }
 
     It "routes shell safety conventions through the precommit orchestrator" {
@@ -612,9 +1017,80 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'Get-FileHash\s+-LiteralPath\s+\$Path\s+-Algorithm\s+SHA256'
         $validatorContent | Should -Match '\$allModeFormatterModifiedDirtyFiles'
         $validatorContent | Should -Match 'ScriptSafetyConventions\.Tests\.ps1'
-        $validatorContent | Should -Match '\$runShellSafetySuite\s*=\s*-not\s+\$runUtilsTests\s+-and'
+        $validatorContent | Should -Match '\$runShellSafetySuite\s*=\s*\$All\s+-and\s+-not\s+\$runUtilsTests'
         $validatorContent | Should -Match 'Running Tests/Utils/ScriptSafetyConventions\.Tests\.ps1 Pester suite in isolated process'
         $validatorContent | Should -Match 'PreCommitScriptSafety'
+    }
+
+    It "keeps precommit git path-list probes trace-safe" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = (Get-Content -Path $validatorPath -Raw) -replace "`r", ''
+
+        $validatorContent | Should -Match 'function\s+Invoke-GitCommandWithSplitOutput'
+        $validatorContent | Should -Match '\$stdout\s*=\s*@\(&\s+\$GitExecutable\s+@Arguments\s+2>\s+\$gitStderrPath\)'
+        $validatorContent | Should -Match 'function\s+Join-GitCommandDiagnosticOutput'
+        $validatorContent | Should -Match 'function\s+Invoke-GitStdoutOrThrow'
+        $validatorContent | Should -Match 'Invoke-GitCommandWithSplitOutput\s+-GitExecutable\s+\$GitExecutable\s+-Arguments\s+\$stagedFileArgs'
+        $validatorContent | Should -Match 'Invoke-GitStdoutOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-Arguments\s+@\("-C",\s*\$repoRoot,\s*"ls-files"\)'
+        $validatorContent | Should -Match 'Invoke-GitStdoutOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-Arguments\s+\$windowsLanguageDiffArgs'
+        $validatorContent | Should -Match 'Invoke-GitStdoutOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-Arguments\s+\$shellQualityDiffArgs'
+        $validatorContent | Should -Match 'Invoke-GitStdoutOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-Arguments\s+\$nativeQualityDiffArgs'
+        $validatorContent | Should -Not -Match '@stagedFileArgs\s+2>&1'
+        $validatorContent | Should -Not -Match 'ls-files\s+2>&1'
+        $validatorContent | Should -Not -Match '@(?:windowsLanguage|shellQuality|nativeQuality)DiffArgs\s+2>&1'
+    }
+
+    It "keeps parsed Git command helpers split-output and trace-safe" {
+        $hookRegistration = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/GitHookRegistrationHelpers.ps1') -Raw) -replace "`r", ''
+        $gitPush = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1') -Raw) -replace "`r", ''
+        $removeBom = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Remove-BOM.ps1') -Raw) -replace "`r", ''
+        $preCommitValidation = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1') -Raw) -replace "`r", ''
+        $preCommitAutoRepair = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1') -Raw) -replace "`r", ''
+        $preCommitRecovery = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1') -Raw) -replace "`r", ''
+        $qualityTooling = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/QualityToolingHelpers.ps1') -Raw) -replace "`r", ''
+        $compatibilityHelpers = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/CompatibilityHelpers.ps1') -Raw) -replace "`r", ''
+
+        $compatibilityHelpers | Should -Match 'function\s+Read-RedirectedProcessText'
+        $compatibilityHelpers | Should -Match 'DecoderFallbackException'
+
+        $hookRegistration | Should -Match '\$output\s*=\s*@\(&\s+\$GitExecutable\s+-C\s+\$RepositoryRoot\s+@Arguments\s+2>\s+\$stderrPath\)'
+        $hookRegistration | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$stderrPath'
+        $hookRegistration | Should -Match 'Get-Command\s+-Name\s+"test"\s+-CommandType\s+Application'
+        $hookRegistration | Should -Match 'DiagnosticOutput\s*=\s*@\(\$diagnosticOutput\)'
+        $hookRegistration | Should -Match 'Get-GitHookRegistrationDiagnosticOutput\s+-Result\s+\$rootResult'
+        $hookRegistration | Should -Not -Match '@Arguments\s+2>&1'
+
+        $gitPush | Should -Match '\$output\s*=\s*@\(&\s+\$GitExecutable\s+-C\s+\$RepositoryRoot\s+@Arguments\s+2>\s+\$stderrPath\)'
+        $gitPush | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$stderrPath'
+        $gitPush | Should -Match 'DiagnosticOutput\s*=\s*@\(\$diagnosticOutput\)'
+        $gitPush | Should -Match 'function\s+Get-GitPushCommandDiagnosticOutput'
+        $gitPush | Should -Match 'Get-GitPushCommandDiagnosticOutput\s+-Result\s+\$Result'
+        $gitPush | Should -Not -Match '@Arguments\s+2>&1'
+
+        $removeBom | Should -Match '\$commandOutput\s*=\s*@\(&\s+\$gitExecutable\s+-C\s+\$workingDirectory\s+@arguments\s+2>\s+\$commandStderrPath\)'
+        $removeBom | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$commandStderrPath'
+        $removeBom | Should -Match 'Get-Command\s+-Name\s+"readlink"\s+-CommandType\s+Application'
+        $removeBom | Should -Match 'DiagnosticOutput\s*=\s*@\(\$diagnosticOutput\)'
+        $removeBom | Should -Match 'function\s+Get-GitCommandFirstDiagnosticLine'
+        $removeBom | Should -Not -Match '@arguments\s+2>&1'
+
+        $qualityTooling | Should -Match 'Get-Command\s+-Name\s+"chmod"\s+-CommandType\s+Application'
+        $preCommitValidation | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$gitStderrPath'
+        $preCommitAutoRepair | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$gitStderrPath'
+        $preCommitAutoRepair | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$repoRootStderrPath'
+        $preCommitRecovery | Should -Match 'Read-RedirectedProcessText\s+-Path\s+\$repositoryRootStderrPath'
+        foreach ($content in @($hookRegistration, $gitPush, $removeBom, $preCommitValidation, $preCommitAutoRepair, $preCommitRecovery)) {
+            $content | Should -Not -Match 'ReadAllText\(\$[A-Za-z]*(?:Stderr|stderr)[A-Za-z]*Path,\s*\[System\.Text\.Encoding\]::UTF8\)'
+        }
+    }
+
+    It "keeps devcontainer shell linting on repo-managed shell quality tooling" {
+        $workflow = Get-Content -Path $script:devcontainerWorkflowPath -Raw
+
+        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+-EnsureOnly'
+        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
+        $workflow | Should -Not -Match 'apt-get\s+install[\s\S]*shellcheck'
+        $workflow | Should -Not -Match 'shellcheck\s+--severity'
     }
 
     It "routes staged Windows language checks through the precommit orchestrator" {
@@ -626,10 +1102,33 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'Config/\\\.config/.+\\\.ahk'
         $validatorContent | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
         $validatorContent | Should -Match '-TargetFiles\s+\$windowsLanguageFiles'
+        $validatorContent | Should -Match '-TargetFiles\s+\$windowsLanguageFiles\s+-StaticOnly'
         $validatorContent | Should -Not -Match '-TargetFiles\s+\$windowsLanguageFiles\s+-Fix'
         $validatorContent | Should -Match 'E_PRECOMMIT_WINDOWS_LANGUAGE_RESTAGE_REQUIRED'
         $validatorContent | Should -Match 'git diff[\s\S]*--name-only'
         $validatorContent | Should -Match 'Running Windows language static validation'
+    }
+
+    It "runs cross-version compatibility checks only through the deep precommit orchestrator mode" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = Get-Content -Path $validatorPath -Raw
+
+        $validatorContent | Should -Match '\$compatibilityTargetPattern\s*='
+        $validatorContent | Should -Match '\$runCompatibilityGate\s*=\s*\$All\s+-and\s+\$compatibilityTargetFiles\.Count\s+-gt\s+0'
+        $validatorContent | Should -Not -Match '\$runCompatibilityGate\s*=\s*-not\s+\$All'
+        $validatorContent | Should -Match 'Invoke-CompatibilityChecks\.ps1'
+        $validatorContent | Should -Match 'Running cross-version compatibility gate for'
+        $validatorContent | Should -Match 'E_PRECOMMIT_COMPATIBILITY_FAILED'
+    }
+
+    It "keeps pre-commit utils Pester execution fast-lane scoped to staged utils test files" {
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = Get-Content -Path $validatorPath -Raw
+
+        $validatorContent | Should -Match '\$utilsPesterPattern\s*=\s*''\^Tests/Utils/.+\\.Tests\\.ps1\$'''
+        $validatorContent | Should -Match '\$utilsScriptPattern\s*=\s*''\^Scripts/Utils/.+\\.ps1\$'''
+        $validatorContent | Should -Match 'Skipping Tests/Utils Pester suite for script-only staged changes in fast local mode'
+        $validatorContent | Should -Match 'full suite remains enforced in -All/full validation'
     }
 
     It "routes native Lua and workflow checks through the precommit orchestrator" {
@@ -683,23 +1182,146 @@ Describe "Cross-language quality platform conventions" {
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
 
         $preCommitHook | Should -Match 'pre-commit run --hook-stage pre-commit'
+        $preCommitHook | Should -Match 'command -v git'
+        $preCommitHook | Should -Match 'E_PRECOMMIT_HOOK_GIT_NOT_AVAILABLE'
+        $preCommitHook | Should -Not -Match 'repo_root="\$\(git rev-parse --show-toplevel 2>&1\)"'
+        $preCommitHook | Should -Match 'repo_root_stderr_path="\$\(mktemp 2> /dev/null\)"'
+        $preCommitHook | Should -Match 'repo_root="\$\(git rev-parse --show-toplevel 2>\s*"\$repo_root_stderr_path"\)"'
+        $preCommitHook | Should -Match 'repo_root_exit=\$\?'
+        $preCommitHook | Should -Match 'repo_root_stderr="\$\(< "\$repo_root_stderr_path"\)"'
+        $preCommitHook | Should -Match 'repo_root_output="\$repo_root"'
+        $preCommitHook | Should -Match 'E_PRECOMMIT_REPO_ROOT_UNAVAILABLE'
+        $preCommitHook | Should -Match 'workingDirectory=\$\{working_directory\}; gitCommand=\$\{git_command\}'
+        $preCommitHook | Should -Match 'run_safe_autorepair'
+        $preCommitHook | Should -Match 'has_staged_windows_language_targets'
+        $preCommitHook | Should -Match 'git -C "\$repo_root" diff --cached --name-only --diff-filter=ACMRD --'
+        $preCommitHook | Should -Match 'W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED'
+        $preCommitHook | Should -Match 'Invoke-PreCommitAutoRepair\.ps1'
         $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit'
+        $preCommitHook | Should -Match 'precommit_recovery_inner_timeout_seconds=30'
+        $preCommitHook | Should -Match 'precommit_recovery_shutdown_buffer_seconds=15'
+        $preCommitHook | Should -Match 'precommit_recovery_setup_slack_seconds=15'
+        $preCommitHook | Should -Match 'minimum_precommit_timeout_seconds=\$\(\(precommit_recovery_inner_timeout_seconds \+ precommit_recovery_shutdown_buffer_seconds \+ precommit_recovery_setup_slack_seconds\)\)'
+        $preCommitHook | Should -Match '\$\{precommit_recovery_inner_timeout_seconds\}s inner recovery timeout plus \$\{precommit_recovery_shutdown_buffer_seconds\}s shutdown buffer plus \$\{precommit_recovery_setup_slack_seconds\}s setup slack'
+        $preCommitHook | Should -Match 'emit_recovery_budget_diagnostic'
+        $preCommitHook | Should -Match 'configuredTimeoutSeconds=\$\{precommit_timeout_seconds\}'
+        $preCommitHook | Should -Match 'elapsedSetupSeconds=\$\{elapsed_seconds\}'
+        $preCommitHook | Should -Match 'remainingSeconds=\$\{remaining_seconds\}'
+        $preCommitHook | Should -Match 'requiredRemainingSeconds=\$\{required_remaining_seconds\}'
+        $preCommitHook | Should -Match 'timeoutProvider=\$\{timeout_provider\}'
+        $preCommitHook | Should -Match 'inner_timeout_seconds=\$\(\(remaining_seconds - precommit_recovery_shutdown_buffer_seconds\)\)'
+        $preCommitHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-commit -TimeoutSeconds "\$inner_timeout_seconds"'
+        $preCommitHook | Should -Match '\[\[ "\$inner_timeout_seconds" -lt "\$precommit_recovery_inner_timeout_seconds" \]\]'
+        $preCommitHook | Should -Match 'below required recovery budget'
         $preCommitHook | Should -Match 'Run-PreCommitValidation\.ps1'
         $preCommitHook | Should -Match 'pipx install pre-commit'
         $preCommitHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $preCommitHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
         $preCommitHook | Should -Match 'run_with_timeout'
+        $preCommitHook | Should -Match 'hook_start_seconds='
+        $preCommitHook | Should -Match 'remaining_timeout_seconds'
+        $preCommitHook | Should -Match 'minimumInnerTimeoutSeconds=\$\{precommit_recovery_inner_timeout_seconds\}'
+        $preCommitHook | Should -Match 'shutdownBufferSeconds=\$\{precommit_recovery_shutdown_buffer_seconds\}'
+        $preCommitHook | Should -Match 'setupSlackSeconds=\$\{precommit_recovery_setup_slack_seconds\}'
         $preCommitHook | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $preCommitHook | Should -Match 'E_HOOK_TIMEOUT_CONFIG'
-        $preCommitHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt 30 \]\]'
+        $preCommitHook | Should -Match 'W_HOOK_RUNTIME_BUDGET'
+        $preCommitHook | Should -Match 'HookTimeout\.sh'
+        $preCommitHook | Should -Match 'wallstop_resolve_timeout_command'
+        $preCommitHook | Should -Match 'wallstop_start_timeout_command'
+        $preCommitHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt "\$minimum_precommit_timeout_seconds" \]\]'
+        $preCommitHook | Should -Match 'grep -Ei'
 
-        $prePushHook | Should -Match 'pre-commit run --hook-stage pre-push --all-files'
-        $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -All'
+        $prePushHook | Should -Not -Match 'pre-commit run --hook-stage pre-push --all-files'
+        $prePushHook | Should -Not -Match '--all-files'
+        $prePushHook | Should -Match 'command -v git'
+        $prePushHook | Should -Match 'E_PREPUSH_HOOK_GIT_NOT_AVAILABLE'
+        $prePushHook | Should -Not -Match 'repo_root="\$\(git rev-parse --show-toplevel 2>&1\)"'
+        $prePushHook | Should -Match 'repo_root_stderr_path="\$\(mktemp 2> /dev/null\)"'
+        $prePushHook | Should -Match 'repo_root="\$\(git rev-parse --show-toplevel 2>\s*"\$repo_root_stderr_path"\)"'
+        $prePushHook | Should -Match 'repo_root_exit=\$\?'
+        $prePushHook | Should -Match 'repo_root_stderr="\$\(< "\$repo_root_stderr_path"\)"'
+        $prePushHook | Should -Match 'repo_root_output="\$repo_root"'
+        $prePushHook | Should -Match 'E_PREPUSH_REPO_ROOT_UNAVAILABLE'
+        $prePushHook | Should -Match 'workingDirectory=\$\{working_directory\}; gitCommand=\$\{git_command\}'
+        $prePushHook | Should -Not -Match 'Invoke-FullValidation\.ps1'
+        $prePushHook | Should -Not -Match 'Run-PreCommitValidation\.ps1"\s+-All'
+        $prePushHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-push'
+        $prePushHook | Should -Match 'prepush_recovery_inner_timeout_seconds=30'
+        $prePushHook | Should -Match 'prepush_recovery_shutdown_buffer_seconds=15'
+        $prePushHook | Should -Match 'prepush_recovery_setup_slack_seconds=15'
+        $prePushHook | Should -Match 'minimum_prepush_timeout_seconds=\$\(\(prepush_recovery_inner_timeout_seconds \+ prepush_recovery_shutdown_buffer_seconds \+ prepush_recovery_setup_slack_seconds\)\)'
+        $prePushHook | Should -Match '\$\{prepush_recovery_inner_timeout_seconds\}s inner recovery timeout plus \$\{prepush_recovery_shutdown_buffer_seconds\}s shutdown buffer plus \$\{prepush_recovery_setup_slack_seconds\}s setup slack'
+        $prePushHook | Should -Match 'emit_recovery_budget_diagnostic'
+        $prePushHook | Should -Match 'configuredTimeoutSeconds=\$\{prepush_timeout_seconds\}'
+        $prePushHook | Should -Match 'elapsedSetupSeconds=\$\{elapsed_seconds\}'
+        $prePushHook | Should -Match 'remainingSeconds=\$\{remaining_seconds\}'
+        $prePushHook | Should -Match 'requiredRemainingSeconds=\$\{required_remaining_seconds\}'
+        $prePushHook | Should -Match 'minimumInnerTimeoutSeconds=\$\{prepush_recovery_inner_timeout_seconds\}'
+        $prePushHook | Should -Match 'shutdownBufferSeconds=\$\{prepush_recovery_shutdown_buffer_seconds\}'
+        $prePushHook | Should -Match 'setupSlackSeconds=\$\{prepush_recovery_setup_slack_seconds\}'
+        $prePushHook | Should -Match 'timeoutProvider=\$\{timeout_provider\}'
+        $prePushHook | Should -Match 'changedFileCount=\$\{#resolved_changed_files\[@\]\}'
+        $prePushHook | Should -Match 'inner_timeout_seconds=\$\(\(remaining_seconds - prepush_recovery_shutdown_buffer_seconds\)\)'
+        $prePushHook | Should -Match 'Invoke-PreCommitWithRecovery\.ps1" -HookStage pre-push -TimeoutSeconds "\$inner_timeout_seconds" -FileListPath "\$target_file_list_path"'
+        $prePushHook | Should -Match 'write_changed_file_list'
+        $prePushHook | Should -Not -Match 'target_file_list_path="\$\(write_changed_file_list\)"'
+        $prePushHook | Should -Match 'write_changed_file_list\s*\r?\n\s*target_file_list_path="\$changed_file_list_path"\s*\r?\n\s*if remaining_seconds="\$\(remaining_timeout_seconds "pre-push changed-file pre-commit validation"\)"'
+        $prePushHook | Should -Match 'Run-PreCommitValidation\.ps1" -IncludePreCommitOwnedChecks -TargetFileListPath "\$target_file_list_path"'
         $prePushHook | Should -Match 'pipx install pre-commit'
         $prePushHook | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $prePushHook | Should -Not -Match 'python3 -m pip install --user pre-commit'
         $prePushHook | Should -Match 'run_with_timeout'
         $prePushHook | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
+        $prePushHook | Should -Match 'W_HOOK_RUNTIME_BUDGET'
+        $prePushHook | Should -Match 'HookTimeout\.sh'
+        $prePushHook | Should -Match 'wallstop_resolve_timeout_command'
+        $prePushHook | Should -Match 'wallstop_start_timeout_command'
+        $prePushHook | Should -Match 'git diff --name-only --diff-filter=ACMRD'
+        $prePushHook | Should -Match 'changed_file_discovery_exit=\$\?'
+        $prePushHook | Should -Match 'pre-push changed-file discovery failed'
+        $prePushHook | Should -Match 'E_PREPUSH_CHANGED_FILE_DISCOVERY_FAILED'
+        $prePushHook | Should -Match 'E_PREPUSH_CHANGED_FILE_FALLBACK_FAILED'
+    }
+
+    It "provides a hook-preflighted push helper for branches without upstreams" {
+        $pushHelperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1'
+        $pushHelper = Get-Content -Path $pushHelperPath -Raw
+
+        $pushHelper | Should -Match 'Assert-GitHookRegistration\s+-RepositoryRoot\s+\$resolvedRepositoryRoot\s+-Repair'
+        $pushHelper | Should -Match 'push",\s*"-u",\s*\$SelectedRemote,\s*"HEAD"'
+        $pushHelper | Should -Match 'push",\s*\$SelectedRemote,\s*"HEAD"'
+        $pushHelper | Should -Match 'E_GIT_PUSH_DETACHED_HEAD'
+        $pushHelper | Should -Match 'E_GIT_PUSH_REMOTE_MISSING'
+        $pushHelper | Should -Match 'E_GIT_PUSH_REMOTE_MISMATCH'
+        $pushHelper | Should -Match 'E_GIT_PUSH_REMOTE_BRANCH_DIVERGED'
+        $pushHelper | Should -Match 'merge-base",\s*"--is-ancestor"'
+        $pushHelper | Should -Not -Match 'push",\s*"-f"|--force' -Because (
+            "Automated push helpers must never force-push."
+        )
+    }
+
+    It "keeps pre-hook Windows language auto-repair safe and static-only" {
+        $autoRepairPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1'
+        $autoRepair = (Get-Content -Path $autoRepairPath -Raw) -replace "`r", ''
+
+        $autoRepair | Should -Match 'diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMRD"'
+        $autoRepair | Should -Match 'Scripts/AutoHotKey/.+\\\.ahk'
+        $autoRepair | Should -Match 'Config/\\\.config/.+\\\.ahk'
+        $autoRepair | Should -Match 'Scripts/.+\\\.bat'
+        $autoRepair | Should -Match 'W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SKIPPED_UNSTAGED'
+        $autoRepair | Should -Match 'W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SOURCE_UNSTAGED'
+        $autoRepair | Should -Match 'function\s+Invoke-WindowsLanguageCheckerForAutoRepair'
+        $autoRepair | Should -Match 'Invoke-WindowsLanguageChecks\.ps1'
+        $autoRepair | Should -Match '-TargetFiles\s+\$repairTargets\s+-Fix\s+-StaticOnly'
+        $autoRepair | Should -Match 'add",\s*"--"'
+        $autoRepair | Should -Match 'E_PRECOMMIT_AUTOREPAIR_GIT_ADD_FAILED'
+        $autoRepair | Should -Match 'Invoke-SafeGitIndexLockRecovery'
+        $autoRepair | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED'
+        $autoRepair | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING'
+        $autoRepair | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED'
+        $autoRepair | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED'
+        $autoRepair | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED'
     }
 
     It "keeps pre-commit bootstrap guidance aligned with PEP 668-safe flows" {
@@ -719,6 +1341,8 @@ Describe "Cross-language quality platform conventions" {
         $fullValidation | Should -Match 'pipx install pre-commit'
         $fullValidation | Should -Match 'python3 -m venv ~/.local/venvs/pre-commit'
         $fullValidation | Should -Match '~/.bashrc or ~/.zshrc'
+        $fullValidation | Should -Match 'Get-PreCommitBootstrapVersionGuidance'
+        $fullValidation | Should -Not -Match '\$\(Get-RequiredPreCommitVersion'
         $fullValidation | Should -Not -Match 'python3 -m pip install --user pre-commit'
 
         $preCommitHook | Should -Match '~/.bashrc or ~/.zshrc'
@@ -746,6 +1370,9 @@ Describe "Cross-language quality platform conventions" {
         $shellQualityScript | Should -Match '"SHELL_QUALITY"'
         $shellQualityScript | Should -Not -Match 'Invoke-WebRequest'
         $shellQualityScript | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
+        $shellQualityScript | Should -Match 'Test-ShellQualityTargetMatchesSuite'
+        $shellQualityScript | Should -Match 'Select-ShellQualityTargetFiles'
+        $shellQualityScript | Should -Match '\.githooks/\(pre-commit\|pre-push\)'
 
         $sharedHelper | Should -Match 'Invoke-WebRequest'
         $sharedHelper | Should -Match 'Get-FileHash'
@@ -804,6 +1431,10 @@ Describe "Cross-language quality platform conventions" {
         $nativeQualityScript | Should -Match 'E_NATIVE_TOOL_TIMEOUT_CONFIG'
         $nativeQualityScript | Should -Not -Match 'Invoke-WebRequest'
         $nativeQualityScript | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
+        $nativeQualityScript | Should -Match 'Test-NativeQualityTargetMatchesTool'
+        $nativeQualityScript | Should -Match 'Select-NativeQualityToolTargetFiles'
+        $nativeQualityScript | Should -Not -Match '\$filterForTool\s*=\s*\(\$SelectedTool\s+-eq\s+"All"\)'
+        $nativeQualityScript | Should -Not -Match '-FilterForTool'
 
         $sharedHelper | Should -Match 'Invoke-WebRequest'
         $sharedHelper | Should -Match 'Get-FileHash'
@@ -825,6 +1456,7 @@ Describe "Cross-language quality platform conventions" {
     It "auto-recovers pre-commit hook environment corruption before falling back to manual triage" {
         $recoveryScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1'
         $recoveryScript = Get-Content -Path $recoveryScriptPath -Raw
+        $autoRepairScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1') -Raw
         $fullValidation = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw
 
         $recoveryScript | Should -Match 'Test-PreCommitEnvironmentFailure'
@@ -833,6 +1465,35 @@ Describe "Cross-language quality platform conventions" {
         $recoveryScript | Should -Match 'install-hooks'
         $recoveryScript | Should -Match 'W_PRECOMMIT_ENV_AUTO_REPAIR'
         $recoveryScript | Should -Match 'E_PRECOMMIT_ENV_AUTO_REPAIR_FAILED'
+        $recoveryScript | Should -Match 'Resolve-PreCommitRecoveryRepositoryRootOrThrow'
+        $recoveryScript | Should -Not -Match 'rev-parse --show-toplevel 2>&1'
+        $recoveryScript | Should -Match 'repositoryRootStderrPath'
+        $recoveryScript | Should -Match 'rev-parse --show-toplevel 2> \$repositoryRootStderrPath'
+        $autoRepairScript | Should -Not -Match 'rev-parse --show-toplevel 2>&1'
+        $autoRepairScript | Should -Match 'repoRootStderrPath'
+        $autoRepairScript | Should -Match 'rev-parse --show-toplevel 2> \$repoRootStderrPath'
+        $autoRepairScript | Should -Match 'function\s+Invoke-GitCommandWithSplitOutput'
+        $autoRepairScript | Should -Match '\$stdout\s*=\s*@\(&\s+\$GitExecutable\s+@Arguments\s+2>\s+\$gitStderrPath\)'
+        $autoRepairScript | Should -Match 'Join-GitCommandDiagnosticOutput\s+-Stdout\s+\$gitOutput\s+-Stderr\s+\$gitResult\.Stderr'
+        $autoRepairScript | Should -Not -Match '@\(&\s+\$GitExecutable\s+@gitArgs\s+2>&1\)'
+        $recoveryScript | Should -Match 'Get-PreCommitRecoveryRemainingTimeoutSeconds'
+        $recoveryScript | Should -Match 'Receive-PreCommitCommandStreamText'
+        $recoveryScript | Should -Match 'StreamDrainTimeoutMilliseconds'
+        $recoveryScript | Should -Match 'E_PRECOMMIT_RECOVERY_CAPTURE_TIMEOUT'
+        $recoveryScript | Should -Match 'New-PreCommitEnvironmentRepairResult'
+        $recoveryScript | Should -Match 'Succeeded'
+        $recoveryScript | Should -Match '\$deadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(\$CommandTimeoutSeconds\)[\s\S]*Get-PreCommitRecoveryGitExecutableOrThrow[\s\S]*Resolve-PreCommitRecoveryRepositoryRootOrThrow[\s\S]*Get-PreCommitExecutableOrThrow[\s\S]*-DeadlineUtc\s+\$deadlineUtc'
+        $recoveryScript | Should -Match 'Assert-PreCommitCliVersion[\s\S]*-TimeoutSeconds\s+\$versionProbeTimeoutSeconds'
+        $recoveryScript | Should -Match 'OverallTimeoutSeconds'
+        $recoveryScript | Should -Match 'WorkingDirectory = \$RepositoryRoot'
+        $recoveryScript | Should -Match 'Invoke-PreCommitIndexLockRecovery'
+        $recoveryScript | Should -Match 'Invoke-SafeGitIndexLockRecovery'
+        $recoveryScript | Should -Match 'workingDirectory='
+        $recoveryScript | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED'
+        $recoveryScript | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING'
+        $recoveryScript | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED'
+        $recoveryScript | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED'
+        $recoveryScript | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED'
         $recoveryScript | Should -Not -Match 'Start-Process\s+@|Start-Process\s+-FilePath'
 
         $fullValidation | Should -Match 'Assert-PreCommitHookEnvironmentAvailability'
@@ -840,15 +1501,22 @@ Describe "Cross-language quality platform conventions" {
         $fullValidation | Should -Match '-InstallHooksOnly'
         $fullValidation | Should -Match 'E_VALIDATION_PRECOMMIT_ENV_PREFLIGHT_FAILED'
         $fullValidation | Should -Match '-HookStage\s+pre-commit\s+-AllFiles'
-        $fullValidation | Should -Match '-HookStage\s+pre-push\s+-AllFiles'
+        $fullValidation | Should -Match 'Run-PreCommitValidation\.ps1'
+        $fullValidation | Should -Match 'E_VALIDATION_DEEP_POWERSHELL_FAILED'
+        $fullValidation | Should -Not -Match '-HookStage\s+pre-push\s+-AllFiles'
+
+        $validationWorkflow = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/validation-workflow.md') -Raw
+        $validationWorkflow | Should -Match 'E_VALIDATION_DEEP_POWERSHELL_FAILED'
+        $validationWorkflow | Should -Not -Match 'E_VALIDATION_PREPUSH_FAILED'
     }
 
     It "explicitly propagates pwsh fallback exit status in git hooks" {
         $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
 
-        $preCommitHook | Should -Match 'run_with_timeout\s+"\$precommit_timeout_seconds"\s+"legacy pre-commit PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s*\r?\n\s*return\s+\$\?'
-        $prePushHook | Should -Match 'run_with_timeout\s+"\$prepush_timeout_seconds"\s+"legacy pre-push PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-All\s*\r?\n\s*return\s+\$\?'
+        $preCommitHook | Should -Match 'remaining_timeout_seconds\s+"legacy pre-commit PowerShell validation"'
+        $preCommitHook | Should -Match 'run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-commit PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-IncludePreCommitOwnedChecks\s+-AllowPreCommitOwnedFixes\s*\r?\n\s*return\s+\$\?'
+        $prePushHook | Should -Match 'run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-push PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-IncludePreCommitOwnedChecks\s+-TargetFileListPath\s+"\$target_file_list_path"\s*\r?\n\s*return\s+\$\?'
         $preCommitHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
         $prePushHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
     }
@@ -856,18 +1524,110 @@ Describe "Cross-language quality platform conventions" {
     It "enforces timeout guardrails for hooks and devcontainer preflight" {
         $preCommitHook = Get-Content -Path $script:preCommitHookPath -Raw
         $prePushHook = Get-Content -Path $script:prePushHookPath -Raw
+        $readme = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'README.md') -Raw
         $postCreatePath = Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh'
         $postCreate = Get-Content -Path $postCreatePath -Raw
+        $hookTimeoutHelperPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/HookTimeout.sh'
+        $hookTimeoutHelper = Get-Content -Path $hookTimeoutHelperPath -Raw
+        $recoveryScript = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1') -Raw
 
         $preCommitHook | Should -Match 'resolve_timeout_command'
         $preCommitHook | Should -Match 'E_HOOK_TIMEOUT'
+        $preCommitHook | Should -Match 'using shell watchdog timeout'
+        $preCommitHook | Should -Match 'sleep "\$timeout_seconds"'
+        $preCommitHook | Should -Match 'wallstop_start_timeout_command'
+        $preCommitHook | Should -Match 'wallstop_terminate_timeout_command'
+        $preCommitHook | Should -Match 'wallstop_cleanup_timeout_command_processes'
+        $preCommitHook | Should -Match '\$timeout_command"\s+-k\s+2s\s+"\$\{timeout_seconds\}s"'
+        $preCommitHook | Should -Not -Match 'timeout_command"\s+--foreground'
+        $preCommitHook | Should -Not -Match 'kill\s+-TERM\s+"\$command_pid"'
+        $preCommitHook | Should -Not -Match 'kill\s+-KILL\s+"\$command_pid"'
         $prePushHook | Should -Match 'resolve_timeout_command'
         $prePushHook | Should -Match 'E_HOOK_TIMEOUT'
-        $prePushHook | Should -Match 'pre-push full validation'
+        $prePushHook | Should -Match 'using shell watchdog timeout'
+        $prePushHook | Should -Match 'sleep "\$timeout_seconds"'
+        $prePushHook | Should -Match 'wallstop_start_timeout_command'
+        $prePushHook | Should -Match 'wallstop_terminate_timeout_command'
+        $prePushHook | Should -Match 'wallstop_cleanup_timeout_command_processes'
+        $prePushHook | Should -Match '\$timeout_command"\s+-k\s+2s\s+"\$\{timeout_seconds\}s"'
+        $prePushHook | Should -Not -Match 'timeout_command"\s+--foreground'
+        $prePushHook | Should -Not -Match 'kill\s+-TERM\s+"\$command_pid"'
+        $prePushHook | Should -Not -Match 'kill\s+-KILL\s+"\$command_pid"'
+        $prePushHook | Should -Match 'pre-push changed-file pre-commit validation'
+        $prePushHook | Should -Match '\[\[ ! "\$timeout_value" =~ \^\[0-9\]\+\$ \]\] \|\| \[\[ "\$timeout_value" -lt "\$minimum_prepush_timeout_seconds" \]\]'
+
+        $readme | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS[\s\S]*at least 60 seconds' -Because (
+            "README must document the same pre-commit minimum enforced by .githooks/pre-commit."
+        )
+        $readme | Should -Match '30s inner recovery timeout plus a 15s shutdown buffer plus 15s setup slack' -Because (
+            "README must explain why pre-commit accepts no values below 60 seconds."
+        )
+        $readme | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS[\s\S]*at least 60 seconds' -Because (
+            "README must document the same pre-push recovery-buffer minimum enforced by .githooks/pre-push."
+        )
 
         $postCreate | Should -Match '_run_with_timeout'
+        $postCreate | Should -Match '_validate_timeout_seconds'
         $postCreate | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $postCreate | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
+        $postCreate | Should -Match 'Invoke-PreCommitWithRecovery\.ps1 -InstallHooksOnly -TimeoutSeconds "\$\{precommit_prewarm_inner_timeout_seconds\}"'
         $postCreate | Should -Match 'Invoke-FullValidation\.ps1 -PreflightOnly'
+        $postCreate | Should -Match 'using shell watchdog timeout'
+        $postCreate | Should -Match 'E_HOOK_TIMEOUT'
+        $postCreate | Should -Match 'HookTimeout\.sh'
+        $postCreate | Should -Match 'wallstop_start_timeout_command'
+        $postCreate | Should -Match 'wallstop_terminate_timeout_command'
+        $postCreate | Should -Match 'wallstop_cleanup_timeout_command_processes'
+        $postCreate | Should -Match '\$timeout_command"\s+-k\s+2s\s+"\$\{timeout_seconds\}s"'
+        $postCreate | Should -Not -Match 'timeout_command"\s+--foreground'
+        $postCreate | Should -Not -Match 'kill\s+-TERM\s+"\$\{command_pid\}"'
+        $postCreate | Should -Not -Match 'kill\s+-KILL\s+"\$\{command_pid\}"'
+        $postCreate | Should -Match '_resolve_codex_npm_global_bin'
+        $postCreate | Should -Match '_resolve_codex_npm_package_bin'
+        $postCreate | Should -Match '_test_codex_local_bin_is_npm_managed'
+        $postCreate | Should -Match '_resolve_codex_path_without_local_bin'
+        $postCreate | Should -Match 'E_DEVCONTAINER_CODEX_LINK_FAILED'
+        $postCreate | Should -Match 'E_DEVCONTAINER_CODEX_BINARY_UNRESOLVED'
+        $postCreate | Should -Match 'npm root --global'
+        $postCreate | Should -Match '@openai/codex'
+        $postCreate | Should -Match 'pwd -P'
+        $postCreate | Should -Match 'readlink -f "\$\{codex_path\}"'
+        $postCreate | Should -Match 'refusing to use \${codex_link_path} as its own link source'
+        $postCreate | Should -Match 'ln -sfn "\$\{codex_source_path\}" "\$\{codex_link_path\}"'
+        $postCreate | Should -Not -Match 'codex_path="\$\(command -v codex'
+
+        $hookTimeoutHelper | Should -Match 'function\s+wallstop_start_timeout_command|wallstop_start_timeout_command\(\)'
+        $hookTimeoutHelper | Should -Match '\bsetsid\b'
+        $hookTimeoutHelper | Should -Match 'os\.setsid\(\)'
+        $hookTimeoutHelper | Should -Match 'wallstop_can_start_session_with_setsid'
+        $hookTimeoutHelper | Should -Match 'kill -0 -- "-\$\$"'
+        $hookTimeoutHelper | Should -Match 'os\.kill\(-os\.getpid\(\), 0\)'
+        $hookTimeoutHelper | Should -Match 'kill 0, -\$\$'
+        $hookTimeoutHelper | Should -Match 'wallstop_terminate_timeout_command'
+        $hookTimeoutHelper | Should -Match 'kill "\-\$\{signal_name\}" -- "-\$\{command_pid\}"'
+        $hookTimeoutHelper | Should -Match 'wallstop_cleanup_timeout_command_processes'
+        $hookTimeoutHelper | Should -Match 'W_HOOK_PROCESS_GROUP_UNAVAILABLE'
+        $hookTimeoutHelper | Should -Match 'W_HOOK_PROCESS_GROUP_CLEANUP'
+        $hookTimeoutWarningFunctionMatch = [regex]::Match(
+            $hookTimeoutHelper,
+            '(?ms)wallstop_timeout_emit_warning\(\)\s*\{(?<body>.*?)^\}'
+        )
+        $hookTimeoutWarningFunctionMatch.Success | Should -BeTrue
+        $hookTimeoutWarningFunctionBody = $hookTimeoutWarningFunctionMatch.Groups["body"].Value
+        $hookTimeoutWarningFunctionBody | Should -Match '\$\{WALLSTOP_TIMEOUT_WARNING_PREFIX\}\$\{message\}[\s\S]*?1?>\s*&2'
+        $hookTimeoutWarningFunctionBody | Should -Match '\$message[\s\S]*?1?>\s*&2'
+        $hookTimeoutWarningFunctionBody | Should -Not -Match '(?m)^\s*(?:echo|printf\b)(?![^\r\n]*(?:1?>\s*&2|\|[&]?\s*(?:cat|tee)\s*>\s*/dev/stderr))[^\r\n]*\$message'
+
+        $streamDrainMatch = [regex]::Match($recoveryScript, '\[int\]\$StreamDrainTimeoutMilliseconds\s*=\s*(?<milliseconds>\d+)')
+        $preCommitBufferMatch = [regex]::Match($preCommitHook, 'precommit_recovery_shutdown_buffer_seconds=(?<seconds>\d+)')
+        $prewarmBufferMatch = [regex]::Match($postCreate, 'precommit_prewarm_shutdown_buffer_seconds=(?<seconds>\d+)')
+        $streamDrainMatch.Success | Should -BeTrue -Because 'the recovery wrapper must declare a bounded per-stream drain timeout'
+        $preCommitBufferMatch.Success | Should -BeTrue -Because 'pre-commit hook must reserve shutdown/capture time outside the inner recovery timeout'
+        $prewarmBufferMatch.Success | Should -BeTrue -Because 'devcontainer prewarm must reserve shutdown/capture time outside the inner recovery timeout'
+
+        $minimumBufferMilliseconds = ([int]$streamDrainMatch.Groups['milliseconds'].Value * 2) + 1000
+        ([int]$preCommitBufferMatch.Groups['seconds'].Value * 1000) | Should -BeGreaterOrEqual $minimumBufferMilliseconds
+        ([int]$prewarmBufferMatch.Groups['seconds'].Value * 1000) | Should -BeGreaterOrEqual $minimumBufferMilliseconds
     }
 
     It "tracks pre-push hook executable mode in git" {
@@ -912,6 +1672,9 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Match 'uses:\s+actions/checkout@v\d+\.\d+\.\d+'
         $workflow | Should -Match 'uses:\s+actions/setup-python@v\d+\.\d+\.\d+'
         $workflow | Should -Match 'uses:\s+actions/cache@v\d+\.\d+\.\d+'
+        $workflow | Should -Match "hashFiles\('\.pre-commit-config\.yaml', 'requirements\.txt'\)"
+        $workflow | Should -Match 'python -m pip install --requirement requirements\.txt'
+        $workflow | Should -Not -Match 'python -m pip install --upgrade pip pre-commit'
         $workflow | Should -Match 'shell-debt-audit'
         $workflow | Should -Match 'run_shell_debt_audit'
     }
@@ -947,7 +1710,9 @@ Describe "Cross-language quality platform conventions" {
         $crossLanguageWorkflow | Should -Match 'uses:\s+actions/checkout@v6\.\d+\.\d+'
         $crossLanguageWorkflow | Should -Match 'uses:\s+actions/setup-python@v6\.\d+\.\d+'
         $crossLanguageWorkflow | Should -Match 'uses:\s+actions/cache@v5\.\d+\.\d+'
+        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/upload-artifact@v(?:6|7)\.\d+\.\d+'
         $powerShellWorkflow | Should -Match 'uses:\s+actions/checkout@v6\.\d+\.\d+'
+        $powerShellWorkflow | Should -Match 'uses:\s+actions/upload-artifact@v(?:6|7)\.\d+\.\d+'
     }
 
     It "keeps targeted Windows helper script contract for changed-file validation" {
@@ -1073,6 +1838,15 @@ Describe "Cross-language quality platform conventions" {
         $windowsChecks | Should -Match 'Batch checks limitation'
         $windowsChecks | Should -Match 'best-effort static smoke checks'
         $windowsChecks | Should -Match 'unbalanced parentheses at end-of-file'
+    }
+
+    It "keeps bounded follow-up static validation pass for fixable AHK dependency chains" {
+        $windowsChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1'
+        $windowsChecks = Get-Content -Path $windowsChecksPath -Raw
+
+        $windowsChecks | Should -Match '\$maxStaticPasses\s*=\s*if\s*\(\$Fix\)\s*\{\s*2\s*\}\s*else\s*\{\s*1\s*\}'
+        $windowsChecks | Should -Match 'repairsAppliedThisPass'
+        $windowsChecks | Should -Match 'running follow-up static validation pass after auto-repair updates'
     }
 }
 
@@ -1245,6 +2019,160 @@ Describe "Shell quality conventions" {
         )
     }
 
+    It "routes shell warning and error diagnostics to stderr" {
+        $shellFiles = @(
+            Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts') -Filter '*.sh' -File -Recurse -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-commit') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-push') -ErrorAction Stop
+        )
+        $diagnosticEmitPattern = '^\s*(?:echo(?:\s+-e)?|printf\b).*?(?:(?<![A-Za-z0-9_])(?:E_[A-Z0-9_]+|W_[A-Z0-9_]+)\b|Error:|Warning:|Unknown option:|Use -h or --help|Install Homebrew first)'
+        $diagnosticTextPattern = '(?:(?<![A-Za-z0-9_])(?:E_[A-Z0-9_]+|W_[A-Z0-9_]+)\b|Error:|Warning:|Unknown option:|Use -h or --help|Install Homebrew first)'
+        $diagnosticHelperNames = @("emit_diagnostic", "_warn", "wallstop_timeout_emit_warning")
+        $diagnosticHelperCallPattern = '^\s*(?<helper>{0})\s+' -f (($diagnosticHelperNames | ForEach-Object { [regex]::Escape($_) }) -join '|')
+        $diagnosticHelperFunctionPattern = '(?m)^\s*(?<helper>{0})\(\)\s*\{{' -f (($diagnosticHelperNames | ForEach-Object { [regex]::Escape($_) }) -join '|')
+        $stderrRedirectPattern = '(?:1?>\s*&2|\|[&]?\s*(?:cat|tee)\s*>\s*/dev/stderr)'
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        foreach ($shellFile in $shellFiles) {
+            $relativePath = (Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $shellFile.FullName) -replace '\\', '/'
+            $content = (Get-Content -Path $shellFile.FullName -Raw) -replace "`r", ''
+            $lines = $content -split "`n"
+            $stderrGroupedLines = [System.Collections.Generic.HashSet[int]]::new()
+            $groupStartStack = New-Object System.Collections.Generic.Stack[int]
+            $stderrDiagnosticHelpers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+
+            foreach ($helperMatch in [regex]::Matches($content, $diagnosticHelperFunctionPattern)) {
+                $helperName = $helperMatch.Groups["helper"].Value
+                $lineStart = $helperMatch.Index
+                $lineEnd = $content.IndexOf("`n", $lineStart)
+                if ($lineEnd -lt 0) {
+                    $lineEnd = $content.Length
+                }
+
+                $definitionLine = $content.Substring($lineStart, $lineEnd - $lineStart)
+                $helperBody = ''
+                if ($definitionLine -match '^\s*[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{\s*(?<body>.*?)\s*\}\s*$') {
+                    $helperBody = $Matches["body"]
+                }
+                else {
+                    $bodyStart = $content.IndexOf("`n", $lineStart)
+                    if ($bodyStart -lt 0) {
+                        continue
+                    }
+
+                    $bodyEndMatch = [regex]::Match($content.Substring($bodyStart + 1), '(?m)^\s*\}')
+                    if (-not $bodyEndMatch.Success) {
+                        continue
+                    }
+
+                    $helperBody = $content.Substring($bodyStart + 1, $bodyEndMatch.Index)
+                }
+
+                $helperBodyLines = $helperBody -split "`n"
+                $helperBodyStderrGroupedLines = [System.Collections.Generic.HashSet[int]]::new()
+                $helperBodyGroupStartStack = New-Object System.Collections.Generic.Stack[int]
+                for ($helperLineIndex = 0; $helperLineIndex -lt $helperBodyLines.Count; $helperLineIndex++) {
+                    $helperLineNumber = $helperLineIndex + 1
+                    $helperLine = $helperBodyLines[$helperLineIndex]
+
+                    if ($helperLine -match '^\s*\{\s*$') {
+                        $helperBodyGroupStartStack.Push($helperLineNumber)
+                        continue
+                    }
+
+                    if ($helperLine -match '^\s*\}\s*1?>\s*&2\s*$' -and $helperBodyGroupStartStack.Count -gt 0) {
+                        $groupStart = $helperBodyGroupStartStack.Pop()
+                        for ($groupLineNumber = $groupStart; $groupLineNumber -le $helperLineNumber; $groupLineNumber++) {
+                            [void]$helperBodyStderrGroupedLines.Add($groupLineNumber)
+                        }
+                        continue
+                    }
+
+                    if ($helperLine -match '^\s*\}\s*$' -and $helperBodyGroupStartStack.Count -gt 0) {
+                        [void]$helperBodyGroupStartStack.Pop()
+                    }
+                }
+
+                $unsafeHelperEmitLines = @()
+                for ($helperLineIndex = 0; $helperLineIndex -lt $helperBodyLines.Count; $helperLineIndex++) {
+                    $helperLineNumber = $helperLineIndex + 1
+                    $helperLine = $helperBodyLines[$helperLineIndex]
+
+                    if ($helperLine -cnotmatch '^\s*(?:echo(?:\s+-e)?|printf\b)') {
+                        continue
+                    }
+
+                    if ($helperLine -cmatch $stderrRedirectPattern -or $helperBodyStderrGroupedLines.Contains($helperLineNumber)) {
+                        continue
+                    }
+
+                    $unsafeHelperEmitLines += $helperLineNumber
+                }
+
+                if (@($unsafeHelperEmitLines).Count -eq 0) {
+                    [void]$stderrDiagnosticHelpers.Add($helperName)
+                    continue
+                }
+
+                $helperLineNumber = (($content.Substring(0, $helperMatch.Index) -split "`n").Count)
+                $violations.Add("${relativePath}:$helperLineNumber diagnostic helper '$helperName' has stdout emit line(s): $($unsafeHelperEmitLines -join ', ')") | Out-Null
+            }
+
+            for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++) {
+                $lineNumber = $lineIndex + 1
+                $line = $lines[$lineIndex]
+
+                if ($line -match '^\s*\{\s*$') {
+                    $groupStartStack.Push($lineNumber)
+                    continue
+                }
+
+                if ($line -match '^\s*\}\s*1?>\s*&2\s*$' -and $groupStartStack.Count -gt 0) {
+                    $groupStart = $groupStartStack.Pop()
+                    for ($groupLineNumber = $groupStart; $groupLineNumber -le $lineNumber; $groupLineNumber++) {
+                        [void]$stderrGroupedLines.Add($groupLineNumber)
+                    }
+                    continue
+                }
+
+                if ($line -match '^\s*\}\s*$' -and $groupStartStack.Count -gt 0) {
+                    [void]$groupStartStack.Pop()
+                }
+            }
+
+            for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++) {
+                $lineNumber = $lineIndex + 1
+                $line = $lines[$lineIndex]
+
+                if ($line -cnotmatch $diagnosticEmitPattern) {
+                    $helperCallMatch = [regex]::Match($line, $diagnosticHelperCallPattern)
+                    if (-not $helperCallMatch.Success -or $line -cnotmatch $diagnosticTextPattern) {
+                        continue
+                    }
+
+                    $helperName = $helperCallMatch.Groups["helper"].Value
+                    if ($stderrDiagnosticHelpers.Contains($helperName)) {
+                        continue
+                    }
+
+                    $violations.Add("${relativePath}:$lineNumber helper '$helperName' must redirect diagnostics to stderr: $line") | Out-Null
+                    continue
+                }
+
+                if ($line -cmatch $stderrRedirectPattern -or $stderrGroupedLines.Contains($lineNumber)) {
+                    continue
+                }
+
+                $violations.Add("${relativePath}:$lineNumber $line") | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Shell diagnostics must go to stderr so stdout remains machine-readable. Violations: {0}" -f ($violations -join ', ')
+        )
+    }
+
     It "keeps Home-directory glob loops quoted in Backup.sh" {
         $backupPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Mac/Backup.sh'
         # Normalize to LF so multiline regex anchors work on all platforms (Windows checkout may add CR).
@@ -1282,6 +2210,10 @@ Describe "Shell quality conventions" {
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+push\s+(?:--force|-f)\b'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$REPO_ROOT"\s+commit\s+-m\s+"Backup for \$current_date"\s*\|\|'
         $backupContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+rev-parse\s+--abbrev-ref\s+HEAD[^\n]*\|\|\s*true'
+        $backupContent | Should -Not -Match 'rev-parse\s+--abbrev-ref\s+HEAD\s+2>&1'
+        $backupContent | Should -Not -Match 'status\s+--porcelain=v1[^\n]*2>&1\)";\s*then'
+        $backupContent | Should -Match 'branch_stderr_path'
+        $backupContent | Should -Match 'outside_status_stderr_path'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+add\s+--all\s*$'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+pull\s+origin\s+main\s*$'
         $backupContent | Should -Not -Match '(?m)^\s*git\s+push\s+origin\s+main\s*$'
@@ -1388,7 +2320,13 @@ Describe "Shell quality conventions" {
         $incrementContent | Should -Not -Match 'git\s+-C\s+"\$repo_root"\s+push\s+(?:--force|-f)\b'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+git\s+rev-parse\s+--is-inside-work-tree\b'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+repo_root_output="\$\(git\s+rev-parse\s+--show-toplevel'
+        $incrementContent | Should -Not -Match 'rev-parse\s+--show-toplevel\s+2>&1'
         $incrementContent | Should -Not -Match '(?m)^\s*branch=\$\(git\s+rev-parse\s+--abbrev-ref\s+HEAD\)'
+        $incrementContent | Should -Not -Match 'rev-parse\s+--abbrev-ref\s+HEAD\s+2>&1'
+        $incrementContent | Should -Not -Match '\$\(\s*git\s+-C\s+"\$repo_root"\s+"\$\{scope_args\[@\]\}"\s+2>&1\)'
+        $incrementContent | Should -Match 'repo_root_stderr_path'
+        $incrementContent | Should -Match 'branch_stderr_path'
+        $incrementContent | Should -Match 'staged_scope_stderr_path'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+!\s+git\s+fetch\s+--prune;\s+then\s*$'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+!\s+git\s+-C\s+"\$repo_root"\s+fetch\s+--prune;\s+then\s*$'
         $incrementContent | Should -Not -Match '(?m)^\s*if\s+counts=\$\(git\s+rev-list\s+--left-right\s+--count'
@@ -1765,7 +2703,8 @@ Describe "Restore script safety conventions" {
 
         $restoreScript | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
         $restoreScript | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
-        $restoreScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
+        $restoreScript | Should -Match 'Resolve-PowerShellExecutablePath'
+        $restoreScript | Should -Not -Match 'Get-Command\s+-Name\s+"pwsh"'
         $restoreScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
         $restoreScript | Should -Match 'E_RESTORE_PARTIAL_FAILURE'
     }
@@ -1884,9 +2823,13 @@ Describe "Backup script safety conventions" {
 
         $backupScript | Should -Match '\$stepResults\s*=\s*New-Object\s+System\.Collections\.Generic\.List\[object\]'
         $backupScript | Should -Match 'Proceeding with git operations \(best-effort mode\)'
+        $backupScript | Should -Match 'param\(\s*\[Parameter\(Mandatory\s*=\s*\$false\)\]\s*\[switch\]\$Unattended\s*\)'
+        $backupScript | Should -Match 'WALLSTOP_BACKUP_UNATTENDED'
+        $backupScript | Should -Match 'function\s+Test-BackupTruthySettingValue'
         $backupScript | Should -Match 'if\s*\(\s*\$hasBackupStepFailures\s*\)\s*\{[\s\S]*partial success:'
         $backupScript | Should -Match 'else\s*\{[\s\S]*\$commitMessage\s*=\s*"Backup for \$dateString \(\$succeededCount/\$totalCount\)"'
-        $backupScript | Should -Match 'Get-Command\s+-Name\s+"pwsh"'
+        $backupScript | Should -Match 'Resolve-PowerShellExecutablePath'
+        $backupScript | Should -Not -Match 'Get-Command\s+-Name\s+"pwsh"'
         $backupScript | Should -Match '&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File'
         $backupScript | Should -Match 'function\s+Get-GitExecutableOrThrow'
         $backupScript | Should -Match 'Get-Command\s+-Name\s+"git"'
@@ -1937,9 +2880,23 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?git\s+push\s+origin\s+main'
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$hasGitFailure\s*\)\s*\{[\s\S]*?Assert-BackupGitBranchOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot\s+-ExpectedBranch\s+"main"[\s\S]*?git\s+push\s+origin\s+main'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX'
+        $backupScript | Should -Match 'W_BACKUP_UNATTENDED_MODE_ACTIVE'
+        $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_NO_VERIFY'
         $backupScript | Should -Match 'W_BACKUP_GIT_ADD_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_SKIPPED_PRIOR_GIT_FAILURE'
         $backupScript | Should -Match 'W_BACKUP_GIT_PUSH_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'if\s*\(\s*\$isUnattendedMode\s*\)\s*\{[\s\S]*?\$gitExecutable\s+-C\s+\$repositoryRoot\s+commit\s+--no-verify\s+-m\s+\$commitMessage[\s\S]*?\}\s*else\s*\{' -Because 'Unattended backup commits must bypass hooks with --no-verify, while attended commits use the retry/autofix branch.'
+        $backupScript | Should -Not -Match 'while\s*\(\s*-not\s+\$commitSucceeded\s+-and\s+\$commitAttempt\s+-lt\s+\$maxCommitAttempts\s*\)[\s\S]*?--no-verify' -Because '--no-verify must remain scoped to unattended mode and not appear inside attended retry commits.'
+        $backupScript | Should -Match 'function\s+Get-BackupManagedChangedFilesOrThrow'
+        $backupScript | Should -Match 'function\s+Invoke-BackupKnownSecretSanitization'
+        $backupScript | Should -Match 'function\s+Find-BackupUnknownSecretFindings'
+        $backupScript | Should -Not -Match 'function\s+Test-BackupLikelyBinaryFile\b'
+        $backupSecretHygieneHelpers = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/BackupSecretHygieneHelpers.ps1') -Raw
+        $backupSecretHygieneHelpers | Should -Not -Match 'function\s+Test-BackupSecretHygieneLikelyBinaryFile\b'
+        $backupScript | Should -Match 'W_BACKUP_SECRET_SANITIZED'
+        $backupScript | Should -Match 'E_BACKUP_SECRET_SCAN_FAILED'
+        $backupScript | Should -Match 'W_BACKUP_SECRET_SCAN_SKIPPED_PRIOR_GIT_FAILURE'
+        $backupScript | Should -Match 'Get-BackupManagedChangedFilesOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot\s+-ManagedPathspecs\s+\$managedPathspecs[\s\S]*?Invoke-BackupKnownSecretSanitization\s+-RepositoryRoot\s+\$repositoryRoot\s+-RelativePaths\s+\$managedChangedFiles[\s\S]*?Find-BackupUnknownSecretFindings\s+-RepositoryRoot\s+\$repositoryRoot\s+-RelativePaths\s+\$managedChangedFiles[\s\S]*?\$gitAddArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"add",\s*"--"\)' -Because 'Secret sanitization and unknown-secret scanning must run on managed backup files before staging and commit.'
         $backupScript | Should -Match 'Write-Host\s+"INFO_BACKUP_FORMATTER_BOUNDARY:[^"]*pre-commit run --all-files'
         $backupScript | Should -Match 'E_BACKUP_STEP_SELECTION_INVALID'
         $backupScript | Should -Match 'Assert-ApplicableBackupStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
@@ -1963,6 +2920,43 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX:[\s\S]*before retry attempt \{0\} of \{1\}' -Because "Retry diagnostics should reference the next attempt, not the attempt that just failed."
         $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT:[\s\S]*\$commitAttempt,\s*\$maxCommitAttempts,\s*\$maxAutofixRetries' -Because "Retry-limit diagnostics must report real attempts performed and configured bounds."
         $backupScript | Should -Not -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT:[\s\S]*autofix retry attempt\(s\)' -Because "Retry-limit wording must distinguish total attempts from retry count."
+    }
+
+    It "keeps Backup.ps1 free of unused local function definitions" {
+        $backupPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Backup.ps1"
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($backupPath, [ref]$tokens, [ref]$parseErrors)
+
+        @($parseErrors).Count | Should -Be 0 -Because "Backup.ps1 must parse before unused helper policy can be validated."
+
+        $functionDefinitions = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+                }, $true))
+        $invokedFunctionNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $commandNodes = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst]
+                }, $true))
+
+        foreach ($commandNode in $commandNodes) {
+            $commandName = $commandNode.GetCommandName()
+            if (-not [string]::IsNullOrWhiteSpace($commandName)) {
+                [void]$invokedFunctionNames.Add($commandName)
+            }
+        }
+
+        $unusedFunctions = New-Object System.Collections.Generic.List[string]
+        foreach ($functionDefinition in $functionDefinitions) {
+            if (-not $invokedFunctionNames.Contains($functionDefinition.Name)) {
+                $unusedFunctions.Add("$($functionDefinition.Name):$($functionDefinition.Extent.StartLineNumber)") | Out-Null
+            }
+        }
+
+        $unusedFunctions.Count | Should -Be 0 -Because (
+            "Backup.ps1 local helpers should be directly used by the orchestrator; remove unused thin wrappers instead of keeping dead compatibility surface. Unused definitions: {0}" -f ($unusedFunctions -join ", ")
+        )
     }
 
     It "uses platform-aware backup step metadata and skip diagnostics" {
@@ -2322,12 +3316,20 @@ Describe "GitHub API resilience conventions" {
         $content | Should -Match 'E_AUTH_RATE_LIMITED'
     }
 
-    It "uses generic API fallback instead of GraphQL fallback in REST retry path" {
+    It "uses public REST review-comment fallback instead of anonymous GraphQL fallback" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
 
         $content | Should -Not -Match 'throw\s+"E_GRAPHQL_ERROR:\s+\$errorText"'
         $content | Should -Match 'E_GITHUB_API_ERROR\(\$statusCode\): GitHub request failed'
+        $content | Should -Match 'function\s+Get-PublicPullRequestReviewCommentsFallback'
+        $content | Should -Match '/repos/\$Owner/\$Repo/pulls/\$PrNumber/comments\?per_page=\$PerPage&page=\$page&sort=created&direction=asc'
+        $content | Should -Match 'W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN'
+        $content | Should -Match 'resolutionState\s*=\s*"unknown"'
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*Get-PublicPullRequestReviewCommentsFallback'
+        $content | Should -Match '\$allowStoredCredentialRetry\s*=\s*\$allowPromptedLoginFallback\s*-or\s*\(-not\s+\$explicitTokenProvided\)'
+        $content | Should -Match '\$isDirectModeExplicitTokenFailure'
+        $content | Should -Not -Match '\$isDirectModeTokenFailure'
     }
 
     It "keeps GraphQL variable payload keys aligned with declared casing" {
@@ -2336,13 +3338,8 @@ Describe "GitHub API resilience conventions" {
         $tokens = $null
         $parseErrors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
-        $targetFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-UnresolvedReviewThreads"
-                }, $true) | Select-Object -First 1)
-
-        $targetFunction.Count | Should -Be 1 -Because "Get-UnresolvedReviewThreads should exist so GraphQL variable-map contracts can be validated"
-        $functionBody = $targetFunction[0].Body.Extent.Text
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-UnresolvedReviewThreads" -Context "GraphQL variable-map contracts"
+        $functionBody = $targetFunction.Body.Extent.Text
 
         $variablesMatch = [regex]::Match($functionBody, '(?ms)\$variables\s*=\s*@\{(?<body>.*?)^\s*\}')
         $variablesMatch.Success | Should -BeTrue -Because "Get-UnresolvedReviewThreads should define a variables hashtable"
@@ -2369,37 +3366,154 @@ Describe "GitHub API resilience conventions" {
         $content | Should -Match 'Select-PullRequestInteractively[^\n]*-RequestTimeoutSeconds\s+\$RequestTimeoutSeconds'
         $content | Should -Match 'Resolve-PullRequestTarget[^\n]*-RequestTimeoutSeconds\s+\$RequestTimeoutSeconds'
     }
+
+    It "keeps source-aware auth token recovery contracts in Invoke-Main" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+
+        @($parseErrors).Count | Should -Be 0 -Because "Get-UnresolvedPRComments.ps1 must parse for policy checks to be meaningful"
+
+        $resolveFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Resolve-AuthTokenWithSource" -Context "source-aware token precedence"
+        $invokeMainFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Invoke-Main" -Context "auth fallback contracts"
+
+        $resolveBodyText = $resolveFunction.Body.Extent.Text
+        $ghTokenIndex = $resolveBodyText.IndexOf('-CandidateToken $env:GH_TOKEN', [System.StringComparison]::Ordinal)
+        $githubTokenIndex = $resolveBodyText.IndexOf('-CandidateToken $env:GITHUB_TOKEN', [System.StringComparison]::Ordinal)
+
+        $ghTokenIndex | Should -BeGreaterOrEqual 0
+        $githubTokenIndex | Should -BeGreaterOrEqual 0
+        ($ghTokenIndex -lt $githubTokenIndex) | Should -BeTrue -Because "GH_TOKEN must be evaluated before GITHUB_TOKEN"
+
+        $invokeMainBodyText = $invokeMainFunction.Body.Extent.Text
+        $invokeMainBodyText | Should -Match '\$rejectedTokenValues\s*=\s*New-Object\s+System\.Collections\.Generic\.HashSet\[string\]'
+        $invokeMainBodyText | Should -Match 'Get-AuthToken[^\n]*-ExplicitToken\s+\$Token[^\n]*-AllowInteractive:\$false[^\n]*-IncludeSourceMetadata'
+        $invokeMainBodyText | Should -Match 'Refresh\s+or\s+unset\s+GH_TOKEN'
+        $invokeMainBodyText | Should -Match 'GH_TOKEN\s+takes\s+precedence\s+over\s+GITHUB_TOKEN'
+        $resolveBodyText | Should -Match 'Invoke-GitHubCliAuthCommand\s+-IgnoreEnvironmentTokens\s+-Command' -Because "stored gh token lookup must clear GH_TOKEN/GITHUB_TOKEN after environment tokens have already been handled"
+        $resolveBodyText | Should -Match 'Get-GitCredentialToken\s+-GitHubHost\s+\$GitHubHost'
+        $resolveBodyText | Should -Match 'Source\s+"git-credential"'
+
+        $scriptContent = Get-Content -Path $fullPath -Raw
+        $scriptContent | Should -Match 'function\s+Invoke-GitHubCliAuthCommand[\s\S]*\$originalGhToken\s*=\s*\$env:GH_TOKEN[\s\S]*\$env:GH_TOKEN\s*=\s*\$null[\s\S]*\$env:GITHUB_TOKEN\s*=\s*\$null[\s\S]*\$env:GH_TOKEN\s*=\s*\$originalGhToken[\s\S]*\$env:GITHUB_TOKEN\s*=\s*\$originalGitHubToken'
+        $scriptContent | Should -Match 'function\s+Get-GitCredentialToken[\s\S]*Set-PortableProcessArguments\s+-StartInfo\s+\$startInfo\s+-ArgumentList\s+@\("credential",\s*"fill"\)'
+
+        $getAuthTokenCalls = @($invokeMainFunction.Body.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq "Get-AuthToken"
+                }, $true))
+        $getAuthTokenCalls.Count | Should -BeGreaterOrEqual 2 -Because "Invoke-Main should call Get-AuthToken for initial resolution and prompted retry"
+
+        $hasIncludeSourceMetadata = $false
+        $hasBypassEnvironmentRetry = $false
+        foreach ($call in $getAuthTokenCalls) {
+            $parameterNames = @($call.CommandElements | Where-Object {
+                    $_ -is [System.Management.Automation.Language.CommandParameterAst]
+                } | ForEach-Object {
+                    $_.ParameterName
+                })
+
+            if ($parameterNames -contains "IncludeSourceMetadata") {
+                $hasIncludeSourceMetadata = $true
+            }
+
+            if (($parameterNames -contains "IgnoreEnvironmentTokens") -and ($parameterNames -contains "RejectedTokenValues")) {
+                $hasBypassEnvironmentRetry = $true
+            }
+        }
+
+        $hasIncludeSourceMetadata | Should -BeTrue
+        $hasBypassEnvironmentRetry | Should -BeTrue
+    }
 }
 
 Describe "Workflow security conventions" {
-    It "uses precise token patterns to avoid redaction false positives" {
+    It "does not reintroduce broad security scanning into the GitHub utility coverage workflow" {
         $workflow = Get-Content -Path $script:workflowPath -Raw
 
-        $workflow | Should -Match 'ghp_\[A-Za-z0-9\]\{36\}'
-        $workflow | Should -Match 'github_pat_\[A-Za-z0-9_\]\{80,\}'
-        $workflow | Should -Not -Match '\(ghp_\|github_pat_\|Authorization'
+        $workflow | Should -Not -Match 'Security pattern checks'
+        $workflow | Should -Not -Match 'scanner_engine=|active_pattern=|match_count='
+        $workflow | Should -Not -Match 'should_detect=|should_ignore=|Scanner corpus failure'
+        $workflow | Should -Not -Match 'Generated artifact tracking checks|git ls-files coverage\.xml out\.txt'
     }
 
-    It "keeps redaction token patterns aligned with workflow scanner precision" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+    It "carries broad security and generated-artifact checks in the canonical script-quality workflow" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+
+        $workflow | Should -Match 'Security pattern checks'
+        $workflow | Should -Match 'Generated artifact tracking checks'
+        $workflow | Should -Match 'git ls-files coverage\.xml out\.txt'
+        $workflow | Should -Match 'git ls-files -z --'
+        $workflow | Should -Not -Match "':\(exclude\)Tests/\*\*'"
+        $workflow | Should -Not -Match "':\(exclude\)\.github/workflows/script-quality\.yml'"
+        $workflow | Should -Match 'command_scan_files='
+        $workflow | Should -Match 'Tests/\*\|\*\.md\|\.llm/\*'
+        $workflow | Should -Match 'Bash case patterns are string matches'
+        $workflow | Should -Match 'because \* matches / here'
+        $workflow | Should -Not -Match 'Tests/\*\*'
+        $workflow | Should -Match 'filter_allowed_security_matches'
+        $workflow | Should -Match 'is_allowed_security_match'
+        $workflow | Should -Match 'allowed_match_count='
+        $workflow | Should -Match 'expected_allowed_match_count=1'
+        $workflow | Should -Not -Match '\.github/workflows/script-quality\.yml:\*'
+        $workflow | Should -Not -Match '\*\\"token_pattern_rg='
+    }
+
+    It "documents command-execution scanner path-scope semantics" {
+        $commandScannerExcludedPatterns = @('Tests/*', '*.md', '.llm/*')
+        $shouldSkip = @(
+            'Tests/Utils/StrictModeHelpers.Tests.ps1',
+            'Tests/Utils/Nested/Policy.Tests.ps1',
+            'README.md',
+            '.llm/context.md'
+        )
+        $shouldScan = @(
+            'Scripts/Utils/Run-PreCommitValidation.ps1',
+            'Config/Tests/Fixture.ps1',
+            '.github/workflows/script-quality.yml'
+        )
+
+        foreach ($path in $shouldSkip) {
+            (@($commandScannerExcludedPatterns | Where-Object { $path -like $_ }).Count -gt 0) | Should -BeTrue -Because "$path should be excluded from command-execution pattern scanning."
+        }
+
+        foreach ($path in $shouldScan) {
+            (@($commandScannerExcludedPatterns | Where-Object { $path -like $_ }).Count -gt 0) | Should -BeFalse -Because "$path should remain in command-execution pattern scanning."
+        }
+    }
+
+    It "uses broad GitHub token patterns in the canonical workflow scanner and pre-commit redaction" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+        $preCommitValidationPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
+        $preCommitValidationContent = Get-Content -Path $preCommitValidationPath -Raw
         $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $scriptContent = Get-Content -Path $scriptPath -Raw
 
-        $workflow | Should -Match 'ghp_\[A-Za-z0-9\]\{36\}'
-        $scriptContent | Should -Match 'ghp_\[A-Za-z0-9\]\{36\}'
+        $workflow | Should -Match 'gh\[pousr\]_\[A-Za-z0-9_\]\{20,\}'
+        $workflow | Should -Match 'github_pat_\[A-Za-z0-9_\]\{20,\}'
+        $workflow | Should -Not -Match '\(ghp_\|github_pat_\|Authorization'
+        $workflow | Should -Not -Match 'gh[pousr]_[A-Za-z0-9_]{20,}'
+        $workflow | Should -Not -Match 'github_pat_[A-Za-z0-9_]{20,}'
 
-        $workflow | Should -Match 'github_pat_\[A-Za-z0-9_\]\{80,\}'
-        $scriptContent | Should -Match 'github_pat_\[A-Za-z0-9_\]\{80,\}'
+        $preCommitValidationContent | Should -Match 'gh\[pousr\]_\[A-Za-z0-9_\]\{20,\}'
+        $preCommitValidationContent | Should -Match 'github_pat_\[A-Za-z0-9_\]\{20,\}'
+
+        $scriptContent | Should -Match 'gh\[pousr\]_\[A-Za-z0-9_\]\{20,\}'
+        $scriptContent | Should -Match 'github_pat_\[A-Za-z0-9_\]\{20,\}'
     }
 
-    It "scans both bearer and token authorization header schemes" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+    It "scans both bearer and token authorization header schemes in the canonical workflow" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
+        $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $scriptContent = Get-Content -Path $scriptPath -Raw
 
         $workflow | Should -Match '\(Bearer\|token\)'
+        $scriptContent | Should -Match '\(Bearer\|token\)'
     }
 
     It "keeps scanner and script authorization redaction schemes aligned" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
         $scriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $scriptContent = Get-Content -Path $scriptPath -Raw
         $redactionPatternLiteral = '(Bearer|token)\s+[A-Za-z0-9_\-\.]{20,}'
@@ -2408,36 +3522,47 @@ Describe "Workflow security conventions" {
         $scriptContent | Should -Match ([regex]::Escape($redactionPatternLiteral))
     }
 
-    It "prints scanner diagnostics and validates behavior corpus" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+    It "prints scanner diagnostics and validates behavior corpus in script-quality" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
 
         $workflow | Should -Match 'scanner_engine='
         $workflow | Should -Match 'active_pattern='
         $workflow | Should -Match 'match_count='
+        $workflow | Should -Match 'tracked_file_count='
+        $workflow | Should -Match 'command_file_count='
+        $workflow | Should -Match 'allowed_match_count='
+        $workflow | Should -Match 'Scanner allowlist drift'
         $workflow | Should -Match 'should_detect='
         $workflow | Should -Match 'should_ignore='
+        $workflow | Should -Match 'sample_ghp="gh""p_0123456789abcdef0123456789abcdef0123"'
+        $workflow | Should -Match 'sample_ghs="gh""s_0123456789abcdef0123"'
+        $workflow | Should -Match 'sample_gho="gh""o_0123456789abcdef0123"'
+        $workflow | Should -Match 'sample_ghu="gh""u_0123456789abcdef0123"'
+        $workflow | Should -Match 'sample_ghr="gh""r_0123456789abcdef0123"'
+        $workflow | Should -Match '"example-token: \$\{sample_ghs\}"'
+        $workflow | Should -Match '"example-token: \$\{sample_gho\}"'
+        $workflow | Should -Match '"example-token: \$\{sample_ghu\}"'
+        $workflow | Should -Match '"example-token: \$\{sample_ghr\}"'
         $workflow | Should -Match 'Scanner corpus failure'
     }
 
-    It "uses equivalent iex boundary patterns in rg and grep paths" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+    It "uses equivalent iex boundary patterns in rg and grep scanner paths" {
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
 
-        $workflow | Should -Match "dangerous_pattern_rg='Invoke-Expression\|\(\^\|\[\^\[:alnum:\]_\]\)iex\(\[\^\[:alnum:\]_\]\|\$\)'"
-        $workflow | Should -Match "dangerous_pattern_grep='Invoke-Expression\|\(\^\|\[\^\[:alnum:\]_\]\)iex\(\[\^\[:alnum:\]_\]\|\$\)'"
+        $workflow | Should -Match 'invoke_expression_pattern="Invoke-""Expression"'
+        $workflow | Should -Match 'iex_alias_pattern="i""ex"'
+        $workflow | Should -Match 'dangerous_pattern_rg="\$\{invoke_expression_pattern\}"'
+        $workflow | Should -Match 'dangerous_pattern_grep="\$\{invoke_expression_pattern\}"'
+        $workflow | Should -Match '\$\{iex_alias_pattern\}'
+        $workflow | Should -Not -Match "dangerous_pattern_rg='Invoke-Expression"
+        $workflow | Should -Not -Match "dangerous_pattern_grep='Invoke-Expression"
     }
 
     It "documents SC2016 suppressions for literal regex and PowerShell corpus samples" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
+        $workflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
 
         $workflow | Should -Match '# shellcheck disable=SC2016 # Reason: regex intentionally includes a literal end-of-line anchor'
         $workflow | Should -Match '# shellcheck disable=SC2016 # Reason: corpus samples are literal PowerShell snippets'
-    }
-
-    It "guards against tracking generated coverage artifacts" {
-        $workflow = Get-Content -Path $script:workflowPath -Raw
-
-        $workflow | Should -Match 'Generated artifact tracking checks'
-        $workflow | Should -Match 'git ls-files coverage.xml out.txt'
     }
 }
 
@@ -2464,8 +3589,8 @@ Describe "Dependabot update automation conventions" {
         )
         $ecosystems = @($ecosystemMatches | ForEach-Object { $_.Groups['name'].Value })
 
-        $ecosystems.Count | Should -Be 3
-        @($ecosystems | Sort-Object -Unique) | Should -Be @('devcontainers', 'github-actions', 'pre-commit') -Because (
+        $ecosystems.Count | Should -Be 4
+        @($ecosystems | Sort-Object -Unique) | Should -Be @('devcontainers', 'github-actions', 'pip', 'pre-commit') -Because (
             "Dependabot coverage must remain aligned to the agreed tooling areas"
         )
     }
@@ -2473,10 +3598,10 @@ Describe "Dependabot update automation conventions" {
     It "uses Monday 03:00 UTC weekly schedule for each configured ecosystem" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count | Should -Be 3
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count | Should -Be 3
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count | Should -Be 3
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count | Should -Be 4
     }
 
     It "groups both version and security updates into one PR per ecosystem area per update type" {
@@ -2514,7 +3639,7 @@ Describe "Dependabot update automation conventions" {
             $ecosystemBlocks[$currentEcosystem] = ($currentLines -join "`n")
         }
 
-        foreach ($ecosystem in @('github-actions', 'pre-commit', 'devcontainers')) {
+        foreach ($ecosystem in @('github-actions', 'pre-commit', 'pip', 'devcontainers')) {
             $ecosystemBlocks.ContainsKey($ecosystem) | Should -BeTrue -Because "Missing ecosystem block for '$ecosystem'"
             $body = $ecosystemBlocks[$ecosystem]
 
@@ -2551,14 +3676,14 @@ Describe "Dependabot update automation conventions" {
     It "targets repository root directory for all configured ecosystems" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*directory:\s*(?:"/"|/)\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*directory:\s*(?:"/"|/)\s*$')).Count | Should -Be 4
     }
 
     It "caps open version-update PR volume per ecosystem and keeps default branch behavior" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*open-pull-requests-limit:\s*10\s*$')).Count | Should -Be 3
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*separator:\s*"?/"?\s*$')).Count | Should -Be 3
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*open-pull-requests-limit:\s*10\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*separator:\s*"?/"?\s*$')).Count | Should -Be 4
         # Policy assumption: updates target the repository default branch.
         # If multi-branch release flows are introduced, this policy test should be updated.
         $content | Should -Not -Match '(?m)^\s*target-branch:\s*'
@@ -2711,6 +3836,10 @@ Describe "Dependabot manifest coverage drift conventions" {
             "Dependabot ecosystem 'pre-commit' requires .pre-commit-config.yaml"
         )
 
+        Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath 'requirements.txt') -PathType Leaf | Should -BeTrue -Because (
+            "Dependabot ecosystem 'pip' requires requirements.txt"
+        )
+
         Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/devcontainer.json') -PathType Leaf | Should -BeTrue -Because (
             "Dependabot ecosystem 'devcontainers' requires .devcontainer/devcontainer.json"
         )
@@ -2757,6 +3886,224 @@ Describe "JSON parsing conventions" {
 }
 
 Describe "Utility configuration safety conventions" {
+    It "routes ProcessStartInfo environment mutations through the portable helper" {
+        function Test-IsProcessStartInfoTypeName {
+            param(
+                [Parameter(Mandatory = $true)]
+                $TypeName
+            )
+
+            $typeNames = @(
+                [string]$TypeName.FullName
+                [string]$TypeName.Name
+            ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+            return @($typeNames | Where-Object {
+                    $_ -in @("System.Diagnostics.ProcessStartInfo", "Diagnostics.ProcessStartInfo", "ProcessStartInfo")
+                }).Count -gt 0
+        }
+
+        function Test-IsProcessStartInfoCreationAst {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.Ast]$Ast
+            )
+
+            $constructorCalls = @($Ast.FindAll({
+                        param($node)
+                        return (
+                            $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                            $node.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+                            $node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                            $node.Member.Value -eq "new" -and
+                            (Test-IsProcessStartInfoTypeName -TypeName $node.Expression.TypeName)
+                        )
+                    }, $true))
+            if ($constructorCalls.Count -gt 0) {
+                return $true
+            }
+
+            $newObjectCommands = @($Ast.FindAll({
+                        param($node)
+                        return (
+                            $node -is [System.Management.Automation.Language.CommandAst] -and
+                            $node.GetCommandName() -in @("New-Object") -and
+                            $node.Extent.Text -match '\b(System\.Diagnostics\.)?ProcessStartInfo\b'
+                        )
+                    }, $true))
+            return ($newObjectCommands.Count -gt 0)
+        }
+
+        function Get-UnqualifiedVariableName {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.VariableExpressionAst]$VariableAst
+            )
+
+            $name = [string]$VariableAst.VariablePath.UserPath
+            if ($name -match '^[^:]+:(?<Name>.+)$') {
+                return $matches.Name
+            }
+
+            return $name
+        }
+
+        function Get-ProcessStartInfoVariableNames {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.Ast]$Ast
+            )
+
+            $names = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+            $assignments = @($Ast.FindAll({
+                        param($node)
+                        return (
+                            $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                            $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                            (Test-IsProcessStartInfoCreationAst -Ast $node.Right)
+                        )
+                    }, $true))
+            foreach ($assignment in $assignments) {
+                [void]$names.Add((Get-UnqualifiedVariableName -VariableAst $assignment.Left))
+            }
+
+            $typedParameters = @($Ast.FindAll({
+                        param($node)
+                        if (-not ($node -is [System.Management.Automation.Language.ParameterAst])) {
+                            return $false
+                        }
+
+                        $typeConstraints = @($node.Attributes | Where-Object {
+                                $_ -is [System.Management.Automation.Language.TypeConstraintAst] -and
+                                (Test-IsProcessStartInfoTypeName -TypeName $_.TypeName)
+                            })
+                        return ($typeConstraints.Count -gt 0)
+                    }, $true))
+            foreach ($parameter in $typedParameters) {
+                [void]$names.Add((Get-UnqualifiedVariableName -VariableAst $parameter.Name))
+            }
+
+            return , $names
+        }
+
+        function Test-IsProcessStartInfoEnvironmentMemberAst {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.Ast]$Ast,
+
+                [Parameter(Mandatory = $true)]
+                [AllowEmptyCollection()]
+                [System.Collections.Generic.HashSet[string]]$ProcessStartInfoVariableNames
+            )
+
+            if (
+                -not (
+                    $Ast -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                    $Ast.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $Ast.Member.Value -in @("Environment", "EnvironmentVariables")
+                )
+            ) {
+                return $false
+            }
+
+            if (-not ($Ast.Expression -is [System.Management.Automation.Language.VariableExpressionAst])) {
+                return $false
+            }
+
+            return $ProcessStartInfoVariableNames.Contains((Get-UnqualifiedVariableName -VariableAst $Ast.Expression))
+        }
+
+        function Get-ProcessStartInfoEnvironmentMutationAsts {
+            param(
+                [Parameter(Mandatory = $true)]
+                [System.Management.Automation.Language.Ast]$Ast,
+
+                [Parameter(Mandatory = $true)]
+                [AllowEmptyCollection()]
+                [System.Collections.Generic.HashSet[string]]$ProcessStartInfoVariableNames
+            )
+
+            $environmentAssignments = @($Ast.FindAll({
+                        param($node)
+
+                        if (-not ($node -is [System.Management.Automation.Language.AssignmentStatementAst])) {
+                            return $false
+                        }
+
+                        $environmentTargets = @($node.Left.FindAll({
+                                    param($leftNode)
+                                    return (Test-IsProcessStartInfoEnvironmentMemberAst -Ast $leftNode -ProcessStartInfoVariableNames $ProcessStartInfoVariableNames)
+                                }, $true))
+                        return ($environmentTargets.Count -gt 0)
+                    }, $true))
+
+            $mutatingMethods = @("Add", "Clear", "Remove", "set_Item")
+            $environmentMethodCalls = @($Ast.FindAll({
+                        param($node)
+
+                        return (
+                            $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                            $node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                            $node.Member.Value -in $mutatingMethods -and
+                            (Test-IsProcessStartInfoEnvironmentMemberAst -Ast $node.Expression -ProcessStartInfoVariableNames $ProcessStartInfoVariableNames)
+                        )
+                    }, $true))
+
+            return @($environmentAssignments + $environmentMethodCalls) # array-unwrap-safe: call sites wrap in @(...)
+        }
+
+        $excludedRelativePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        [void]$excludedRelativePaths.Add("Scripts/Utils/Common/CompatibilityHelpers.ps1")
+        [void]$excludedRelativePaths.Add("Tests/Utils/CompatibilityHelpers.Tests.ps1")
+
+        $fixture = @'
+$startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+$startInfo.Environment["PATH"] = "x"
+$startInfo.EnvironmentVariables["PATH"] = "x"
+$startInfo.Environment.Add("PATH", "x")
+$startInfo.EnvironmentVariables.Clear()
+$notProcessStartInfo.Environment["PATH"] = "allowed"
+Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value "x"
+'@
+        $fixtureAst = [System.Management.Automation.Language.Parser]::ParseInput($fixture, [ref]$null, [ref]$null)
+        $fixtureVariables = Get-ProcessStartInfoVariableNames -Ast $fixtureAst
+        $fixtureMutations = @(Get-ProcessStartInfoEnvironmentMutationAsts -Ast $fixtureAst -ProcessStartInfoVariableNames $fixtureVariables)
+        $fixtureMutations.Count | Should -Be 4 -Because "the policy detector must catch Environment/EnvironmentVariables index writes plus Add/Clear calls and ignore non-ProcessStartInfo look-alikes."
+
+        $scanRoots = @("Scripts", "Tests") |
+            ForEach-Object { Join-Path -Path $script:repoRoot -ChildPath $_ } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+        $scriptFiles = @(Get-ChildItem -Path $scanRoots -Recurse -File -Include *.ps1, *.psm1)
+        $violations = [System.Collections.Generic.List[string]]::new()
+
+        foreach ($scriptFile in $scriptFiles) {
+            $relativePath = (Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName) -replace '[\\/]+', '/'
+            if ($excludedRelativePaths.Contains($relativePath)) {
+                continue
+            }
+
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptFile.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+                throw "E_CONFIG_ERROR: Failed to parse '$relativePath' for ProcessStartInfo environment mutation checks."
+            }
+
+            $processStartInfoVariableNames = Get-ProcessStartInfoVariableNames -Ast $ast
+            if ($processStartInfoVariableNames.Count -eq 0) {
+                continue
+            }
+
+            foreach ($mutation in @(Get-ProcessStartInfoEnvironmentMutationAsts -Ast $ast -ProcessStartInfoVariableNames $processStartInfoVariableNames)) {
+                $violations.Add(("{0}:{1} {2}" -f $relativePath, $mutation.Extent.StartLineNumber, $mutation.Extent.Text)) | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Use Set-PortableProcessEnvironmentVariable for ProcessStartInfo Environment/EnvironmentVariables mutations; direct writes can leave Windows Path/PATH case variants. Violations: " + ($violations -join '; '))
+    }
+
     It "keeps formatter settings and tab-normalization fail-fast diagnostics in Format-PowerShellFiles" {
         $formatterPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Format-PowerShellFiles.ps1"
         $formatterContent = Get-Content -Path $formatterPath -Raw
@@ -2795,7 +4142,8 @@ Describe "Utility configuration safety conventions" {
         $content | Should -Match 'Invoke-PesterQualityGateInIsolatedProcess'
         $content | Should -Match 'Invoke-PesterQualityGate\.ps1'
         $content | Should -Match 'System\.Diagnostics\.ProcessStartInfo'
-        $content | Should -Match '\$startInfo\.Environment\["PSModulePath"\]\s*=\s*\$env:PSModulePath'
+        $content | Should -Match 'Set-PortableProcessEnvironmentVariable\s+-StartInfo\s+\$startInfo\s+-Name\s+"PSModulePath"\s+-Value\s+\$env:PSModulePath'
+        $content | Should -Not -Match '\$startInfo\.Environment\["PSModulePath"\]\s*='
         $content | Should -Match 'BeginOutputReadLine\(\)'
         $content | Should -Match 'BeginErrorReadLine\(\)'
         $content | Should -Match '\$maxCapturedOutputLinesPerStream\s*=\s*2000'
@@ -2859,14 +4207,9 @@ Describe "Utility configuration safety conventions" {
             throw "E_CONFIG_ERROR: Failed to parse Run-PreCommitValidation.ps1 for redaction helper behavior checks."
         }
 
-        $targetFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-RedactedFailureLine"
-                }, $true) | Select-Object -First 1)
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-RedactedFailureLine" -Context "redaction helper behavior checks"
 
-        $targetFunction.Count | Should -Be 1
-
-        . ([scriptblock]::Create($targetFunction[0].Extent.Text))
+        . ([scriptblock]::Create($targetFunction.Extent.Text))
         try {
             (Get-RedactedFailureLine -Line 'Authorization: Bearer "secretjwt"') | Should -Be 'Authorization: [REDACTED]'
             (Get-RedactedFailureLine -Line "Authorization: Bearer 'secretjwt'") | Should -Be 'Authorization: [REDACTED]'
@@ -2897,13 +4240,9 @@ Describe "Utility configuration safety conventions" {
 
         $requiredFunctions = @("Get-RedactedFailureLine", "Convert-ToRedactedOutputLines")
         foreach ($requiredFunction in $requiredFunctions) {
-            $targetFunction = @($ast.FindAll({
-                        param($node)
-                        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $requiredFunction
-                    }, $true) | Select-Object -First 1)
+            $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name $requiredFunction -Context "array-shape behavior checks"
 
-            $targetFunction.Count | Should -Be 1 -Because "Expected function '$requiredFunction' for array-shape behavior checks."
-            . ([scriptblock]::Create($targetFunction[0].Extent.Text))
+            . ([scriptblock]::Create($targetFunction.Extent.Text))
         }
 
         try {
@@ -3359,7 +4698,10 @@ $result = "value {0} {1}" -f
         $content | Should -Match 'Common/ModuleHelpers\.ps1'
         $content | Should -Match '\[ValidateSet\("Pester",\s*"PSScriptAnalyzer"\)\]'
         $content | Should -Match 'Set-PSRepository\s+-Name\s+"PSGallery"\s+-InstallationPolicy\s+Trusted'
-        $content | Should -Match 'Install-Module\s+-Name\s+\$requirement\.ModuleName\s+-Repository\s+"PSGallery"\s+-Scope\s+CurrentUser\s+-MinimumVersion\s+\$requirement\.MinimumVersion\s+-Force'
+        $content | Should -Match 'Install-PowerShellQualityModuleRequirement'
+        $content | Should -Match '\$installModuleParameters\["SkipPublisherCheck"\]\s*=\s*\$true'
+        $content | Should -Match 'W_MODULE_BOOTSTRAP_SKIP_PUBLISHER_CHECK_FALLBACK'
+        $content | Should -Not -Match 'Install-Module[^\r\n]*-SkipPublisherCheck'
         $content | Should -Match 'E_MODULE_BOOTSTRAP_INSTALL_FAILED'
         $content | Should -Match 'E_MODULE_BOOTSTRAP_VERIFY_FAILED'
     }
@@ -3401,6 +4743,7 @@ $result = "value {0} {1}" -f
 
         $contextContent | Should -Match 'Install-PowerShellQualityModules\.ps1'
         $contextContent | Should -Match 'rerun preflight before any hook execution'
+        $contextContent | Should -Match 'Register-PSRepository -Default'
         $validationWorkflowContent | Should -Match 'Install-PowerShellQualityModules\.ps1'
         $validationWorkflowContent | Should -Match 'Invoke-FullValidation\.ps1 -PreflightOnly'
     }
@@ -3418,6 +4761,9 @@ $result = "value {0} {1}" -f
         $contextContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $contextContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
+        $contextContent | Should -Match 'pre-commit and pre-push recovery-backed outer timeout minimums 60s'
+        $contextContent | Should -Match 'Diagnostic strings that must preserve stable `E_\*`/`W_\*` codes'
         $contextContent | Should -Match 'Copilot/agent-driven test execution'
         $contextContent | Should -Match 'avoid direct `Invoke-Pester` terminal calls'
 
@@ -3425,14 +4771,24 @@ $result = "value {0} {1}" -f
         $validationWorkflowContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $validationWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
+        $validationWorkflowContent | Should -Match 'override minimum is 60s'
         $validationWorkflowContent | Should -Match 'do not call `Invoke-Pester` directly'
-        $validationWorkflowContent | Should -Match 'timeout --foreground 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate\.ps1'
+        $validationWorkflowContent | Should -Match 'timeout -k 5s 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate\.ps1'
         $validationWorkflowContent | Should -Match 'OutputVerbosity None'
 
         $skillDetailContent | Should -Match 'Timeout-Guarded Hook Execution'
+        $skillDetailContent | Should -Match 'Invoke-PreCommitWithRecovery\.ps1 -HookStage pre-push -FileListPath'
+        $skillDetailContent | Should -Not -Match 'Invoke-PreCommitWithRecovery\.ps1 -HookStage pre-push -Files'
+        $skillDetailContent | Should -Match 'parent `EXIT` trap'
+        $skillDetailContent | Should -Match 'Invoke-PrePushPreCommitValidation\.ps1'
+        $skillDetailContent | Should -Match 'Run-PreCommitValidation\.ps1 -TargetFiles'
+        $skillDetailContent | Should -Match 'pwsh -File` misbinds the second filename'
         $skillDetailContent | Should -Match 'WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_PREPUSH_TIMEOUT_SECONDS'
         $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS'
+        $skillDetailContent | Should -Match 'WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS'
+        $skillDetailContent | Should -Match 'at least 60 seconds'
         $skillDetailContent | Should -Match 'do not run direct `Invoke-Pester` terminal commands'
     }
 
@@ -3462,7 +4818,7 @@ $result = "value {0} {1}" -f
 
     It "uses explicit git availability preflight in git-consuming utility scripts" {
         $gitPreflightCases = @(
-            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+diff\s+--cached\s+--name-only\s+--diff-filter=ACMR' },
+            @{ Path = 'Scripts/Utils/Run-PreCommitValidation.ps1'; ErrorCode = 'E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '\$stagedFileArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"diff",\s*"--cached",\s*"--name-only",\s*"--diff-filter=ACMRD"\)[\s\S]*Invoke-GitCommandWithSplitOutput\s+-GitExecutable\s+\$GitExecutable\s+-Arguments\s+\$stagedFileArgs' },
             @{ Path = 'Scripts/Utils/Quality/Invoke-FullValidation.ps1'; ErrorCode = 'E_VALIDATION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$GitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
             @{ Path = 'Scripts/Utils/Quality/Assert-CleanGitTree.ps1'; ErrorCode = 'E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+(?:@statusArgs|"-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all")' },
             @{ Path = 'Scripts/Utils/Increment-Version.ps1'; ErrorCode = 'E_INCREMENT_VERSION_GIT_NOT_AVAILABLE'; InvocationPattern = '&\s+\$gitExecutable\s+rev-parse\s+--is-inside-work-tree' }
@@ -3500,6 +4856,12 @@ $result = "value {0} {1}" -f
         $fullValidation | Should -Match 'E_VALIDATION_DIAGNOSTICS_HELPER_MISSING'
         $fullValidation | Should -Not -Match 'function\s+Get-OutputPreview'
         $fullValidation | Should -Match 'statusArgs\s*=\s*@\("-C",\s*\$RepositoryRoot,\s*"status",\s*"--porcelain=v1",\s*"--untracked-files=all"\)'
+        $fullValidation | Should -Match 'Invoke-SafeGitIndexLockRecovery'
+        $fullValidation | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED'
+        $fullValidation | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING'
+        $fullValidation | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED'
+        $fullValidation | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED'
+        $fullValidation | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED'
         $fullValidation | Should -Match 'E_VALIDATION_GIT_NOT_REPOSITORY'
         $fullValidation | Should -Match 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*repositoryRoot=' -Because "Validation status failures should include repository context."
         $fullValidation | Should -Match 'E_VALIDATION_GIT_STATUS_FAILED:[^\n]*workingDirectory=' -Because "Validation status failures should include calling working-directory context."
@@ -3525,10 +4887,23 @@ $result = "value {0} {1}" -f
         $diagnosticsHelpers | Should -Match 'switch\]\$CollapseWhitespace'
         $diagnosticsHelpers | Should -Match 'Alias\(\s*''MaxPreviewLines''\s*\)'
         $diagnosticsHelpers | Should -Match 'Alias\(\s*''MaxLength''\s*\)'
+        $diagnosticsHelpers | Should -Match 'function\s+Test-IsGitIndexLockFailure'
+        $diagnosticsHelpers | Should -Match 'function\s+Get-GitIndexLockPathFromOutput'
+        $diagnosticsHelpers | Should -Match 'function\s+Get-GitIndexLockRecoveryConfig'
+        $diagnosticsHelpers | Should -Match 'function\s+Invoke-SafeGitIndexLockRecovery'
+        $diagnosticsHelpers | Should -Match 'WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE'
+        $diagnosticsHelpers | Should -Match 'WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS'
+        $diagnosticsHelpers | Should -Match 'WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT'
+        $diagnosticsHelpers | Should -Match 'WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS'
+        $diagnosticsHelpers | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_CONFIG'
 
         $preCommit | Should -Match 'Common/DiagnosticsHelpers\.ps1'
         $preCommit | Should -Not -Match 'function\s+Get-OutputPreview'
         $preCommit | Should -Match 'Get-OutputPreview\s+-OutputLines\s+\$redactedCombinedLines\s+-MaxPreviewLines\s+4\s+-FilterBlankLines\s+-HeadTailWhenTruncated\s+-PerLineMaxCharacters\s+240'
+        $preCommit | Should -Match 'Get-StagedFilesWithIndexLockRecoveryOrThrow'
+        $preCommit | Should -Match 'Invoke-SafeGitIndexLockRecovery'
+        $preCommit | Should -Match 'W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED'
+        $preCommit | Should -Match 'E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED'
 
         $windowsChecks | Should -Match 'Common/DiagnosticsHelpers\.ps1'
         $windowsChecks | Should -Not -Match 'function\s+Get-OutputPreview'
@@ -3549,6 +4924,25 @@ $result = "value {0} {1}" -f
         $windowsChecks | Should -Match 'Write-Verbose\s+"Batch checks: running best-effort static smoke checks'
         $windowsChecks | Should -Match 'Write-Verbose\s+"Windows language checks: running in targeted mode'
         $windowsChecks | Should -Not -Match 'Write-Host\s+"Batch checks limitation:'
+    }
+
+    It "keeps portable process-tree cleanup from degrading to parent-only kills" {
+        $compatibilityHelpersPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/CompatibilityHelpers.ps1'
+        $compatibilityHelpers = (Get-Content -Path $compatibilityHelpersPath -Raw) -replace "`r", ''
+        $preCommit = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1') -Raw) -replace "`r", ''
+        $windowsChecks = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1') -Raw) -replace "`r", ''
+        $compatibilityTests = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Tests/Utils/CompatibilityHelpers.Tests.ps1') -Raw) -replace "`r", ''
+
+        $compatibilityHelpers | Should -Match 'function\s+Get-ChildProcessIdsPortably'
+        $compatibilityHelpers | Should -Match 'function\s+Get-ProcessDescendantIdsPortably'
+        $compatibilityHelpers | Should -Match 'function\s+Stop-ProcessTreeFallbackPortably'
+        $compatibilityHelpers | Should -Match 'Get-CimInstance'
+        $compatibilityHelpers | Should -Match '\bpgrep\b'
+        $compatibilityHelpers | Should -Match '\bps\b'
+        $compatibilityHelpers | Should -Match 'Stop-ProcessTreeFallbackPortably\s+-Process\s+\$Process'
+        $preCommit | Should -Match 'Stop-ProcessTreePortably\s+-Process\s+\$process'
+        $windowsChecks | Should -Match 'Stop-ProcessTreePortably\s+-Process\s+\$process'
+        $compatibilityTests | Should -Match 'terminates descendants when using the explicit fallback path'
     }
 
     It "keeps Invoke-PesterQualityGate diagnostics low-noise" {
@@ -4037,13 +5431,7 @@ Describe "GitHub output and clipboard conventions" {
             "Get-UnresolvedPRComments.ps1 must parse cleanly before checking truncation policy."
         )
 
-        $targetFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-                    $node.Name -eq "Convert-ReviewThreadToOutputRecord"
-                }, $true) | Select-Object -First 1)
-
-        $targetFunction | Should -Not -BeNullOrEmpty
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Convert-ReviewThreadToOutputRecord" -Context "review-thread truncation policy"
         $parameterNames = @($targetFunction.Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
         ($parameterNames -ccontains "Truncate") | Should -BeTrue
 
@@ -4091,13 +5479,8 @@ Describe "GitHub output and clipboard conventions" {
         $content | Should -Match 'githubLineStart\s*=\s*\$githubAnchor\.Start'
         $content | Should -Match 'embeddedLocations\s*=\s*@\(\$embeddedLocations\)'
 
-        $normalizeFunction = @($ast.FindAll({
-                    param($node)
-                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-                    $node.Name -eq "Normalize-CommentText"
-                }, $true) | Select-Object -First 1)
-        $normalizeFunction | Should -Not -BeNullOrEmpty
-        $normalizeText = $normalizeFunction[0].Extent.Text
+        $normalizeFunction = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Normalize-CommentText" -Context "bot cleanup policy"
+        $normalizeText = $normalizeFunction.Extent.Text
         $normalizeText | Should -Match '\$cleanedText\s*=\s*if\s*\(\$KeepMarkup\.IsPresent\)\s*\{\s*\$Text\s*\}\s*else\s*\{\s*Remove-MarkupFromCommentText\s+-Text\s+\$Text\s*\}'
 
         $testsContent | Should -Match 'Describe\s+"Normalize-CommentText"'
@@ -4192,6 +5575,84 @@ Describe "PowerShell return safety conventions" {
     }
 }
 
+Describe "PowerShell diagnostic stability conventions" {
+    It "does not invoke helper commands inside expandable diagnostic strings" {
+        $scriptsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts"
+        $scripts = Get-ChildItem -Path $scriptsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop
+        $diagnosticEmitterNames = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($name in @("Write-Error", "Write-Warning", "Write-Verbose", "Write-Host")) {
+            [void]$diagnosticEmitterNames.Add($name)
+        }
+
+        $violations = New-Object System.Collections.Generic.List[string]
+        foreach ($scriptFile in $scripts) {
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptFile.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($null -eq $ast -or @($parseErrors).Count -gt 0) {
+                continue
+            }
+
+            $diagnosticNodes = @($ast.FindAll({
+                        param($node)
+
+                        if ($node -is [System.Management.Automation.Language.ThrowStatementAst]) {
+                            return $true
+                        }
+
+                        if (-not ($node -is [System.Management.Automation.Language.CommandAst])) {
+                            return $false
+                        }
+
+                        $commandName = $node.GetCommandName()
+                        return -not [string]::IsNullOrWhiteSpace($commandName) -and $diagnosticEmitterNames.Contains($commandName)
+                    }, $true))
+            if ($diagnosticNodes.Count -eq 0) {
+                continue
+            }
+
+            $expandableStrings = @($ast.FindAll({
+                        param($node)
+                        return $node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+                    }, $true))
+
+            foreach ($stringNode in $expandableStrings) {
+                $hasCommandSubexpression = $false
+                foreach ($nestedExpression in $stringNode.NestedExpressions) {
+                    if (-not ($nestedExpression -is [System.Management.Automation.Language.SubExpressionAst])) {
+                        continue
+                    }
+
+                    $commandExpressions = @($nestedExpression.FindAll({
+                                param($innerNode)
+                                return $innerNode -is [System.Management.Automation.Language.CommandAst]
+                            }, $true))
+                    if ($commandExpressions.Count -gt 0) {
+                        $hasCommandSubexpression = $true
+                        break
+                    }
+                }
+
+                if (-not $hasCommandSubexpression) {
+                    continue
+                }
+
+                foreach ($diagnosticNode in $diagnosticNodes) {
+                    if ($stringNode.Extent.StartOffset -ge $diagnosticNode.Extent.StartOffset -and $stringNode.Extent.EndOffset -le $diagnosticNode.Extent.EndOffset) {
+                        $relative = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
+                        $violations.Add("${relative}:$($stringNode.Extent.StartLineNumber)") | Out-Null
+                        break
+                    }
+                }
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Stable diagnostics must precompute helper output before throw/Write-* messages so helper failures cannot mask the primary E_/W_ code. Violations: {0}" -f ($violations -join ", ")
+        )
+    }
+}
+
 Describe "Quality tooling shared-helper conventions" {
     BeforeAll {
         $script:sharedHelperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/QualityToolingHelpers.ps1"
@@ -4258,6 +5719,20 @@ Describe "Quality tooling shared-helper conventions" {
         )
         $content | Should -Match '\$sha256\s*-notmatch\s*''\^\[a-f0-9\]\{64\}\$''' -Because (
             "shared helper asset resolution must validate sha256 format."
+        )
+    }
+
+    It "does not use closure-captured install-lock callbacks" {
+        $content = (Get-Content -Path $script:sharedHelperPath -Raw) -replace "`r", ''
+
+        $content | Should -Match 'Invoke-QualityToolingInstallLock[\s\S]*\[object\[\]\]\$ArgumentList' -Because (
+            "Install-lock callbacks must receive explicit arguments so callback visibility is not dependent on GetNewClosure."
+        )
+        $content | Should -Match '&\s+\$ScriptBlock\s+@ArgumentList' -Because (
+            "The shared lock helper must splat explicit callback arguments."
+        )
+        $content | Should -Not -Match '\.GetNewClosure\s*\(' -Because (
+            "Quality-tooling install-lock callbacks must not use GetNewClosure."
         )
     }
 }

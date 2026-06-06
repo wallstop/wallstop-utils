@@ -18,7 +18,7 @@ This file is generated. Do not edit generated sections manually.
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
 | [Adversarial Handoff Protocol](./skills/adversarial-handoff-protocol.md) | [Expanded Guide](./skill-details/adversarial-handoff-protocol.md) | adversarial review, red team, green team, zero-knowledge, handoff, hardening, challenge | Apply adversarial handoff protocol for unknown-invariant discovery |
-| [Dependency Update Automation](./skills/dependency-update-automation.md) | [Expanded Guide](./skill-details/dependency-update-automation.md) | dependabot, dependency updates, github-actions, pre-commit, devcontainers, grouped updates, security updates | Maintain weekly grouped dependency automation across tooling ecosystems |
+| [Dependency Update Automation](./skills/dependency-update-automation.md) | [Expanded Guide](./skill-details/dependency-update-automation.md) | dependabot, dependency updates, github-actions, pre-commit, pip, devcontainers, grouped updates, security updates | Maintain weekly grouped dependency automation across tooling ecosystems |
 | [Post Work Self Improvement](./skills/post-work-self-improvement.md) | [Expanded Guide](./skill-details/post-work-self-improvement.md) | self-improvement, post-work review, knowledge capture, retrospective, lessons learned, workflow update, skill update, continuous improvement, meta-learning | Execute mandatory post-work self-improvement retrospective with adversarial consensus |
 | [Precommit Hooks And Fallbacks](./skills/precommit-hooks-and-fallbacks.md) | [Expanded Guide](./skill-details/precommit-hooks-and-fallbacks.md) | pre-commit, git hooks, fallback, pre-push | Maintain last-resort hooks with deterministic fallback |
 | [Shell Governance Remediation](./skills/shell-governance-remediation.md) | [Expanded Guide](./skill-details/shell-governance-remediation.md) | shellcheck, suppression, remediation, lint policy | Apply strict shell governance and remediation contract |
@@ -28,7 +28,7 @@ This file is generated. Do not edit generated sections manually.
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
-| [Cross Platform PowerShell](./skills/cross-platform-powershell.md) | [Expanded Guide](./skill-details/cross-platform-powershell.md) | cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity | Write portable PowerShell that runs on Windows, macOS, and Linux |
+| [Cross Platform PowerShell](./skills/cross-platform-powershell.md) | [Expanded Guide](./skill-details/cross-platform-powershell.md) | cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity, git bash, bash_env, processstartinfo path, fake-command harness | Write portable PowerShell that runs on Windows, macOS, and Linux |
 | [Devcontainer Bootstrap](./skills/devcontainer-bootstrap.md) | [Expanded Guide](./skill-details/devcontainer-bootstrap.md) | devcontainer, bootstrap, toolchain, setup parity | Use devcontainer bootstrap for consistent quality tooling |
 | [macOS AppleScript Validation](./skills/macos-applescript-validation.md) | [Expanded Guide](./skill-details/macos-applescript-validation.md) | macos, applescript, osacompile, migration fallback | Keep macOS AppleScript validation migration-safe |
 | [Windows Language Validation](./skills/windows-language-validation.md) | [Expanded Guide](./skill-details/windows-language-validation.md) | windows, autohotkey, batch, fast lane, runtime budget | Preserve Windows PR lane validation contracts |
@@ -37,6 +37,6 @@ This file is generated. Do not edit generated sections manually.
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
-| [GitHub PR Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, cursor bugbot, bot markup, embedded locations, host allowlist, retries, clipboard fallback, output file, powershell completion | Preserve GitHub utility safety and UX contracts |
+| [GitHub PR Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, cursor bugbot, bot markup, embedded locations, host allowlist, retries, auth recovery, public rest fallback, git credential, GH_TOKEN, GITHUB_TOKEN, clipboard fallback, output file, powershell completion | Preserve GitHub utility safety and UX contracts |
 
 <!-- END GENERATED SKILLS INDEX -->

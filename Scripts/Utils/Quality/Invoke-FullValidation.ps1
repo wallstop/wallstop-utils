@@ -35,6 +35,20 @@ if (-not (Test-Path -Path $diagnosticsHelpersPath -PathType Leaf)) {
 
 .$diagnosticsHelpersPath
 
+$gitHookRegistrationHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/GitHookRegistrationHelpers.ps1"
+if (-not (Test-Path -Path $gitHookRegistrationHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_HOOK_REGISTRATION_HELPER_MISSING: hook registration helper file not found at '$gitHookRegistrationHelpersPath'."
+}
+
+.$gitHookRegistrationHelpersPath
+
+$preCommitCliHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/PreCommitCliHelpers.ps1"
+if (-not (Test-Path -Path $preCommitCliHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_PRECOMMIT_CLI_HELPER_MISSING: pre-commit CLI helper file not found at '$preCommitCliHelpersPath'."
+}
+
+.$preCommitCliHelpersPath
+
 if ($PreflightOnly -and $WatchCi) {
     throw "E_VALIDATION_ARG_CONFLICT: -PreflightOnly cannot be combined with -WatchCi."
 }
@@ -100,6 +114,87 @@ function Get-StatusSnapshot {
     $statusExit = $LASTEXITCODE
     if ($statusExit -ne 0) {
         $statusDiagnostics = @(& $GitExecutable @statusArgs 2>&1)
+        if (Test-IsGitIndexLockFailure -OutputLines $statusDiagnostics) {
+            Write-Warning (
+                "W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED: context='full-validation-status-snapshot'; repositoryRoot='{0}'." -f
+                $RepositoryRoot
+            )
+
+            $lockRecovery = Invoke-SafeGitIndexLockRecovery -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -OutputLines $statusDiagnostics -Context 'full-validation-status-snapshot'
+            if ($lockRecovery.ElapsedMilliseconds -gt $lockRecovery.SlowPathThresholdMs) {
+                Write-Warning (
+                    "W_PRECOMMIT_GIT_INDEX_LOCK_SLOW_PATH: context='full-validation-status-snapshot'; elapsedMs={0}; thresholdMs={1}." -f
+                    [int]$lockRecovery.ElapsedMilliseconds,
+                    [int]$lockRecovery.SlowPathThresholdMs
+                )
+            }
+
+            if ($lockRecovery.Recovered) {
+                Write-Warning (
+                    "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING: context='full-validation-status-snapshot'; lockPath='{0}'; lockAgeSeconds={1}." -f
+                    [string]$lockRecovery.LockPath,
+                    [int]$lockRecovery.LockAgeSeconds
+                )
+
+                $statusLines = @(& $GitExecutable @statusArgs 2>$null)
+                $statusExit = $LASTEXITCODE
+                if ($statusExit -eq 0) {
+                    $invariantCultureName = [System.Globalization.CultureInfo]::InvariantCulture.Name
+                    $sortedRecoveredStatusLines = @($statusLines | Sort-Object -Culture $invariantCultureName)
+                    $cultureDiagnostic = if ([string]::IsNullOrEmpty($invariantCultureName)) { '<InvariantCulture>' } else { $invariantCultureName }
+                    Write-Verbose "Status snapshot diagnostics: entries=$($statusLines.Count) sortCulture=$cultureDiagnostic"
+                    Write-Output -NoEnumerate ([string[]]$sortedRecoveredStatusLines)
+                    return
+                }
+
+                $statusDiagnostics = @(& $GitExecutable @statusArgs 2>&1)
+            }
+            else {
+                $skipReason = if ([string]::IsNullOrWhiteSpace([string]$lockRecovery.SkippedReason)) {
+                    'unknown'
+                }
+                else {
+                    [string]$lockRecovery.SkippedReason
+                }
+
+                $ambiguousGitProcessCount = if ($null -ne $lockRecovery.PSObject.Properties["AmbiguousGitProcessCount"]) {
+                    [int]$lockRecovery.AmbiguousGitProcessCount
+                }
+                else {
+                    0
+                }
+
+                Write-Warning (
+                    "W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED: context='full-validation-status-snapshot'; reason={0}; lockPath='{1}'; lockAgeSeconds={2}; activeGitProcessCount={3}; ambiguousGitProcessCount={4}; processScanDegraded={5}." -f
+                    $skipReason,
+                    [string]$lockRecovery.LockPath,
+                    [int]$lockRecovery.LockAgeSeconds,
+                    [int]$lockRecovery.ActiveGitProcessCount,
+                    $ambiguousGitProcessCount,
+                    [bool]$lockRecovery.ProcessScanDegraded
+                )
+
+                if ($skipReason -eq 'recovery_failed') {
+                    throw (
+                        "E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED: unable to recover status snapshot lock (repositoryRoot='{0}'; lockPath='{1}'; error={2})." -f
+                        $RepositoryRoot,
+                        [string]$lockRecovery.LockPath,
+                        [string]$lockRecovery.ErrorMessage
+                    )
+                }
+            }
+
+            if (Test-IsGitIndexLockFailure -OutputLines $statusDiagnostics) {
+                $statusPreview = Get-OutputPreview -OutputLines $statusDiagnostics
+                throw (
+                    "E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED: unable to read status snapshot because git index lock persisted (repositoryRoot='{0}'; lockPath='{1}'; outputPreview={2})." -f
+                    $RepositoryRoot,
+                    [string]$lockRecovery.LockPath,
+                    $statusPreview
+                )
+            }
+        }
+
         $statusPreview = Get-OutputPreview -OutputLines $statusDiagnostics
         $workingDirectory = (Get-Location).Path
         throw "E_VALIDATION_GIT_STATUS_FAILED: unable to read git status snapshot (exitCode=$statusExit; repositoryRoot='$RepositoryRoot'; workingDirectory='$workingDirectory'; outputPreview=$statusPreview)."
@@ -166,6 +261,31 @@ function Assert-PreCommitHookEnvironmentAvailability {
     }
 }
 
+function Assert-PreCommitCliAvailability {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
+    if ($null -eq $preCommitCommand) {
+        $preCommitGuidance = Get-PreCommitBootstrapVersionGuidance -RepositoryRoot $RepositoryRoot
+        $requirementsDiagnostic = ""
+        if ($preCommitGuidance.IsFallback -and -not [string]::IsNullOrWhiteSpace([string]$preCommitGuidance.RequirementsDiagnostic)) {
+            $requirementsDiagnostic = " requirementsPinDiagnostic='$([string]$preCommitGuidance.RequirementsDiagnostic)'."
+        }
+
+        throw (
+            "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit=={0}' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=`$HOME/.local/bin:`$PATH and persist that export in ~/.bashrc or ~/.zshrc), then rerun validation preflight.{1}" -f
+            [string]$preCommitGuidance.Version,
+            $requirementsDiagnostic
+        )
+    }
+
+    # Assert-PreCommitCliVersion emits E_VALIDATION_PRECOMMIT_VERSION_MISMATCH for exact-version drift.
+    [void](Assert-PreCommitCliVersion -PreCommitExecutable $preCommitCommand.Source -RepositoryRoot $RepositoryRoot)
+}
+
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
 Push-Location -LiteralPath $repoRoot
 
@@ -173,9 +293,11 @@ try {
     Write-Host "[validation] PowerShell format-operator binding safety check"
     Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts", "Tests") -ErrorCode "E_VALIDATION_FORMAT_OPERATOR_BINDING" -ContextLabel "PowerShell format-operator safety"
 
-    if (-not (Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue)) {
-        throw "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install pre-commit; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=$HOME/.local/bin:$PATH and persist that export in ~/.bashrc or ~/.zshrc), then run 'pre-commit install --hook-type pre-commit --hook-type pre-push'."
-    }
+    Write-Host "[validation] git hook registration preflight"
+    [void](Assert-GitHookRegistration -RepositoryRoot $repoRoot -Repair)
+
+    Write-Host "[validation] pre-commit CLI version check"
+    Assert-PreCommitCliAvailability -RepositoryRoot $repoRoot
 
     Write-Host "[validation] PowerShell module prerequisite check"
     Assert-PowerShellQualityModuleAvailability
@@ -198,13 +320,14 @@ try {
     $statusBeforeValidation = Get-StatusSnapshot -gitExecutable $gitExecutable -RepositoryRoot $repoRoot
 
     $preCommitRecoveryScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1"
+    $preCommitValidationScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
 
     Invoke-NativeCommand -Label "pre-commit stage (all files)" -FailureCode "E_VALIDATION_PRECOMMIT_FAILED" -Remediation "Fix hook findings, then rerun this command." -ScriptBlock {
         pwsh -NoLogo -NoProfile -File $preCommitRecoveryScript -HookStage pre-commit -AllFiles
     }
 
-    Invoke-NativeCommand -Label "pre-push stage (all files)" -FailureCode "E_VALIDATION_PREPUSH_FAILED" -Remediation "Fix failing tests/lint/policy checks, then rerun this command." -ScriptBlock {
-        pwsh -NoLogo -NoProfile -File $preCommitRecoveryScript -HookStage pre-push -AllFiles
+    Invoke-NativeCommand -Label "PowerShell deep validation" -FailureCode "E_VALIDATION_DEEP_POWERSHELL_FAILED" -Remediation "Fix failing tests/lint/policy checks, then rerun this command." -ScriptBlock {
+        pwsh -NoLogo -NoProfile -File $preCommitValidationScript -All
     }
 
     $skillsIndexScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1"

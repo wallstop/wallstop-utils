@@ -109,6 +109,9 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 Avoid `Out-File` and `Set-Content` default encoding which varies by platform and PowerShell version.
 Prefer `[System.IO.File]` methods for deterministic encoding control.
+When reading redirected native process stderr from a temp file, use `Read-RedirectedProcessText`
+from `CompatibilityHelpers.ps1` instead of fixed UTF-8 `ReadAllText`; Windows PowerShell 5.1
+can write UTF-16LE with a BOM while PowerShell 7+ normally writes UTF-8.
 
 ## Case Sensitivity And File System Differences
 
@@ -130,6 +133,9 @@ if ($fileName.Equals('README.md', [System.StringComparison]::OrdinalIgnoreCase))
 
 When creating files programmatically, use consistent lowercase or match existing conventions exactly.
 File permission differences: Unix requires `chmod +x` for executable scripts; use platform checks before setting permissions.
+When resolving POSIX/native tools from PowerShell (`chmod`, `readlink`, `test`), use
+`Get-Command -CommandType Application` and invoke `.Path` with `.Source` fallback; do not
+allow functions, aliases, or Pester helpers to shadow the external executable.
 
 Environment variable `$env:PATH` uses `;` as separator on Windows and `:` on Unix:
 
@@ -137,6 +143,18 @@ Environment variable `$env:PATH` uses `;` as separator on Windows and `:` on Uni
 $pathSep = if ($IsWindows) { ';' } else { ':' }
 $entries = $env:PATH -split [regex]::Escape($pathSep)
 ```
+
+## Process And Git Bash Environment Isolation
+
+When tests launch Git Bash from PowerShell on Windows, do not assume a `ProcessStartInfo`
+`PATH` replacement becomes Bash's exact runtime `PATH`. Git Bash/MSYS startup can add
+or reorder entries such as `/mingw64/bin` before the command runs.
+
+For fake-command harnesses, use a non-login shell (`--noprofile --norc`) and make the
+test bin directory win inside Bash after startup, for example with a Bash-visible
+`BASH_ENV` file that prepends the converted fake-bin path. Assert command precedence
+with `command -v`/`type -a` diagnostics rather than assuming the whole `PATH` string
+is identical to the PowerShell environment value.
 
 ## Performance And Pipeline Optimization
 

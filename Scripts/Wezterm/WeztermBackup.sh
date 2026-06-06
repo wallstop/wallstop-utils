@@ -55,10 +55,12 @@ find_wezterm_config() {
 
 # Find the source config file
 SOURCE_CONFIG=$(find_wezterm_config) || {
-  echo "Error: WezTerm configuration file not found."
-  echo "Checked locations:"
-  echo "  - $HOME/.config/wezterm/$CONFIG_FILE"
-  echo "  - $HOME/.wezterm.lua"
+  {
+    echo "Error: WezTerm configuration file not found."
+    echo "Checked locations:"
+    echo "  - $HOME/.config/wezterm/$CONFIG_FILE"
+    echo "  - $HOME/.wezterm.lua"
+  } >&2
   exit 1
 }
 

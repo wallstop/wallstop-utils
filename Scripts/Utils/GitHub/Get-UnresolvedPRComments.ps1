@@ -181,8 +181,8 @@ function Redact-SensitiveText {
     }
 
     # Generic token redaction for accidental echoes.
-    $redacted = $redacted -replace "ghp_[A-Za-z0-9]{36}", "***REDACTED***"
-    $redacted = $redacted -replace "github_pat_[A-Za-z0-9_]{80,}", "***REDACTED***"
+    $redacted = $redacted -replace "gh[pousr]_[A-Za-z0-9_]{20,}", "***REDACTED***"
+    $redacted = $redacted -replace "github_pat_[A-Za-z0-9_]{20,}", "***REDACTED***"
     $redacted = $redacted -replace "(Bearer|token)\s+[A-Za-z0-9_\-\.]{20,}", '$1 ***REDACTED***'
 
     return $redacted
@@ -387,11 +387,13 @@ function Get-SingleHeaderValueOrThrow {
             return $null
         }
 
-        throw "${ErrorCode}: Missing $Context. $(Get-HeaderValueDiagnostics -Key $Key -Values $values)"
+        $headerDiagnostics = Get-HeaderValueDiagnostics -Key $Key -Values $values
+        throw "${ErrorCode}: Missing $Context. $headerDiagnostics"
     }
 
     if ($valueCount -gt 1) {
-        throw "${ErrorCode}: Expected exactly one value for $Context but received $valueCount. $(Get-HeaderValueDiagnostics -Key $Key -Values $values)"
+        $headerDiagnostics = Get-HeaderValueDiagnostics -Key $Key -Values $values
+        throw "${ErrorCode}: Expected exactly one value for $Context but received $valueCount. $headerDiagnostics"
     }
 
     return $values[0]
@@ -723,6 +725,38 @@ function Get-NormalizedGitHubHostAllowlist {
     return $normalizedHosts.ToArray()
 }
 
+function Get-GitHubRequestUriAllowlist {
+    [OutputType([string[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHosts = @()
+    )
+
+    if ((Get-SafeCount -InputObject $AllowedGitHubHosts) -eq 0) {
+        return @() # array-unwrap-safe: callers always wrap with @()
+    }
+
+    $seenHosts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $requestHosts = New-Object System.Collections.Generic.List[string]
+    foreach ($allowedHost in @($AllowedGitHubHosts)) {
+        if ([string]::IsNullOrWhiteSpace($allowedHost)) {
+            continue
+        }
+
+        $normalizedAllowedHost = Assert-GitHubHostFormat -GitHubHost $allowedHost -Context "AllowedGitHubHosts"
+        if ($seenHosts.Add($normalizedAllowedHost)) {
+            $requestHosts.Add($normalizedAllowedHost) | Out-Null
+        }
+
+        if ($normalizedAllowedHost.Equals("github.com", [System.StringComparison]::OrdinalIgnoreCase) -and $seenHosts.Add("api.github.com")) {
+            $requestHosts.Add("api.github.com") | Out-Null
+        }
+    }
+
+    return $requestHosts.ToArray()
+}
+
 function Assert-GitHubHostInAllowlist {
     [CmdletBinding()]
     param(
@@ -777,7 +811,8 @@ function Assert-GitHubRequestUri {
     }
 
     $normalizedHost = Assert-GitHubHostFormat -GitHubHost $parsedUri.DnsSafeHost -Context "$Context URI"
-    Assert-GitHubHostInAllowlist -GitHubHost $normalizedHost -AllowedGitHubHosts $AllowedGitHubHosts -Context "$Context URI"
+    $requestAllowedHosts = Get-GitHubRequestUriAllowlist -AllowedGitHubHosts $AllowedGitHubHosts
+    Assert-GitHubHostInAllowlist -GitHubHost $normalizedHost -AllowedGitHubHosts $requestAllowedHosts -Context "$Context URI"
 }
 
 function Resolve-GitHubGraphQLEndpoint {
@@ -794,6 +829,22 @@ function Resolve-GitHubGraphQLEndpoint {
     }
 
     return "https://$normalizedHost/api/graphql"
+}
+
+function Resolve-GitHubRestApiBaseUri {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost
+    )
+
+    $normalizedHost = Assert-GitHubHostFormat -GitHubHost $GitHubHost -Context "Resolve-GitHubRestApiBaseUri"
+
+    if ($normalizedHost.Equals("github.com", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return "https://api.github.com"
+    }
+
+    return "https://$normalizedHost/api/v3"
 }
 
 function Get-GitHubHeaders {
@@ -1553,6 +1604,312 @@ function Test-CanPromptForLogin {
     }
 }
 
+function New-AuthTokenResolutionResult {
+    [OutputType([pscustomobject])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Token,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Source,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$EnvironmentVariable
+    )
+
+    $normalizedToken = if ([string]::IsNullOrWhiteSpace($Token)) {
+        $null
+    }
+    else {
+        $Token.Trim()
+    }
+
+    $sourceCategory = "unknown"
+    switch ($Source) {
+        "explicit" {
+            $sourceCategory = "explicit"
+            break
+        }
+        "GH_TOKEN" {
+            $sourceCategory = "environment"
+            break
+        }
+        "GITHUB_TOKEN" {
+            $sourceCategory = "environment"
+            break
+        }
+        "gh" {
+            $sourceCategory = "gh"
+            break
+        }
+        "git-credential" {
+            $sourceCategory = "git-credential"
+            break
+        }
+        "none" {
+            $sourceCategory = "none"
+            break
+        }
+    }
+
+    return [pscustomobject]@{
+        Token               = $normalizedToken
+        Source              = $Source
+        SourceCategory      = $sourceCategory
+        EnvironmentVariable = $EnvironmentVariable
+    }
+}
+
+function Invoke-GitHubCliAuthCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Command,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IgnoreEnvironmentTokens
+    )
+
+    $originalGhToken = $env:GH_TOKEN
+    $originalGitHubToken = $env:GITHUB_TOKEN
+
+    try {
+        if ($IgnoreEnvironmentTokens.IsPresent) {
+            $env:GH_TOKEN = $null
+            $env:GITHUB_TOKEN = $null
+        }
+
+        return & $Command
+    }
+    finally {
+        if ($IgnoreEnvironmentTokens.IsPresent) {
+            $env:GH_TOKEN = $originalGhToken
+            $env:GITHUB_TOKEN = $originalGitHubToken
+        }
+    }
+}
+
+function Get-GitCredentialToken {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 30)]
+        [int]$TimeoutSeconds = 5
+    )
+
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    if ($null -eq $gitCommand -or [string]::IsNullOrWhiteSpace([string]$gitCommand.Source)) {
+        return $null
+    }
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = [string]$gitCommand.Source
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("credential", "fill")
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "GIT_TERMINAL_PROMPT" -Value "0"
+    Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "GCM_INTERACTIVE" -Value "Never"
+
+    $process = $null
+    try {
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        $process.StandardInput.Write("protocol=https`nhost=$GitHubHost`n`n")
+        $process.StandardInput.Close()
+
+        $timeoutMilliseconds = $TimeoutSeconds * 1000
+        if (-not $process.WaitForExit($timeoutMilliseconds)) {
+            try {
+                $process.Kill()
+            }
+            catch {
+                # Best-effort cleanup for a non-interactive credential probe.
+            }
+            return $null
+        }
+
+        [void]$stdoutTask.Wait(1000)
+        [void]$stderrTask.Wait(1000)
+
+        if ($process.ExitCode -ne 0) {
+            return $null
+        }
+
+        $output = [string]$stdoutTask.Result
+        foreach ($line in @($output -split "`r?`n")) {
+            if ($line.StartsWith("password=", [System.StringComparison]::Ordinal)) {
+                $candidate = $line.Substring("password=".Length).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                    return $candidate
+                }
+            }
+        }
+
+        return $null
+    }
+    catch {
+        return $null
+    }
+    finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+    }
+}
+
+function Resolve-AuthTokenWithSource {
+    [OutputType([pscustomobject])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$ExplicitToken,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$AllowInteractive,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IgnoreEnvironmentTokens,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$RejectedTokenValues = @()
+    )
+
+    $rejectedTokenSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+    foreach ($rejectedTokenValue in $RejectedTokenValues) {
+        if ([string]::IsNullOrWhiteSpace($rejectedTokenValue)) {
+            continue
+        }
+
+        $trimmedRejectedTokenValue = $rejectedTokenValue.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($trimmedRejectedTokenValue)) {
+            $rejectedTokenSet.Add($trimmedRejectedTokenValue) | Out-Null
+        }
+    }
+
+    $resolveCandidate = {
+        param(
+            [Parameter(Mandatory = $false)]
+            [AllowNull()]
+            [string]$CandidateToken,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Source,
+
+            [Parameter(Mandatory = $false)]
+            [AllowNull()]
+            [string]$EnvironmentVariable
+        )
+
+        if ([string]::IsNullOrWhiteSpace($CandidateToken)) {
+            return $null
+        }
+
+        $trimmedCandidateToken = $CandidateToken.Trim()
+        if ($rejectedTokenSet.Contains($trimmedCandidateToken)) {
+            Write-Verbose "Skipping previously rejected token from source '$Source'."
+            return $null
+        }
+
+        return New-AuthTokenResolutionResult -Token $trimmedCandidateToken -Source $Source -EnvironmentVariable $EnvironmentVariable
+    }
+
+    $explicitResolution = & $resolveCandidate -CandidateToken $ExplicitToken -Source "explicit" -EnvironmentVariable $null
+    if ($null -ne $explicitResolution) {
+        return $explicitResolution
+    }
+
+    if (-not $IgnoreEnvironmentTokens.IsPresent) {
+        $ghTokenResolution = & $resolveCandidate -CandidateToken $env:GH_TOKEN -Source "GH_TOKEN" -EnvironmentVariable "GH_TOKEN"
+        if ($null -ne $ghTokenResolution) {
+            return $ghTokenResolution
+        }
+
+        $githubTokenResolution = & $resolveCandidate -CandidateToken $env:GITHUB_TOKEN -Source "GITHUB_TOKEN" -EnvironmentVariable "GITHUB_TOKEN"
+        if ($null -ne $githubTokenResolution) {
+            return $githubTokenResolution
+        }
+    }
+
+    $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
+
+    if ($null -ne $ghCmd) {
+        try {
+            $tokenOutput = Invoke-GitHubCliAuthCommand -IgnoreEnvironmentTokens -Command {
+                & gh auth token --hostname $GitHubHost 2>$null
+            }
+
+            if ($LASTEXITCODE -eq 0) {
+                $ghCliResolution = & $resolveCandidate -CandidateToken $tokenOutput -Source "gh" -EnvironmentVariable $null
+                if ($null -ne $ghCliResolution) {
+                    return $ghCliResolution
+                }
+            }
+        }
+        catch {
+            # Continue to git credential and interactive fallback only if allowed.
+        }
+    }
+
+    $gitCredentialToken = Get-GitCredentialToken -GitHubHost $GitHubHost
+    $gitCredentialResolution = & $resolveCandidate -CandidateToken $gitCredentialToken -Source "git-credential" -EnvironmentVariable $null
+    if ($null -ne $gitCredentialResolution) {
+        return $gitCredentialResolution
+    }
+
+    if (-not $AllowInteractive.IsPresent) {
+        return New-AuthTokenResolutionResult -Token $null -Source "none" -EnvironmentVariable $null
+    }
+
+    if ($null -eq $ghCmd) {
+        throw "E_AUTH_REQUIRED: GitHub CLI (gh) is required for interactive login but is not installed."
+    }
+
+    if (-not (Test-CanPromptForLogin)) {
+        throw "E_AUTH_REQUIRED: Interactive login is unavailable because input/output is redirected. Provide -Token or set GH_TOKEN/GITHUB_TOKEN."
+    }
+
+    Write-Host "No usable GitHub token found. Starting GitHub CLI login for $GitHubHost..." -ForegroundColor Yellow
+    [void](Invoke-GitHubCliAuthCommand -IgnoreEnvironmentTokens:$IgnoreEnvironmentTokens -Command {
+            & gh auth login --hostname $GitHubHost --web --git-protocol https --scopes repo | Out-Null
+        })
+    if ($LASTEXITCODE -ne 0) {
+        throw "E_AUTH_REQUIRED: GitHub CLI login was not completed."
+    }
+
+    $tokenOutput = Invoke-GitHubCliAuthCommand -IgnoreEnvironmentTokens:$IgnoreEnvironmentTokens -Command {
+        & gh auth token --hostname $GitHubHost 2>$null
+    }
+    if ($LASTEXITCODE -eq 0) {
+        if ([string]::IsNullOrWhiteSpace($tokenOutput)) {
+            throw "E_AUTH_REQUIRED: Login succeeded but no token was returned by GitHub CLI."
+        }
+
+        $postLoginResolution = & $resolveCandidate -CandidateToken $tokenOutput -Source "gh" -EnvironmentVariable $null
+        if ($null -ne $postLoginResolution) {
+            return $postLoginResolution
+        }
+
+        throw "E_AUTH_REQUIRED: Login succeeded but returned a token that was already rejected in this session. Refresh or unset GH_TOKEN/GITHUB_TOKEN, then retry."
+    }
+
+    throw "E_AUTH_REQUIRED: Login succeeded but no token was returned by GitHub CLI."
+}
+
 function Get-AuthToken {
     [CmdletBinding()]
     param(
@@ -1563,62 +1920,94 @@ function Get-AuthToken {
         [string]$GitHubHost,
 
         [Parameter(Mandatory = $false)]
-        [switch]$AllowInteractive
+        [switch]$AllowInteractive,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IncludeSourceMetadata,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IgnoreEnvironmentTokens,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$RejectedTokenValues = @()
     )
 
-    if (-not [string]::IsNullOrWhiteSpace($ExplicitToken)) {
-        return $ExplicitToken.Trim()
+    $resolution = Resolve-AuthTokenWithSource -ExplicitToken $ExplicitToken -GitHubHost $GitHubHost -AllowInteractive:$AllowInteractive -IgnoreEnvironmentTokens:$IgnoreEnvironmentTokens -RejectedTokenValues $RejectedTokenValues
+    if ($IncludeSourceMetadata.IsPresent) {
+        return $resolution
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
-        return $env:GITHUB_TOKEN.Trim()
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-        return $env:GH_TOKEN.Trim()
-    }
-
-    $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
-    if ($null -eq $ghCmd) {
-        if ($AllowInteractive.IsPresent) {
-            throw "E_AUTH_REQUIRED: GitHub CLI (gh) is required for interactive login but is not installed."
-        }
-
-        return $null
-    }
-
-    try {
-        $tokenOutput = & gh auth token --hostname $GitHubHost 2>$null
-        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tokenOutput)) {
-            return $tokenOutput.Trim()
-        }
-    }
-    catch {
-        # Continue to interactive fallback only if allowed.
-    }
-
-    if (-not $AllowInteractive.IsPresent) {
-        return $null
-    }
-
-    if (-not (Test-CanPromptForLogin)) {
-        throw "E_AUTH_REQUIRED: Interactive login is unavailable because input/output is redirected. Provide -Token or set GITHUB_TOKEN/GH_TOKEN."
-    }
-
-    Write-Host "No GitHub token found. Starting GitHub CLI login for $GitHubHost..." -ForegroundColor Yellow
-    & gh auth login --hostname $GitHubHost --web --git-protocol https --scopes repo | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "E_AUTH_REQUIRED: GitHub CLI login was not completed."
-    }
-
-    $tokenOutput = & gh auth token --hostname $GitHubHost 2>$null
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($tokenOutput)) {
-        return $tokenOutput.Trim()
-    }
-
-    throw "E_AUTH_REQUIRED: Login succeeded but no token was returned by GitHub CLI."
+    return $resolution.Token
 }
 
+function Convert-ToAuthTokenResolutionResult {
+    [OutputType([pscustomobject])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $AuthTokenValue,
+
+        [Parameter(Mandatory = $false)]
+        [string]$FallbackSource = "unknown"
+    )
+
+    if ($null -eq $AuthTokenValue) {
+        return New-AuthTokenResolutionResult -Token $null -Source "none" -EnvironmentVariable $null
+    }
+
+    if ($AuthTokenValue -is [string]) {
+        return New-AuthTokenResolutionResult -Token $AuthTokenValue -Source $FallbackSource -EnvironmentVariable $null
+    }
+
+    $tokenValue = $null
+    $sourceValue = $FallbackSource
+    $sourceCategoryValue = $null
+    $environmentVariableValue = $null
+    $hasToken = $false
+
+    if ($AuthTokenValue -is [System.Collections.IDictionary]) {
+        if ($AuthTokenValue.Contains("Token")) {
+            $tokenValue = $AuthTokenValue["Token"]
+            $hasToken = $true
+        }
+        if ($AuthTokenValue.Contains("Source") -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue["Source"])) {
+            $sourceValue = [string]$AuthTokenValue["Source"]
+        }
+        if ($AuthTokenValue.Contains("SourceCategory") -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue["SourceCategory"])) {
+            $sourceCategoryValue = [string]$AuthTokenValue["SourceCategory"]
+        }
+        if ($AuthTokenValue.Contains("EnvironmentVariable") -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue["EnvironmentVariable"])) {
+            $environmentVariableValue = [string]$AuthTokenValue["EnvironmentVariable"]
+        }
+    }
+    else {
+        if ($AuthTokenValue.PSObject.Properties.Name -contains "Token") {
+            $tokenValue = $AuthTokenValue.Token
+            $hasToken = $true
+        }
+        if ($AuthTokenValue.PSObject.Properties.Name -contains "Source" -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue.Source)) {
+            $sourceValue = [string]$AuthTokenValue.Source
+        }
+        if ($AuthTokenValue.PSObject.Properties.Name -contains "SourceCategory" -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue.SourceCategory)) {
+            $sourceCategoryValue = [string]$AuthTokenValue.SourceCategory
+        }
+        if ($AuthTokenValue.PSObject.Properties.Name -contains "EnvironmentVariable" -and -not [string]::IsNullOrWhiteSpace([string]$AuthTokenValue.EnvironmentVariable)) {
+            $environmentVariableValue = [string]$AuthTokenValue.EnvironmentVariable
+        }
+    }
+
+    if (-not $hasToken) {
+        return New-AuthTokenResolutionResult -Token ([string]$AuthTokenValue) -Source $FallbackSource -EnvironmentVariable $null
+    }
+
+    $normalizedResolution = New-AuthTokenResolutionResult -Token ([string]$tokenValue) -Source $sourceValue -EnvironmentVariable $environmentVariableValue
+    if (-not [string]::IsNullOrWhiteSpace($sourceCategoryValue)) {
+        $normalizedResolution.SourceCategory = $sourceCategoryValue
+    }
+
+    return $normalizedResolution
+}
 function Invoke-GitHubRequestWithRetry {
     [CmdletBinding()]
     param(
@@ -1694,7 +2083,8 @@ function Invoke-GitHubRequestWithRetry {
                                 $resetValue = $retryAfterDate.ToUnixTimeSeconds().ToString()
                             }
                             else {
-                                throw "E_RATE_LIMIT: Invalid Retry-After value '$retryAfterCandidate'. $(Get-HeaderValueDiagnostics -Key 'Retry-After' -Values @($retryAfterValue))"
+                                $retryAfterDiagnostics = Get-HeaderValueDiagnostics -Key 'Retry-After' -Values @($retryAfterValue)
+                                throw "E_RATE_LIMIT: Invalid Retry-After value '$retryAfterCandidate'. $retryAfterDiagnostics"
                             }
                         }
                     }
@@ -1703,7 +2093,8 @@ function Invoke-GitHubRequestWithRetry {
                 if ($null -ne $resetValue) {
                     $resetEpoch = [int64]0
                     if (-not [int64]::TryParse($resetValue, [ref]$resetEpoch)) {
-                        throw "E_RATE_LIMIT: Invalid rate-limit reset value '$resetValue'. $(Get-HeaderValueDiagnostics -Key 'X-RateLimit-Reset' -Values @($resetValue))"
+                        $rateLimitResetDiagnostics = Get-HeaderValueDiagnostics -Key 'X-RateLimit-Reset' -Values @($resetValue)
+                        throw "E_RATE_LIMIT: Invalid rate-limit reset value '$resetValue'. $rateLimitResetDiagnostics"
                     }
 
                     $resetUtc = [DateTimeOffset]::FromUnixTimeSeconds($resetEpoch).UtcDateTime
@@ -1879,7 +2270,8 @@ function Validate-GitHubTokenForRepoAccess {
                 }
 
                 if ($scopes.Count -eq 0) {
-                    throw "E_MALFORMED_RESPONSE: Token scope header did not contain any non-empty scope values. $(Get-HeaderValueDiagnostics -Key 'X-OAuth-Scopes' -Values $scopeHeaderValues)"
+                    $scopeHeaderDiagnostics = Get-HeaderValueDiagnostics -Key 'X-OAuth-Scopes' -Values $scopeHeaderValues
+                    throw "E_MALFORMED_RESPONSE: Token scope header did not contain any non-empty scope values. $scopeHeaderDiagnostics"
                 }
 
                 $isPrivateRepo = $false
@@ -2085,6 +2477,11 @@ function Convert-ReviewThreadToOutputRecord {
         return $null
     }
 
+    $resolutionState = Get-ObjectPropertyValue -InputObject $Thread -Name "resolutionState"
+    if ([string]::IsNullOrWhiteSpace([string]$resolutionState)) {
+        $resolutionState = "unresolved"
+    }
+
     $threadComments = Get-ObjectPropertyValue -InputObject $Thread -Name "comments"
     $commentNodes = Get-ObjectPropertyValue -InputObject $threadComments -Name "nodes" -NoEnumerate
     if ($null -eq $threadComments -or $null -eq $commentNodes) {
@@ -2155,12 +2552,115 @@ function Convert-ReviewThreadToOutputRecord {
         embeddedLocations  = @($embeddedLocations)
         topLevelComment    = $topLevelComment
         latestReplySummary = $latestReplySummary
+        resolutionState    = [string]$resolutionState
         threadId           = [string]$threadId
         prNumber           = $PrNumber
         owner              = $Owner
         repo               = $Repo
         url                = "https://$GitHubHost/$Owner/$Repo/pull/$PrNumber"
     }
+}
+
+function Convert-RestReviewCommentToThreadCommentNode {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Comment
+    )
+
+    return [pscustomobject]@{
+        body      = Get-ObjectPropertyValue -InputObject $Comment -Name "body"
+        createdAt = Get-ObjectPropertyValue -InputObject $Comment -Name "created_at"
+        url       = Get-ObjectPropertyValue -InputObject $Comment -Name "html_url"
+        author    = [pscustomobject]@{
+            login = Get-ObjectPropertyValue -InputObject (Get-ObjectPropertyValue -InputObject $Comment -Name "user") -Name "login"
+        }
+    }
+}
+
+function Convert-RestReviewCommentsToThreadLikeObjects {
+    [OutputType([object[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyCollection()]
+        [object[]]$Comments = @()
+    )
+
+    $topLevelComments = New-Object System.Collections.Generic.List[object]
+    $repliesByParentId = @{}
+
+    foreach ($comment in @($Comments)) {
+        if ($null -eq $comment) {
+            continue
+        }
+
+        $id = Get-ObjectPropertyValue -InputObject $comment -Name "id"
+        if ($null -eq $id) {
+            continue
+        }
+
+        $idText = [string]$id
+        if ([string]::IsNullOrWhiteSpace($idText)) {
+            continue
+        }
+
+        $parentId = Get-ObjectPropertyValue -InputObject $comment -Name "in_reply_to_id"
+        if ($null -eq $parentId -or [string]::IsNullOrWhiteSpace([string]$parentId)) {
+            $topLevelComments.Add($comment) | Out-Null
+            continue
+        }
+
+        $parentIdText = [string]$parentId
+        if (-not $repliesByParentId.ContainsKey($parentIdText)) {
+            $repliesByParentId[$parentIdText] = New-Object System.Collections.Generic.List[object]
+        }
+
+        $repliesByParentId[$parentIdText].Add($comment) | Out-Null
+    }
+
+    $threads = New-Object System.Collections.Generic.List[object]
+    foreach ($topLevelComment in $topLevelComments) {
+        $topLevelId = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "id"
+        if ($null -eq $topLevelId) {
+            continue
+        }
+
+        $topLevelIdText = [string]$topLevelId
+        if ([string]::IsNullOrWhiteSpace($topLevelIdText)) {
+            continue
+        }
+
+        $commentNodes = New-Object System.Collections.Generic.List[object]
+        $commentNodes.Add((Convert-RestReviewCommentToThreadCommentNode -Comment $topLevelComment)) | Out-Null
+
+        if ($repliesByParentId.ContainsKey($topLevelIdText)) {
+            foreach ($reply in @($repliesByParentId[$topLevelIdText].ToArray())) {
+                $commentNodes.Add((Convert-RestReviewCommentToThreadCommentNode -Comment $reply)) | Out-Null
+            }
+        }
+
+        $line = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "line"
+        $startLine = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "start_line"
+        $originalLine = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "original_line"
+        $originalStartLine = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "original_start_line"
+
+        $threads.Add([pscustomobject]@{
+                id                = "rest:$topLevelIdText"
+                isResolved        = $false
+                resolutionState   = "unknown"
+                path              = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "path"
+                startLine         = $startLine
+                line              = $line
+                originalStartLine = $originalStartLine
+                originalLine      = $originalLine
+                comments          = [pscustomobject]@{
+                    nodes = $commentNodes.ToArray()
+                }
+            }) | Out-Null
+    }
+
+    return $threads.ToArray()
 }
 
 function Format-UnresolvedThreadsAsText {
@@ -2556,6 +3056,90 @@ query GetReviewThreads(
     return $allRecords.ToArray()
 }
 
+function Get-PublicPullRequestReviewCommentsFallback {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Owner,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Repo,
+
+        [Parameter(Mandatory = $true)]
+        [int]$PrNumber,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $true)]
+        [int]$PerPage,
+
+        [Parameter(Mandatory = $true)]
+        [int]$MaxPages,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(5, 300)]
+        [int]$RequestTimeoutSeconds = 60,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$OverallDeadlineUtc,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$WaitOnRateLimit,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Truncate,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$KeepMarkup,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHostsNormalized = @(),
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    $headers = Get-GitHubHeaders -AuthToken $null
+    Assert-IsHashtableLike -Value $headers -Name "Headers"
+    $base = Resolve-GitHubRestApiBaseUri -GitHubHost $GitHubHost
+    $allComments = New-Object System.Collections.Generic.List[object]
+
+    for ($page = 1; $page -le $MaxPages; $page++) {
+        $uri = "$base/repos/$Owner/$Repo/pulls/$PrNumber/comments?per_page=$PerPage&page=$page&sort=created&direction=asc"
+        $response = Invoke-GitHubRequestWithRetry -Method GET -Uri $uri -Headers $headers -Body $null -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
+
+        if ($null -eq $response) {
+            break
+        }
+
+        $comments = @($response)
+        if ((Get-SafeCount -InputObject $comments) -eq 0) {
+            break
+        }
+
+        foreach ($comment in $comments) {
+            $allComments.Add($comment) | Out-Null
+        }
+
+        if ((Get-SafeCount -InputObject $comments) -lt $PerPage) {
+            break
+        }
+    }
+
+    $threads = @(Convert-RestReviewCommentsToThreadLikeObjects -Comments $allComments.ToArray())
+    $records = New-Object System.Collections.Generic.List[object]
+    foreach ($thread in $threads) {
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost -Truncate:$Truncate -KeepMarkup:$KeepMarkup
+        if ($null -ne $record) {
+            $records.Add($record) | Out-Null
+        }
+    }
+
+    Write-Warning "W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN: Public REST fallback cannot determine review-thread resolution state; returned records use resolutionState='unknown'."
+    return $records.ToArray()
+}
+
 function Resolve-PullRequestTarget {
     [CmdletBinding()]
     param(
@@ -2650,6 +3234,35 @@ function Resolve-PullRequestTarget {
     throw "E_INVALID_URL: Provide -PullRequestUrl or use -Interactive."
 }
 
+function Test-RecoverableGitHubAuthFailureMessage {
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Message
+    )
+
+    return $Message -like "E_AUTH_INVALID*" -or
+    $Message -like "E_FORBIDDEN*" -or
+    $Message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or
+    $Message -like "E_AUTH_RATE_LIMITED*" -or
+    $Message -like "E_RATE_LIMIT_403*"
+}
+
+function Test-GitHubFallbackFailureMayRequireAuth {
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Message
+    )
+
+    return (Test-RecoverableGitHubAuthFailureMessage -Message $Message) -or
+    $Message -like "E_NOT_FOUND*"
+}
+
 function Invoke-Main {
     [CmdletBinding()]
     param()
@@ -2673,7 +3286,13 @@ function Invoke-Main {
         return
     }
 
-    $authToken = Get-AuthToken -ExplicitToken $Token -GitHubHost $target.Host -AllowInteractive:$Interactive
+    $rejectedTokenValues = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+    $explicitTokenProvided = -not [string]::IsNullOrWhiteSpace($Token)
+
+    $authResolution = Convert-ToAuthTokenResolutionResult -AuthTokenValue (Get-AuthToken -ExplicitToken $Token -GitHubHost $target.Host -AllowInteractive:$false -IncludeSourceMetadata) -FallbackSource "unknown"
+    $authToken = $authResolution.Token
+    $authTokenSourceCategory = $authResolution.SourceCategory
+    $authTokenEnvironmentVariable = $authResolution.EnvironmentVariable
     if ($null -ne $authToken) {
         $authToken = [string]$authToken
     }
@@ -2687,84 +3306,138 @@ function Invoke-Main {
     Assert-IsHashtableLike -Value $headers -Name "Headers"
 
     # Recovery prompts are intentionally limited to URL and interactive workflows.
-    # Direct owner/repo mode is typically automation-oriented and should fail fast.
+    # Direct owner/repo mode remains non-prompting but may still use non-interactive
+    # stored credentials and public REST fallback unless an explicit token failed.
     $allowPromptedLoginFallback = $Interactive.IsPresent -or -not [string]::IsNullOrWhiteSpace($PullRequestUrl)
+    $allowStoredCredentialRetry = $allowPromptedLoginFallback -or (-not $explicitTokenProvided)
 
     $endpoint = Resolve-GitHubGraphQLEndpoint -GitHubHost $target.Host
+    $retrievedRecords = $false
+    $message = $null
+    $isAuthRecoverableFailure = $false
+    $isAuthRateLimitFailure = $false
+    $lastFailureMayRequireAuth = $false
+    $publicRestFallbackAttempted = $false
 
     try {
-        if (-not [string]::IsNullOrWhiteSpace($authToken)) {
+        if ([string]::IsNullOrWhiteSpace($authToken)) {
+            $publicRestFallbackAttempted = $true
+            $records = @(Get-PublicPullRequestReviewCommentsFallback -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
+        }
+        else {
             Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
+            $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
         }
 
-        $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
+        $retrievedRecords = $true
     }
     catch {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
+        $isAuthRateLimitFailure = $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+        $isAuthRecoverableFailure = Test-RecoverableGitHubAuthFailureMessage -Message $message
+        $lastFailureMayRequireAuth = Test-GitHubFallbackFailureMayRequireAuth -Message $message
 
-        $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
-        $originalAuthRecoverableFailure = $isAuthRecoverableFailure
-        $originalSensitiveTokens = @($sensitiveTokens)
-        $anonymousRetrySucceeded = $false
+        if ($isAuthRecoverableFailure -and -not [string]::IsNullOrWhiteSpace($authToken)) {
+            $rejectedTokenValues.Add($authToken) | Out-Null
+        }
+    }
 
-        if ($allowPromptedLoginFallback -and $isAuthRecoverableFailure -and -not [string]::IsNullOrWhiteSpace($authToken)) {
-            Write-Verbose "Recoverable authentication failure detected. Retrying request anonymously before prompting for login."
+    if (-not $retrievedRecords -and $allowStoredCredentialRetry -and $isAuthRecoverableFailure -and -not [string]::IsNullOrWhiteSpace($authToken)) {
+        $rejectedTokenValuesArray = @($rejectedTokenValues)
+        $storedAuthResolution = Convert-ToAuthTokenResolutionResult -AuthTokenValue (Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive:$false -IncludeSourceMetadata -IgnoreEnvironmentTokens -RejectedTokenValues $rejectedTokenValuesArray) -FallbackSource "unknown"
+        $storedAuthToken = $storedAuthResolution.Token
+        if ($null -ne $storedAuthToken) {
+            $storedAuthToken = [string]$storedAuthToken
+        }
 
-            $authToken = $null
-            $sensitiveTokens = @()
-            $headers = Get-GitHubHeaders -AuthToken $null
+        if (-not [string]::IsNullOrWhiteSpace($storedAuthToken)) {
+            Write-Verbose "Recoverable authentication failure detected. Retrying with stored GitHub credentials before public REST fallback."
+            $authToken = $storedAuthToken
+            $authTokenSourceCategory = $storedAuthResolution.SourceCategory
+            $authTokenEnvironmentVariable = $storedAuthResolution.EnvironmentVariable
+            $sensitiveTokens = @($authToken)
+            $headers = Get-GitHubHeaders -AuthToken $authToken
             Assert-IsHashtableLike -Value $headers -Name "Headers"
 
             try {
-                $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
-                $anonymousRetrySucceeded = $true
-            }
-            catch {
-                $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $originalSensitiveTokens
-                $isAuthRecoverableFailure = $message -like "E_AUTH_INVALID*" -or $message -like "E_FORBIDDEN*" -or $message -like "E_AUTH_INSUFFICIENT_SCOPE*" -or $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
-            }
-        }
-
-        if (-not $anonymousRetrySucceeded -and $allowPromptedLoginFallback -and $originalAuthRecoverableFailure -and -not (Test-CanPromptForLogin)) {
-            # If retry produced a non-auth error (for example network timeout), surface
-            # that actionable failure instead of forcing an E_AUTH_REQUIRED wrapper.
-            if ($isAuthRecoverableFailure) {
-                throw "E_AUTH_REQUIRED: Authentication is missing or invalid, but interactive login prompt is unavailable because input/output is redirected. Provide -Token or set GITHUB_TOKEN/GH_TOKEN."
-            }
-
-            throw $message
-        }
-
-        if (-not $anonymousRetrySucceeded -and $allowPromptedLoginFallback -and $originalAuthRecoverableFailure) {
-            $choice = Read-Host "Authentication is missing or invalid. Log in using GitHub CLI now? [y/N]"
-            if ($choice -match "^(y|yes)$") {
-                $authToken = Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive
-                if ($null -ne $authToken) {
-                    $authToken = [string]$authToken
-                }
-
-                if ([string]::IsNullOrWhiteSpace($authToken)) {
-                    throw "E_AUTH_REQUIRED: Login completed but no token is available."
-                }
-
-                $sensitiveTokens = @()
-                if (-not [string]::IsNullOrWhiteSpace($authToken)) {
-                    $sensitiveTokens += [string]$authToken
-                }
-
-                $headers = Get-GitHubHeaders -AuthToken $authToken
-                Assert-IsHashtableLike -Value $headers -Name "Headers"
-
                 Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
                 $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
+                $retrievedRecords = $true
             }
-            else {
-                throw $message
+            catch {
+                $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $sensitiveTokens
+                $isAuthRateLimitFailure = $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+                $isAuthRecoverableFailure = Test-RecoverableGitHubAuthFailureMessage -Message $message
+                $lastFailureMayRequireAuth = Test-GitHubFallbackFailureMayRequireAuth -Message $message
+
+                if ($isAuthRecoverableFailure -and -not [string]::IsNullOrWhiteSpace($authToken)) {
+                    $rejectedTokenValues.Add($authToken) | Out-Null
+                }
             }
         }
-        elseif (-not $anonymousRetrySucceeded) {
+    }
+
+    $isDirectModeExplicitTokenFailure = (-not $allowPromptedLoginFallback) -and $explicitTokenProvided -and $isAuthRecoverableFailure
+
+    if (-not $retrievedRecords -and -not $publicRestFallbackAttempted -and -not $isDirectModeExplicitTokenFailure -and ([string]::IsNullOrWhiteSpace($authToken) -or $isAuthRecoverableFailure)) {
+        $publicRestFallbackAttempted = $true
+        $restSensitiveTokens = @($sensitiveTokens) + @($rejectedTokenValues)
+        try {
+            $records = @(Get-PublicPullRequestReviewCommentsFallback -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $restSensitiveTokens)
+            $authToken = $null
+            $authTokenSourceCategory = "none"
+            $authTokenEnvironmentVariable = $null
+            $sensitiveTokens = @()
+            $retrievedRecords = $true
+        }
+        catch {
+            $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $restSensitiveTokens
+            $isAuthRateLimitFailure = $message -like "E_AUTH_RATE_LIMITED*" -or $message -like "E_RATE_LIMIT_403*"
+            $isAuthRecoverableFailure = Test-RecoverableGitHubAuthFailureMessage -Message $message
+            $lastFailureMayRequireAuth = Test-GitHubFallbackFailureMayRequireAuth -Message $message
+        }
+    }
+
+    if (-not $retrievedRecords -and $allowPromptedLoginFallback -and $lastFailureMayRequireAuth -and -not (Test-CanPromptForLogin)) {
+        throw "E_AUTH_REQUIRED: Authentication is missing or invalid, and public REST fallback could not read the PR. Interactive login prompt is unavailable because input/output is redirected. Provide -Token or set GH_TOKEN/GITHUB_TOKEN."
+    }
+
+    if (-not $retrievedRecords -and $allowPromptedLoginFallback -and $lastFailureMayRequireAuth) {
+        $choice = Read-Host "Authentication is missing or invalid. Log in using GitHub CLI now? [y/N]"
+        if ($choice -match "^(y|yes)$") {
+            $rejectedTokenValuesArray = @($rejectedTokenValues)
+            $promptedAuthResolution = Convert-ToAuthTokenResolutionResult -AuthTokenValue (Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive -IncludeSourceMetadata -IgnoreEnvironmentTokens -RejectedTokenValues $rejectedTokenValuesArray) -FallbackSource "unknown"
+            $authToken = $promptedAuthResolution.Token
+            $authTokenSourceCategory = $promptedAuthResolution.SourceCategory
+            $authTokenEnvironmentVariable = $promptedAuthResolution.EnvironmentVariable
+            if ($null -ne $authToken) {
+                $authToken = [string]$authToken
+            }
+
+            if ([string]::IsNullOrWhiteSpace($authToken)) {
+                throw "E_AUTH_REQUIRED: Login completed but no token is available."
+            }
+
+            $sensitiveTokens = @($authToken)
+            $headers = Get-GitHubHeaders -AuthToken $authToken
+            Assert-IsHashtableLike -Value $headers -Name "Headers"
+
+            Validate-GitHubTokenForRepoAccess -Owner $target.Owner -Repo $target.Repo -GitHubHost $target.Host -Headers $headers -OverallDeadlineUtc $overallDeadlineUtc -RequestTimeoutSeconds $RequestTimeoutSeconds -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
+            $records = @(Get-UnresolvedReviewThreads -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -Endpoint $endpoint -Headers $headers -GitHubHost $target.Host -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallDeadlineUtc $overallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -Truncate:$Truncate -KeepMarkup:$KeepMarkup -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens)
+            $retrievedRecords = $true
+        }
+        else {
             throw $message
         }
+    }
+
+    if (-not $retrievedRecords) {
+        $isDirectModeEnvironmentTokenFailure = (-not $allowPromptedLoginFallback) -and $isAuthRecoverableFailure -and -not $isAuthRateLimitFailure -and ($authTokenSourceCategory -eq "environment" -or -not [string]::IsNullOrWhiteSpace($authTokenEnvironmentVariable))
+        if ($isDirectModeEnvironmentTokenFailure -and $message -notlike "*GH_TOKEN takes precedence over GITHUB_TOKEN*") {
+            $message = "$message Refresh or unset GH_TOKEN (GH_TOKEN takes precedence over GITHUB_TOKEN), or set GITHUB_TOKEN, then retry; you can also pass -Token explicitly."
+        }
+
+        throw $message
     }
 
     $output = $null

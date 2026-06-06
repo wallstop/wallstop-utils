@@ -74,6 +74,59 @@ Describe "Invoke-ShellQualityChecks target scoping" {
         { Resolve-ShellQualityTargetFiles -RepositoryRoot $script:repoRoot -InputFiles @($outsidePath) } |
             Should -Throw -ExpectedMessage "*E_SHELL_QUALITY_TARGET_OUTSIDE_REPOSITORY*"
     }
+
+    It "filters resolved targets to the managed shell quality scope" {
+        $shellPath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/post-create.sh"
+        $nonShellPath = Join-Path -Path $script:repoRoot -ChildPath "README.md"
+
+        $targets = @(Select-ShellQualityTargetFiles -RepositoryRoot $script:repoRoot -Files @($shellPath, $nonShellPath))
+
+        $targets.Count | Should -Be 1
+        (ConvertTo-ShellQualityRelativePath -RepositoryRoot $script:repoRoot -Path $targets[0]) | Should -Be ".devcontainer/post-create.sh"
+    }
+
+    It "skips zero selected targets before reading the manifest or resolving tools" {
+        Mock Read-ShellQualityToolManifest { throw "manifest should not be read for zero-target checks" }
+        Mock Resolve-ShellQualityToolExecutable { throw "tool resolution should not run for zero-target checks" }
+
+        { Invoke-ShellQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("does-not-exist.sh") } |
+            Should -Not -Throw
+
+        Assert-MockCalled -CommandName Read-ShellQualityToolManifest -Times 0 -Exactly
+        Assert-MockCalled -CommandName Resolve-ShellQualityToolExecutable -Times 0 -Exactly
+    }
+
+    It "skips existing non-shell targets before reading the manifest or resolving tools" {
+        Mock Read-ShellQualityToolManifest { throw "manifest should not be read for non-shell targets" }
+        Mock Resolve-ShellQualityToolExecutable { throw "tool resolution should not run for non-shell targets" }
+        Mock Invoke-ShfmtQualityCheck { throw "shfmt should not run for non-shell targets" }
+        Mock Invoke-ShellCheckQualityCheck { throw "shellcheck should not run for non-shell targets" }
+
+        { Invoke-ShellQualityChecksMain -SelectedTool shfmt -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("README.md") } |
+            Should -Not -Throw
+
+        Assert-MockCalled -CommandName Read-ShellQualityToolManifest -Times 0 -Exactly
+        Assert-MockCalled -CommandName Resolve-ShellQualityToolExecutable -Times 0 -Exactly
+        Assert-MockCalled -CommandName Invoke-ShfmtQualityCheck -Times 0 -Exactly
+        Assert-MockCalled -CommandName Invoke-ShellCheckQualityCheck -Times 0 -Exactly
+    }
+
+    It "still resolves all requested tools in EnsureOnly mode" {
+        $script:resolvedShellEnsureTools = New-Object System.Collections.Generic.List[string]
+
+        Mock Read-ShellQualityToolManifest {
+            return [pscustomobject]@{ tools = [pscustomobject]@{} }
+        }
+        Mock Resolve-ShellQualityToolExecutable {
+            param($Manifest, $ToolName, $RepositoryRoot)
+            $script:resolvedShellEnsureTools.Add($ToolName) | Out-Null
+            return "/tmp/$ToolName"
+        }
+
+        Invoke-ShellQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$true -InputFiles @()
+
+        @($script:resolvedShellEnsureTools.ToArray()) | Should -Be @("shfmt", "shellcheck")
+    }
 }
 
 Describe "Invoke-ShellQualityChecks bounded process execution" {

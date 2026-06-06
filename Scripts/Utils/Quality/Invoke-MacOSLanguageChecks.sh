@@ -6,7 +6,7 @@ repo_root="$(cd "$script_dir/../../.." && pwd)"
 cd "$repo_root"
 
 if ! command -v osacompile > /dev/null 2>&1; then
-  echo "W_OSACOMPILE_UNAVAILABLE: osacompile is not available; skipping AppleScript checks."
+  echo "W_OSACOMPILE_UNAVAILABLE: osacompile is not available; skipping AppleScript checks." >&2
   exit 0
 fi
 
@@ -47,7 +47,7 @@ validate_text_sources() {
     local tmp_scpt
     tmp_scpt="$(mktemp -t applescript-compile.XXXXXX.scpt)"
     if ! osacompile -o "$tmp_scpt" "$source" > /dev/null 2>&1; then
-      echo "E_APPLESCRIPT_COMPILE_FAILED: failed to compile text source '$source'"
+      echo "E_APPLESCRIPT_COMPILE_FAILED: failed to compile text source '$source'" >&2
       failures=1
     fi
     rm -f "$tmp_scpt"
@@ -58,7 +58,7 @@ validate_text_sources() {
 validate_compiled_sources() {
   local failures=0
   if ! command -v osadecompile > /dev/null 2>&1; then
-    echo "W_OSADECOMPILE_UNAVAILABLE: osadecompile is not available; cannot validate .scpt fallback artifacts."
+    echo "W_OSADECOMPILE_UNAVAILABLE: osadecompile is not available; cannot validate .scpt fallback artifacts." >&2
     return 0
   fi
 
@@ -69,14 +69,14 @@ validate_compiled_sources() {
     tmp_scpt="$(mktemp -t applescript-recompile.XXXXXX.scpt)"
 
     if ! osadecompile "$compiled" > "$tmp_text" 2> /dev/null; then
-      echo "E_APPLESCRIPT_DECOMPILE_FAILED: failed to decompile '$compiled'"
+      echo "E_APPLESCRIPT_DECOMPILE_FAILED: failed to decompile '$compiled'" >&2
       failures=1
       rm -f "$tmp_text" "$tmp_scpt"
       continue
     fi
 
     if ! osacompile -o "$tmp_scpt" "$tmp_text" > /dev/null 2>&1; then
-      echo "E_APPLESCRIPT_RECOMPILE_FAILED: failed to recompile '$compiled' from decompiled source"
+      echo "E_APPLESCRIPT_RECOMPILE_FAILED: failed to recompile '$compiled' from decompiled source" >&2
       failures=1
     fi
 

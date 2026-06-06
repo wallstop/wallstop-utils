@@ -81,6 +81,8 @@ Latest reply summary: <text or (none)>
 ## Output Behavior
 
 - Default behavior is full (untruncated) comment and latest reply text.
+- JSON output includes `resolutionState`. Authenticated GraphQL records use `unresolved`;
+  anonymous REST fallback records use `unknown`.
 - Default rendering strips bot metadata and visual chrome from comment text, including HTML comments,
   image embeds, HTML tags, Cursor/Bugbot action buttons, Bugbot footers, and link URLs.
 - `-KeepMarkup` preserves comment markup for debugging or archival workflows. Whitespace is still
@@ -119,14 +121,24 @@ add `-Truncate` to restore legacy clipping behavior.
 ## Authentication Order
 
 1. `-Token` argument
-2. `GITHUB_TOKEN` environment variable
-3. `GH_TOKEN` environment variable
-4. `gh auth token`
-5. `gh auth login` (interactive fallback)
+2. `GH_TOKEN` environment variable
+3. `GITHUB_TOKEN` environment variable
+4. stored `gh auth token` credentials (with `GH_TOKEN`/`GITHUB_TOKEN` temporarily cleared)
+5. `git credential fill` for `https://<host>`
+6. `gh auth login` (interactive fallback)
 
-Public repos can work without auth, but auth is preferred to avoid low rate limits.
+Exact unresolved-thread state uses GitHub GraphQL and requires auth.
+For public PRs, when no token is available or a recoverable token failure occurs, the script falls
+back to anonymous REST review-comment retrieval before prompting. REST fallback cannot know whether a
+thread is resolved, so those JSON records use `resolutionState: "unknown"` and may include comments
+from resolved threads.
 Private repos require auth.
-For PR URL and interactive flows, recoverable auth failures with an existing token are retried once anonymously before prompting for login.
+Anonymous REST requests use GitHub's lower unauthenticated limit (typically 60 requests/hour per IP);
+authenticated requests have higher limits.
+For PR URL and interactive flows, recoverable auth failures retry stored `gh`/Git credentials and then
+anonymous REST before prompting for login.
+When interactive fallback is used after an auth failure, the script ignores `GH_TOKEN`/`GITHUB_TOKEN` for the prompted token refresh and excludes the token value that already failed in this run.
+Direct owner/repo mode remains non-prompting: explicit `-Token` failures fail fast, while missing auth or recoverable environment/stored-credential failures can use non-interactive stored-credential retry and anonymous REST.
 When auth is used, the script validates token access against repository metadata before querying review threads.
 For `github.com`, the script also validates `X-OAuth-Scopes` and expects:
 
@@ -148,7 +160,8 @@ Optional host allowlist controls:
 - If `-AllowedGitHubHosts` is omitted, the script uses `WALLSTOP_GITHUB_ALLOWED_HOSTS`, then
   `GITHUB_ALLOWED_HOSTS` (comma/semicolon/whitespace separated) when present.
 - When an allowlist is active, both target resolution and outbound request URIs must match
-  the allowlist.
+  the allowlist. For `github.com`, outbound requests to the canonical public API host
+  `api.github.com` are also allowed; GHES outbound hosts remain exact.
 
 Example:
 

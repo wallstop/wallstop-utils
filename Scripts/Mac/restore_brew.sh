@@ -29,7 +29,7 @@ BACKUP_DIR="$script_dir/../../Config/Mac-Brew"
 
 # Ensure backup directory exists
 if [[ ! -d "$BACKUP_DIR" ]]; then
-  echo "Error: Backup directory '$BACKUP_DIR' does not exist."
+  echo "Error: Backup directory '$BACKUP_DIR' does not exist." >&2
   exit 1
 fi
 BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
@@ -44,7 +44,7 @@ if [[ -n "${1:-}" ]]; then
 
   # Check if the specified backup file exists.
   if [[ ! -f "$candidate_path" ]]; then
-    echo "Error: Backup file '$backup_input' does not exist in '$BACKUP_DIR'."
+    echo "Error: Backup file '$backup_input' does not exist in '$BACKUP_DIR'." >&2
     exit 1
   fi
 
@@ -52,19 +52,19 @@ if [[ -n "${1:-}" ]]; then
   case "$candidate_path_abs" in
     "$BACKUP_DIR"/*) ;;
     *)
-      echo "Error: Backup file must be inside '$BACKUP_DIR'."
+      echo "Error: Backup file must be inside '$BACKUP_DIR'." >&2
       exit 1
       ;;
   esac
 
   if [[ -L "$candidate_path_abs" ]]; then
-    echo "Error: Symlinked backup files are not allowed: '$candidate_path_abs'."
+    echo "Error: Symlinked backup files are not allowed: '$candidate_path_abs'." >&2
     exit 1
   fi
 
   BACKUP_FILE="$(basename "$candidate_path_abs")"
   if [[ "$BACKUP_FILE" != brewfile_backup* ]]; then
-    echo "Error: Backup file '$BACKUP_FILE' does not match expected pattern 'brewfile_backup*'."
+    echo "Error: Backup file '$BACKUP_FILE' does not match expected pattern 'brewfile_backup*'." >&2
     exit 1
   fi
 else
@@ -75,7 +75,7 @@ else
   done < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'brewfile_backup*' -print0)
 
   if [[ ${#backup_candidates[@]} -eq 0 ]]; then
-    echo "Error: No backup files found in '$BACKUP_DIR'."
+    echo "Error: No backup files found in '$BACKUP_DIR'." >&2
     exit 1
   fi
 
@@ -100,8 +100,10 @@ if ! command -v brew &> /dev/null; then
 fi
 
 if ! command -v brew &> /dev/null; then
-  echo "Error: Homebrew is not installed or not available on PATH."
-  echo "Install Homebrew first, then rerun this script."
+  {
+    echo "Error: Homebrew is not installed or not available on PATH."
+    echo "Install Homebrew first, then rerun this script."
+  } >&2
   exit 1
 fi
 

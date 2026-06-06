@@ -149,7 +149,7 @@ parse_args() {
         ;;
       *)
         echo -e "${RED}Error: Unknown option '$1'${NC}" >&2
-        echo "Use -h or --help for usage information."
+        echo "Use -h or --help for usage information." >&2
         exit 1
         ;;
     esac
@@ -375,6 +375,8 @@ assert_increment_staged_scope() {
   shift
   local managed_paths=("$@")
   local staged_scope_output
+  local staged_scope_stderr
+  local staged_scope_stderr_path
   local staged_scope_exit
   local staged_scope_preview
   local outside_count
@@ -389,10 +391,26 @@ assert_increment_staged_scope() {
     scope_args+=(":(exclude)$managed_path")
   done
 
-  if staged_scope_output="$(git -C "$repo_root" "${scope_args[@]}" 2>&1)"; then
+  if ! staged_scope_stderr_path="$(mktemp 2> /dev/null)"; then
+    staged_scope_stderr_path="/tmp/wallstop-increment-staged-scope.$$.$RANDOM.err"
+  fi
+  if staged_scope_output="$(git -C "$repo_root" "${scope_args[@]}" 2> "$staged_scope_stderr_path")"; then
+    rm -f "$staged_scope_stderr_path" > /dev/null 2>&1 || true
     :
   else
     staged_scope_exit=$?
+    staged_scope_stderr=""
+    if [[ -f "$staged_scope_stderr_path" ]]; then
+      staged_scope_stderr="$(< "$staged_scope_stderr_path")"
+    fi
+    rm -f "$staged_scope_stderr_path" > /dev/null 2>&1 || true
+    if [[ -n "$staged_scope_stderr" ]]; then
+      if [[ -n "$staged_scope_output" ]]; then
+        staged_scope_output="${staged_scope_output}"$'\n'"${staged_scope_stderr}"
+      else
+        staged_scope_output="$staged_scope_stderr"
+      fi
+    fi
     staged_scope_preview="$(get_output_preview "$staged_scope_output")"
     echo -e "${RED}E_INCREMENT_VERSION_GIT_STAGED_DIFF_FAILED: Unable to inspect staged scope (exitCode=$staged_scope_exit; repositoryRoot='$repo_root'; outputPreview='$staged_scope_preview').${NC}" >&2
     return "$staged_scope_exit"
@@ -614,10 +632,26 @@ PY
     package_json_dir="$(dirname "$package_json_path")"
     if git -C "$package_json_dir" rev-parse --is-inside-work-tree > /dev/null 2>&1; then
       repo_root_output=""
-      if repo_root_output="$(git -C "$package_json_dir" rev-parse --show-toplevel 2>&1)"; then
+      repo_root_stderr=""
+      if ! repo_root_stderr_path="$(mktemp 2> /dev/null)"; then
+        repo_root_stderr_path="/tmp/wallstop-increment-repo-root.$$.$RANDOM.err"
+      fi
+      if repo_root_output="$(git -C "$package_json_dir" rev-parse --show-toplevel 2> "$repo_root_stderr_path")"; then
+        rm -f "$repo_root_stderr_path" > /dev/null 2>&1 || true
         :
       else
         repo_root_exit=$?
+        if [[ -f "$repo_root_stderr_path" ]]; then
+          repo_root_stderr="$(< "$repo_root_stderr_path")"
+        fi
+        rm -f "$repo_root_stderr_path" > /dev/null 2>&1 || true
+        if [[ -n "$repo_root_stderr" ]]; then
+          if [[ -n "$repo_root_output" ]]; then
+            repo_root_output="${repo_root_output}"$'\n'"${repo_root_stderr}"
+          else
+            repo_root_output="$repo_root_stderr"
+          fi
+        fi
         repo_root_preview="$(get_output_preview "$repo_root_output")"
         echo -e "${RED}E_INCREMENT_VERSION_GIT_REPOSITORY_ROOT_FAILED: Unable to resolve repository root (exitCode=$repo_root_exit; outputPreview='$repo_root_preview').${NC}" >&2
         exit "$repo_root_exit"
@@ -627,11 +661,27 @@ PY
       repo_root="${repo_root//$'\r'/}"
 
       branch_output=""
-      if branch_output="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>&1)"; then
+      branch_stderr=""
+      if ! branch_stderr_path="$(mktemp 2> /dev/null)"; then
+        branch_stderr_path="/tmp/wallstop-increment-branch.$$.$RANDOM.err"
+      fi
+      if branch_output="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2> "$branch_stderr_path")"; then
+        rm -f "$branch_stderr_path" > /dev/null 2>&1 || true
         branch="${branch_output//$'\n'/}"
         branch="${branch//$'\r'/}"
       else
         branch_exit=$?
+        if [[ -f "$branch_stderr_path" ]]; then
+          branch_stderr="$(< "$branch_stderr_path")"
+        fi
+        rm -f "$branch_stderr_path" > /dev/null 2>&1 || true
+        if [[ -n "$branch_stderr" ]]; then
+          if [[ -n "$branch_output" ]]; then
+            branch_output="${branch_output}"$'\n'"${branch_stderr}"
+          else
+            branch_output="$branch_stderr"
+          fi
+        fi
         branch_preview="$(get_output_preview "$branch_output")"
         echo -e "${RED}E_INCREMENT_VERSION_GIT_BRANCH_DETECTION_FAILED: Unable to determine current branch (exitCode=$branch_exit; repositoryRoot='$repo_root'; outputPreview='$branch_preview').${NC}" >&2
         exit "$branch_exit"

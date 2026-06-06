@@ -57,6 +57,127 @@ Describe "CompatibilityHelpers OS detection" {
     }
 }
 
+Describe "Resolve-PowerShellExecutablePath" {
+    It "exposes the runtime resolver helper" {
+        Get-Command Resolve-PowerShellExecutablePath -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+    }
+
+    It "returns the discovered pwsh path when pwsh is available" {
+        $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
+        if ($null -eq $pwshCommand) {
+            Set-ItResult -Skipped -Because "pwsh is not available in this environment."
+            return
+        }
+
+        (Resolve-PowerShellExecutablePath) | Should -BeExactly ([string]$pwshCommand.Source)
+    }
+
+    It "prefers pwsh over powershell.exe on Windows-capable probes" {
+        Mock -CommandName Test-IsWindowsPlatform -MockWith { return $true }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith {
+            return [pscustomobject]@{ Source = 'C:\Program Files\PowerShell\7\pwsh.exe' }
+        }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
+            return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        }
+
+        $verboseRecords = @(& { Resolve-PowerShellExecutablePath -Verbose } 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
+        $selectedExecutable = Resolve-PowerShellExecutablePath
+        $selectedExecutable | Should -BeExactly 'C:\Program Files\PowerShell\7\pwsh.exe'
+        (@($verboseRecords | ForEach-Object { $_.Message }) -join [Environment]::NewLine) | Should -Match "selectedExecutable='C:\\Program Files\\PowerShell\\7\\pwsh\.exe'; source='pwsh'"
+    }
+
+    It "falls back to powershell.exe on Windows when pwsh is unavailable" {
+        Mock -CommandName Test-IsWindowsPlatform -MockWith { return $true }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith { return $null }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
+            return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        }
+
+        $resolvedExecutable = Resolve-PowerShellExecutablePath
+        $resolvedExecutable | Should -BeExactly 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    }
+
+    It "throws a stable E_* diagnostic when no PowerShell executable is available" {
+        Mock -CommandName Test-IsWindowsPlatform -MockWith { return $false }
+        Mock -CommandName Test-IsMacOSPlatform -MockWith { return $false }
+        Mock -CommandName Test-IsLinuxPlatform -MockWith { return $true }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith { return $null }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith { return $null }
+
+        {
+            Resolve-PowerShellExecutablePath
+        } | Should -Throw -Because 'Resolver must fail with a stable E_* diagnostic when no runtime is available.'
+
+        {
+            Resolve-PowerShellExecutablePath
+        } | Should -Throw -ExpectedMessage '*E_COMPATIBILITY_POWERSHELL_EXECUTABLE_NOT_FOUND*'
+    }
+}
+
+Describe "Read-RedirectedProcessText" {
+    BeforeEach {
+        $script:redirectedTextPath = Join-Path -Path $TestDrive -ChildPath ("redirected-{0}.txt" -f [guid]::NewGuid().ToString("N"))
+    }
+
+    It "decodes redirected process text with BOM detection (<Name>)" -ForEach @(
+        @{
+            Name       = "utf8-no-bom"
+            Encoding   = [System.Text.UTF8Encoding]::new($false, $true)
+            IncludeBom = $false
+        },
+        @{
+            Name       = "utf8-bom"
+            Encoding   = [System.Text.UTF8Encoding]::new($true, $true)
+            IncludeBom = $true
+        },
+        @{
+            Name       = "utf16le-bom"
+            Encoding   = [System.Text.UnicodeEncoding]::new($false, $true, $true)
+            IncludeBom = $true
+        },
+        @{
+            Name       = "utf16be-bom"
+            Encoding   = [System.Text.UnicodeEncoding]::new($true, $true, $true)
+            IncludeBom = $true
+        },
+        @{
+            Name       = "utf32le-bom"
+            Encoding   = [System.Text.UTF32Encoding]::new($false, $true, $true)
+            IncludeBom = $true
+        },
+        @{
+            Name       = "utf32be-bom"
+            Encoding   = [System.Text.UTF32Encoding]::new($true, $true, $true)
+            IncludeBom = $true
+        }
+    ) {
+        param(
+            [string]$Name,
+            [System.Text.Encoding]$Encoding,
+            [bool]$IncludeBom
+        )
+
+        $text = "fatal: diagnostics for $Name"
+        $preamble = if ($IncludeBom) { $Encoding.GetPreamble() } else { [byte[]]@() }
+        [byte[]]$bytes = @($preamble + $Encoding.GetBytes($text))
+        [System.IO.File]::WriteAllBytes($script:redirectedTextPath, $bytes)
+
+        Read-RedirectedProcessText -Path $script:redirectedTextPath | Should -Be $text
+    }
+
+    It "falls back without throwing for malformed no-BOM bytes" {
+        [System.IO.File]::WriteAllBytes($script:redirectedTextPath, [byte[]](0xC3, 0x28))
+
+        { $script:malformedText = Read-RedirectedProcessText -Path $script:redirectedTextPath } | Should -Not -Throw
+        [string]$script:malformedText | Should -Not -BeNullOrEmpty
+    }
+
+    It "returns empty text for missing redirected files" {
+        Read-RedirectedProcessText -Path $script:redirectedTextPath | Should -Be ""
+    }
+}
+
 Describe "Get-RelativePathCompat" {
     # Expected values use '/' separators; the actual result is normalized to '/' so the
     # contract is asserted identically on Windows ('\') and Unix ('/'). These expectations
@@ -291,6 +412,32 @@ Describe "Set-PortableProcessArguments" {
     }
 }
 
+Describe "Set-PortableProcessEnvironmentVariable" {
+    It "replaces existing case variants when case-insensitive environment matching is active" {
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.Environment["Path"] = "real-tools"
+        $startInfo.Environment["OTHER"] = "keep"
+
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value "fake-tools" -CaseInsensitive
+
+        $pathKeys = @($startInfo.Environment.Keys | Where-Object { [string]::Equals([string]$_, "PATH", [System.StringComparison]::OrdinalIgnoreCase) })
+        $pathKeys.Count | Should -Be 1
+        $pathKeys[0] | Should -BeExactly "PATH"
+        $startInfo.Environment["PATH"] | Should -BeExactly "fake-tools"
+        $startInfo.Environment["OTHER"] | Should -BeExactly "keep"
+    }
+
+    It "removes existing case variants when a null value is supplied" {
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.Environment["Path"] = "real-tools"
+
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value $null -CaseInsensitive
+
+        @($startInfo.Environment.Keys | Where-Object { [string]::Equals([string]$_, "PATH", [System.StringComparison]::OrdinalIgnoreCase) }).Count |
+            Should -Be 0
+    }
+}
+
 Describe "Get-PortableLinkTarget" {
     BeforeAll {
         $script:linkRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("compat-link-{0}" -f ([System.Guid]::NewGuid().ToString("N")))
@@ -393,6 +540,100 @@ Describe "Stop-ProcessTreePortably" {
             [void]$process.Start()
             return $process
         }
+
+        function Test-ProcessIdAlive {
+            param(
+                [Parameter(Mandatory = $true)]
+                [int]$ProcessId
+            )
+
+            try {
+                $process = [System.Diagnostics.Process]::GetProcessById($ProcessId)
+                try {
+                    return (-not $process.HasExited)
+                }
+                finally {
+                    $process.Dispose()
+                }
+            }
+            catch {
+                return $false
+            }
+        }
+
+        function Wait-ProcessIdExit {
+            param(
+                [Parameter(Mandatory = $true)]
+                [int]$ProcessId,
+
+                [Parameter(Mandatory = $false)]
+                [int]$TimeoutMilliseconds = 20000
+            )
+
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($stopwatch.ElapsedMilliseconds -lt $TimeoutMilliseconds) {
+                if (-not (Test-ProcessIdAlive -ProcessId $ProcessId)) {
+                    return $true
+                }
+
+                Start-Sleep -Milliseconds 100
+            }
+
+            return $false
+        }
+
+        function Wait-FileText {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string]$Path,
+
+                [Parameter(Mandatory = $false)]
+                [int]$TimeoutMilliseconds = 10000
+            )
+
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($stopwatch.ElapsedMilliseconds -lt $TimeoutMilliseconds) {
+                if (Test-Path -LiteralPath $Path -PathType Leaf) {
+                    $content = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8).Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($content)) {
+                        return $content
+                    }
+                }
+
+                Start-Sleep -Milliseconds 100
+            }
+
+            throw "Timed out waiting for file text at '$Path'."
+        }
+
+        function Start-LongRunningProcessWithChild {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string]$ChildPidPath
+            )
+
+            $escapedPowerShellPath = ([string]$script:killHostPwsh).Replace("'", "''")
+            $escapedChildPidPath = ([string]$ChildPidPath).Replace("'", "''")
+            $commandText = @"
+`$childStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+`$childStartInfo.FileName = '$escapedPowerShellPath'
+`$childStartInfo.UseShellExecute = `$false
+`$childStartInfo.CreateNoWindow = `$true
+`$childStartInfo.Arguments = '-NoLogo -NoProfile -Command "Start-Sleep -Seconds 120"'
+`$child = [System.Diagnostics.Process]::Start(`$childStartInfo)
+[System.IO.File]::WriteAllText('$escapedChildPidPath', [string]`$child.Id, [System.Text.Encoding]::UTF8)
+Start-Sleep -Seconds 120
+"@
+
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $script:killHostPwsh
+            $startInfo.UseShellExecute = $false
+            Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-NoLogo", "-NoProfile", "-Command", $commandText)
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            [void]$process.Start()
+            return $process
+        }
     }
 
     It "terminates a running process via <Case>" -ForEach @(
@@ -413,6 +654,36 @@ Describe "Stop-ProcessTreePortably" {
                 $process.Kill()
             }
             $process.Dispose()
+        }
+    }
+
+    It "terminates descendants when using the explicit fallback path" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-process-tree-test-{0}" -f [guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($tempRoot)
+        $childPidPath = Join-Path -Path $tempRoot -ChildPath "child.pid"
+
+        $parentProcess = Start-LongRunningProcessWithChild -ChildPidPath $childPidPath
+        $childProcessId = -1
+        try {
+            $childPidText = Wait-FileText -Path $childPidPath
+            $childProcessId = [int]$childPidText
+            Test-ProcessIdAlive -ProcessId $childProcessId | Should -BeTrue -Because "the child process should still be running before fallback cleanup."
+
+            Stop-ProcessTreePortably -Process $parentProcess -ForceFallback
+            $parentProcess.WaitForExit(20000) | Should -BeTrue -Because "the parent process must be terminated by fallback cleanup."
+            Wait-ProcessIdExit -ProcessId $childProcessId | Should -BeTrue -Because "the fallback cleanup must also terminate descendants."
+        }
+        finally {
+            if ($childProcessId -gt 0 -and (Test-ProcessIdAlive -ProcessId $childProcessId)) {
+                Stop-ProcessByIdPortably -ProcessId $childProcessId
+            }
+
+            if (-not $parentProcess.HasExited) {
+                $parentProcess.Kill()
+            }
+
+            $parentProcess.Dispose()
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }

@@ -27,13 +27,20 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -P
 
 - In devcontainer sessions, `.devcontainer/post-create.sh` runs this preflight automatically once at bootstrap in non-blocking mode; rerun it manually after dependency or quality-tooling updates.
 
+- After domain-specific edits, run the relevant skill-card quick checks immediately. Preflight proves tools are available; targeted skill checks catch behavioral and lint regressions before last-resort hooks.
+
 - Run full local validation:
 
 ```bash
 pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1
 ```
 
-- Push your branch so CI jobs execute.
+- Push your branch so CI jobs execute:
+
+```bash
+pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1
+```
+
 - Watch PR checks to completion:
 
 ```bash
@@ -47,17 +54,18 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -W
 `Invoke-FullValidation.ps1` runs these in order:
 
 1. `pre-commit` stage for all files (format and stage-level hooks)
-2. `pre-push` stage for all files (full-repo tests/policy checks)
+2. deep PowerShell validation via `Run-PreCommitValidation.ps1 -All` (full-repo tests/policy checks)
 3. explicit LLM index and harness checks
 4. workspace drift assertion (before/after git-status snapshot comparison)
 5. optional CI watch via `gh pr checks --watch`
 
-`Run-PreCommitValidation.ps1` executes Pester through the centralized `Invoke-PesterQualityGate.ps1` wrapper in an isolated `pwsh -NoProfile -NonInteractive` subprocess with explicit timeout, bounded/truncated output capture, and bounded stream-drain timeout handling to avoid host/terminal lockups. In pre-commit mode (non-`-All`), ScriptAnalyzer targets must remain staged-file scoped (`Scripts/Utils/*.ps1`) to keep commit-time checks fast and reduce editor-host pressure; full-repo analyzer scope remains in `-All` paths.
+`Run-PreCommitValidation.ps1 -All` executes Pester through the centralized `Invoke-PesterQualityGate.ps1` wrapper in an isolated `pwsh -NoProfile -NonInteractive` subprocess with explicit timeout, bounded/truncated output capture, and bounded stream-drain timeout handling to avoid host/terminal lockups. In fast local mode (non-`-All`), ScriptAnalyzer targets must remain staged-file or target-file scoped (`Scripts/Utils/*.ps1`) to keep hook checks fast and reduce editor-host pressure; full-repo analyzer scope remains in `-All` paths.
+When `pwsh` is available, `.githooks/pre-commit` runs `Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1` before pre-commit execution so staged AHK/batch drift can be safely auto-repaired (`-Fix -StaticOnly`) and restaged before last-resort hook gating.
 
 For Copilot/agent-driven ad-hoc test runs, do not call `Invoke-Pester` directly in terminal sessions. Use a timeout-bounded quality-gate invocation with low output verbosity:
 
 ```bash
-timeout --foreground 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1 -TestPath Tests/Utils/ScriptSafetyConventions.Tests.ps1 -OutputVerbosity None -DiagnosticsPrefix AgentSafe
+timeout -k 5s 300s pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1 -TestPath Tests/Utils/ScriptSafetyConventions.Tests.ps1 -OutputVerbosity None -DiagnosticsPrefix AgentSafe
 ```
 
 On macOS hosts, use `gtimeout` if `timeout` is unavailable.
@@ -67,19 +75,28 @@ On macOS hosts, use `gtimeout` if `timeout` is unavailable.
 Use the first failing gate as the active remediation target.
 
 - `E_VALIDATION_PRECOMMIT_FAILED`: fix formatter/lint findings, rerun.
-- `E_VALIDATION_PREPUSH_FAILED`: fix tests/analyzer/policy failures, rerun.
+- `E_VALIDATION_DEEP_POWERSHELL_FAILED`: fix tests/analyzer/policy failures from `Run-PreCommitValidation.ps1 -All`, rerun.
 - `E_VALIDATION_POWERSHELL_MODULES_MISSING`: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1` in the current host shell (`pwsh`), rerun `Invoke-FullValidation.ps1 -PreflightOnly`, then continue validation in the same session.
 - `E_PRECOMMIT_VALIDATION_MODULES_MISSING`: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1` before running commit hooks, then rerun preflight and hooks in the same shell session.
 - Linker/compiler errors while pre-commit is "Installing environment" for a native tool: treat this as a hook architecture defect, not a developer toolchain task. Verify `.pre-commit-config.yaml` uses local `stylua`/`actionlint` hook IDs that invoke `Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1`, confirm the tool is pinned in `Scripts/Utils/Quality/native-quality-tools.json`, then run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1 -Tool All -EnsureOnly` and the standard preflight before retrying hooks.
 - `E_TEST_FAILURE`: isolated Pester suite failed; use `W_TEST_FAILURE_OUTPUT_PREVIEW` for compact head/tail context and `W_TEST_FAILURE_ARTIFACT` (`logPath` under temp root) for bounded, redacted stdout/stderr and failure metadata (`suite`, `exitCode`, `rootCode`).
 - `E_TEST_TIMEOUT` or `E_TEST_CAPTURE_*`: isolated Pester subprocess exceeded runtime or stream-capture bounds; treat as execution-path instability and remediate before rerunning.
 - `E_AHK_STATIC_VALIDATION_FAILED`, `E_AHK_REQUIRES_V2_*`, or `E_AHK_V1_SYNTAX_DETECTED`: run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-WindowsLanguageChecks.ps1 -TargetFiles <paths> -Fix`; if v1 syntax remains, migrate the script to AHK v2 and rerun the targeted command before hooks.
+- `W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SKIPPED_UNSTAGED`: pre-hook auto-repair skipped one or more staged Windows-language files because they had unstaged drift; either stage/stash the unstaged changes or rerun the targeted fixer on the intended scope.
+- `W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SOURCE_UNSTAGED`: pre-hook auto-repair skipped config snapshot refresh because the mapped `Scripts/AutoHotKey/<name>.ahk` source had unstaged drift; stage/stash source changes first, then rerun commit.
+- `E_PRECOMMIT_AUTOREPAIR_*`: pre-hook safe auto-repair failed before pre-commit execution; fix the reported git/config issue and rerun commit.
+- `W_PRECOMMIT_GIT_INDEX_LOCK_DETECTED` / `W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_RETRYING`: hook-time stale index lock recovery ran automatically; if failures continue, inspect concurrent git activity in the same repository.
+- `W_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_SKIPPED`: safe recovery was intentionally skipped (for example active git process detected, lock too new, or recovery mode disabled); resolve the reported reason and rerun.
+- `E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED` / `E_PRECOMMIT_GIT_INDEX_LOCK_PERSISTED`: lock recovery could not safely resolve `.git/index.lock`; check for active git processes in this repo, then rerun after contention clears.
 - `E_PRECOMMIT_WINDOWS_LANGUAGE_RESTAGE_REQUIRED`: a staged AHK/batch target differs from the repaired working tree; stage the repaired target files and rerun pre-commit validation.
 - `E_VALIDATION_CI_FAILED`: fix failing workflow checks, rerun with `-WatchCi`.
 - `E_VALIDATION_PR_MISSING`: open a PR, then rerun with `-WatchCi`.
 - `E_CONFIG_ERROR` from PowerShell hooks: install or update required modules using the command in the diagnostic, then rerun in the same session.
 - `E_VALIDATION_ARG_CONFLICT`: remove invalid flag combinations (for example `-PreflightOnly` with `-WatchCi`) and rerun with a valid workflow stage.
-- `E_HOOK_TIMEOUT` / `E_HOOK_TIMEOUT_CONFIG` from `.githooks/*`: raise timeout guardrail values only when needed (`WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`, `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`, `WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS`), then rerun with the same command path.
+- `E_HOOK_TIMEOUT` / `E_HOOK_TIMEOUT_CONFIG` from hooks or devcontainer bootstrap: raise timeout guardrail values only when needed (`WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS`, `WALLSTOP_PREPUSH_TIMEOUT_SECONDS`, `WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS`, `WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS`), then rerun with the same command path. Recovery-backed pre-commit and pre-push hooks must leave 30s for inner recovery plus a 15s shutdown buffer plus 15s setup slack, so their override minimum is 60s.
+- `W_HOOK_RUNTIME_BUDGET` from `.githooks/*`: hook phase exceeded its runtime tier. No-op/prefiltered paths target <=1s; active validation has a separate bounded budget so real staged lint/format work is investigated without hiding no-op regressions.
+- Hook-time index-lock recovery knobs: adjust only when needed (`WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE`, `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`), then rerun with the same command path.
+- `E_GIT_PUSH_DETACHED_HEAD`, `E_GIT_PUSH_REMOTE_MISSING`, or `E_GIT_PUSH_REMOTE_BRANCH_DIVERGED` from `Invoke-GitPushWithUpstream.ps1`: fix branch/remote state explicitly; do not force-push from automation.
 
 ## Codify New Knowledge (Forest-Not-Trees)
 

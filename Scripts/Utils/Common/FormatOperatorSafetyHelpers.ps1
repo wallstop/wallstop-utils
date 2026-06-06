@@ -195,6 +195,117 @@ function Get-FormatOperatorContinuationViolations {
     return @($violationList.ToArray())
 }
 
+function Get-FormatOperatorContinuationViolationsForTargetFiles {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$RootPath,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$TargetFiles = @()
+    )
+
+    $resolvedRootPath = (Resolve-Path -LiteralPath $RootPath -ErrorAction Stop).Path
+    $violationList = New-Object System.Collections.Generic.List[object]
+    $normalizedTargetFiles = @(
+        $TargetFiles |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique
+    )
+
+    foreach ($targetFile in $normalizedTargetFiles) {
+        $candidatePath = if ([System.IO.Path]::IsPathRooted($targetFile)) {
+            $targetFile
+        }
+        else {
+            Join-Path -Path $resolvedRootPath -ChildPath $targetFile
+        }
+
+        if (-not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
+            continue
+        }
+
+        $resolvedTargetPath = (Resolve-Path -LiteralPath $candidatePath -ErrorAction Stop).Path
+        if ([System.IO.Path]::GetExtension($resolvedTargetPath) -ne ".ps1") {
+            continue
+        }
+
+        $scriptContent = (Get-Content -LiteralPath $resolvedTargetPath -Raw) -replace "`r", ''
+        $scriptLines = @($scriptContent -split "`n")
+
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($resolvedTargetPath, [ref]$tokens, [ref]$parseErrors)
+        if ($null -ne $parseErrors -and @($parseErrors).Count -gt 0) {
+            $relativeParsePath = ConvertTo-PortableFormatOperatorPath -PathValue (Get-RelativePathCompat -BasePath $resolvedRootPath -TargetPath $resolvedTargetPath)
+            $firstParseError = [string]$parseErrors[0]
+            Write-Verbose (
+                "Format-operator safety parse diagnostics: file='{0}'; parseErrorCount={1}; firstError='{2}'" -f
+                $relativeParsePath,
+                @($parseErrors).Count,
+                $firstParseError
+            )
+        }
+
+        if ($null -eq $ast) {
+            continue
+        }
+
+        $formatExpressions = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.BinaryExpressionAst] -and
+                    $node.Operator -eq [System.Management.Automation.Language.TokenKind]::Format
+                }, $true))
+
+        foreach ($formatExpression in @($formatExpressions)) {
+            $placeholderMaxIndex = Get-FormatStringPlaceholderMaxIndex -FormatText $formatExpression.Left.Extent.Text
+            if ($placeholderMaxIndex -lt 1) {
+                continue
+            }
+
+            $rightExpression = $formatExpression.Right
+            if ($null -eq $rightExpression) {
+                continue
+            }
+
+            if ($rightExpression -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+                continue
+            }
+
+            $leftExpressionEndLine = $formatExpression.Left.Extent.EndLineNumber
+            $rightExpressionStartLine = $rightExpression.Extent.StartLineNumber
+            if ($rightExpressionStartLine -le $leftExpressionEndLine) {
+                continue
+            }
+
+            $continuationCommaToken = Get-FormatOperatorContinuationCommaToken -Tokens $tokens -RightExpression $rightExpression
+            if ($null -eq $continuationCommaToken) {
+                continue
+            }
+
+            $continuationLineNumber = $continuationCommaToken.Extent.StartLineNumber
+            $continuationLineIndex = $continuationLineNumber - 1
+            if ($continuationLineIndex -lt 0 -or $continuationLineIndex -ge $scriptLines.Count) {
+                continue
+            }
+
+            $rightExpressionLine = $scriptLines[$continuationLineIndex]
+
+            $relativePath = ConvertTo-PortableFormatOperatorPath -PathValue (Get-RelativePathCompat -BasePath $resolvedRootPath -TargetPath $resolvedTargetPath)
+            $violationList.Add([pscustomobject]@{
+                    Path                = $relativePath
+                    Line                = $rightExpressionStartLine
+                    ContinuationLine    = $continuationLineNumber
+                    PlaceholderMaxIndex = $placeholderMaxIndex
+                    RightOperandAstType = $rightExpression.GetType().Name
+                    Snippet             = $rightExpressionLine.Trim()
+                }) | Out-Null
+        }
+    }
+
+    return @($violationList.ToArray())
+}
+
 function Assert-NoFormatOperatorContinuationViolations {
     param(
         [Parameter(Mandatory = $true)]
@@ -205,6 +316,9 @@ function Assert-NoFormatOperatorContinuationViolations {
         [string[]]$RelativeRoots = @("Scripts", "Tests"),
 
         [Parameter(Mandatory = $false)]
+        [string[]]$TargetFiles = @(),
+
+        [Parameter(Mandatory = $false)]
         [ValidateNotNullOrEmpty()]
         [string]$ErrorCode = "E_CONFIG_ERROR",
 
@@ -213,7 +327,20 @@ function Assert-NoFormatOperatorContinuationViolations {
         [string]$ContextLabel = "PowerShell format-operator safety"
     )
 
-    $violations = @(Get-FormatOperatorContinuationViolations -RootPath $RootPath -RelativeRoots $RelativeRoots)
+    $normalizedTargetFiles = @(
+        $TargetFiles |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+
+    $violations = @(
+        if ($normalizedTargetFiles.Count -gt 0) {
+            Get-FormatOperatorContinuationViolationsForTargetFiles -RootPath $RootPath -TargetFiles $normalizedTargetFiles
+        }
+        else {
+            Get-FormatOperatorContinuationViolations -RootPath $RootPath -RelativeRoots $RelativeRoots
+        }
+    )
+
     if ($violations.Count -eq 0) {
         Write-Verbose (
             "Format-operator safety diagnostics: context='{0}'; root='{1}'; status=ok" -f

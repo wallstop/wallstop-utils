@@ -1,4 +1,4 @@
-<!-- trigger: cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity | Write portable PowerShell that runs on Windows, macOS, and Linux | Platform | skill-details/cross-platform-powershell.md -->
+<!-- trigger: cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity, git bash, bash_env, processstartinfo path, fake-command harness | Write portable PowerShell that runs on Windows, macOS, and Linux | Platform | skill-details/cross-platform-powershell.md -->
 
 # Cross-Platform PowerShell
 
@@ -15,6 +15,7 @@ Lightweight skill card for writing portable PowerShell 7+ scripts across Windows
 - [OS detection and conditional logic](../skill-details/cross-platform-powershell.md#os-detection-and-conditional-logic)
 - [Line ending and encoding safety](../skill-details/cross-platform-powershell.md#line-ending-and-encoding-safety)
 - [Case sensitivity and file system differences](../skill-details/cross-platform-powershell.md#case-sensitivity-and-file-system-differences)
+- [Process and Git Bash environment isolation](../skill-details/cross-platform-powershell.md#process-and-git-bash-environment-isolation)
 - [Performance and pipeline optimization](../skill-details/cross-platform-powershell.md#performance-and-pipeline-optimization)
 - [Avoiding Windows-only APIs and commands](../skill-details/cross-platform-powershell.md#avoiding-windows-only-apis-and-commands)
 - [Error handling and reliability](../skill-details/cross-platform-powershell.md#error-handling-and-reliability)

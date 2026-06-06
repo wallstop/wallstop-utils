@@ -5,12 +5,15 @@ This folder contains quality helper scripts used by local hooks and CI:
 - `Format-PowerShellFiles.ps1`: deterministic PowerShell formatting for staged or selected files.
 - `Install-PowerShellQualityModules.ps1`: explicit host-shell bootstrap for required PowerShell quality modules (`Pester`, `PSScriptAnalyzer`) used by hooks and validation workflows.
 - `Invoke-WindowsLanguageChecks.ps1`: cross-platform PowerShell checks for AutoHotkey and batch targets. A dependency-free static AutoHotkey gate enforces top-level `#Requires AutoHotkey v2`, detects common v1 syntax, and supports safe `-Fix` recovery before optional runtime probing with `/validate` then `/iLib` fallback. AutoHotkey process execution uses `System.Diagnostics.Process` with `ArgumentList.Add()` for reliable stdout/stderr capture across all platforms, avoiding `Start-Process -ArgumentList` which mangles special characters on Windows.
+- `Invoke-PreCommitAutoRepair.ps1`: pre-hook safe auto-repair pass used by `.githooks/pre-commit`. It discovers staged Windows-language targets, skips files with unstaged drift, runs `Invoke-WindowsLanguageChecks.ps1 -Fix -StaticOnly` on safe targets, and restages repaired files before pre-commit runs.
+- `Invoke-PreCommitWithRecovery.ps1`: wrapper around `pre-commit` hook stages that auto-recovers cache/environment corruption and now performs bounded git index-lock recovery (`.git/index.lock`) with deterministic `W_PRECOMMIT_GIT_INDEX_LOCK_*` and `E_PRECOMMIT_GIT_INDEX_LOCK_*` diagnostics.
+- `DiagnosticsHelpers.ps1`: shared lock-recovery contract for hook-time git index contention, controlled by `WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE`, `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, and `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`.
 
 Batch smoke checks intentionally remain heuristic, but they now apply uniformly to both single-line and multi-line `.bat` files.
 
 - `Invoke-MacOSLanguageChecks.sh`: macOS AppleScript validation with a source-first migration path and `.scpt` fallback.
 - `Assert-CleanGitTree.ps1`: fails when formatting or checks mutate files in CI.
-- `Invoke-FullValidation.ps1`: session-close full validation wrapper (pre-commit stage all-files, pre-push stage all-files, clean-tree assertion, optional PR CI watch).
+- `Invoke-FullValidation.ps1`: session-close full validation wrapper (pre-commit stage all-files, `Run-PreCommitValidation.ps1 -All`, clean-tree assertion, optional PR CI watch).
 - `Update-LlmSkillsIndex.ps1`: deterministically regenerates `.llm/skills-index.md` from `.llm/skills` metadata comments.
 - `Test-LlmHarness.ps1`: validates wrapper pointers, line limits (300), trigger metadata coverage, lightweight skill cards, expanded-guide links, and index freshness (`-Check`).
 
@@ -21,6 +24,7 @@ Windows CI operating model:
 - PR fast lane: Windows language validation runs only when `*.ahk` or `*.bat` targets change.
 - AutoHotkey policy scope: CI validates `.ahk` files in both `Scripts/AutoHotKey/` and `Config/.config/`; keep both roots on AutoHotkey v2 (`#Requires AutoHotkey v2`).
 - Local agent workflow: run `Invoke-WindowsLanguageChecks.ps1 -TargetFiles <paths> -Fix` before hooks for edited `.ahk`/`.bat` files; hook-side validation remains non-mutating and reports stale staged files as restage-required.
+- Hook wrapper auto-recovery: `.githooks/pre-commit` runs `Invoke-PreCommitAutoRepair.ps1` before pre-commit execution to repair fixable staged AHK/batch drift without requiring manual restaging in the common case.
 - PR budget: targeted Windows checks must complete within 180 seconds; CI fails fast on budget breach.
 - Runtime source: PR lane must use the cached portable AutoHotkey runtime and must not depend on heavyweight package-manager installs.
 - Nightly deep lane: full-repository Windows validation runs on schedule (and optional manual dispatch) to preserve comprehensive coverage.

@@ -12,7 +12,9 @@ if ($setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('Predi
 if ($setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('PredictionViewStyle')) {
     Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
 }
-Set-PSReadLineOption -EditMode Windows
+if ($setPSReadLineOption -and $setPSReadLineOption.Parameters.ContainsKey('EditMode')) {
+    Set-PSReadLineOption -EditMode Windows -ErrorAction SilentlyContinue
+}
 Set-PSReadlineKeyHandler -Key Tab -Function Complete
 
 try { $null = gcm pshazz -ea stop; pshazz init 'default' } catch { }

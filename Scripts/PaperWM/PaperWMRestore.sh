@@ -46,8 +46,8 @@ while [[ $# -gt 0 ]]; do
       usage
       ;;
     *)
-      echo "Unknown option: $1"
-      usage
+      echo "Unknown option: $1" >&2
+      usage >&2
       ;;
   esac
 done
@@ -55,13 +55,13 @@ done
 # Check if we're on Linux
 OS_TYPE="$(uname -s)"
 if [[ "$OS_TYPE" != "Linux" ]]; then
-  echo "Error: PaperWM is only supported on Linux with GNOME Shell."
+  echo "Error: PaperWM is only supported on Linux with GNOME Shell." >&2
   exit 1
 fi
 
 # Check if dconf is available
 if ! command -v dconf &> /dev/null; then
-  echo "Error: dconf command not found. Please install dconf-cli."
+  echo "Error: dconf command not found. Please install dconf-cli." >&2
   exit 1
 fi
 
@@ -70,9 +70,11 @@ echo "Running environment checks..."
 
 # Check if GNOME Shell is available
 if ! command -v gnome-shell &> /dev/null; then
-  echo "Warning: gnome-shell command not found."
-  echo "         PaperWM requires GNOME Shell to function."
-  echo ""
+  {
+    echo "Warning: gnome-shell command not found."
+    echo "         PaperWM requires GNOME Shell to function."
+    echo ""
+  } >&2
 fi
 
 # Check if PaperWM extension is installed
@@ -80,11 +82,13 @@ PAPERWM_USER_DIR="$HOME/.local/share/gnome-shell/extensions/paperwm@paperwm.gith
 PAPERWM_SYSTEM_DIR="/usr/share/gnome-shell/extensions/paperwm@paperwm.github.com"
 
 if [[ ! -d "$PAPERWM_USER_DIR" && ! -d "$PAPERWM_SYSTEM_DIR" ]]; then
-  echo "Warning: PaperWM extension not found."
-  echo "         Checked: $PAPERWM_USER_DIR"
-  echo "         Checked: $PAPERWM_SYSTEM_DIR"
-  echo "         Settings will be restored, but PaperWM must be installed to use them."
-  echo ""
+  {
+    echo "Warning: PaperWM extension not found."
+    echo "         Checked: $PAPERWM_USER_DIR"
+    echo "         Checked: $PAPERWM_SYSTEM_DIR"
+    echo "         Settings will be restored, but PaperWM must be installed to use them."
+    echo ""
+  } >&2
 fi
 
 # Get the directory where the script is located and resolve to absolute path
@@ -93,8 +97,10 @@ BACKUP_DIR_REL="$SCRIPT_DIR/../../Config/PaperWM"
 
 # Resolve to absolute path, with friendly error if it doesn't exist
 if [[ ! -d "$BACKUP_DIR_REL" ]]; then
-  echo "Error: Backup directory '$BACKUP_DIR_REL' does not exist."
-  echo "Make sure you have backed up a PaperWM configuration first."
+  {
+    echo "Error: Backup directory '$BACKUP_DIR_REL' does not exist."
+    echo "Make sure you have backed up a PaperWM configuration first."
+  } >&2
   exit 1
 fi
 BACKUP_DIR="$(cd "$BACKUP_DIR_REL" && pwd)"
@@ -146,7 +152,7 @@ if [[ "$RESTORE_DCONF" == true ]]; then
     echo "  -> dconf settings restored to $DCONF_PATH"
     RESTORED_SOMETHING=true
   else
-    echo "Warning: dconf backup file not found at $BACKUP_DIR/$DCONF_BACKUP_FILE"
+    echo "Warning: dconf backup file not found at $BACKUP_DIR/$DCONF_BACKUP_FILE" >&2
   fi
 fi
 

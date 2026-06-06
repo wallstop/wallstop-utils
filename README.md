@@ -121,6 +121,33 @@ Scripts/          # Backup and restore scripts
 .\Scripts\Backup.ps1
 ```
 
+### Scheduled Backup (Windows Task Scheduler)
+
+Use explicit unattended mode for non-interactive scheduled runs:
+
+```powershell
+pwsh -NoLogo -NoProfile -File .\Scripts\Backup.ps1 -Unattended
+```
+
+If `pwsh` is unavailable on Windows, use the Windows PowerShell fallback explicitly:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -File .\Scripts\Backup.ps1 -Unattended
+```
+
+Environment fallback is also supported when the switch is omitted:
+
+```powershell
+$env:WALLSTOP_BACKUP_UNATTENDED = "1"
+pwsh -NoLogo -NoProfile -File .\Scripts\Backup.ps1
+```
+
+Safety notes:
+
+- Unattended mode bypasses hook verification only for backup commit (`git commit --no-verify`).
+- Backup still enforces clean preflight, managed scope checks, pull-before-mutate, branch assertions, and post-push clean checks.
+- Before staging/commit, backup redacts known secret fields in changed `Config/` text outputs and fails with `E_BACKUP_SECRET_SCAN_FAILED` if unknown high-confidence secret patterns remain.
+
 **macOS:**
 
 ```bash
@@ -191,7 +218,7 @@ Local hooks are wrapper scripts in `.githooks/` that execute `pre-commit` when a
 Default local behavior is:
 
 - `pre-commit` hook: staged-file checks and auto-fixes where applicable (including deterministic PowerShell formatting, `shellcheck`/`shfmt` for changed shell targets, and pinned native StyLua/actionlint checks)
-- `pre-push` hook: runs `Scripts/Utils/Quality/Invoke-FullValidation.ps1` when `pwsh` is available (full pre-commit + pre-push + harness + drift checks), with legacy fallback when `pre-commit` is unavailable
+- `pre-push` hook: parses pushed refs, resolves changed files, and runs file-scoped pre-push validation through `Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1`, with legacy file-scoped PowerShell fallback when `pre-commit` is unavailable
 
 Shell `shfmt` and `shellcheck` hooks use repo-managed PowerShell wrappers instead of Python-packaged hook environments. `Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1` downloads pinned upstream release assets into ignored `.tools/shell-quality`, verifies SHA256 and tool versions, and reuses the same executables on Linux, macOS, and Windows hosts.
 
@@ -199,7 +226,11 @@ Compiled native tools that publish release binaries follow the same contract. `S
 
 Hook troubleshooting is intentionally automated first:
 
-- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` bound hook runtime; values must be integers of at least 30 seconds.
+- When `pwsh` is available, `.githooks/pre-commit` runs `Scripts/Utils/Quality/Invoke-PreCommitAutoRepair.ps1` before pre-commit to safely repair and restage fixable staged AHK/batch drift (`-Fix -StaticOnly`) while skipping files that have unstaged drift.
+- Hook-time git index lock failures (`.git/index.lock`) are auto-detected and recovered in `Invoke-PreCommitAutoRepair.ps1`, `Run-PreCommitValidation.ps1`, and `Invoke-PreCommitWithRecovery.ps1`; recovery emits stable `W_PRECOMMIT_GIT_INDEX_LOCK_*` / `E_PRECOMMIT_GIT_INDEX_LOCK_*` diagnostics and retries once before failing.
+- `WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS` and `WALLSTOP_PREPUSH_TIMEOUT_SECONDS` bound hook runtime. Values must be integers of at least 60 seconds (30s inner recovery timeout plus a 15s shutdown buffer plus 15s setup slack).
+- Hook wrappers emit `W_HOOK_RUNTIME_BUDGET` when a phase exceeds the fast-path target (`<= 1s`) so slow paths are visible and can be remediated.
+- Index-lock recovery tuning is available via `WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE` (`safe` or `off`), `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, and `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`.
 - `WALLSTOP_NATIVE_TOOL_DOWNLOAD_TIMEOUT_SECONDS` overrides the native binary download timeout when a slow network needs more than the default 300 seconds.
 - `.tools/shell-quality` and `.tools/native-quality` are ignored caches. Delete them only when deliberately forcing a fresh verified download; normal version/hash drift repairs itself.
 - If pre-commit reports environment installation corruption, run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1 -InstallHooksOnly` to trigger the same clean + `install-hooks` repair path used by preflight.
@@ -207,10 +238,11 @@ Hook troubleshooting is intentionally automated first:
 Enable hooks:
 
 ```bash
-pipx install pre-commit
+PRE_COMMIT_VERSION="$(awk -F'==' '/^[[:space:]]*pre-commit==/ { gsub(/[[:space:]].*$/, "", $2); print $2; exit }' requirements.txt)"
+pipx install pre-commit=="${PRE_COMMIT_VERSION}"
 # or use a dedicated pre-commit venv when pipx is unavailable:
 python3 -m venv ~/.local/venvs/pre-commit
-~/.local/venvs/pre-commit/bin/pip install pre-commit
+~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt
 mkdir -p ~/.local/bin
 ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit
 export PATH="$HOME/.local/bin:$PATH"
@@ -253,7 +285,7 @@ See [.llm/validation-workflow.md](.llm/validation-workflow.md) for the full reme
 
 ### PowerShell utility gate (retained)
 
-The existing utility validation gate remains and is integrated into pre-commit:
+The existing utility validation gate remains and is integrated into explicit full validation and CI:
 
 - `Tests/Utils` Pester suite (isolated `pwsh -NoProfile -NonInteractive` process)
 - `Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1` Pester suite (when relevant files are staged)
@@ -313,7 +345,7 @@ GitHub Actions workflow `.github/workflows/script-quality.yml` runs full-repo ch
 To avoid a permanently-red baseline while keeping strict enforcement on new changes:
 
 - PRs/pushes enforce `shellcheck` and `shfmt` on changed shell targets only.
-- Local `pre-push` still runs non-shell full-repo quality gates (`pre-commit --hook-stage pre-push --all-files` + PowerShell utility checks).
+- Local `pre-push` stays changed-file scoped; full-repo PowerShell, policy, and Pester checks run in CI and explicit full validation.
 - Full-repo deterministic CI checks exclude shell debt-heavy hooks.
 - A manual non-blocking debt audit job is available in `.github/workflows/script-quality.yml` via `workflow_dispatch` input `run_shell_debt_audit=true`.
 

@@ -15,6 +15,9 @@ param(
     [string]$CoveragePath,
 
     [Parameter(Mandatory = $false)]
+    [string]$TestResultOutputPath,
+
+    [Parameter(Mandatory = $false)]
     [ValidateRange(0, 100)]
     [int]$MinimumCoveragePercent = 0,
 
@@ -39,8 +42,8 @@ function Get-FailedTestSummary {
         [object]$Result,
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(1, 20)]
-        [int]$MaxCount = 3
+        [ValidateRange(1, 50)]
+        [int]$MaxCount = 20
     )
 
     if ($null -eq $Result) {
@@ -100,8 +103,8 @@ function Get-FailedContainerSummary {
         [object]$Result,
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(1, 20)]
-        [int]$MaxCount = 3
+        [ValidateRange(1, 50)]
+        [int]$MaxCount = 20
     )
 
     if ($null -eq $Result) {
@@ -276,6 +279,16 @@ if ($EnableCoverage) {
     $configuration.CodeCoverage.Path = @($CoveragePath)
 }
 
+if (-not [string]::IsNullOrWhiteSpace($TestResultOutputPath)) {
+    $testResultDirectory = [System.IO.Path]::GetDirectoryName($TestResultOutputPath)
+    if (-not [string]::IsNullOrWhiteSpace($testResultDirectory)) {
+        [void][System.IO.Directory]::CreateDirectory($testResultDirectory)
+    }
+
+    $configuration.TestResult.Enabled = $true
+    $configuration.TestResult.OutputPath = $TestResultOutputPath
+}
+
 $result = Invoke-Pester -Configuration $configuration -ErrorAction Stop
 if ($null -eq $result) {
     throw "E_CI_PESTER_RESULT_MISSING: Invoke-Pester returned no result object."
@@ -320,7 +333,13 @@ if ($totalCount -eq 0) {
 
 if ((Get-PesterResultCount -Result $result -PropertyName "FailedCount") -gt 0) {
     $failedSummary = Get-FailedTestSummary -Result $result
-    throw "E_CI_PESTER_TESTS_FAILED: Pester failed with $($result.FailedCount) failed test(s). Failed tests: $failedSummary"
+    $testResultArtifactDiagnostic = if ([string]::IsNullOrWhiteSpace($TestResultOutputPath)) {
+        ""
+    }
+    else {
+        " TestResultOutputPath='$TestResultOutputPath'."
+    }
+    throw "E_CI_PESTER_TESTS_FAILED: Pester failed with $($result.FailedCount) failed test(s). Failed tests: $failedSummary.$testResultArtifactDiagnostic"
 }
 
 if (-not $EnableCoverage) {

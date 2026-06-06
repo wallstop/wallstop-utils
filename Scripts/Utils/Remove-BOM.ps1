@@ -392,19 +392,32 @@ function Resolve-TopLevelPathAlias {
                 # /var -> /private/var, where readlink returns relative target "private/var").
                 if (-not (Test-IsWindowsPlatform) -and $resolvedTopLevelAliasTarget.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
                     try {
-                        $readlinkOutput = (& readlink $topLevelSegment 2>$null)
-                        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($readlinkOutput)) {
-                            $readlinkPath = ([string]$readlinkOutput).Trim()
-                            if (-not [System.IO.Path]::IsPathRooted($readlinkPath)) {
-                                $readlinkParent = Split-Path -Path $topLevelSegment -Parent
-                                if ([string]::IsNullOrWhiteSpace($readlinkParent)) {
-                                    $readlinkParent = "/"
+                        $readlinkCommand = @(Get-Command -Name "readlink" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+                        $readlinkCommandPath = if ($null -ne $readlinkCommand -and -not [string]::IsNullOrWhiteSpace([string]$readlinkCommand.Path)) {
+                            [string]$readlinkCommand.Path
+                        }
+                        elseif ($null -ne $readlinkCommand -and -not [string]::IsNullOrWhiteSpace([string]$readlinkCommand.Source)) {
+                            [string]$readlinkCommand.Source
+                        }
+                        else {
+                            ""
+                        }
+
+                        if (-not [string]::IsNullOrWhiteSpace($readlinkCommandPath)) {
+                            $readlinkOutput = (& $readlinkCommandPath $topLevelSegment 2>$null)
+                            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($readlinkOutput)) {
+                                $readlinkPath = ([string]$readlinkOutput).Trim()
+                                if (-not [System.IO.Path]::IsPathRooted($readlinkPath)) {
+                                    $readlinkParent = Split-Path -Path $topLevelSegment -Parent
+                                    if ([string]::IsNullOrWhiteSpace($readlinkParent)) {
+                                        $readlinkParent = "/"
+                                    }
+                                    $readlinkPath = [System.IO.Path]::GetFullPath((Join-Path -Path $readlinkParent -ChildPath $readlinkPath))
                                 }
-                                $readlinkPath = [System.IO.Path]::GetFullPath((Join-Path -Path $readlinkParent -ChildPath $readlinkPath))
-                            }
-                            if (-not $readlinkPath.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
-                                $resolvedTopLevelAliasTarget = $readlinkPath
-                                $aliasResolutionSource = "readlink"
+                                if (-not $readlinkPath.Equals($topLevelSegment, [System.StringComparison]::Ordinal)) {
+                                    $resolvedTopLevelAliasTarget = $readlinkPath
+                                    $aliasResolutionSource = "readlink"
+                                }
                             }
                         }
                     }
@@ -464,8 +477,20 @@ function Get-GitCommandDetails {
         [string[]]$arguments
     )
 
-    $commandOutput = @(& $gitExecutable -C $workingDirectory @arguments 2>&1)
-    $commandExitCode = $LASTEXITCODE
+    $commandStderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $commandOutput = @(& $gitExecutable -C $workingDirectory @arguments 2> $commandStderrPath)
+        $commandExitCode = $LASTEXITCODE
+        $commandStderr = Read-RedirectedProcessText -Path $commandStderrPath
+    }
+    finally {
+        Remove-Item -LiteralPath $commandStderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $diagnosticOutput = @($commandOutput)
+    if (-not [string]::IsNullOrWhiteSpace($commandStderr)) {
+        $diagnosticOutput += @($commandStderr -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
 
     $firstOutputLine = $null
     foreach ($line in $commandOutput) {
@@ -476,12 +501,42 @@ function Get-GitCommandDetails {
         }
     }
 
-    return [pscustomobject]@{
-        ExitCode  = $commandExitCode
-        Output    = @($commandOutput)
-        FirstLine = $firstOutputLine
-        HasOutput = $null -ne $firstOutputLine
+    $firstDiagnosticLine = $null
+    foreach ($line in $diagnosticOutput) {
+        $normalizedLine = [string]$line
+        if (-not [string]::IsNullOrWhiteSpace($normalizedLine)) {
+            $firstDiagnosticLine = $normalizedLine.Trim()
+            break
+        }
     }
+
+    return [pscustomobject]@{
+        ExitCode              = $commandExitCode
+        Output                = @($commandOutput)
+        DiagnosticOutput      = @($diagnosticOutput)
+        FirstLine             = $firstOutputLine
+        HasOutput             = $null -ne $firstOutputLine
+        FirstDiagnosticLine   = $firstDiagnosticLine
+        HasDiagnosticOutput   = $null -ne $firstDiagnosticLine
+    }
+}
+
+function Get-GitCommandFirstDiagnosticLine {
+    param(
+        [pscustomobject]$result
+    )
+
+    $firstDiagnosticLineProperty = $result.PSObject.Properties["FirstDiagnosticLine"]
+    if ($null -ne $firstDiagnosticLineProperty -and -not [string]::IsNullOrWhiteSpace([string]$firstDiagnosticLineProperty.Value)) {
+        return [string]$firstDiagnosticLineProperty.Value
+    }
+
+    $firstLineProperty = $result.PSObject.Properties["FirstLine"]
+    if ($null -ne $firstLineProperty -and -not [string]::IsNullOrWhiteSpace([string]$firstLineProperty.Value)) {
+        return [string]$firstLineProperty.Value
+    }
+
+    return ""
 }
 
 function Resolve-CanonicalFileSystemPath {
@@ -627,8 +682,9 @@ function Resolve-ScannableFileDiscovery {
                 }
             }
             else {
-                $gitPrefixFailureDetails = if ($gitPrefixResult.HasOutput) {
-                    " First output: '$($gitPrefixResult.FirstLine)'."
+                $gitPrefixFirstDiagnosticLine = Get-GitCommandFirstDiagnosticLine -result $gitPrefixResult
+                $gitPrefixFailureDetails = if (-not [string]::IsNullOrWhiteSpace($gitPrefixFirstDiagnosticLine)) {
+                    " First diagnostic output: '$gitPrefixFirstDiagnosticLine'."
                 }
                 else {
                     ""
@@ -699,8 +755,9 @@ function Resolve-ScannableFileDiscovery {
             }
         }
         else {
-            $gitRootFailureDetails = if ($gitRootResult.HasOutput) {
-                " first output: '$($gitRootResult.FirstLine)'"
+            $gitRootFirstDiagnosticLine = Get-GitCommandFirstDiagnosticLine -result $gitRootResult
+            $gitRootFailureDetails = if (-not [string]::IsNullOrWhiteSpace($gitRootFirstDiagnosticLine)) {
+                " first diagnostic output: '$gitRootFirstDiagnosticLine'"
             }
             else {
                 ""
@@ -786,8 +843,9 @@ function Get-ScannableFileStream {
         $streamExitCode = $LASTEXITCODE
         if ($streamExitCode -ne 0) {
             $failureProbe = Get-GitCommandDetails -gitExecutable $scanPlan.GitExecutable -WorkingDirectory $scanPlan.GitRoot -arguments @($scanPlan.GitListArguments)
-            $failureDetails = if ($failureProbe.HasOutput) {
-                " First output: '$($failureProbe.FirstLine)'."
+            $failureFirstDiagnosticLine = Get-GitCommandFirstDiagnosticLine -result $failureProbe
+            $failureDetails = if (-not [string]::IsNullOrWhiteSpace($failureFirstDiagnosticLine)) {
+                " First diagnostic output: '$failureFirstDiagnosticLine'."
             }
             else {
                 ""

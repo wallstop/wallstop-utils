@@ -9,6 +9,7 @@ Lightweight skill card for hook wrapper flow and fallback behavior.
 ## Core concepts
 
 - [Last-resort hook behavior](../skill-details/precommit-hooks-and-fallbacks.md#last-resort-hook-behavior)
+- [Fast local hook contract](../skill-details/precommit-hooks-and-fallbacks.md#fast-local-hook-contract)
 - [Deterministic fallback path](../skill-details/precommit-hooks-and-fallbacks.md#deterministic-fallback-path)
 - [Timeout-guarded hook execution](../skill-details/precommit-hooks-and-fallbacks.md#timeout-guarded-hook-execution)
 - [Pinned native hook tools](../skill-details/precommit-hooks-and-fallbacks.md#pinned-native-hook-tools)
@@ -17,4 +18,4 @@ Lightweight skill card for hook wrapper flow and fallback behavior.
 - Agentic early parity command: `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1 -PreflightOnly`
 - Use `Invoke-NativeQualityChecks.ps1 -Tool All -EnsureOnly` for pinned StyLua/actionlint assets; never add remote compiled pre-commit repos for those tools.
 - Run targeted validators and safe fixers during agent work before invoking hooks.
-- Keep pre-commit ScriptAnalyzer staged-file scoped; reserve full-repo analyzer scans for `-All` paths.
+- Keep local hooks changed-file scoped; reserve Pester, full-repo scans, and all-files validation for `-All`, CI, and explicit full validation.

@@ -1,4 +1,4 @@
-<!-- trigger: dependabot, dependency updates, github-actions, pre-commit, devcontainers, grouped updates, security updates | Maintain weekly grouped dependency automation across tooling ecosystems | Quality | skill-details/dependency-update-automation.md -->
+<!-- trigger: dependabot, dependency updates, github-actions, pre-commit, pip, devcontainers, grouped updates, security updates | Maintain weekly grouped dependency automation across tooling ecosystems | Quality | skill-details/dependency-update-automation.md -->
 
 # Dependency Update Automation
 

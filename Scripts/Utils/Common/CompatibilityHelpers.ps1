@@ -89,6 +89,112 @@ function Test-IsLinuxPlatform {
     return (Get-PortableAutomaticBool -Name 'IsLinux')
 }
 
+function Resolve-PowerShellExecutablePath {
+    # Resolves the PowerShell executable path used to invoke child scripts.
+    # Preference order:
+    #   1) pwsh (all platforms)
+    #   2) powershell.exe (Windows fallback)
+    # Throws a stable E_* diagnostic when no supported executable is available.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+
+    $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
+    if ($null -ne $pwshCommand -and -not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Source)) {
+        Write-Verbose (
+            "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='pwsh'." -f
+            $pwshCommand.Source
+        )
+        return [string]$pwshCommand.Source
+    }
+
+    if (Test-IsWindowsPlatform) {
+        $windowsPowerShellCommand = Get-Command -Name 'powershell.exe' -ErrorAction SilentlyContinue
+        if ($null -ne $windowsPowerShellCommand -and -not [string]::IsNullOrWhiteSpace([string]$windowsPowerShellCommand.Source)) {
+            Write-Verbose (
+                "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='powershell.exe-fallback'." -f
+                $windowsPowerShellCommand.Source
+            )
+            return [string]$windowsPowerShellCommand.Source
+        }
+    }
+
+    $platformName = 'Unknown'
+    if (Test-IsWindowsPlatform) {
+        $platformName = 'Windows'
+    }
+    elseif (Test-IsMacOSPlatform) {
+        $platformName = 'macOS'
+    }
+    elseif (Test-IsLinuxPlatform) {
+        $platformName = 'Linux'
+    }
+
+    $checkedExecutables = @('pwsh')
+    if ($platformName -eq 'Windows') {
+        $checkedExecutables += 'powershell.exe'
+    }
+
+    throw (
+        "E_COMPATIBILITY_POWERSHELL_EXECUTABLE_NOT_FOUND: unable to resolve a PowerShell executable for child script execution. Checked={0}; platform='{1}'." -f
+        ($checkedExecutables -join ', '),
+        $platformName
+    )
+}
+
+function Read-RedirectedProcessText {
+    # PowerShell redirection encoding differs by edition: Windows PowerShell 5.1 writes
+    # redirected native stderr as UTF-16LE with a BOM, while pwsh normally writes UTF-8.
+    # Decode BOM-marked files first, then use strict UTF-8 for normal no-BOM output.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return ""
+    }
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -eq 0) {
+        return ""
+    }
+
+    if ($bytes.Length -ge 4) {
+        if ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE -and $bytes[2] -eq 0x00 -and $bytes[3] -eq 0x00) {
+            return ([System.Text.UTF32Encoding]::new($false, $true, $true)).GetString($bytes, 4, $bytes.Length - 4)
+        }
+
+        if ($bytes[0] -eq 0x00 -and $bytes[1] -eq 0x00 -and $bytes[2] -eq 0xFE -and $bytes[3] -eq 0xFF) {
+            return ([System.Text.UTF32Encoding]::new($true, $true, $true)).GetString($bytes, 4, $bytes.Length - 4)
+        }
+    }
+
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        return ([System.Text.UTF8Encoding]::new($true, $true)).GetString($bytes, 3, $bytes.Length - 3)
+    }
+
+    if ($bytes.Length -ge 2) {
+        if ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+            return ([System.Text.UnicodeEncoding]::new($false, $true, $true)).GetString($bytes, 2, $bytes.Length - 2)
+        }
+
+        if ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+            return ([System.Text.UnicodeEncoding]::new($true, $true, $true)).GetString($bytes, 2, $bytes.Length - 2)
+        }
+    }
+
+    try {
+        return ([System.Text.UTF8Encoding]::new($false, $true)).GetString($bytes)
+    }
+    catch [System.Text.DecoderFallbackException] {
+        return [System.Text.Encoding]::Default.GetString($bytes)
+    }
+}
+
 function Get-RelativePathFallback {
     # .NET Framework fallback for [System.IO.Path]::GetRelativePath. Mirrors the native
     # algorithm: normalize both paths, confirm a shared root, diff the path segments, and
@@ -486,24 +592,220 @@ function Set-PortableProcessArguments {
     $StartInfo.Arguments = ConvertTo-ProcessArgumentString -ArgumentList $normalizedArguments
 }
 
+function Set-PortableProcessEnvironmentVariable {
+    # Sets/removes a ProcessStartInfo environment variable while avoiding duplicate
+    # case variants on Windows, where child process environment names are case-insensitive.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [System.Diagnostics.ProcessStartInfo]$StartInfo,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Name,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [object]$Value,
+
+        # Test-only: force Windows-style matching on non-Windows runners.
+        [Parameter(Mandatory = $false)]
+        [switch]$CaseInsensitive
+    )
+
+    if ($CaseInsensitive -or (Test-IsWindowsPlatform)) {
+        $comparison = [System.StringComparison]::OrdinalIgnoreCase
+    } else {
+        $comparison = [System.StringComparison]::Ordinal
+    }
+
+    $keysToRemove = @(
+        $StartInfo.Environment.Keys |
+            Where-Object { [string]::Equals([string]$_, $Name, $comparison) } |
+            ForEach-Object { [string]$_ }
+    )
+
+    foreach ($existingName in $keysToRemove) {
+        [void]$StartInfo.Environment.Remove($existingName)
+    }
+
+    if ($null -ne $Value) {
+        $StartInfo.Environment[$Name] = [string]$Value
+    }
+}
+
+function Get-ChildProcessIdsPortably {
+    [CmdletBinding()]
+    [OutputType([int[]])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ParentProcessId
+    )
+
+    if (Test-IsWindowsPlatform) {
+        $getCimInstanceCommand = Get-Command -Name 'Get-CimInstance' -ErrorAction SilentlyContinue
+        if ($null -eq $getCimInstanceCommand) {
+            Write-Verbose "Process tree cleanup diagnostics: Get-CimInstance unavailable; descendant discovery degraded."
+            return @() # array-unwrap-safe: callers always wrap with @()
+        }
+
+        try {
+            $filter = "ParentProcessId = {0}" -f $ParentProcessId
+            return @(
+                & $getCimInstanceCommand -ClassName Win32_Process -Filter $filter -ErrorAction Stop |
+                    ForEach-Object { [int]$_.ProcessId }
+            ) # array-unwrap-safe: callers always wrap with @()
+        }
+        catch {
+            Write-Verbose ("Process tree cleanup diagnostics: Get-CimInstance child discovery failed for parentPid={0}: {1}" -f $ParentProcessId,$_.Exception.Message)
+            return @() # array-unwrap-safe: callers always wrap with @()
+        }
+    }
+
+    $pgrepCommand = @(Get-Command -Name 'pgrep' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($pgrepCommand.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$pgrepCommand[0].Source)) {
+        try {
+            $pgrepOutput = @(& ([string]$pgrepCommand[0].Source) -P $ParentProcessId 2>$null)
+            if ($LASTEXITCODE -eq 0) {
+                return @(
+                    $pgrepOutput |
+                        Where-Object { [string]$_ -match '^\d+$' } |
+                        ForEach-Object { [int]$_ }
+                ) # array-unwrap-safe: callers always wrap with @()
+            }
+        }
+        catch {
+            Write-Verbose ("Process tree cleanup diagnostics: pgrep child discovery failed for parentPid={0}: {1}" -f $ParentProcessId,$_.Exception.Message)
+        }
+    }
+
+    $psCommand = @(Get-Command -Name 'ps' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($psCommand.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$psCommand[0].Source)) {
+        try {
+            $processLines = @(& ([string]$psCommand[0].Source) -eo pid=,ppid= 2>$null)
+            if ($LASTEXITCODE -eq 0) {
+                return @(
+                    $processLines |
+                        ForEach-Object {
+                            $match = [regex]::Match([string]$_, '^\s*(?<pid>\d+)\s+(?<ppid>\d+)\s*$')
+                            if ($match.Success -and [int]$match.Groups['ppid'].Value -eq $ParentProcessId) {
+                                [int]$match.Groups['pid'].Value
+                            }
+                        }
+                ) # array-unwrap-safe: callers always wrap with @()
+            }
+        }
+        catch {
+            Write-Verbose ("Process tree cleanup diagnostics: ps child discovery failed for parentPid={0}: {1}" -f $ParentProcessId,$_.Exception.Message)
+        }
+    }
+
+    Write-Verbose ("Process tree cleanup diagnostics: descendant discovery unavailable for parentPid={0}." -f $ParentProcessId)
+    return @() # array-unwrap-safe: callers always wrap with @()
+}
+
+function Get-ProcessDescendantIdsPortably {
+    [CmdletBinding()]
+    [OutputType([int[]])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ParentProcessId,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [hashtable]$VisitedProcessIds
+    )
+
+    if ($null -eq $VisitedProcessIds) {
+        $VisitedProcessIds = @{}
+    }
+
+    $descendantIds = New-Object System.Collections.Generic.List[int]
+    foreach ($childProcessId in @(Get-ChildProcessIdsPortably -ParentProcessId $ParentProcessId)) {
+        $childKey = [string]$childProcessId
+        if ($VisitedProcessIds.ContainsKey($childKey)) {
+            continue
+        }
+
+        $VisitedProcessIds[$childKey] = $true
+        foreach ($grandchildProcessId in @(Get-ProcessDescendantIdsPortably -ParentProcessId $childProcessId -VisitedProcessIds $VisitedProcessIds)) {
+            $descendantIds.Add([int]$grandchildProcessId) | Out-Null
+        }
+
+        $descendantIds.Add([int]$childProcessId) | Out-Null
+    }
+
+    return @($descendantIds.ToArray()) # array-unwrap-safe: callers always wrap with @()
+}
+
+function Stop-ProcessByIdPortably {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ProcessId
+    )
+
+    try {
+        $targetProcess = [System.Diagnostics.Process]::GetProcessById($ProcessId)
+    }
+    catch {
+        return
+    }
+
+    try {
+        $targetProcess.Kill()
+    }
+    catch {
+        Write-Verbose ("Process tree cleanup diagnostics: failed to kill processId={0}: {1}" -f $ProcessId,$_.Exception.Message)
+    }
+    finally {
+        $targetProcess.Dispose()
+    }
+}
+
+function Stop-ProcessTreeFallbackPortably {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [System.Diagnostics.Process]$Process
+    )
+
+    $rootProcessId = [int]$Process.Id
+    $visitedProcessIds = @{ ([string]$rootProcessId) = $true }
+    $descendantProcessIds = @(Get-ProcessDescendantIdsPortably -ParentProcessId $rootProcessId -VisitedProcessIds $visitedProcessIds)
+
+    foreach ($descendantProcessId in $descendantProcessIds) {
+        Stop-ProcessByIdPortably -ProcessId ([int]$descendantProcessId)
+    }
+
+    try {
+        $Process.Kill()
+    }
+    catch {
+        Write-Verbose ("Process tree cleanup diagnostics: failed to kill root processId={0}: {1}" -f $rootProcessId,$_.Exception.Message)
+    }
+}
+
 function Stop-ProcessTreePortably {
     # Portable replacement for [System.Diagnostics.Process]::Kill($true) (terminate the whole
     # process tree). The Kill(bool) overload was added in .NET Core 3.0 and is ABSENT on
     # Windows PowerShell 5.1 (.NET Framework), where $process.Kill($true) throws "Cannot find an
     # overload for 'Kill' and the argument count: '1'". On editions with the overload the entire
-    # tree is terminated; on 5.1 the parameterless Kill() terminates the target process (best
-    # effort — accepting that orphaned children may linger is better than throwing during
-    # timeout cleanup). This is the single sanctioned reference to the Kill(bool) overload.
+    # tree is terminated by .NET. On fallback paths, descendants are discovered and killed
+    # recursively before the root process. This is the single sanctioned reference to the
+    # Kill(bool) overload.
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '',
-        Justification = 'Kill($true) is invoked only after a runtime reflection guard confirms the .NET Core 3.0+ overload exists; Windows PowerShell 5.1 falls back to the parameterless Kill(). Single sanctioned reference to the Kill(bool) overload.')]
+        Justification = 'Kill($true) is invoked only after a runtime reflection guard confirms the .NET Core 3.0+ overload exists; Windows PowerShell 5.1 falls back to explicit descendant discovery plus parameterless Kill(). Single sanctioned reference to the Kill(bool) overload.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         [ValidateNotNull()]
         [System.Diagnostics.Process]$Process,
 
-        # Test-only: force the Windows PowerShell 5.1 (parameterless Kill) fallback even where
-        # the Kill(bool) overload exists.
+        # Test-only: force the Windows PowerShell 5.1 explicit descendant-discovery fallback even
+        # where the Kill(bool) overload exists.
         [Parameter(Mandatory = $false)]
         [switch]$ForceFallback
     )
@@ -518,7 +820,7 @@ function Stop-ProcessTreePortably {
         return
     }
 
-    $Process.Kill()
+    Stop-ProcessTreeFallbackPortably -Process $Process
 }
 
 function Get-FileSystemLinkTargetProperty {

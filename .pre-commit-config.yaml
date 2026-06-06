@@ -21,14 +21,6 @@ repos:
         args: [--autofix, --no-sort-keys, --indent, "2"]
         files: '^(Config/Komorebi/(komorebi|komorebi\.bar)\.json|Config/WindowsTerminal/settings\.json|Config/scoopfile\.json)$'
 
-  - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.1.0
-    hooks:
-      - id: prettier
-        name: prettier-yaml
-        types_or: [yaml]
-        files: '^(\.github/workflows/.*\.(yml|yaml)|Config/Komorebi/applications\.yaml)$'
-
   - repo: local
     hooks:
       - id: stylua
@@ -75,13 +67,14 @@ repos:
         name: powershell-precommit-validation
         entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Run-PreCommitValidation.ps1
         language: system
+        files: '^(Scripts/Utils/.*\.ps1|Tests/Utils/.*\.Tests\.ps1|Tests/GitHub/.*\.ps1|Scripts/AutoHotKey/.*\.ahk|Config/\.config/.*\.ahk|Scripts/.*\.bat|Scripts/.*\.sh|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push)|Config/Wezterm/wezterm\.lua|\.github/workflows/.*\.(yml|yaml)|\.llm/.*\.md|AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|\.github/dependabot\.yml|\.pre-commit-config\.yaml|\.gitattributes|\.editorconfig|\.gitignore|requirements\.txt|\.psscriptanalyzer(\.format)?\.psd1|\.shellcheckrc|\.stylua\.toml|Scripts/Utils/Quality/(native-quality-tools|shell-quality-tools)\.json)$'
         pass_filenames: false
         stages: [pre-commit]
       - id: powershell-prepush-validation
         name: powershell-prepush-validation
-        entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Run-PreCommitValidation.ps1 -All
+        entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation.ps1
         language: system
-        pass_filenames: false
+        pass_filenames: true
         stages: [pre-push]
       - id: llm-skills-index-check
         name: llm-skills-index-check

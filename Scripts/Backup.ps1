@@ -1,8 +1,12 @@
+param(
+    [Parameter(Mandatory = $false)]
+    [switch]$Unattended
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
-$pwshCommand = (Get-Command -Name "pwsh" -ErrorAction Stop).Source
 $diagnosticsHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/DiagnosticsHelpers.ps1"
 if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
     throw "E_BACKUP_DIAGNOSTICS_HELPER_MISSING: diagnostics helper file not found at '$diagnosticsHelpersPath'."
@@ -17,6 +21,15 @@ if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
 
 . $compatibilityHelpersPath
 
+$backupSecretHygieneHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/BackupSecretHygieneHelpers.ps1"
+if (-not (Test-Path -LiteralPath $backupSecretHygieneHelpersPath -PathType Leaf)) {
+    throw "E_BACKUP_SECRET_HYGIENE_HELPER_MISSING: backup secret hygiene helper file not found at '$backupSecretHygieneHelpersPath'."
+}
+
+. $backupSecretHygieneHelpersPath
+
+$pwshCommand = Resolve-PowerShellExecutablePath
+
 function Get-LastExitCodeOrDefault {
     $lecValue = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
     if ($null -ne $lecValue) {
@@ -24,6 +37,20 @@ function Get-LastExitCodeOrDefault {
     }
 
     return 0
+}
+
+function Test-BackupTruthySettingValue {
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    return ($Value.Trim() -match '^(?i:1|true|yes|on)$')
 }
 
 function Get-PathspecDiagnosticsText {
@@ -245,6 +272,98 @@ function Assert-BackupManagedPathspecs {
     }
 }
 
+function Get-BackupManagedChangedFilesOrThrow {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$ManagedPathspecs
+    )
+
+    $trackedChangedArgs = @("-C", $RepositoryRoot, "diff", "--name-only", "--diff-filter=AM", "--")
+    $trackedChangedArgs += $ManagedPathspecs
+    $trackedChangedOutput = @(& $GitExecutable @trackedChangedArgs 2>$null)
+    $trackedChangedExitCode = Get-LastExitCodeOrDefault
+    if ($trackedChangedExitCode -ne 0) {
+        $trackedChangedDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $GitExecutable -GitArguments $trackedChangedArgs)
+        $trackedChangedPreview = Get-OutputPreview -OutputLines $trackedChangedDiagnostics
+        throw (
+            "E_BACKUP_GIT_CHANGED_FILE_DISCOVERY_FAILED: git diff --name-only --diff-filter=AM failed (exitCode={0}; repositoryRoot='{1}'; pathspec={2}; outputPreview={3})." -f
+            $trackedChangedExitCode,
+            $RepositoryRoot,
+            (Get-PathspecDiagnosticsText -Pathspec $ManagedPathspecs),
+            $trackedChangedPreview
+        )
+    }
+
+    $untrackedChangedArgs = @("-C", $RepositoryRoot, "ls-files", "--others", "--exclude-standard", "--")
+    $untrackedChangedArgs += $ManagedPathspecs
+    $untrackedChangedOutput = @(& $GitExecutable @untrackedChangedArgs 2>$null)
+    $untrackedChangedExitCode = Get-LastExitCodeOrDefault
+    if ($untrackedChangedExitCode -ne 0) {
+        $untrackedChangedDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $GitExecutable -GitArguments $untrackedChangedArgs)
+        $untrackedChangedPreview = Get-OutputPreview -OutputLines $untrackedChangedDiagnostics
+        throw (
+            "E_BACKUP_GIT_CHANGED_FILE_DISCOVERY_FAILED: git ls-files --others --exclude-standard failed (exitCode={0}; repositoryRoot='{1}'; pathspec={2}; outputPreview={3})." -f
+            $untrackedChangedExitCode,
+            $RepositoryRoot,
+            (Get-PathspecDiagnosticsText -Pathspec $ManagedPathspecs),
+            $untrackedChangedPreview
+        )
+    }
+
+    $pathComparer = if (Test-IsWindowsPlatform) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+    $seenPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+    $managedChangedFiles = New-Object System.Collections.Generic.List[string]
+
+    foreach ($candidatePath in @($trackedChangedOutput + $untrackedChangedOutput)) {
+        $relativePath = [string]$candidatePath
+        if ([string]::IsNullOrWhiteSpace($relativePath)) {
+            continue
+        }
+
+        $relativePath = $relativePath.Trim()
+        if (-not $seenPaths.Add($relativePath)) {
+            continue
+        }
+
+        $fullPath = Join-Path -Path $RepositoryRoot -ChildPath $relativePath
+        if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+            [void]$managedChangedFiles.Add($relativePath)
+        }
+    }
+
+    return $managedChangedFiles.ToArray()
+}
+
+function Invoke-BackupKnownSecretSanitization {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$RelativePaths = @()
+    )
+
+    return (Invoke-BackupSecretHygieneSanitizeKnownSecrets -RepositoryRoot $RepositoryRoot -RelativePaths $RelativePaths)
+}
+
+function Find-BackupUnknownSecretFindings {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$RelativePaths = @()
+    )
+
+    return (Find-BackupSecretHygieneUnknownSecretFindings -RepositoryRoot $RepositoryRoot -RelativePaths $RelativePaths)
+}
+
 function Invoke-BackupStep {
     param(
         [Parameter(Mandatory = $true)]
@@ -380,6 +499,28 @@ function Assert-ApplicableBackupStepsFlat {
     }
 }
 
+$unattendedEnvironmentValue = [string]$env:WALLSTOP_BACKUP_UNATTENDED
+$isUnattendedMode = $false
+$unattendedModeSource = 'default'
+
+if ($PSBoundParameters.ContainsKey('Unattended')) {
+    if ($Unattended.IsPresent) {
+        $isUnattendedMode = $true
+        $unattendedModeSource = 'parameter'
+    }
+}
+elseif (Test-BackupTruthySettingValue -Value $unattendedEnvironmentValue) {
+    $isUnattendedMode = $true
+    $unattendedModeSource = 'environment'
+}
+
+Write-Verbose (
+    "Backup unattended diagnostics: isUnattended={0}; source='{1}'; environmentValue='{2}'" -f
+    $isUnattendedMode,
+    $unattendedModeSource,
+    $unattendedEnvironmentValue
+)
+
 $stepResults = New-Object System.Collections.Generic.List[object]
 $steps = @(
     @{ Name = "ConfigBackup"; RelativeScriptPath = "Config/ConfigBackup.ps1"; SupportedPlatforms = @("All") },
@@ -497,6 +638,12 @@ try {
     Write-Host ""
     Write-Host "Proceeding with git operations (best-effort mode)." -ForegroundColor Cyan
     Write-Host "INFO_BACKUP_FORMATTER_BOUNDARY: FormatPowershellScripts is no longer run automatically by Backup.ps1. Source code formatting is enforced by pre-commit hooks. Run 'pre-commit run --all-files' when manual formatting is needed." -ForegroundColor DarkYellow
+    if ($isUnattendedMode) {
+        Write-Warning (
+            "W_BACKUP_UNATTENDED_MODE_ACTIVE: unattended mode is active (source='{0}'). Backup commit hooks will be bypassed with --no-verify when a managed commit is required." -f
+            $unattendedModeSource
+        )
+    }
 
     if (-not $hasGitFailure) {
         $outsideManagedPathspec = @(".")
@@ -517,6 +664,61 @@ try {
             )
             $hasGitFailure = $true
         }
+    }
+
+    $managedChangedFiles = @()
+    if (-not $hasGitFailure) {
+        $managedChangedFiles = @(Get-BackupManagedChangedFilesOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ManagedPathspecs $managedPathspecs)
+        Write-Verbose (
+            "Backup secret hygiene diagnostics: managedChangedFilesCount={0}; managedPathspecs={1}" -f
+            $managedChangedFiles.Count,
+            (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs)
+        )
+
+        if ($managedChangedFiles.Count -gt 0) {
+            $sanitizationResult = Invoke-BackupKnownSecretSanitization -RepositoryRoot $repositoryRoot -RelativePaths $managedChangedFiles
+            $redactedFiles = @($sanitizationResult.RedactedFiles)
+            $skippedBinaryFiles = @($sanitizationResult.SkippedBinaryFiles)
+
+            if ($redactedFiles.Count -gt 0) {
+                Write-Warning (
+                    "W_BACKUP_SECRET_SANITIZED: redacted known secret fields in {0} managed file(s). files={1}" -f
+                    $redactedFiles.Count,
+                    (Get-PathspecDiagnosticsText -Pathspec $redactedFiles)
+                )
+            }
+
+            if ($skippedBinaryFiles.Count -gt 0) {
+                Write-Verbose (
+                    "Backup secret sanitization diagnostics: skippedBinaryFiles={0}; files={1}" -f
+                    $skippedBinaryFiles.Count,
+                    (Get-PathspecDiagnosticsText -Pathspec $skippedBinaryFiles)
+                )
+            }
+
+            $secretFindings = @(Find-BackupUnknownSecretFindings -RepositoryRoot $repositoryRoot -RelativePaths $managedChangedFiles)
+            if ($secretFindings.Count -gt 0) {
+                $secretFindingFiles = @($secretFindings | ForEach-Object { $_.FilePath } | Sort-Object -Unique)
+                $secretFindingPreviewLines = @(
+                    $secretFindings |
+                        Select-Object -First 10 |
+                        ForEach-Object {
+                            "{0}:{1} pattern={2} [REDACTED]" -f $_.FilePath, $_.LineNumber, $_.PatternName
+                        }
+                )
+                $secretFindingPreview = Get-OutputPreview -OutputLines $secretFindingPreviewLines -MaxLines 5 -MaxCharacters 640 -HeadTailWhenTruncated
+                Write-Warning (
+                    "E_BACKUP_SECRET_SCAN_FAILED: high-confidence secret patterns remain in managed backup files after sanitization. fileCount={0}; files={1}; outputPreview={2}." -f
+                    $secretFindingFiles.Count,
+                    (Get-PathspecDiagnosticsText -Pathspec $secretFindingFiles),
+                    $secretFindingPreview
+                )
+                $hasGitFailure = $true
+            }
+        }
+    }
+    else {
+        Write-Warning "W_BACKUP_SECRET_SCAN_SKIPPED_PRIOR_GIT_FAILURE: Skipping managed secret sanitization and unknown-secret scan because a previous git operation failed."
     }
 
     $date = Get-Date
@@ -580,103 +782,119 @@ try {
                 $commitMessage = "Backup for $dateString ($succeededCount/$totalCount)"
             }
 
-            $maxCommitAttempts = 5
-            $maxAutofixRetries = [Math]::Max(0, $maxCommitAttempts - 1)
-            $commitAttempt = 0
-            $commitSucceeded = $false
-
-            while (-not $commitSucceeded -and $commitAttempt -lt $maxCommitAttempts) {
-                $commitAttempt++
-                $commitOutput = @(& $gitExecutable -C $repositoryRoot commit -m $commitMessage 2>&1)
+            if ($isUnattendedMode) {
+                Write-Warning "W_BACKUP_GIT_COMMIT_NO_VERIFY: unattended mode bypassing git hook verification via --no-verify."
+                $commitOutput = @(& $gitExecutable -C $repositoryRoot commit --no-verify -m $commitMessage 2>&1)
                 $commitExitCode = Get-LastExitCodeOrDefault
-
-                if ($commitExitCode -eq 0) {
-                    $commitSucceeded = $true
-                    Write-Verbose ("Backup git commit diagnostics: succeeded on attempt {0} of {1}." -f $commitAttempt, $maxCommitAttempts)
-                    break
-                }
-
-                $commitOutputText = $commitOutput -join [Environment]::NewLine
-                $autofixDetected = $commitOutputText -match '(?im)(files were modified by this hook|modified by this hook|hook.+modified)'
-                if (-not $autofixDetected) {
+                if ($commitExitCode -ne 0) {
                     $commitOutputPreview = Get-OutputPreview -OutputLines $commitOutput
-
                     Write-Warning (
-                        "E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0} on attempt {1}. outputPreview={2}" -f
+                        "E_BACKUP_GIT_COMMIT_FAILED: git commit --no-verify exited with code {0} in unattended mode. outputPreview={1}" -f
                         $commitExitCode,
-                        $commitAttempt,
                         $commitOutputPreview
                     )
                     $hasGitFailure = $true
-                    break
                 }
+            }
+            else {
+                $maxCommitAttempts = 5
+                $maxAutofixRetries = [Math]::Max(0, $maxCommitAttempts - 1)
+                $commitAttempt = 0
+                $commitSucceeded = $false
 
-                if ($commitAttempt -ge $maxCommitAttempts) {
-                    $commitOutputPreview = Get-OutputPreview -OutputLines $commitOutput
+                while (-not $commitSucceeded -and $commitAttempt -lt $maxCommitAttempts) {
+                    $commitAttempt++
+                    $commitOutput = @(& $gitExecutable -C $repositoryRoot commit -m $commitMessage 2>&1)
+                    $commitExitCode = Get-LastExitCodeOrDefault
+
+                    if ($commitExitCode -eq 0) {
+                        $commitSucceeded = $true
+                        Write-Verbose ("Backup git commit diagnostics: succeeded on attempt {0} of {1}." -f $commitAttempt, $maxCommitAttempts)
+                        break
+                    }
+
+                    $commitOutputText = $commitOutput -join [Environment]::NewLine
+                    $autofixDetected = $commitOutputText -match '(?im)(files were modified by this hook|modified by this hook|hook.+modified)'
+                    if (-not $autofixDetected) {
+                        $commitOutputPreview = Get-OutputPreview -OutputLines $commitOutput
+
+                        Write-Warning (
+                            "E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0} on attempt {1}. outputPreview={2}" -f
+                            $commitExitCode,
+                            $commitAttempt,
+                            $commitOutputPreview
+                        )
+                        $hasGitFailure = $true
+                        break
+                    }
+
+                    if ($commitAttempt -ge $maxCommitAttempts) {
+                        $commitOutputPreview = Get-OutputPreview -OutputLines $commitOutput
+                        Write-Warning (
+                            "E_BACKUP_GIT_COMMIT_RETRY_LIMIT: git commit did not succeed after {0} total commit attempt(s) (maxAttempts={1}; maxAutofixRetries={2}); lastOutputPreview={3}." -f
+                            $commitAttempt,
+                            $maxCommitAttempts,
+                            $maxAutofixRetries,
+                            $commitOutputPreview
+                        )
+                        $hasGitFailure = $true
+                        break
+                    }
+
+                    $nextCommitAttempt = $commitAttempt + 1
+
                     Write-Warning (
-                        "E_BACKUP_GIT_COMMIT_RETRY_LIMIT: git commit did not succeed after {0} total commit attempt(s) (maxAttempts={1}; maxAutofixRetries={2}); lastOutputPreview={3}." -f
-                        $commitAttempt,
+                        "W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX: commit hook modified files; restaging managed pathspecs before retry attempt {0} of {1} (maxAutofixRetries={2})." -f
+                        $nextCommitAttempt,
                         $maxCommitAttempts,
-                        $maxAutofixRetries,
-                        $commitOutputPreview
+                        $maxAutofixRetries
                     )
-                    $hasGitFailure = $true
-                    break
-                }
 
-                $nextCommitAttempt = $commitAttempt + 1
+                    $restageArgs = @("-C", $repositoryRoot, "add", "--")
+                    $restageArgs += $managedPathspecs
+                    $restageOutput = @(& $gitExecutable @restageArgs 2>&1)
+                    $restageExitCode = Get-LastExitCodeOrDefault
+                    if ($restageExitCode -ne 0) {
+                        $restagePreview = Get-OutputPreview -OutputLines $restageOutput
+                        Write-Warning (
+                            "E_BACKUP_GIT_RESTAGE_FAILED: git add managed pathspecs for commit retry exited with code {0} on attempt {1} (repositoryRoot='{2}'; pathspec={3}; outputPreview={4})." -f
+                            $restageExitCode,
+                            $commitAttempt,
+                            $repositoryRoot,
+                            (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs),
+                            $restagePreview
+                        )
+                        $hasGitFailure = $true
+                        break
+                    }
 
-                Write-Warning (
-                    "W_BACKUP_GIT_COMMIT_RETRY_AUTOFIX: commit hook modified files; restaging managed pathspecs before retry attempt {0} of {1} (maxAutofixRetries={2})." -f
-                    $nextCommitAttempt,
-                    $maxCommitAttempts,
-                    $maxAutofixRetries
-                )
+                    $retryDiffArgs = @("-C", $repositoryRoot, "diff", "--cached", "--name-only", "--")
+                    $retryDiffArgs += $managedPathspecs
+                    $retryStagedFiles = @(& $gitExecutable @retryDiffArgs 2>$null)
+                    $retryDiffExitCode = Get-LastExitCodeOrDefault
+                    if ($retryDiffExitCode -ne 0) {
+                        $retryDiffDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $gitExecutable -GitArguments $retryDiffArgs)
+                        $retryDiffPreview = Get-OutputPreview -OutputLines $retryDiffDiagnostics
+                        Write-Warning (
+                            "E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only (managed pathspecs) failed during commit retry (attempt {0}) with code {1}; repositoryRoot='{2}'; pathspec={3}; outputPreview={4}." -f
+                            $commitAttempt,
+                            $retryDiffExitCode,
+                            $repositoryRoot,
+                            (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs),
+                            $retryDiffPreview
+                        )
+                        $hasGitFailure = $true
+                        break
+                    }
 
-                $restageArgs = @("-C", $repositoryRoot, "add", "--")
-                $restageArgs += $managedPathspecs
-                $restageOutput = @(& $gitExecutable @restageArgs 2>&1)
-                $restageExitCode = Get-LastExitCodeOrDefault
-                if ($restageExitCode -ne 0) {
-                    $restagePreview = Get-OutputPreview -OutputLines $restageOutput
-                    Write-Warning (
-                        "E_BACKUP_GIT_RESTAGE_FAILED: git add managed pathspecs for commit retry exited with code {0} on attempt {1} (repositoryRoot='{2}'; pathspec={3}; outputPreview={4})." -f
-                        $restageExitCode,
-                        $commitAttempt,
-                        $repositoryRoot,
-                        (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs),
-                        $restagePreview
-                    )
-                    $hasGitFailure = $true
-                    break
-                }
-
-                $retryDiffArgs = @("-C", $repositoryRoot, "diff", "--cached", "--name-only", "--")
-                $retryDiffArgs += $managedPathspecs
-                $retryStagedFiles = @(& $gitExecutable @retryDiffArgs 2>$null)
-                $retryDiffExitCode = Get-LastExitCodeOrDefault
-                if ($retryDiffExitCode -ne 0) {
-                    $retryDiffDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $gitExecutable -GitArguments $retryDiffArgs)
-                    $retryDiffPreview = Get-OutputPreview -OutputLines $retryDiffDiagnostics
-                    Write-Warning (
-                        "E_BACKUP_GIT_DIFF_FAILED: git diff --cached --name-only (managed pathspecs) failed during commit retry (attempt {0}) with code {1}; repositoryRoot='{2}'; pathspec={3}; outputPreview={4}." -f
-                        $commitAttempt,
-                        $retryDiffExitCode,
-                        $repositoryRoot,
-                        (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs),
-                        $retryDiffPreview
-                    )
-                    $hasGitFailure = $true
-                    break
-                }
-
-                if ($retryStagedFiles.Count -eq 0) {
-                    Write-Warning (
-                        "E_BACKUP_GIT_COMMIT_RETRY_EMPTY_STAGE: hook autofix removed all staged managed files on attempt {0}; aborting retry to avoid non-deterministic empty commits." -f
-                        $commitAttempt
-                    )
-                    $hasGitFailure = $true
-                    break
+                    if ($retryStagedFiles.Count -eq 0) {
+                        Write-Warning (
+                            "E_BACKUP_GIT_COMMIT_RETRY_EMPTY_STAGE: hook autofix removed all staged managed files on attempt {0}; aborting retry to avoid non-deterministic empty commits." -f
+                            $commitAttempt
+                        )
+                        $hasGitFailure = $true
+                        break
+                    }
                 }
             }
         }

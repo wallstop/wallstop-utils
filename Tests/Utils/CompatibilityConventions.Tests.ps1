@@ -19,7 +19,8 @@ Describe "Cross-version compatibility infrastructure" {
         $content = Get-Content -LiteralPath $script:helperPath -Raw
         foreach ($fn in @(
                 'Test-IsWindowsPlatform', 'Test-IsMacOSPlatform', 'Test-IsLinuxPlatform',
-                'Get-RelativePathCompat', 'ConvertTo-JsonArrayCompat', 'ConvertFrom-JsonCompat')) {
+                'Get-RelativePathCompat', 'ConvertTo-JsonArrayCompat', 'ConvertFrom-JsonCompat',
+                'Set-PortableProcessEnvironmentVariable')) {
             $content | Should -Match ("function\s+" + [regex]::Escape($fn) + "\b")
         }
     }
@@ -44,6 +45,26 @@ Describe "Cross-version compatibility infrastructure" {
         $forbidden = @('ConvertTo-Json', 'ConvertFrom-Json', 'New-Item', 'Get-Content', 'Set-Content', 'Set-Clipboard', 'Set-PSReadLineOption')
         foreach ($command in $forbidden) {
             $allEntries | Should -Not -Contain $command
+        }
+    }
+
+    It "keeps Config PowerShell profile snapshots guarded for PSReadLine prediction options" {
+        $profileSnapshots = @(
+            'Config/Powershell/CurrentUserCurrentHost_Microsoft.PowerShell_profile.ps1',
+            'Config/Powershell/Microsoft.PowerShell_profile.ps1',
+            'Config/Powershell/WindowsPowerShellFallback_Microsoft.PowerShell_profile.ps1'
+        )
+
+        foreach ($relativePath in $profileSnapshots) {
+            $fullPath = Join-Path -Path $script:repoRoot -ChildPath $relativePath
+            Test-Path -LiteralPath $fullPath -PathType Leaf | Should -BeTrue
+
+            $content = (Get-Content -LiteralPath $fullPath -Raw) -replace "`r", ''
+            $content | Should -Match '\$setPSReadLineOption\s*=\s*Get-Command\s+Set-PSReadLineOption'
+            $content | Should -Match "Parameters\.ContainsKey\('PredictionSource'\)"
+            $content | Should -Match "Parameters\.ContainsKey\('PredictionViewStyle'\)"
+            $content | Should -Match '\[Diagnostics\.CodeAnalysis\.SuppressMessageAttribute\(''PSUseCompatibleCommands'''
+            $content | Should -Not -Match '(?m)(?-i)^\s*Set-PSReadLineOption\s+-PredictionViewStyle\s+InLineView\b'
         }
     }
 }
