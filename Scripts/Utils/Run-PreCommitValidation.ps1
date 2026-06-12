@@ -71,6 +71,13 @@ if (-not (Test-Path -Path $compatibilityHelpersPath -PathType Leaf)) {
 
 .$compatibilityHelpersPath
 
+$preCommitCliHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/PreCommitCliHelpers.ps1"
+if (-not (Test-Path -Path $preCommitCliHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: pre-commit CLI helper file not found at '$preCommitCliHelpersPath'."
+}
+
+.$preCommitCliHelpersPath
+
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "Common/StrictModeHelpers.ps1"
 if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Strict mode helper file not found at '$strictModeHelpersPath'."
@@ -116,13 +123,15 @@ function Get-GitExecutableOrThrow {
 }
 
 function Get-PwshExecutableOrThrow {
-    $pwshCommand = Get-Command -Name "pwsh" -ErrorAction SilentlyContinue
-    if ($null -eq $pwshCommand) {
-        throw "E_CONFIG_ERROR: pwsh is required for isolated Pester execution but was not found on PATH."
+    try {
+        $pwshExecutable = Resolve-PowerShellExecutablePath
+    }
+    catch {
+        throw "E_CONFIG_ERROR: pwsh is required for isolated Pester execution but no launchable PowerShell executable was found. $($_.Exception.Message)"
     }
 
-    Write-Verbose ("Pre-commit validation pwsh diagnostics: pwshPath='{0}'" -f $pwshCommand.Source)
-    return $pwshCommand.Source
+    Write-Verbose ("Pre-commit validation pwsh diagnostics: pwshPath='{0}'" -f $pwshExecutable)
+    return $pwshExecutable
 }
 
 function Get-LastNativeExitCodeOrDefault {
@@ -562,12 +571,22 @@ function Invoke-PreCommitGovernanceValidation {
     }
 
     if ($governanceTargets -contains ".pre-commit-config.yaml") {
-        $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
-        if ($null -eq $preCommitCommand) {
-            throw "E_PRECOMMIT_GOVERNANCE_PRECOMMIT_NOT_AVAILABLE: pre-commit is required to validate .pre-commit-config.yaml but was not found on PATH."
+        try {
+            $resolvedPreCommit = Resolve-PreCommitCliExecutable -RepositoryRoot $RepoRoot -TimeoutSeconds 30 -EnableAutoRepair -AutoRepairTimeoutSeconds 240
+        }
+        catch {
+            throw "E_PRECOMMIT_GOVERNANCE_PRECOMMIT_NOT_AVAILABLE: pre-commit is required to validate .pre-commit-config.yaml. $($_.Exception.Message)"
         }
 
-        $preCommitConfigOutput = @(& $preCommitCommand.Source validate-config 2>&1)
+        if ([bool]$resolvedPreCommit.AutoRepaired) {
+            Write-Warning (
+                "W_PRECOMMIT_GOVERNANCE_PRECOMMIT_CLI_AUTO_REPAIRED: recovered pinned pre-commit CLI (expectedVersion={0}; executable='{1}')." -f
+                [string]$resolvedPreCommit.ExpectedVersion,
+                [string]$resolvedPreCommit.Executable
+            )
+        }
+
+        $preCommitConfigOutput = @(& ([string]$resolvedPreCommit.Executable) validate-config 2>&1)
         if ($LASTEXITCODE -ne 0) {
             $preCommitConfigPreview = Get-OutputPreview -OutputLines $preCommitConfigOutput -CollapseWhitespace
             throw "E_PRECOMMIT_GOVERNANCE_PRECOMMIT_CONFIG_INVALID: pre-commit validate-config failed. Output: $preCommitConfigPreview"

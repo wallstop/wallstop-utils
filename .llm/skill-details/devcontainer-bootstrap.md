@@ -8,6 +8,12 @@ Use the repository devcontainer bootstrap to keep local quality tooling consiste
 
 Run quality work in the provided container baseline to reduce host-specific drift.
 
+Prefer an image-first devcontainer contract for reliability and rebuild speed:
+
+- Pin `.devcontainer/devcontainer.json` `image` to an official `mcr.microsoft.com/devcontainers/*@sha256:...` digest.
+- Avoid `build` and non-empty `features` in this repository's end-user devcontainer; feature mutation during build is a common transient network failure source.
+- Keep project-specific tool bootstrap in `.devcontainer/post-create.sh`, bounded by timeout guards and explicit non-blocking diagnostics.
+
 ## Post-Create Bootstrap Expectations
 
 Confirm that pre-commit hooks and PowerShell quality modules are installed during container bootstrap.

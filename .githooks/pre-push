@@ -133,13 +133,21 @@ run_with_timeout() {
   local label="$1"
   shift
   local phase_start_seconds=$SECONDS
+  local caller_errexit_enabled=0
+  case "$-" in
+    *e*) caller_errexit_enabled=1 ;;
+  esac
 
   local timeout_command
   if timeout_command="$(resolve_timeout_command)"; then
     set +e
     "$timeout_command" -k 2s "${timeout_seconds}s" "$@"
     local command_exit=$?
-    set -e
+    if [[ $caller_errexit_enabled -eq 1 ]]; then
+      set -e
+    else
+      set +e
+    fi
 
     if [[ $command_exit -eq 124 || $command_exit -eq 137 ]]; then
       emit_diagnostic "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PREPUSH_TIMEOUT_SECONDS."
@@ -180,7 +188,11 @@ run_with_timeout() {
   kill "$watchdog_pid" > /dev/null 2>&1 || true
   wait "$watchdog_pid" > /dev/null 2>&1 || true
   wallstop_cleanup_timeout_command_processes "$command_pid" "$command_process_group_mode" "$label"
-  set -e
+  if [[ $caller_errexit_enabled -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
 
   if [[ -f "$timeout_flag_file" ]]; then
     rm -f "$timeout_flag_file"
@@ -458,8 +470,11 @@ run_legacy_validation() {
       return 124
     fi
 
+    set +e
     run_with_timeout "$remaining_seconds" "legacy pre-push PowerShell validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1" -IncludePreCommitOwnedChecks -TargetFileListPath "$target_file_list_path"
-    return $?
+    local legacy_validation_exit=$?
+    set -e
+    return $legacy_validation_exit
   fi
 
   emit_diagnostic "pre-commit is unavailable and pwsh was not found; cannot run legacy PowerShell quality gates."
@@ -490,28 +505,49 @@ if [[ ${#resolved_changed_files[@]} -eq 0 ]]; then
   exit 0
 fi
 
-if command -v pre-commit > /dev/null 2>&1; then
-  if command -v pwsh > /dev/null 2>&1; then
-    write_changed_file_list
-    target_file_list_path="$changed_file_list_path"
-    if remaining_seconds="$(remaining_timeout_seconds "pre-push changed-file pre-commit validation")"; then
-      inner_timeout_seconds=$((remaining_seconds - prepush_recovery_shutdown_buffer_seconds))
-      required_remaining_seconds=$((prepush_recovery_inner_timeout_seconds + prepush_recovery_shutdown_buffer_seconds))
-      if [[ "$inner_timeout_seconds" -lt "$prepush_recovery_inner_timeout_seconds" ]]; then
-        emit_recovery_budget_diagnostic "pre-push changed-file pre-commit validation" "$remaining_seconds" "$required_remaining_seconds" "$inner_timeout_seconds"
-        exit 124
-      fi
+if command -v pwsh > /dev/null 2>&1; then
+  write_changed_file_list
+  target_file_list_path="$changed_file_list_path"
+  if remaining_seconds="$(remaining_timeout_seconds "pre-push changed-file pre-commit validation")"; then
+    inner_timeout_seconds=$((remaining_seconds - prepush_recovery_shutdown_buffer_seconds))
+    required_remaining_seconds=$((prepush_recovery_inner_timeout_seconds + prepush_recovery_shutdown_buffer_seconds))
+    if [[ "$inner_timeout_seconds" -lt "$prepush_recovery_inner_timeout_seconds" ]]; then
+      emit_recovery_budget_diagnostic "pre-push changed-file pre-commit validation" "$remaining_seconds" "$required_remaining_seconds" "$inner_timeout_seconds"
+      exit 124
+    fi
 
-      run_with_timeout "$remaining_seconds" "pre-push changed-file pre-commit validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-push -TimeoutSeconds "$inner_timeout_seconds" -FileListPath "$target_file_list_path"
+    set +e
+    run_with_timeout "$remaining_seconds" "pre-push changed-file pre-commit validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-push -TimeoutSeconds "$inner_timeout_seconds" -FileListPath "$target_file_list_path"
+    recovery_exit=$?
+    set -e
+    if [[ $recovery_exit -eq 0 ]]; then
+      exit 0
+    fi
+
+    if [[ $recovery_exit -eq 125 ]]; then
+      emit_diagnostic "pre-commit CLI bootstrap failed in recovery wrapper; falling back to legacy PowerShell checks."
+      emit_diagnostic "Recommended bootstrap:"
+      print_precommit_bootstrap_guidance
+      emit_diagnostic "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"
+      emit_diagnostic "  pre-commit install --hook-type pre-commit --hook-type pre-push"
+      emit_diagnostic "Major changes should close with the full validation command documented in .llm/validation-workflow.md."
+      run_legacy_validation
       exit $?
     fi
 
-    exit 124
+    exit $recovery_exit
   fi
 
+  exit 124
+fi
+
+if command -v pre-commit > /dev/null 2>&1; then
   if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-push changed files")"; then
+    set +e
     run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-push changed files" pre-commit run --hook-stage pre-push --files "${resolved_changed_files[@]}" --show-diff-on-failure --color always
-    exit $?
+    precommit_hook_exit=$?
+    set -e
+    exit $precommit_hook_exit
   fi
 
   exit 124

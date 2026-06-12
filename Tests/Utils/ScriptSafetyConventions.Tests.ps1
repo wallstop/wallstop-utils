@@ -1472,7 +1472,8 @@ Describe "Cross-language quality platform conventions" {
         $fullValidation = Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-FullValidation.ps1') -Raw
 
         $recoveryScript | Should -Match 'Test-PreCommitEnvironmentFailure'
-        $recoveryScript | Should -Match 'pre-commit"\s+-ErrorAction\s+SilentlyContinue'
+        $recoveryScript | Should -Match 'Resolve-PreCommitCliExecutable'
+        $recoveryScript | Should -Match 'EnableAutoRepair:\$enableCliAutoRepair'
         $recoveryScript | Should -Match 'pre-commit clean|@\("clean"\)'
         $recoveryScript | Should -Match 'install-hooks'
         $recoveryScript | Should -Match 'W_PRECOMMIT_ENV_AUTO_REPAIR'
@@ -1528,7 +1529,7 @@ Describe "Cross-language quality platform conventions" {
 
         $preCommitHook | Should -Match 'remaining_timeout_seconds\s+"legacy pre-commit PowerShell validation"'
         $preCommitHook | Should -Match 'run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-commit PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-IncludePreCommitOwnedChecks\s+-AllowPreCommitOwnedFixes\s*\r?\n\s*return\s+\$\?'
-        $prePushHook | Should -Match 'run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-push PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-IncludePreCommitOwnedChecks\s+-TargetFileListPath\s+"\$target_file_list_path"\s*\r?\n\s*return\s+\$\?'
+        $prePushHook | Should -Match '(?:set\s+\+e\s*\r?\n\s*run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-push PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-IncludePreCommitOwnedChecks\s+-TargetFileListPath\s+"\$target_file_list_path"\s*\r?\n\s*local\s+legacy_validation_exit=\$\?\s*\r?\n\s*set\s+-e\s*\r?\n\s*return\s+\$legacy_validation_exit|run_with_timeout\s+"\$remaining_seconds"\s+"legacy pre-push PowerShell validation"\s+pwsh\s+-NoLogo\s+-NoProfile\s+-File\s+"Scripts/Utils/Run-PreCommitValidation\.ps1"\s+-IncludePreCommitOwnedChecks\s+-TargetFileListPath\s+"\$target_file_list_path"\s*\r?\n\s*return\s+\$\?)'
         $preCommitHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
         $prePushHook | Should -Match 'run_legacy_validation\s*\r?\n\s*exit\s+\$\?'
     }

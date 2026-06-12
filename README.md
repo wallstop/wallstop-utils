@@ -174,12 +174,19 @@ Safety notes:
 
 This repository includes a ready-to-use VS Code development container at `.devcontainer/devcontainer.json`.
 
+The devcontainer follows an image-first reliability contract:
+
+- The `image` value is pinned to an official `mcr.microsoft.com/devcontainers/*` digest.
+- `build` and `features` are intentionally omitted to avoid build-time feature mutation failures.
+- Project-specific setup remains in `.devcontainer/post-create.sh` with bounded timeouts and non-blocking fallback diagnostics.
+
 What it provides:
 
-- Ubuntu 24.04 base container
-- PowerShell, Python, Node.js (LTS), and GitHub CLI
+- A pinned Debian Bookworm-based devcontainer image (`mcr.microsoft.com/devcontainers/dotnet`)
+- PowerShell and Python preinstalled in the base image
 - Pre-commit bootstrap and hook installation on first create
 - PowerShell quality module bootstrap (`Pester`, `PSScriptAnalyzer`)
+- Optional Codex CLI bootstrap as a non-blocking best-effort step in `.devcontainer/post-create.sh`
 - Curated extension pack for script-heavy workflows plus polished themes/icons
 
 Open it in VS Code:

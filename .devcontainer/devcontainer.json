@@ -1,24 +1,7 @@
 {
   "name": "wallstop-utils Dev",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "image": "mcr.microsoft.com/devcontainers/dotnet:1-8.0-bookworm@sha256:16a0321c730596c9ee1b1de20369ec454ad9ab963f9b06fc24f88daabe9e44c2",
   "updateRemoteUserUID": false,
-  "features": {
-    "ghcr.io/devcontainers/features/common-utils:": {
-      "installZsh": "true",
-      "installOhMyZsh": "true",
-      "upgradePackages": "false",
-      "username": "vscode"
-    },
-    "ghcr.io/devcontainers/features/powershell:2": {},
-    "ghcr.io/devcontainers/features/python:1": {
-      "installTools": "true",
-      "version": "3.12"
-    },
-    "ghcr.io/devcontainers/features/node:2": {
-      "version": "lts"
-    },
-    "ghcr.io/devcontainers/features/github-cli:1": {}
-  },
   "remoteUser": "vscode",
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "customizations": {

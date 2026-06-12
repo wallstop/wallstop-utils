@@ -1014,6 +1014,17 @@ for arg in "$@"; do
   previous_arg="$arg"
 done
 
+if [[ -n "${WALLSTOP_TEST_PWSH_RECOVERY_EXIT:-}" ]]; then
+    for arg in "$@"; do
+        if [[ "$arg" == *"Invoke-PreCommitWithRecovery.ps1" ]]; then
+            if [[ -n "${WALLSTOP_TEST_PWSH_RECOVERY_STDERR:-}" ]]; then
+                printf '%b' "$WALLSTOP_TEST_PWSH_RECOVERY_STDERR" >&2
+            fi
+            exit "$WALLSTOP_TEST_PWSH_RECOVERY_EXIT"
+        fi
+    done
+fi
+
 exit 0
 '@
 
@@ -1567,11 +1578,12 @@ Describe "pre-push changed-file hook behavior" {
             Name                  = "uses legacy PowerShell target-file checks when pre-commit is unavailable"
             Stdin                 = "refs/heads/main local456 refs/heads/main remote123`n"
             Environment           = @{
-                WALLSTOP_TEST_DIFF_OUTPUT = ".githooks/pre-push`n"
+                WALLSTOP_TEST_DIFF_OUTPUT       = ".githooks/pre-push`n"
+                WALLSTOP_TEST_PWSH_RECOVERY_EXIT = "125"
             }
             RemovePreCommit       = $true
             ExpectedExitCode      = 0
-            ExpectedStderrPattern = 'pre-commit is not installed; falling back to legacy PowerShell checks'
+            ExpectedStderrPattern = 'pre-commit CLI bootstrap failed in recovery wrapper; falling back to legacy PowerShell checks|pre-commit is not installed; falling back to legacy PowerShell checks'
             ExpectedLogPatterns   = @(
                 'pwsh[\s\S]*Scripts/Utils/Run-PreCommitValidation\.ps1[\s\S]*-IncludePreCommitOwnedChecks[\s\S]*-TargetFileListPath',
                 'pwsh-file\t\.githooks/pre-push'

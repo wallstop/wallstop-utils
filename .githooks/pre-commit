@@ -302,30 +302,46 @@ if ! has_any_staged_files; then
   exit 0
 fi
 
-if command -v pre-commit > /dev/null 2>&1; then
-  if command -v pwsh > /dev/null 2>&1; then
-    if run_safe_autorepair; then
-      :
-    else
-      safe_autorepair_exit=$?
-      exit $safe_autorepair_exit
+if command -v pwsh > /dev/null 2>&1; then
+  if run_safe_autorepair; then
+    :
+  else
+    safe_autorepair_exit=$?
+    exit $safe_autorepair_exit
+  fi
+
+  if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
+    inner_timeout_seconds=$((remaining_seconds - precommit_recovery_shutdown_buffer_seconds))
+    required_remaining_seconds=$((precommit_recovery_inner_timeout_seconds + precommit_recovery_shutdown_buffer_seconds))
+    if [[ "$inner_timeout_seconds" -lt "$precommit_recovery_inner_timeout_seconds" ]]; then
+      emit_recovery_budget_diagnostic "pre-commit hook-stage pre-commit" "$remaining_seconds" "$required_remaining_seconds" "$inner_timeout_seconds"
+      exit 124
     fi
 
-    if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
-      inner_timeout_seconds=$((remaining_seconds - precommit_recovery_shutdown_buffer_seconds))
-      required_remaining_seconds=$((precommit_recovery_inner_timeout_seconds + precommit_recovery_shutdown_buffer_seconds))
-      if [[ "$inner_timeout_seconds" -lt "$precommit_recovery_inner_timeout_seconds" ]]; then
-        emit_recovery_budget_diagnostic "pre-commit hook-stage pre-commit" "$remaining_seconds" "$required_remaining_seconds" "$inner_timeout_seconds"
-        exit 124
-      fi
+    run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-commit -TimeoutSeconds "$inner_timeout_seconds"
+    recovery_exit=$?
+    if [[ $recovery_exit -eq 0 ]]; then
+      exit 0
+    fi
 
-      run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-commit -TimeoutSeconds "$inner_timeout_seconds"
+    if [[ $recovery_exit -eq 125 ]]; then
+      emit_diagnostic "pre-commit CLI bootstrap failed in recovery wrapper; falling back to legacy PowerShell checks."
+      emit_diagnostic "Recommended bootstrap:"
+      print_precommit_bootstrap_guidance
+      emit_diagnostic "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"
+      emit_diagnostic "  pre-commit install --hook-type pre-commit --hook-type pre-push"
+      emit_diagnostic "Major changes should close with: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1"
+      run_legacy_validation
       exit $?
     fi
 
-    exit 124
+    exit $recovery_exit
   fi
 
+  exit 124
+fi
+
+if command -v pre-commit > /dev/null 2>&1; then
   if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
     run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pre-commit run --hook-stage pre-commit --show-diff-on-failure --color always
     exit $?

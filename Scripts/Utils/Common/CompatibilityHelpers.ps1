@@ -89,6 +89,87 @@ function Test-IsLinuxPlatform {
     return (Get-PortableAutomaticBool -Name 'IsLinux')
 }
 
+function Test-PowerShellExecutableCandidate {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ExecutablePath,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 30)]
+        [int]$TimeoutSeconds = 5
+    )
+
+    if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+        return [pscustomobject]@{
+            Usable     = $false
+            Diagnostic = "path-not-found"
+        }
+    }
+
+    $processStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $processStartInfo.FileName = $ExecutablePath
+    $processStartInfo.UseShellExecute = $false
+    $processStartInfo.RedirectStandardOutput = $true
+    $processStartInfo.RedirectStandardError = $true
+    Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList @('-NoLogo', '-NoProfile', '-Command', '$PSVersionTable.PSEdition | Out-Null')
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $processStartInfo
+    try {
+        try {
+            [void]$process.Start()
+        }
+        catch {
+            return [pscustomobject]@{
+                Usable     = $false
+                Diagnostic = "start-failed"
+            }
+        }
+
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $exited = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $exited) {
+            try {
+                Stop-ProcessTreePortably -Process $process
+            }
+            catch {
+                Write-Verbose "PowerShell executable probe cleanup failed for '$ExecutablePath': $($_.Exception.Message)"
+            }
+
+            return [pscustomobject]@{
+                Usable     = $false
+                Diagnostic = "probe-timeout"
+            }
+        }
+
+        [void]$stdoutTask.GetAwaiter().GetResult()
+        $stderr = [string]$stderrTask.GetAwaiter().GetResult()
+        if ([int]$process.ExitCode -ne 0) {
+            $stderrPreview = (($stderr -replace "\s+", " ").Trim())
+            if ([string]::IsNullOrWhiteSpace($stderrPreview)) {
+                $stderrPreview = "<empty>"
+            }
+
+            return [pscustomobject]@{
+                Usable     = $false
+                Diagnostic = ("probe-exit-{0}:{1}" -f [int]$process.ExitCode, $stderrPreview)
+            }
+        }
+
+        return [pscustomobject]@{
+            Usable     = $true
+            Diagnostic = "ok"
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
 function Resolve-PowerShellExecutablePath {
     # Resolves the PowerShell executable path used to invoke child scripts.
     # Preference order:
@@ -99,23 +180,75 @@ function Resolve-PowerShellExecutablePath {
     [OutputType([string])]
     param()
 
-    $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
-    if ($null -ne $pwshCommand -and -not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Source)) {
+    $pwshCommands = @(Get-Command -Name 'pwsh' -All -ErrorAction SilentlyContinue)
+    foreach ($pwshCommand in $pwshCommands) {
+        if ($null -eq $pwshCommand) {
+            continue
+        }
+
+        $pwshPath = ""
+        if ($null -ne $pwshCommand.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Source)) {
+            $pwshPath = [string]$pwshCommand.Source
+        }
+        elseif ($null -ne $pwshCommand.PSObject.Properties['Path'] -and -not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Path)) {
+            $pwshPath = [string]$pwshCommand.Path
+        }
+
+        if ([string]::IsNullOrWhiteSpace($pwshPath)) {
+            continue
+        }
+
+        $pwshProbe = Test-PowerShellExecutableCandidate -ExecutablePath $pwshPath
+        if (-not [bool]$pwshProbe.Usable) {
+            Write-Verbose (
+                "PowerShell executable resolver diagnostics: rejectedExecutable='{0}'; source='pwsh'; reason='{1}'." -f
+                $pwshPath,
+                [string]$pwshProbe.Diagnostic
+            )
+            continue
+        }
+
         Write-Verbose (
             "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='pwsh'." -f
-            $pwshCommand.Source
+            $pwshPath
         )
-        return [string]$pwshCommand.Source
+        return $pwshPath
     }
 
     if (Test-IsWindowsPlatform) {
-        $windowsPowerShellCommand = Get-Command -Name 'powershell.exe' -ErrorAction SilentlyContinue
-        if ($null -ne $windowsPowerShellCommand -and -not [string]::IsNullOrWhiteSpace([string]$windowsPowerShellCommand.Source)) {
+        $windowsPowerShellCommands = @(Get-Command -Name 'powershell.exe' -All -ErrorAction SilentlyContinue)
+        foreach ($windowsPowerShellCommand in $windowsPowerShellCommands) {
+            if ($null -eq $windowsPowerShellCommand) {
+                continue
+            }
+
+            $windowsPowerShellPath = ""
+            if ($null -ne $windowsPowerShellCommand.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$windowsPowerShellCommand.Source)) {
+                $windowsPowerShellPath = [string]$windowsPowerShellCommand.Source
+            }
+            elseif ($null -ne $windowsPowerShellCommand.PSObject.Properties['Path'] -and -not [string]::IsNullOrWhiteSpace([string]$windowsPowerShellCommand.Path)) {
+                $windowsPowerShellPath = [string]$windowsPowerShellCommand.Path
+            }
+
+            if ([string]::IsNullOrWhiteSpace($windowsPowerShellPath)) {
+                continue
+            }
+
+            $windowsPowerShellProbe = Test-PowerShellExecutableCandidate -ExecutablePath $windowsPowerShellPath
+            if (-not [bool]$windowsPowerShellProbe.Usable) {
+                Write-Verbose (
+                    "PowerShell executable resolver diagnostics: rejectedExecutable='{0}'; source='powershell.exe-fallback'; reason='{1}'." -f
+                    $windowsPowerShellPath,
+                    [string]$windowsPowerShellProbe.Diagnostic
+                )
+                continue
+            }
+
             Write-Verbose (
                 "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='powershell.exe-fallback'." -f
-                $windowsPowerShellCommand.Source
+                $windowsPowerShellPath
             )
-            return [string]$windowsPowerShellCommand.Source
+            return $windowsPowerShellPath
         }
     }
 

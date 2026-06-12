@@ -69,7 +69,30 @@ Describe "Resolve-PowerShellExecutablePath" {
             return
         }
 
-        (Resolve-PowerShellExecutablePath) | Should -BeExactly ([string]$pwshCommand.Source)
+        $resolvedExecutable = Resolve-PowerShellExecutablePath
+        $resolvedExecutable | Should -Not -BeNullOrEmpty
+        (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf) | Should -BeTrue
+
+        $pwshCandidates = @(
+            Get-Command -Name 'pwsh' -All -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    if ($null -eq $_) {
+                        return
+                    }
+
+                    if ($null -ne $_.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Source)) {
+                        [string]$_.Source
+                        return
+                    }
+
+                    if ($null -ne $_.PSObject.Properties['Path'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Path)) {
+                        [string]$_.Path
+                    }
+                } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique
+        )
+        $pwshCandidates | Should -Contain $resolvedExecutable
     }
 
     It "prefers pwsh over powershell.exe on Windows-capable probes" {
@@ -79,6 +102,12 @@ Describe "Resolve-PowerShellExecutablePath" {
         }
         Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
             return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        }
+        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Program Files\PowerShell\7\pwsh.exe' } -MockWith {
+            return [pscustomobject]@{ Usable = $true; Diagnostic = 'ok' }
+        }
+        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' } -MockWith {
+            return [pscustomobject]@{ Usable = $true; Diagnostic = 'ok' }
         }
 
         $verboseRecords = @(& { Resolve-PowerShellExecutablePath -Verbose } 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
@@ -92,6 +121,9 @@ Describe "Resolve-PowerShellExecutablePath" {
         Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith { return $null }
         Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
             return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        }
+        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' } -MockWith {
+            return [pscustomobject]@{ Usable = $true; Diagnostic = 'ok' }
         }
 
         $resolvedExecutable = Resolve-PowerShellExecutablePath
