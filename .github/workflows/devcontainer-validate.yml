@@ -35,6 +35,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.3
 
+      - name: Validate image-first devcontainer contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+
+          path = ".devcontainer/devcontainer.json"
+          with open(path, "r", encoding="utf-8") as handle:
+              config = json.load(handle)
+
+          image = config.get("image")
+          if not isinstance(image, str) or not image:
+              raise SystemExit("ERROR: devcontainer image is missing.")
+
+          if not image.startswith("mcr.microsoft.com/devcontainers/"):
+              raise SystemExit(f"ERROR: devcontainer image must come from mcr devcontainers, got: {image}")
+
+          if not re.search(r"@sha256:[0-9a-f]{64}$", image):
+              raise SystemExit(f"ERROR: devcontainer image must be digest-pinned, got: {image}")
+
+          if "build" in config:
+              raise SystemExit("ERROR: image-first policy forbids a build block in devcontainer.json.")
+
+          features = config.get("features")
+          if isinstance(features, dict) and len(features) > 0:
+              raise SystemExit(
+                  f"ERROR: image-first policy forbids feature mutations, found {len(features)} feature entries."
+              )
+
+          print("Image-first devcontainer contract validated.")
+          PY
+
       - name: Setup Python
         uses: actions/setup-python@v6.2.0
         with:
@@ -68,6 +102,8 @@ jobs:
 
       - name: Run post-create.sh
         shell: bash
+        env:
+          WALLSTOP_DEVCONTAINER_ENABLE_CODEX: "1"
         run: |
           set -euo pipefail
           bash .devcontainer/post-create.sh | tee "${RUNNER_TEMP}/post-create-first.log"
@@ -193,6 +229,8 @@ jobs:
 
       - name: Confirm idempotence (run post-create.sh a second time)
         shell: bash
+        env:
+          WALLSTOP_DEVCONTAINER_ENABLE_CODEX: "1"
         run: |
           set -euo pipefail
           bash .devcontainer/post-create.sh | tee "${RUNNER_TEMP}/post-create-second.log"

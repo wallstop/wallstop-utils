@@ -624,6 +624,24 @@ _install_codex_cli() {
   return 1
 }
 
+_should_enable_codex_bootstrap() {
+  local codex_toggle="${WALLSTOP_DEVCONTAINER_ENABLE_CODEX:-0}"
+  codex_toggle="$(printf '%s' "${codex_toggle}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${codex_toggle}" in
+    1 | true | yes | on)
+      return 0
+      ;;
+    0 | false | no | off | '')
+      return 1
+      ;;
+    *)
+      _warn "WALLSTOP_DEVCONTAINER_ENABLE_CODEX has unsupported value '${WALLSTOP_DEVCONTAINER_ENABLE_CODEX}'; treating Codex bootstrap as disabled."
+      return 1
+      ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # pre-commit install strategies (ordered by preference)
 # ---------------------------------------------------------------------------
@@ -838,7 +856,11 @@ fi
 # Install/update OpenAI Codex CLI (non-blocking)
 # ---------------------------------------------------------------------------
 
-_install_codex_cli || _warn "Codex CLI install/update failed (non-blocking)."
+if _should_enable_codex_bootstrap; then
+  _install_codex_cli || _warn "Codex CLI install/update failed (non-blocking)."
+else
+  _log "Codex CLI bootstrap disabled (set WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1 to enable)."
+fi
 ensure_local_bin_on_path || _warn "PATH refresh failed after Codex install; continuing without profile updates."
 
 # ---------------------------------------------------------------------------

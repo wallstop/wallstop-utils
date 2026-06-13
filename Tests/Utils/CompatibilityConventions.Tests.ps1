@@ -417,7 +417,25 @@ if ($canConfigurePSReadLinePrediction -and $setPSReadLineOption -and $setPSReadL
         )
 
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath $RelativePath
-        $output = @(& $CommandPath -NoLogo -NoProfile -File $fullPath 2>&1)
+        $resolvedCommandPath = $CommandPath
+        if ($HostName -eq "PowerShell 7+") {
+            $resolvePwshCommand = Get-Command -Name "Resolve-PowerShellExecutablePath" -ErrorAction SilentlyContinue
+            if ($null -ne $resolvePwshCommand) {
+                try {
+                    $resolvedCommandPath = Resolve-PowerShellExecutablePath
+                }
+                catch {
+                    $resolvedCommandPath = $CommandPath
+                }
+            }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($resolvedCommandPath) -or -not (Test-Path -LiteralPath $resolvedCommandPath -PathType Leaf)) {
+            Set-ItResult -Skipped -Because "Resolved host command path is unavailable for $HostName profile validation."
+            return
+        }
+
+        $output = @(& $resolvedCommandPath -NoLogo -NoProfile -File $fullPath 2>&1)
         $exitCode = $LASTEXITCODE
         $psReadLineErrors = @(
             $output |

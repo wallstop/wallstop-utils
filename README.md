@@ -174,12 +174,22 @@ Safety notes:
 
 This repository includes a ready-to-use VS Code development container at `.devcontainer/devcontainer.json`.
 
+The devcontainer follows an image-first reliability contract:
+
+- The `image` value is pinned to an official `mcr.microsoft.com/devcontainers/*` digest.
+- `build` and `features` are intentionally omitted to avoid build-time feature mutation failures.
+- The container runs with `init: true` for improved process reaping and shutdown behavior.
+- Project-specific setup remains in `.devcontainer/post-create.sh` with bounded timeouts and non-blocking fallback diagnostics.
+- Persistent cache mounts are configured for `pip`, `pre-commit`, and `npm` to reduce repeat bootstrap cost on rebuilds.
+- Codex bootstrap is opt-in (`WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1`) so default cold-start attach prioritizes speed and reliability.
+
 What it provides:
 
-- Ubuntu 24.04 base container
-- PowerShell, Python, Node.js (LTS), and GitHub CLI
+- A pinned Debian Bookworm-based devcontainer image (`mcr.microsoft.com/devcontainers/dotnet`)
+- PowerShell and Python preinstalled in the base image
 - Pre-commit bootstrap and hook installation on first create
 - PowerShell quality module bootstrap (`Pester`, `PSScriptAnalyzer`)
+- Optional Codex CLI bootstrap as a non-blocking best-effort step in `.devcontainer/post-create.sh` when explicitly enabled
 - Curated extension pack for script-heavy workflows plus polished themes/icons
 
 Open it in VS Code:
@@ -194,6 +204,12 @@ After the container is created, quality commands are ready to run:
 pre-commit run
 pre-commit run --all-files
 pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1
+```
+
+Enable Codex bootstrap only when you need it (for example, targeted validation or local experimentation):
+
+```bash
+WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1 bash .devcontainer/post-create.sh
 ```
 
 ## GitHub Utilities
