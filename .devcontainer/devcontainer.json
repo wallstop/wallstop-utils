@@ -5,7 +5,7 @@
   "updateRemoteUserUID": false,
   "remoteUser": "vscode",
   "containerEnv": {
-    "WALLSTOP_DEVCONTAINER_ENABLE_CODEX": "0",
+    "WALLSTOP_DEVCONTAINER_ENABLE_CODEX": "1",
     "WALLSTOP_DEVCONTAINER_CODEX_NPM_TIMEOUT_SECONDS": "180",
     "WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS": "90",
     "WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS": "90"
@@ -54,7 +54,18 @@
         "Catppuccin.catppuccin-vsc",
         "sdras.night-owl",
         "oderwat.indent-rainbow",
-        "gruntfuggly.todo-tree"
+        "gruntfuggly.todo-tree",
+        "Gruntfuggly.todo-tree",
+        "ms-python.vscode-python-envs",
+        "ms-python.debugpy",
+        "DavidAnson.vscode-markdownlint",
+        "github.vscode-github-actions",
+        "dbaeumer.vscode-eslint",
+        "EditorConfig.EditorConfig",
+        "ms-azuretools.vscode-containers",
+        "Anthropic.claude-code",
+        "ms-dotnettools.csharp",
+        "ms-dotnettools.vscode-dotnet-runtime"
       ],
       "settings": {
         "workbench.colorTheme": "Tokyo Night Storm",
@@ -81,12 +92,7 @@
         "shellformat.flag": "-i 2 -ci -sr",
         "prettier.requireConfig": false,
         "yaml.format.enable": true,
-        "todo-tree.general.tags": [
-          "TODO",
-          "FIXME",
-          "NOTE",
-          "REVIEW"
-        ],
+        "todo-tree.general.tags": ["TODO", "FIXME", "NOTE", "REVIEW"],
         "[python]": {
           "editor.defaultFormatter": "charliermarsh.ruff",
           "editor.codeActionsOnSave": {
