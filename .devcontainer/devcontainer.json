@@ -1,8 +1,20 @@
 {
   "name": "wallstop-utils Dev",
   "image": "mcr.microsoft.com/devcontainers/dotnet:1-8.0-bookworm@sha256:16a0321c730596c9ee1b1de20369ec454ad9ab963f9b06fc24f88daabe9e44c2",
+  "init": true,
   "updateRemoteUserUID": false,
   "remoteUser": "vscode",
+  "containerEnv": {
+    "WALLSTOP_DEVCONTAINER_ENABLE_CODEX": "0",
+    "WALLSTOP_DEVCONTAINER_CODEX_NPM_TIMEOUT_SECONDS": "180",
+    "WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS": "90",
+    "WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS": "90"
+  },
+  "mounts": [
+    "source=${devcontainerId}-pip-cache,target=/home/vscode/.cache/pip,type=volume",
+    "source=${devcontainerId}-pre-commit-cache,target=/home/vscode/.cache/pre-commit,type=volume",
+    "source=${devcontainerId}-npm-cache,target=/home/vscode/.npm,type=volume"
+  ],
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "customizations": {
     "vscode": {

@@ -12,7 +12,10 @@ Prefer an image-first devcontainer contract for reliability and rebuild speed:
 
 - Pin `.devcontainer/devcontainer.json` `image` to an official `mcr.microsoft.com/devcontainers/*@sha256:...` digest.
 - Avoid `build` and non-empty `features` in this repository's end-user devcontainer; feature mutation during build is a common transient network failure source.
+- Keep `init: true` in `.devcontainer/devcontainer.json` for stronger startup/shutdown process hygiene.
+- Keep persistent cache mounts for `/home/vscode/.cache/pip`, `/home/vscode/.cache/pre-commit`, and `/home/vscode/.npm` to reduce repeat cold-start bootstrap cost.
 - Keep project-specific tool bootstrap in `.devcontainer/post-create.sh`, bounded by timeout guards and explicit non-blocking diagnostics.
+- Keep Codex bootstrap opt-in via `WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1` so default cold-start attach remains fast and reliable.
 
 ## Post-Create Bootstrap Expectations
 

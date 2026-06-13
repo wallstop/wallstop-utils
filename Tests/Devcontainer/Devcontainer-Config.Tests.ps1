@@ -38,6 +38,39 @@ Describe "devcontainer.json image-first contract" {
 
         @($featuresProperty.Value.PSObject.Properties).Count | Should -Be 0
     }
+
+    It "enables init process for startup signal and zombie reaping reliability" {
+        $initProperty = $script:devcontainer.PSObject.Properties["init"]
+        $null -eq $initProperty | Should -BeFalse
+        [bool]$initProperty.Value | Should -BeTrue
+    }
+
+    It "defines persistent cache mounts for heavy tool bootstrap paths" {
+        $mountsProperty = $script:devcontainer.PSObject.Properties["mounts"]
+        $null -eq $mountsProperty | Should -BeFalse
+
+        $mounts = @($mountsProperty.Value)
+        $mounts.Count | Should -BeGreaterThan 0
+
+        $normalizedMounts = @($mounts | ForEach-Object { [string]$_ -replace "`r", "" })
+        $normalizedMounts -join "`n" | Should -Match 'target=/home/vscode/\.cache/pip,type=volume'
+        $normalizedMounts -join "`n" | Should -Match 'target=/home/vscode/\.cache/pre-commit,type=volume'
+        $normalizedMounts -join "`n" | Should -Match 'target=/home/vscode/\.npm,type=volume'
+    }
+
+    It "disables Codex bootstrap by default to prioritize cold-start attach" {
+        $containerEnvProperty = $script:devcontainer.PSObject.Properties["containerEnv"]
+        $null -eq $containerEnvProperty | Should -BeFalse
+
+        $containerEnv = $containerEnvProperty.Value
+        $containerEnv.WALLSTOP_DEVCONTAINER_ENABLE_CODEX | Should -Be "0"
+    }
+
+    It "defines an explicit bounded Codex npm install timeout" {
+        $containerEnv = $script:devcontainer.PSObject.Properties["containerEnv"].Value
+        $containerEnv.WALLSTOP_DEVCONTAINER_CODEX_NPM_TIMEOUT_SECONDS | Should -Match '^[0-9]+$'
+        [int]$containerEnv.WALLSTOP_DEVCONTAINER_CODEX_NPM_TIMEOUT_SECONDS | Should -BeGreaterOrEqual 30
+    }
 }
 
 Describe "devcontainer validate workflow policy contract" {

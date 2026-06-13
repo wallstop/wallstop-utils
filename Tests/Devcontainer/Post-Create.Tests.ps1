@@ -313,6 +313,7 @@ Describe "post-create.sh Codex CLI bootstrap" {
 
     It "defines a dedicated Codex install function" {
         $script:postCreateContent | Should -Match '_install_codex_cli\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_should_enable_codex_bootstrap\(\)\s*\{'
         $script:postCreateContent | Should -Match '_resolve_codex_npm_package_bin\(\)\s*\{'
         $script:postCreateContent | Should -Match '_test_codex_local_bin_is_npm_managed\(\)\s*\{'
         $script:postCreateContent | Should -Match '_resolve_codex_npm_global_bin\(\)\s*\{'
@@ -637,6 +638,8 @@ exit 1
     }
 
     It "invokes Codex install/update as non-blocking in the main flow" {
+        $script:postCreateContent | Should -Match '_should_enable_codex_bootstrap'
+        $script:postCreateContent | Should -Match 'Codex CLI bootstrap disabled'
         $script:postCreateContent | Should -Match '_install_codex_cli\s*\|\|\s*_warn\s+"Codex CLI install/update failed \(non-blocking\)\."'
     }
 }
@@ -703,6 +706,11 @@ Describe "devcontainer-validate.yml Codex verification contract" {
         $secondCodexStepLine | Should -Not -Be -1 -Because "Workflow must validate Codex after the second run"
         $idempotenceStepLine | Should -BeLessThan $secondCodexStepLine `
             -Because "Codex idempotence validation must run after the second post-create execution"
+    }
+
+    It "explicitly enables Codex bootstrap only for Codex verification steps" {
+        $script:runPostCreateStep | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_CODEX:\s*"1"'
+        $script:confirmIdempotenceStep | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_CODEX:\s*"1"'
     }
 }
 

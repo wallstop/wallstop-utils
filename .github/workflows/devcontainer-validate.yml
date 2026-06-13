@@ -102,6 +102,8 @@ jobs:
 
       - name: Run post-create.sh
         shell: bash
+        env:
+          WALLSTOP_DEVCONTAINER_ENABLE_CODEX: "1"
         run: |
           set -euo pipefail
           bash .devcontainer/post-create.sh | tee "${RUNNER_TEMP}/post-create-first.log"
@@ -227,6 +229,8 @@ jobs:
 
       - name: Confirm idempotence (run post-create.sh a second time)
         shell: bash
+        env:
+          WALLSTOP_DEVCONTAINER_ENABLE_CODEX: "1"
         run: |
           set -euo pipefail
           bash .devcontainer/post-create.sh | tee "${RUNNER_TEMP}/post-create-second.log"
