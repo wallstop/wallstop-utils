@@ -17,9 +17,15 @@ Hook wrappers must capture `git rev-parse --show-toplevel` stdout separately fro
 
 ## Fast Local Hook Contract
 
-Local hooks optimize for changed-file feedback. They must not run full validation, Pester, or all-files pre-commit flows by default.
+Local hooks optimize for changed-file feedback. They must not run full validation, Pester, ShellCheck-wide scans, Python pre-commit environments, or all-files pre-commit flows by default.
 
-`.githooks/pre-push` must parse Git pre-push stdin, resolve changed files from pushed refs, write the resolved list to a temp file owned by the parent hook process, and pass that file through `Invoke-PreCommitWithRecovery.ps1 -HookStage pre-push -FileListPath ...`. Existing remote refs use `remote_oid..local_oid`; new refs choose a baseline from upstream, then `origin/HEAD`, then the pushed commit parent, and fall back to tracked files only when no baseline exists. Changed-file discovery must include deleted paths (`ACMRD`) for trigger selection and must propagate `git diff`/`git ls-files` failures explicitly instead of relying on `set -e` loop behavior. The temp file path must be visible to the parent `EXIT` trap so recovery and fallback paths clean it up.
+The default `pre-commit`/`pre-push` shell wrappers are fast last-resort gates: shell parse checks for touched shell entrypoints and direct repo-managed actionlint with repo-managed ShellCheck for touched GitHub workflows. Full recovery-backed pre-commit execution is explicit opt-in only (`WALLSTOP_PRECOMMIT_FULL_SUITE=1` or `WALLSTOP_PREPUSH_FULL_SUITE=1`) and belongs to agentic preflight, CI, or manual deep validation; staged diff whitespace checking remains available through `WALLSTOP_PRECOMMIT_FAST_DIFF_CHECK=1` when intentionally trading speed for extra local coverage.
+
+The default pre-commit fast gate must validate staged index blobs, not the current working tree. Extract each supported staged shell/workflow file from `:path` into hook-owned temporary files before running shell parse checks or actionlint, and bootstrap missing repo-managed native binaries with `Invoke-NativeQualityChecks.ps1 -Tool actionlint -EnsureOnly` before invoking the binaries directly. Do not skip supported staged files just because the worktree path is missing or dirty.
+
+`.githooks/pre-push` must parse Git pre-push stdin, resolve changed files from pushed refs, write the resolved list to a temp file owned by the parent hook process, and pass that file through `Invoke-PreCommitWithRecovery.ps1 -HookStage pre-push -FileListPath ...` only for explicit full-suite opt-in. Existing remote refs use `remote_oid..local_oid`; new refs choose a baseline from upstream, then `origin/HEAD`, then the pushed commit parent, and fall back to `git ls-tree -r --name-only "$local_oid"` only when no baseline exists. Changed-file discovery must include deleted paths (`ACMRD`) for trigger selection and must propagate `git diff`/`git ls-tree` failures explicitly instead of relying on `set -e` loop behavior. The temp file path must be visible to the parent `EXIT` trap so recovery and fallback paths clean it up.
+
+The default pre-push fast gate must validate pushed commit blobs, not the current working tree. Extract each supported changed file from `local_oid:path` into hook-owned temporary files before running shell parse checks or actionlint, and use PowerShell only to bootstrap missing pinned native binaries before invoking those binaries directly on the extracted blobs. Recovery-backed full-suite pre-push validation reads working-tree files, so it must fail closed unless the pushed blob, worktree file, and git index blob all match for every validated non-deleted target.
 
 The pre-push local hook entry in `.pre-commit-config.yaml` must route through `Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation.ps1` with `pass_filenames: true`. That wrapper captures all pre-commit filenames as remaining positional arguments and then splats them into `Run-PreCommitValidation.ps1 -TargetFiles` as one array; do not append `-TargetFiles` directly in the pre-commit entry because `pwsh -File` misbinds the second filename to later positional parameters.
 
@@ -75,6 +81,10 @@ Keep hook wrappers bounded so stalled commands cannot lock editor-hosted workflo
 
 Native tool wrappers must download only manifest-pinned upstream release assets into ignored `.tools/native-quality`, verify SHA256 before extraction or execution, reject unsafe archive entries, probe the expected version, and use explicit platform keys. Windows ARM64 may fall back to Windows x64 only when upstream lacks an ARM64 asset and the fallback is encoded in resolver diagnostics.
 
+Fast Bash hooks must not trust arbitrary executables under `.tools`. They may use cached native tools only when the path is under the manifest-pinned version/platform directory, the `asset.json` marker matches the requested tool/version/platform, the marker includes `executableSha256`, executable size/mtime metadata, and `executableFastFingerprint` fields written after PowerShell installer/preflight full-hash and version checks, and the current executable size, mtime, and sampled fast fingerprint still match that marker. Metadata-only trust is forbidden. Missing, stale, or mismatched markers must fall through to the PowerShell `-EnsureOnly` bootstrap before retrying direct binary execution.
+
+Actionlint must pass the repo-managed ShellCheck executable explicitly through `-shellcheck`; do not rely on actionlint discovering an ambient PATH `shellcheck`, because that makes embedded workflow shell diagnostics host-dependent.
+
 Run `pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1 -Tool All -EnsureOnly` to pre-warm StyLua/actionlint without running checks. `Invoke-FullValidation.ps1 -PreflightOnly` must call this automatically before hooks.
 
 When pre-commit itself reports cache/environment installation failures, route through `Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1`; it cleans hook environments, runs `pre-commit install-hooks`, and retries once before failing with stable `E_PRECOMMIT_*` diagnostics.
@@ -84,6 +94,9 @@ When pre-commit reports `files were modified by this hook`, `Invoke-PreCommitWit
 Index-lock recovery must fail closed when process scanning is degraded or any active git/pre-commit command line is ambiguous, even if an active-git override is enabled. Only remove a stale `index.lock` after the lock path matches this repository, the file is stable and old enough, no repo-scoped or ambiguous active git process is present, and the lock can be opened exclusively.
 
 `Invoke-FullValidation.ps1 -PreflightOnly` must also verify local `.githooks` registration and the pinned pre-commit CLI from `requirements.txt`. Agents should publish branches through `Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1` instead of bare `git push`; the helper runs hook registration preflight first and safely applies `push -u origin HEAD` only when the remote branch is absent or an ancestor of `HEAD`.
+
+Pre-commit CLI auto-repair should prefer an ambient `uv` when present, then a repo-managed, SHA256-verified native `uv` from `Scripts/Utils/Quality/precommit-cli-tools.json`, before Python-specific `pipx`/venv/zipapp fallbacks.
+Hook/recovery paths should run pre-commit with a managed `PRE_COMMIT_HOME` under ignored `.tools/precommit-cli` so unwritable host cache directories do not block last-resort hooks.
 
 ## Failure Artifact Diagnostics
 

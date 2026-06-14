@@ -9,6 +9,45 @@ if (-not (Test-Path -LiteralPath $preCommitCompatibilityHelpersPath -PathType Le
 
 . $preCommitCompatibilityHelpersPath
 
+$preCommitStrictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath 'StrictModeHelpers.ps1'
+if (-not (Test-Path -LiteralPath $preCommitStrictModeHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_PRECOMMIT_STRICT_MODE_HELPER_MISSING: Strict mode helper file not found at '$preCommitStrictModeHelpersPath'."
+}
+
+. $preCommitStrictModeHelpersPath
+
+$preCommitQualityToolingHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath 'QualityToolingHelpers.ps1'
+if (-not (Test-Path -LiteralPath $preCommitQualityToolingHelpersPath -PathType Leaf)) {
+    throw "E_VALIDATION_PRECOMMIT_QUALITY_TOOLING_HELPER_MISSING: Quality tooling helper file not found at '$preCommitQualityToolingHelpersPath'."
+}
+
+. $preCommitQualityToolingHelpersPath
+
+$script:PreCommitCliToolManifestPath = Join-Path -Path $PSScriptRoot -ChildPath "../Quality/precommit-cli-tools.json"
+$script:PreCommitCliToolRootName = ".tools/precommit-cli"
+$script:PreCommitCliToolDownloadTimeoutSeconds = 300
+$script:PreCommitCliToolLockTimeoutSeconds = 60
+$script:PreCommitCliToolLockRetryMilliseconds = 200
+
+if (-not [string]::IsNullOrWhiteSpace($env:WALLSTOP_PRECOMMIT_CLI_TOOL_DOWNLOAD_TIMEOUT_SECONDS)) {
+    if ($env:WALLSTOP_PRECOMMIT_CLI_TOOL_DOWNLOAD_TIMEOUT_SECONDS -notmatch '^[0-9]+$' -or [int]$env:WALLSTOP_PRECOMMIT_CLI_TOOL_DOWNLOAD_TIMEOUT_SECONDS -lt 30) {
+        throw "E_VALIDATION_PRECOMMIT_CLI_TOOL_TIMEOUT_CONFIG: WALLSTOP_PRECOMMIT_CLI_TOOL_DOWNLOAD_TIMEOUT_SECONDS must be an integer >= 30 seconds (received '$env:WALLSTOP_PRECOMMIT_CLI_TOOL_DOWNLOAD_TIMEOUT_SECONDS')."
+    }
+
+    $script:PreCommitCliToolDownloadTimeoutSeconds = [int]$env:WALLSTOP_PRECOMMIT_CLI_TOOL_DOWNLOAD_TIMEOUT_SECONDS
+}
+
+$script:PreCommitCliToolContext = New-QualityToolingContext `
+    -DiagnosticPrefix "VALIDATION_PRECOMMIT_CLI_TOOL" `
+    -TargetDiagnosticPrefix "VALIDATION_PRECOMMIT_CLI" `
+    -LogPrefix "[precommit-cli-tool]" `
+    -ManifestPath $script:PreCommitCliToolManifestPath `
+    -ToolRootName $script:PreCommitCliToolRootName `
+    -DownloadTimeoutSeconds $script:PreCommitCliToolDownloadTimeoutSeconds `
+    -ToolSuiteLabel "pre-commit CLI" `
+    -ManifestContextLabel "pre-commit CLI tool manifest" `
+    -MarkerContextLabel "pre-commit CLI tool asset marker"
+
 function Get-RequiredPreCommitVersion {
     param(
         [Parameter(Mandatory = $true)]
@@ -84,6 +123,10 @@ function Invoke-PreCommitVersionProbe {
     $processStartInfo.RedirectStandardError = $true
 
     Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList @("--version")
+    $preCommitEnvironment = Get-PreCommitManagedEnvironment -RepositoryRoot $RepositoryRoot
+    foreach ($environmentKey in @($preCommitEnvironment.Keys)) {
+        Set-PortableProcessEnvironmentVariable -StartInfo $processStartInfo -Name ([string]$environmentKey) -Value ([string]$preCommitEnvironment[$environmentKey])
+    }
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo
@@ -103,10 +146,18 @@ function Invoke-PreCommitVersionProbe {
             throw "E_VALIDATION_PRECOMMIT_VERSION_TIMEOUT: pre-commit --version exceeded ${TimeoutSeconds}s (executable='$PreCommitExecutable')."
         }
 
+        $stdoutCapture = Read-PreCommitProcessOutputTaskBounded -Task $stdoutTask -StreamName stdout
+        $stderrCapture = Read-PreCommitProcessOutputTaskBounded -Task $stderrTask -StreamName stderr
+        $captureDiagnostics = Join-PreCommitCaptureDiagnostics -Diagnostics @($stdoutCapture.Diagnostic, $stderrCapture.Diagnostic)
+        $stderrText = [string]$stderrCapture.Text
+        if (-not [string]::IsNullOrWhiteSpace($captureDiagnostics)) {
+            $stderrText = (@($stderrText, $captureDiagnostics) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        }
+
         return [pscustomobject]@{
             ExitCode = $process.ExitCode
-            Stdout   = $stdoutTask.GetAwaiter().GetResult()
-            Stderr   = $stderrTask.GetAwaiter().GetResult()
+            Stdout   = $stdoutCapture.Text
+            Stderr   = $stderrText
         }
     }
     finally {
@@ -173,6 +224,166 @@ function Get-PreCommitCommandExecutablePath {
     return ""
 }
 
+function Read-PreCommitProcessOutputTaskBounded {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Task,
+
+        [Parameter(Mandatory = $true)]
+        [string]$StreamName,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 30000)]
+        [int]$TimeoutMilliseconds = 2000
+    )
+
+    try {
+        if (-not $Task.Wait($TimeoutMilliseconds)) {
+            return [pscustomobject]@{
+                Text       = ""
+                Diagnostic = "E_VALIDATION_PRECOMMIT_CAPTURE_TIMEOUT: stream=$StreamName timed out after ${TimeoutMilliseconds}ms while draining subprocess output."
+                TimedOut   = $true
+            }
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Text       = ""
+            Diagnostic = "E_VALIDATION_PRECOMMIT_CAPTURE_FAILED: stream=$StreamName failed while draining subprocess output. $($_.Exception.Message)"
+            TimedOut   = $false
+        }
+    }
+
+    try {
+        return [pscustomobject]@{
+            Text       = [string]$Task.GetAwaiter().GetResult()
+            Diagnostic = ""
+            TimedOut   = $false
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Text       = ""
+            Diagnostic = "E_VALIDATION_PRECOMMIT_CAPTURE_FAILED: stream=$StreamName failed while reading subprocess output. $($_.Exception.Message)"
+            TimedOut   = $false
+        }
+    }
+}
+
+function Join-PreCommitCaptureDiagnostics {
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyCollection()]
+        [string[]]$Diagnostics = @()
+    )
+
+    return (@($Diagnostics) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+}
+
+function Read-PreCommitCliToolManifest {
+    return Read-QualityToolingManifest -Context $script:PreCommitCliToolContext
+}
+
+function Install-PreCommitCliUvToolAsset {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallRoot,
+
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$AssetSpec,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    Install-QualityToolingToolAsset `
+        -Context $script:PreCommitCliToolContext `
+        -InstallRoot $InstallRoot `
+        -AssetSpec $AssetSpec `
+        -RepositoryRoot $RepositoryRoot `
+        -DownloadCommand { param($AssetSpec, $DownloadPath) Invoke-QualityToolingDownload -Context $script:PreCommitCliToolContext -AssetSpec $AssetSpec -DownloadPath $DownloadPath }
+}
+
+function Resolve-PreCommitCliUvExecutable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    $manifest = Read-PreCommitCliToolManifest
+    return Resolve-QualityToolingToolExecutable `
+        -Context $script:PreCommitCliToolContext `
+        -Manifest $manifest `
+        -ToolName "uv" `
+        -RepositoryRoot $RepositoryRoot `
+        -LockTimeoutSeconds $script:PreCommitCliToolLockTimeoutSeconds `
+        -LockRetryMilliseconds $script:PreCommitCliToolLockRetryMilliseconds `
+        -InstallCommand { param($InstallRoot, $AssetSpec, $RepositoryRoot) Install-PreCommitCliUvToolAsset -InstallRoot $InstallRoot -AssetSpec $AssetSpec -RepositoryRoot $RepositoryRoot }
+}
+
+function Get-PreCommitManagedUvState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    $uvStateRoot = Join-Path -Path $RepositoryRoot -ChildPath ".tools/precommit-cli/uv-state"
+    $uvCacheDir = Join-Path -Path $uvStateRoot -ChildPath "cache"
+    $uvToolDir = Join-Path -Path $uvStateRoot -ChildPath "tools"
+    $uvToolBinDir = Join-Path -Path $uvStateRoot -ChildPath "bin"
+    [System.IO.Directory]::CreateDirectory($uvCacheDir) | Out-Null
+    [System.IO.Directory]::CreateDirectory($uvToolDir) | Out-Null
+    [System.IO.Directory]::CreateDirectory($uvToolBinDir) | Out-Null
+
+    $preCommitExecutableName = if (Test-IsWindowsPlatform) {
+        "pre-commit.exe"
+    }
+    else {
+        "pre-commit"
+    }
+
+    return [pscustomobject]@{
+        CacheDir            = $uvCacheDir
+        ToolDir             = $uvToolDir
+        ToolBinDir          = $uvToolBinDir
+        PreCommitExecutable = Join-Path -Path $uvToolBinDir -ChildPath $preCommitExecutableName
+        Environment         = @{
+            UV_CACHE_DIR     = $uvCacheDir
+            UV_TOOL_DIR      = $uvToolDir
+            UV_TOOL_BIN_DIR  = $uvToolBinDir
+            UV_NO_MODIFY_PATH = "1"
+        }
+    }
+}
+
+function Get-PreCommitManagedPreCommitHome {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$EnsureDirectory
+    )
+
+    $preCommitHome = Join-Path -Path $RepositoryRoot -ChildPath ".tools/precommit-cli/pre-commit-home"
+    if ($EnsureDirectory) {
+        [System.IO.Directory]::CreateDirectory($preCommitHome) | Out-Null
+    }
+
+    return $preCommitHome
+}
+
+function Get-PreCommitManagedEnvironment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    return @{
+        PRE_COMMIT_HOME = Get-PreCommitManagedPreCommitHome -RepositoryRoot $RepositoryRoot -EnsureDirectory
+    }
+}
+
 function Get-PreCommitFailureOutputPreview {
     param(
         [Parameter(Mandatory = $false)]
@@ -198,6 +409,37 @@ function Get-PreCommitFailureOutputPreview {
     }
 
     return ("{0}..." -f $collapsed.Substring(0, $MaxLength))
+}
+
+function Join-PreCommitCommandOutput {
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Stdout = "",
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Stderr = ""
+    )
+
+    return (@([string]$Stdout, [string]$Stderr) -join [Environment]::NewLine)
+}
+
+function Get-PreCommitPyzSha256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    $hashesByVersion = @{
+        "4.6.0" = "ea8a0c84902e48c1875558f2f362ed8476773aa5fc8c16c5d8f2acc2a2830a65"
+    }
+
+    if ($hashesByVersion.ContainsKey($Version)) {
+        return [string]$hashesByVersion[$Version]
+    }
+
+    return ""
 }
 
 function Get-PreCommitRemainingTimeoutSeconds {
@@ -230,7 +472,10 @@ function Invoke-PreCommitExternalCommand {
         [int]$TimeoutSeconds = 120,
 
         [Parameter(Mandatory = $false)]
-        [string]$ContextLabel = "external command"
+        [string]$ContextLabel = "external command",
+
+        [Parameter(Mandatory = $false)]
+        [hashtable]$Environment = @{}
     )
 
     $processStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -240,6 +485,13 @@ function Invoke-PreCommitExternalCommand {
     $processStartInfo.RedirectStandardOutput = $true
     $processStartInfo.RedirectStandardError = $true
     Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $Arguments
+    foreach ($environmentKey in @($Environment.Keys)) {
+        if ([string]::IsNullOrWhiteSpace([string]$environmentKey)) {
+            continue
+        }
+
+        Set-PortableProcessEnvironmentVariable -StartInfo $processStartInfo -Name ([string]$environmentKey) -Value ([string]$Environment[$environmentKey])
+    }
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo
@@ -268,19 +520,38 @@ function Invoke-PreCommitExternalCommand {
                 Write-Verbose "Failed to kill timed-out ${ContextLabel}: $($_.Exception.Message)"
             }
 
+            $stdoutCapture = Read-PreCommitProcessOutputTaskBounded -Task $stdoutTask -StreamName stdout
+            $stderrCapture = Read-PreCommitProcessOutputTaskBounded -Task $stderrTask -StreamName stderr
+            $captureDiagnostics = Join-PreCommitCaptureDiagnostics -Diagnostics @($stdoutCapture.Diagnostic, $stderrCapture.Diagnostic)
+            $timeoutStderr = "E_VALIDATION_PRECOMMIT_COMMAND_TIMEOUT: ${ContextLabel} exceeded ${TimeoutSeconds}s (executable='$Executable')."
+            if (-not [string]::IsNullOrWhiteSpace($stderrCapture.Text)) {
+                $timeoutStderr = "${timeoutStderr}`n$($stderrCapture.Text)"
+            }
+            if (-not [string]::IsNullOrWhiteSpace($captureDiagnostics)) {
+                $timeoutStderr = "${timeoutStderr}`n${captureDiagnostics}"
+            }
+
             return [pscustomobject]@{
                 ExitCode    = 124
-                Stdout      = $stdoutTask.GetAwaiter().GetResult()
-                Stderr      = "E_VALIDATION_PRECOMMIT_COMMAND_TIMEOUT: ${ContextLabel} exceeded ${TimeoutSeconds}s (executable='$Executable').`n$($stderrTask.GetAwaiter().GetResult())"
+                Stdout      = $stdoutCapture.Text
+                Stderr      = $timeoutStderr
                 TimedOut    = $true
                 StartFailed = $false
             }
         }
 
+        $normalStdoutCapture = Read-PreCommitProcessOutputTaskBounded -Task $stdoutTask -StreamName stdout
+        $normalStderrCapture = Read-PreCommitProcessOutputTaskBounded -Task $stderrTask -StreamName stderr
+        $normalCaptureDiagnostics = Join-PreCommitCaptureDiagnostics -Diagnostics @($normalStdoutCapture.Diagnostic, $normalStderrCapture.Diagnostic)
+        $normalStderr = [string]$normalStderrCapture.Text
+        if (-not [string]::IsNullOrWhiteSpace($normalCaptureDiagnostics)) {
+            $normalStderr = (@($normalStderr, $normalCaptureDiagnostics) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        }
+
         return [pscustomobject]@{
             ExitCode    = [int]$process.ExitCode
-            Stdout      = $stdoutTask.GetAwaiter().GetResult()
-            Stderr      = $stderrTask.GetAwaiter().GetResult()
+            Stdout      = $normalStdoutCapture.Text
+            Stderr      = $normalStderr
             TimedOut    = $false
             StartFailed = $false
         }
@@ -292,7 +563,10 @@ function Invoke-PreCommitExternalCommand {
 
 function Get-PreCommitCandidateExecutablePaths {
     [OutputType([string[]])]
-    param()
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$RepositoryRoot = ""
+    )
 
     $candidatePaths = New-Object System.Collections.Generic.List[string]
     $pathComparer = if (Test-IsWindowsPlatform) {
@@ -312,6 +586,19 @@ function Get-PreCommitCandidateExecutablePaths {
 
         if ($seenPaths.Add($candidatePath)) {
             $candidatePaths.Add($candidatePath) | Out-Null
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+        $managedPreCommitExecutableName = if (Test-IsWindowsPlatform) {
+            "pre-commit.exe"
+        }
+        else {
+            "pre-commit"
+        }
+        $managedUvPreCommitCandidate = Join-Path -Path (Join-Path -Path $RepositoryRoot -ChildPath ".tools/precommit-cli/uv-state/bin") -ChildPath $managedPreCommitExecutableName
+        if ($seenPaths.Add($managedUvPreCommitCandidate)) {
+            $candidatePaths.Add($managedUvPreCommitCandidate) | Out-Null
         }
     }
 
@@ -337,6 +624,31 @@ function Get-PreCommitCandidateExecutablePaths {
             $venvFallbackCandidate
         )
 
+        if (-not (Test-IsWindowsPlatform)) {
+            $pyzRoot = Join-Path -Path $homePath -ChildPath ".local/share/wallstop/pre-commit"
+            if (Test-Path -LiteralPath $pyzRoot -PathType Container) {
+                $pyzCandidates = @(
+                    foreach ($pyzCandidate in @(Get-ChildItem -LiteralPath $pyzRoot -Filter "pre-commit-*.pyz" -File -ErrorAction SilentlyContinue | Sort-Object -Property Name -Descending)) {
+                        $versionMatch = [System.Text.RegularExpressions.Regex]::Match($pyzCandidate.Name, '^pre-commit-(?<version>[0-9]+(?:\.[0-9]+){1,3})\.pyz$')
+                        if (-not $versionMatch.Success) {
+                            continue
+                        }
+
+                        $expectedPyzHash = Get-PreCommitPyzSha256 -Version $versionMatch.Groups["version"].Value
+                        if ([string]::IsNullOrWhiteSpace($expectedPyzHash)) {
+                            continue
+                        }
+
+                        $actualPyzHash = (Get-FileHash -LiteralPath $pyzCandidate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                        if ($actualPyzHash -eq $expectedPyzHash) {
+                            $pyzCandidate.FullName
+                        }
+                    }
+                )
+                $fallbackCandidates += $pyzCandidates
+            }
+        }
+
         foreach ($fallbackCandidate in $fallbackCandidates) {
             if ([string]::IsNullOrWhiteSpace([string]$fallbackCandidate)) {
                 continue
@@ -353,6 +665,145 @@ function Get-PreCommitCandidateExecutablePaths {
     }
 
     return @($candidatePaths.ToArray())
+}
+
+function Install-PreCommitPyzFallback {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedVersion,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$DeadlineUtc
+    )
+
+    if (Test-IsWindowsPlatform) {
+        return [pscustomobject]@{
+            Succeeded          = $false
+            Strategy           = "pyz"
+            RepairedExecutable = ""
+            Diagnostics        = @("pyz strategy skipped on Windows because direct .pyz execution is not portable under the current process launcher.")
+        }
+    }
+
+    $expectedSha256 = Get-PreCommitPyzSha256 -Version $ExpectedVersion
+    if ([string]::IsNullOrWhiteSpace($expectedSha256)) {
+        return [pscustomobject]@{
+            Succeeded          = $false
+            Strategy           = "pyz"
+            RepairedExecutable = ""
+            Diagnostics        = @("pyz strategy skipped because no pinned SHA256 is recorded for pre-commit $ExpectedVersion.")
+        }
+    }
+
+    $python3Command = Get-Command -Name "python3" -ErrorAction SilentlyContinue
+    $python3Path = Get-PreCommitCommandExecutablePath -CommandInfo $python3Command
+    if ([string]::IsNullOrWhiteSpace($python3Path)) {
+        return [pscustomobject]@{
+            Succeeded          = $false
+            Strategy           = "pyz"
+            RepairedExecutable = ""
+            Diagnostics        = @("pyz strategy skipped because python3 is unavailable on PATH.")
+        }
+    }
+
+    $homePathVariable = Get-Variable -Name "HOME" -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $homePathVariable -or [string]::IsNullOrWhiteSpace([string]$homePathVariable)) {
+        return [pscustomobject]@{
+            Succeeded          = $false
+            Strategy           = "pyz"
+            RepairedExecutable = ""
+            Diagnostics        = @("pyz strategy skipped because HOME is unavailable.")
+        }
+    }
+
+    $homePath = [string]$homePathVariable
+    $pyzRoot = Join-Path -Path $homePath -ChildPath ".local/share/wallstop/pre-commit"
+    [System.IO.Directory]::CreateDirectory($pyzRoot) | Out-Null
+    $pyzPath = Join-Path -Path $pyzRoot -ChildPath "pre-commit-$ExpectedVersion.pyz"
+
+    $needsDownload = $true
+    if (Test-Path -LiteralPath $pyzPath -PathType Leaf) {
+        $existingHash = (Get-FileHash -LiteralPath $pyzPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $needsDownload = ($existingHash -ne $expectedSha256)
+    }
+
+    if ($needsDownload) {
+        $remainingSeconds = Get-PreCommitRemainingTimeoutSeconds -DeadlineUtc $DeadlineUtc
+        if ($remainingSeconds -le 0) {
+            return [pscustomobject]@{
+                Succeeded          = $false
+                Strategy           = "pyz"
+                RepairedExecutable = ""
+                Diagnostics        = @("pyz strategy skipped because auto-repair timeout expired before download.")
+            }
+        }
+
+        $downloadTimeoutSeconds = [Math]::Min($remainingSeconds, 120)
+        $downloadUrl = "https://github.com/pre-commit/pre-commit/releases/download/v$ExpectedVersion/pre-commit-$ExpectedVersion.pyz"
+        $temporaryDownloadPath = Join-Path -Path $pyzRoot -ChildPath ("pre-commit-$ExpectedVersion.{0}.tmp" -f [guid]::NewGuid().ToString("N"))
+        try {
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $temporaryDownloadPath -UseBasicParsing -TimeoutSec $downloadTimeoutSeconds -ErrorAction Stop
+            $actualSha256 = (Get-FileHash -LiteralPath $temporaryDownloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualSha256 -ne $expectedSha256) {
+                return [pscustomobject]@{
+                    Succeeded          = $false
+                    Strategy           = "pyz"
+                    RepairedExecutable = ""
+                    Diagnostics        = @("pyz strategy failed SHA256 verification for pre-commit $ExpectedVersion (expected=$expectedSha256; actual=$actualSha256).")
+                }
+            }
+
+            Move-Item -LiteralPath $temporaryDownloadPath -Destination $pyzPath -Force
+        }
+        catch {
+            return [pscustomobject]@{
+                Succeeded          = $false
+                Strategy           = "pyz"
+                RepairedExecutable = ""
+                Diagnostics        = @("pyz strategy failed to download pre-commit $ExpectedVersion. $($_.Exception.Message)")
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $temporaryDownloadPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $chmodCommand = Get-Command -Name "chmod" -ErrorAction SilentlyContinue
+    $chmodPath = Get-PreCommitCommandExecutablePath -CommandInfo $chmodCommand
+    if (-not [string]::IsNullOrWhiteSpace($chmodPath)) {
+        [void](Invoke-PreCommitExternalCommand -Executable $chmodPath -Arguments @("+x", $pyzPath) -RepositoryRoot $RepositoryRoot -TimeoutSeconds 10 -ContextLabel "chmod pre-commit pyz")
+    }
+
+    $remainingProbeSeconds = Get-PreCommitRemainingTimeoutSeconds -DeadlineUtc $DeadlineUtc
+    if ($remainingProbeSeconds -le 0) {
+        return [pscustomobject]@{
+            Succeeded          = $false
+            Strategy           = "pyz"
+            RepairedExecutable = ""
+            Diagnostics        = @("pyz strategy installed pre-commit $ExpectedVersion but auto-repair timeout expired before version probe.")
+        }
+    }
+
+    $probeTimeoutSeconds = [Math]::Min($remainingProbeSeconds, 30)
+    $probeResult = Invoke-PreCommitExternalCommand -Executable $pyzPath -Arguments @("--version") -RepositoryRoot $RepositoryRoot -TimeoutSeconds $probeTimeoutSeconds -ContextLabel "pre-commit pyz version probe"
+    if ($probeResult.ExitCode -eq 0 -and (Join-PreCommitCommandOutput -Stdout $probeResult.Stdout -Stderr $probeResult.Stderr) -match "\bpre-commit\s+$([regex]::Escape($ExpectedVersion))\b") {
+        return [pscustomobject]@{
+            Succeeded          = $true
+            Strategy           = "pyz"
+            RepairedExecutable = $pyzPath
+            Diagnostics        = @()
+        }
+    }
+
+    return [pscustomobject]@{
+        Succeeded          = $false
+        Strategy           = "pyz"
+        RepairedExecutable = ""
+        Diagnostics        = @("pyz strategy installed pre-commit $ExpectedVersion but version probe failed (exitCode=$([int]$probeResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $probeResult.Stdout -Stderr $probeResult.Stderr))).")
+    }
 }
 
 function Get-PreCommitVersionProbeClassification {
@@ -431,24 +882,70 @@ function Invoke-PreCommitCliAutoRepair {
 
     $repairDeadlineUtc = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
     $repairDiagnostics = New-Object System.Collections.Generic.List[string]
+    $uvCandidates = New-Object System.Collections.Generic.List[object]
 
     $uvCommand = Get-Command -Name "uv" -ErrorAction SilentlyContinue
     $uvCommandPath = Get-PreCommitCommandExecutablePath -CommandInfo $uvCommand
     if (-not [string]::IsNullOrWhiteSpace($uvCommandPath)) {
+        $uvCandidates.Add([pscustomobject]@{
+                Label = "ambient uv"
+                Path  = $uvCommandPath
+            }) | Out-Null
+    }
+
+    $remainingSeconds = Get-PreCommitRemainingTimeoutSeconds -DeadlineUtc $repairDeadlineUtc
+    if ($remainingSeconds -gt 0) {
+        try {
+            $managedUvCommandPath = Resolve-PreCommitCliUvExecutable -RepositoryRoot $RepositoryRoot
+            $hasManagedUvCandidate = $false
+            foreach ($uvCandidate in $uvCandidates) {
+                if ([string]::Equals([string]$uvCandidate.Path, $managedUvCommandPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $hasManagedUvCandidate = $true
+                    break
+                }
+            }
+
+            if (-not $hasManagedUvCandidate -and -not [string]::IsNullOrWhiteSpace($managedUvCommandPath)) {
+                $uvCandidates.Add([pscustomobject]@{
+                        Label = "repo-managed uv"
+                        Path  = $managedUvCommandPath
+                    }) | Out-Null
+            }
+        }
+        catch {
+            $repairDiagnostics.Add("repo-managed uv strategy unavailable. $($_.Exception.Message)") | Out-Null
+        }
+    }
+
+    foreach ($uvCandidate in $uvCandidates) {
+        $uvCommandPath = [string]$uvCandidate.Path
+        $uvCandidateLabel = [string]$uvCandidate.Label
         $remainingSeconds = Get-PreCommitRemainingTimeoutSeconds -DeadlineUtc $repairDeadlineUtc
         if ($remainingSeconds -gt 0) {
             $uvTimeoutSeconds = [Math]::Min($remainingSeconds, 180)
-            $uvResult = Invoke-PreCommitExternalCommand -Executable $uvCommandPath -Arguments @("tool", "install", "--force", "pre-commit==$ExpectedVersion") -RepositoryRoot $RepositoryRoot -TimeoutSeconds $uvTimeoutSeconds -ContextLabel "uv tool install pre-commit==$ExpectedVersion"
-            if ($uvResult.ExitCode -eq 0) {
+            $uvState = Get-PreCommitManagedUvState -RepositoryRoot $RepositoryRoot
+            $uvResult = Invoke-PreCommitExternalCommand `
+                -Executable $uvCommandPath `
+                -Arguments @("tool", "install", "--force", "pre-commit==$ExpectedVersion") `
+                -RepositoryRoot $RepositoryRoot `
+                -TimeoutSeconds $uvTimeoutSeconds `
+                -ContextLabel "uv tool install pre-commit==$ExpectedVersion" `
+                -Environment $uvState.Environment
+            if ($uvResult.ExitCode -eq 0 -and (Test-Path -LiteralPath $uvState.PreCommitExecutable -PathType Leaf)) {
                 return [pscustomobject]@{
                     Succeeded          = $true
                     Strategy           = "uv-tool-install"
-                    RepairedExecutable = ""
+                    RepairedExecutable = $uvState.PreCommitExecutable
                     Diagnostics        = @()
                 }
             }
 
-            $repairDiagnostics.Add("uv strategy failed (exitCode=$([int]$uvResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (@([string]$uvResult.Stdout, [string]$uvResult.Stderr -join [Environment]::NewLine)))).") | Out-Null
+            if ($uvResult.ExitCode -eq 0) {
+                $repairDiagnostics.Add("${uvCandidateLabel} strategy completed but did not create expected pre-commit executable '$($uvState.PreCommitExecutable)'.") | Out-Null
+            }
+            else {
+                $repairDiagnostics.Add("${uvCandidateLabel} strategy failed (exitCode=$([int]$uvResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $uvResult.Stdout -Stderr $uvResult.Stderr))).") | Out-Null
+            }
         }
     }
 
@@ -468,7 +965,7 @@ function Invoke-PreCommitCliAutoRepair {
                 }
             }
 
-            $repairDiagnostics.Add("pipx strategy failed (exitCode=$([int]$pipxResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (@([string]$pipxResult.Stdout, [string]$pipxResult.Stderr -join [Environment]::NewLine)))).") | Out-Null
+            $repairDiagnostics.Add("pipx strategy failed (exitCode=$([int]$pipxResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $pipxResult.Stdout -Stderr $pipxResult.Stderr))).") | Out-Null
         }
     }
 
@@ -546,13 +1043,25 @@ function Invoke-PreCommitCliAutoRepair {
                             }
                         }
 
-                        $repairDiagnostics.Add("venv pip install failed (exitCode=$([int]$pipInstallResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (@([string]$pipInstallResult.Stdout, [string]$pipInstallResult.Stderr -join [Environment]::NewLine)))).") | Out-Null
+                        $repairDiagnostics.Add("venv pip install failed (exitCode=$([int]$pipInstallResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $pipInstallResult.Stdout -Stderr $pipInstallResult.Stderr))).") | Out-Null
                     }
                 }
                 else {
-                    $repairDiagnostics.Add("venv bootstrap failed (exitCode=$([int]$venvCreateResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (@([string]$venvCreateResult.Stdout, [string]$venvCreateResult.Stderr -join [Environment]::NewLine)))).") | Out-Null
+                    $repairDiagnostics.Add("venv bootstrap failed (exitCode=$([int]$venvCreateResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $venvCreateResult.Stdout -Stderr $venvCreateResult.Stderr))).") | Out-Null
                 }
             }
+        }
+    }
+
+    $remainingSeconds = Get-PreCommitRemainingTimeoutSeconds -DeadlineUtc $repairDeadlineUtc
+    if ($remainingSeconds -gt 0) {
+        $pyzResult = Install-PreCommitPyzFallback -RepositoryRoot $RepositoryRoot -ExpectedVersion $ExpectedVersion -DeadlineUtc $repairDeadlineUtc
+        if ($pyzResult.Succeeded) {
+            return $pyzResult
+        }
+
+        foreach ($pyzDiagnostic in @($pyzResult.Diagnostics)) {
+            $repairDiagnostics.Add([string]$pyzDiagnostic) | Out-Null
         }
     }
 
@@ -585,7 +1094,7 @@ function Resolve-PreCommitCliExecutable {
     $probeDiagnostics = New-Object System.Collections.Generic.List[string]
     $mismatchDiagnostics = New-Object System.Collections.Generic.List[string]
 
-    $probeCandidates = @(Get-PreCommitCandidateExecutablePaths)
+    $probeCandidates = @(Get-PreCommitCandidateExecutablePaths -RepositoryRoot $RepositoryRoot)
     $resolved = $null
 
     foreach ($probeCandidate in $probeCandidates) {
@@ -634,7 +1143,7 @@ function Resolve-PreCommitCliExecutable {
         if (-not [string]::IsNullOrWhiteSpace([string]$repairResult.RepairedExecutable)) {
             $postRepairCandidates.Add([string]$repairResult.RepairedExecutable) | Out-Null
         }
-        foreach ($candidatePath in @(Get-PreCommitCandidateExecutablePaths)) {
+        foreach ($candidatePath in @(Get-PreCommitCandidateExecutablePaths -RepositoryRoot $RepositoryRoot)) {
             $postRepairCandidates.Add([string]$candidatePath) | Out-Null
         }
 

@@ -270,6 +270,80 @@ Describe "powershell pre-push pre-commit validation hook" {
         }
     }
 
+    It "validates staged shell blobs even when the worktree target is absent" {
+        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+        if ($null -eq $bashCommand) {
+            Set-ItResult -Skipped -Because "bash is unavailable."
+            return
+        }
+        if (-not (Test-IsWindowsNativeBashForHookTest -BashPath $bashCommand.Source)) {
+            Set-ItResult -Skipped -Because "bash is not Windows-native; WSL bash cannot reliably execute the Windows worktree hook in this test."
+            return
+        }
+
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        if ($null -eq $gitCommand) {
+            Set-ItResult -Skipped -Because "git is unavailable."
+            return
+        }
+
+        $previousGitIndexFileSet = Test-Path -Path "Env:GIT_INDEX_FILE"
+        $previousGitIndexFile = $env:GIT_INDEX_FILE
+        $tempIndexPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-precommit-staged-blob-{0}.index" -f [guid]::NewGuid().ToString("N"))
+        $missingShellPath = "Scripts/precommit-staged-missing-{0}.sh" -f [guid]::NewGuid().ToString("N")
+
+        try {
+            $env:GIT_INDEX_FILE = $tempIndexPath
+            $readTreeOutput = @(& $gitCommand.Source -C $script:repoRoot read-tree HEAD 2>&1)
+            $LASTEXITCODE | Should -Be 0 -Because (
+                "temp-index read-tree should succeed before pre-commit staged-blob test. Output: {0}" -f
+                ($readTreeOutput -join "`n")
+            )
+
+            (Test-Path -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath $missingShellPath) -PathType Leaf) |
+                Should -BeFalse -Because "the regression requires a staged supported file that is absent from the worktree."
+
+            $invalidShellContent = "#!/usr/bin/env bash`nif true; then`n  printf '%s\n' staged-only`n"
+            $blobOutput = @($invalidShellContent | & $gitCommand.Source -C $script:repoRoot hash-object -w --stdin 2>&1)
+            $LASTEXITCODE | Should -Be 0 -Because (
+                "temp-index blob creation should succeed before pre-commit staged-blob test. Output: {0}" -f
+                ($blobOutput -join "`n")
+            )
+            $blobSha = [string]($blobOutput | Select-Object -First 1)
+
+            $updateIndexOutput = @(& $gitCommand.Source -C $script:repoRoot update-index --add --cacheinfo 100755 $blobSha $missingShellPath 2>&1)
+            $LASTEXITCODE | Should -Be 0 -Because (
+                "temp-index staging should make the missing shell script visible to the hook. Output: {0}" -f
+                ($updateIndexOutput -join "`n")
+            )
+
+            Push-Location -LiteralPath $script:repoRoot
+            try {
+                $output = @(& $bashCommand.Source --noprofile --norc .githooks/pre-commit 2>&1)
+            }
+            finally {
+                Pop-Location
+            }
+
+            $outputText = $output -join "`n"
+            $LASTEXITCODE | Should -Be 1 -Because $outputText
+            $outputText | Should -Match 'E_PRECOMMIT_FAST_SHELL_PARSE_FAILED'
+            $outputText | Should -Match ([regex]::Escape("file=$missingShellPath"))
+            $outputText | Should -Not -Match 'pre-commit is not installed; falling back to legacy PowerShell checks|Run-PreCommitValidation'
+        }
+        finally {
+            if ($previousGitIndexFileSet) {
+                $env:GIT_INDEX_FILE = $previousGitIndexFile
+            }
+            else {
+                Remove-Item -Path "Env:GIT_INDEX_FILE" -ErrorAction SilentlyContinue
+            }
+
+            Remove-Item -LiteralPath $tempIndexPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "$tempIndexPath.lock" -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "emits no-op runtime budget warning for slow pre-commit no-staged setup" {
         if ([System.IO.Path]::DirectorySeparatorChar -eq '\') {
             Set-ItResult -Skipped -Because "PATH-prepended executable wrapper semantics differ on native Windows."

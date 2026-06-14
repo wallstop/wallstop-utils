@@ -109,12 +109,17 @@ function Test-PowerShellExecutableCandidate {
         }
     }
 
+    $sentinelPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-pwsh-probe-{0}.txt" -f [guid]::NewGuid().ToString("N"))
+    $escapedSentinelPath = $sentinelPath -replace "'", "''"
+    $probeCommand = "[System.IO.File]::WriteAllText('$escapedSentinelPath', 'ok'); exit 0"
+
     $processStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $processStartInfo.FileName = $ExecutablePath
     $processStartInfo.UseShellExecute = $false
     $processStartInfo.RedirectStandardOutput = $true
     $processStartInfo.RedirectStandardError = $true
-    Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList @('-NoLogo', '-NoProfile', '-Command', '$PSVersionTable.PSEdition | Out-Null')
+    $processStartInfo.CreateNoWindow = $true
+    Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', $probeCommand)
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo
@@ -129,10 +134,32 @@ function Test-PowerShellExecutableCandidate {
             }
         }
 
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        $exited = $process.WaitForExit($TimeoutSeconds * 1000)
-        if (-not $exited) {
+        $deadlineUtc = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
+        while ([datetime]::UtcNow -lt $deadlineUtc) {
+            if (Test-Path -LiteralPath $sentinelPath -PathType Leaf) {
+                if (-not $process.WaitForExit(250)) {
+                    try {
+                        Stop-ProcessTreePortably -Process $process
+                    }
+                    catch {
+                        Write-Verbose "PowerShell executable probe cleanup failed for '$ExecutablePath': $($_.Exception.Message)"
+                    }
+                }
+
+                return [pscustomobject]@{
+                    Usable     = $true
+                    Diagnostic = "ok"
+                }
+            }
+
+            if ($process.HasExited) {
+                break
+            }
+
+            Start-Sleep -Milliseconds 50
+        }
+
+        if (-not $process.HasExited) {
             try {
                 Stop-ProcessTreePortably -Process $process
             }
@@ -146,9 +173,8 @@ function Test-PowerShellExecutableCandidate {
             }
         }
 
-        [void]$stdoutTask.GetAwaiter().GetResult()
-        $stderr = [string]$stderrTask.GetAwaiter().GetResult()
         if ([int]$process.ExitCode -ne 0) {
+            $stderr = [string]$process.StandardError.ReadToEnd()
             $stderrPreview = (($stderr -replace "\s+", " ").Trim())
             if ([string]::IsNullOrWhiteSpace($stderrPreview)) {
                 $stderrPreview = "<empty>"
@@ -161,11 +187,12 @@ function Test-PowerShellExecutableCandidate {
         }
 
         return [pscustomobject]@{
-            Usable     = $true
-            Diagnostic = "ok"
+            Usable     = $false
+            Diagnostic = "probe-no-sentinel"
         }
     }
     finally {
+        Remove-Item -LiteralPath $sentinelPath -Force -ErrorAction SilentlyContinue
         $process.Dispose()
     }
 }

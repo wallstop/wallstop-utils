@@ -334,6 +334,10 @@ function Invoke-PreCommitCapturedCommand {
 
     # ProcessStartInfo.ArgumentList is .NET Core-only; see Set-PortableProcessArguments.
     Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $Arguments
+    $preCommitEnvironment = Get-PreCommitManagedEnvironment -RepositoryRoot $RepositoryRoot
+    foreach ($environmentKey in @($preCommitEnvironment.Keys)) {
+        Set-PortableProcessEnvironmentVariable -StartInfo $processStartInfo -Name ([string]$environmentKey) -Value ([string]$preCommitEnvironment[$environmentKey])
+    }
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo

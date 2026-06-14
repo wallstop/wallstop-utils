@@ -586,8 +586,26 @@ function Invoke-PreCommitGovernanceValidation {
             )
         }
 
-        $preCommitConfigOutput = @(& ([string]$resolvedPreCommit.Executable) validate-config 2>&1)
-        if ($LASTEXITCODE -ne 0) {
+        $previousPreCommitHome = $env:PRE_COMMIT_HOME
+        $hadPreCommitHome = $null -ne (Get-ChildItem -Path Env:PRE_COMMIT_HOME -ErrorAction SilentlyContinue)
+        $preCommitConfigOutput = @()
+        $preCommitConfigExitCode = 1
+        try {
+            $preCommitManagedEnvironment = Get-PreCommitManagedEnvironment -RepositoryRoot $RepoRoot
+            $env:PRE_COMMIT_HOME = [string]$preCommitManagedEnvironment.PRE_COMMIT_HOME
+            $preCommitConfigOutput = @(& ([string]$resolvedPreCommit.Executable) validate-config 2>&1)
+            $preCommitConfigExitCode = $LASTEXITCODE
+        }
+        finally {
+            if ($hadPreCommitHome) {
+                $env:PRE_COMMIT_HOME = $previousPreCommitHome
+            }
+            else {
+                Remove-Item -Path Env:PRE_COMMIT_HOME -ErrorAction SilentlyContinue
+            }
+        }
+
+        if ($preCommitConfigExitCode -ne 0) {
             $preCommitConfigPreview = Get-OutputPreview -OutputLines $preCommitConfigOutput -CollapseWhitespace
             throw "E_PRECOMMIT_GOVERNANCE_PRECOMMIT_CONFIG_INVALID: pre-commit validate-config failed. Output: $preCommitConfigPreview"
         }
@@ -613,7 +631,7 @@ function Invoke-PreCommitGovernanceValidation {
         }
     }
 
-    foreach ($jsonConfigFile in @("Scripts/Utils/Quality/native-quality-tools.json", "Scripts/Utils/Quality/shell-quality-tools.json")) {
+    foreach ($jsonConfigFile in @("Scripts/Utils/Quality/native-quality-tools.json", "Scripts/Utils/Quality/shell-quality-tools.json", "Scripts/Utils/Quality/precommit-cli-tools.json")) {
         if ($governanceTargets -contains $jsonConfigFile) {
             $jsonConfigPath = Join-Path -Path $RepoRoot -ChildPath $jsonConfigFile
             try {
@@ -624,10 +642,15 @@ function Invoke-PreCommitGovernanceValidation {
                         "stylua"     = @("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "windows-x64")
                     }
                 }
-                else {
+                elseif ($jsonConfigFile -eq "Scripts/Utils/Quality/shell-quality-tools.json") {
                     Assert-GovernanceQualityManifest -GovernanceManifest $jsonConfigManifest -GovernanceManifestPath $jsonConfigFile -GovernanceExpectedToolAssets @{
                         "shellcheck" = @("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "windows-x64")
                         "shfmt"      = @("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "windows-x64")
+                    }
+                }
+                else {
+                    Assert-GovernanceQualityManifest -GovernanceManifest $jsonConfigManifest -GovernanceManifestPath $jsonConfigFile -GovernanceExpectedToolAssets @{
+                        "uv" = @("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "windows-arm64", "windows-x64")
                     }
                 }
             }
@@ -1427,9 +1450,10 @@ try {
         ".stylua.toml",
         "requirements.txt",
         "Scripts/Utils/Quality/native-quality-tools.json",
-        "Scripts/Utils/Quality/shell-quality-tools.json"
+        "Scripts/Utils/Quality/shell-quality-tools.json",
+        "Scripts/Utils/Quality/precommit-cli-tools.json"
     )
-    $governanceConfigPattern = '^(\.pre-commit-config\.yaml|\.gitattributes|\.editorconfig|\.gitignore|requirements\.txt|\.psscriptanalyzer(\.format)?\.psd1|\.shellcheckrc|\.stylua\.toml|Scripts/Utils/Quality/(native-quality-tools|shell-quality-tools)\.json)$'
+    $governanceConfigPattern = '^(\.pre-commit-config\.yaml|\.gitattributes|\.editorconfig|\.gitignore|requirements\.txt|\.psscriptanalyzer(\.format)?\.psd1|\.shellcheckrc|\.stylua\.toml|Scripts/Utils/Quality/(native-quality-tools|shell-quality-tools|precommit-cli-tools)\.json)$'
 
     $contextPath = Join-Path -Path $repoRoot -ChildPath '.llm/context.md'
     $llmHarnessPatternSource = 'wrapper-contract'

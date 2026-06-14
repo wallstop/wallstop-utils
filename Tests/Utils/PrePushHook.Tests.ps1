@@ -933,7 +933,28 @@ if [[ "$#" -ge 4 && "$1" == "rev-parse" && "$2" == "--verify" && "$3" == "--quie
   exit 1
 fi
 
+if [[ "$#" -ge 2 && "$1" == "rev-parse" && "$2" == :* ]]; then
+  if [[ "${WALLSTOP_TEST_INDEX_BLOB_MISSING:-0}" == "1" ]]; then
+    exit 1
+  fi
+  printf '%s\n' "${WALLSTOP_TEST_INDEX_BLOB_HASH:-blob123}"
+  exit 0
+fi
+
+if [[ "$1" == "rev-parse" && "${2:-}" == *":"* ]]; then
+  printf '%s\n' "${WALLSTOP_TEST_PUSHED_BLOB_HASH:-blob123}"
+  exit 0
+fi
+
 if [[ "$1" == "merge-base" ]]; then
+  if [[ "${2:-}" == "--is-ancestor" ]]; then
+    if [[ "${WALLSTOP_TEST_NON_HEAD_PUSH:-0}" == "1" ]]; then
+      exit 1
+    fi
+
+    exit 0
+  fi
+
   if [[ "$3" == "origin/HEAD" && -n "${WALLSTOP_TEST_ORIGIN_MERGE_BASE:-}" ]]; then
     printf '%s\n' "$WALLSTOP_TEST_ORIGIN_MERGE_BASE"
     exit 0
@@ -947,7 +968,46 @@ if [[ "$1" == "merge-base" ]]; then
   exit 1
 fi
 
+if [[ "$1" == "cat-file" && "${2:-}" == "-e" ]]; then
+  if [[ "${WALLSTOP_TEST_BLOB_MISSING:-0}" == "1" ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+
+if [[ "$1" == "show" ]]; then
+  if [[ -n "${WALLSTOP_TEST_SHOW_OUTPUT:-}" ]]; then
+    printf '%b' "$WALLSTOP_TEST_SHOW_OUTPUT"
+    exit "${WALLSTOP_TEST_SHOW_EXIT:-0}"
+  fi
+
+  case "${2:-}" in
+    *".github/workflows/"*.yml|*".github/workflows/"*.yaml)
+      printf 'name: test\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n'
+      ;;
+    *)
+      printf '#!/usr/bin/env bash\ntrue\n'
+      ;;
+  esac
+  exit "${WALLSTOP_TEST_SHOW_EXIT:-0}"
+fi
+
 if [[ "$1" == "diff" ]]; then
+  if [[ "$*" == *" --quiet "* || "$*" == *" --quiet --"* ]]; then
+    exit "${WALLSTOP_TEST_DIFF_QUIET_EXIT:-0}"
+  fi
+  if [[ "$*" == *" --cached "* ]]; then
+    if [[ -n "${WALLSTOP_TEST_STAGED_DRIFT_OUTPUT:-}" ]]; then
+      printf '%b' "$WALLSTOP_TEST_STAGED_DRIFT_OUTPUT"
+    fi
+    exit "${WALLSTOP_TEST_STAGED_DRIFT_EXIT:-0}"
+  fi
+  if [[ "$*" != *".."* ]]; then
+    if [[ -n "${WALLSTOP_TEST_UNSTAGED_DRIFT_OUTPUT:-}" ]]; then
+      printf '%b' "$WALLSTOP_TEST_UNSTAGED_DRIFT_OUTPUT"
+    fi
+    exit "${WALLSTOP_TEST_UNSTAGED_DRIFT_EXIT:-0}"
+  fi
   if [[ -n "${WALLSTOP_TEST_DIFF_STDERR:-}" ]]; then
     printf '%b' "$WALLSTOP_TEST_DIFF_STDERR" >&2
   fi
@@ -958,6 +1018,9 @@ if [[ "$1" == "diff" ]]; then
 fi
 
 if [[ "$1" == "ls-files" ]]; then
+  if [[ "${2:-}" == "--error-unmatch" ]]; then
+    exit "${WALLSTOP_TEST_LS_FILES_ERROR_UNMATCH_EXIT:-0}"
+  fi
   if [[ -n "${WALLSTOP_TEST_LS_FILES_STDERR:-}" ]]; then
     printf '%b' "$WALLSTOP_TEST_LS_FILES_STDERR" >&2
   fi
@@ -965,6 +1028,24 @@ if [[ "$1" == "ls-files" ]]; then
     printf '%b' "$WALLSTOP_TEST_LS_FILES_OUTPUT"
   fi
   exit "${WALLSTOP_TEST_LS_FILES_EXIT:-0}"
+fi
+
+if [[ "$1" == "ls-tree" ]]; then
+  if [[ -n "${WALLSTOP_TEST_LS_TREE_STDERR:-}" ]]; then
+    printf '%b' "$WALLSTOP_TEST_LS_TREE_STDERR" >&2
+  fi
+  if [[ -n "${WALLSTOP_TEST_LS_TREE_OUTPUT:-}" ]]; then
+    printf '%b' "$WALLSTOP_TEST_LS_TREE_OUTPUT"
+  fi
+  exit "${WALLSTOP_TEST_LS_TREE_EXIT:-0}"
+fi
+
+if [[ "$1" == "hash-object" ]]; then
+  if [[ "${WALLSTOP_TEST_WORKTREE_HASH_EXIT:-0}" != "0" ]]; then
+    exit "$WALLSTOP_TEST_WORKTREE_HASH_EXIT"
+  fi
+  printf '%s\n' "${WALLSTOP_TEST_WORKTREE_BLOB_HASH:-blob123}"
+  exit 0
 fi
 
 printf 'E_TEST_UNEXPECTED_FAKE_GIT_COMMAND:' >&2
@@ -1034,7 +1115,7 @@ exit 0
 
     Set-BashExecutableBit -Path @($gitScriptPath, $preCommitScriptPath, $pwshScriptPath)
 
-    foreach ($utilityName in @("bash", "rm", "sort", "sleep", "timeout", "gtimeout", "awk")) {
+    foreach ($utilityName in @("bash", "rm", "sort", "sleep", "timeout", "gtimeout", "awk", "mkdir")) {
         $wrapperPath = Join-Path -Path $binRoot -ChildPath $utilityName
         if (Test-Path -LiteralPath $wrapperPath -PathType Leaf) {
             continue
@@ -1121,6 +1202,29 @@ function script:Invoke-PrePushHookHarness {
     $harnessPath = ConvertTo-BashPath -Path $Harness.BinRoot
     $stdinPath = Join-Path -Path $Harness.Root -ChildPath "pre-push-stdin.txt"
     Write-Utf8NoBomFile -Path $stdinPath -Content $Stdin
+    $skipWorktreeFixture = $Environment.ContainsKey("WALLSTOP_TEST_SKIP_WORKTREE_FIXTURE") -and [string]$Environment["WALLSTOP_TEST_SKIP_WORKTREE_FIXTURE"] -eq "1"
+    if (-not $skipWorktreeFixture) {
+        foreach ($changedFileOutputKey in @("WALLSTOP_TEST_DIFF_OUTPUT", "WALLSTOP_TEST_LS_FILES_OUTPUT", "WALLSTOP_TEST_LS_TREE_OUTPUT")) {
+            if (-not $Environment.ContainsKey($changedFileOutputKey)) {
+                continue
+            }
+
+            $changedFileOutput = [string]$Environment[$changedFileOutputKey]
+            if ([string]::IsNullOrWhiteSpace([string]$changedFileOutput)) {
+                continue
+            }
+
+            foreach ($changedFile in ([string]$changedFileOutput -split "`r?`n")) {
+                if ([string]::IsNullOrWhiteSpace($changedFile)) {
+                    continue
+                }
+
+                $fixturePath = Join-Path -Path $Harness.RepoRoot -ChildPath $changedFile
+                Write-Utf8NoBomFile -Path $fixturePath -Content "#!/usr/bin/env bash`ntrue`n"
+            }
+        }
+    }
+
     $bashStdinPath = ConvertTo-BashPath -Path $stdinPath
     $startInfo.WorkingDirectory = $Harness.RepoRoot
     $startInfo.UseShellExecute = $false
@@ -1528,13 +1632,13 @@ Describe "pre-push changed-file hook behavior" {
             Name                  = "falls back to tracked files for new branches without any baseline"
             Stdin                 = "refs/heads/root local456 refs/heads/root 0000000000000000000000000000000000000000`n"
             Environment           = @{
-                WALLSTOP_TEST_LS_FILES_OUTPUT = "README.md`nScripts/Utils/Fallback.ps1`n"
+                WALLSTOP_TEST_LS_TREE_OUTPUT = "README.md`nScripts/Utils/Fallback.ps1`n"
             }
             RemovePreCommit       = $false
             ExpectedExitCode      = 0
             ExpectedStderrPattern = 'W_PREPUSH_CHANGED_FILE_BASELINE_MISSING'
             ExpectedLogPatterns   = @(
-                'git\tls-files',
+                'git\tls-tree\t-r\t--name-only\tlocal456',
                 'pwsh[\s\S]*-FileListPath',
                 'pwsh-file\tREADME\.md',
                 'pwsh-file\tScripts/Utils/Fallback\.ps1'
@@ -1546,31 +1650,31 @@ Describe "pre-push changed-file hook behavior" {
             Name                  = "ignores successful tracked-file fallback stderr output"
             Stdin                 = "refs/heads/root local456 refs/heads/root 0000000000000000000000000000000000000000`n"
             Environment           = @{
-                WALLSTOP_TEST_LS_FILES_OUTPUT = "README.md`nScripts/Utils/Fallback.ps1`n"
-                WALLSTOP_TEST_LS_FILES_STDERR = "trace: ls-files probe`n"
+                WALLSTOP_TEST_LS_TREE_OUTPUT = "README.md`nScripts/Utils/Fallback.ps1`n"
+                WALLSTOP_TEST_LS_TREE_STDERR = "trace: ls-tree probe`n"
             }
             RemovePreCommit       = $false
             ExpectedExitCode      = 0
             ExpectedStderrPattern = 'W_PREPUSH_CHANGED_FILE_BASELINE_MISSING'
             ExpectedLogPatterns   = @(
-                'git\tls-files',
+                'git\tls-tree\t-r\t--name-only\tlocal456',
                 'pwsh-file\tREADME\.md',
                 'pwsh-file\tScripts/Utils/Fallback\.ps1'
             )
-            UnexpectedLogPattern  = 'trace: ls-files probe|pwsh-file\ttrace:'
+            UnexpectedLogPattern  = 'trace: ls-tree probe|pwsh-file\ttrace:'
             AssertFileListCleanup = $true
         }
         @{
             Name                  = "fails closed when tracked-file fallback discovery fails"
             Stdin                 = "refs/heads/root local456 refs/heads/root 0000000000000000000000000000000000000000`n"
             Environment           = @{
-                WALLSTOP_TEST_LS_FILES_EXIT   = "129"
-                WALLSTOP_TEST_LS_FILES_STDERR = "fatal: ls-files unavailable`n"
+                WALLSTOP_TEST_LS_TREE_EXIT   = "129"
+                WALLSTOP_TEST_LS_TREE_STDERR = "fatal: ls-tree unavailable`n"
             }
             RemovePreCommit       = $false
             ExpectedExitCode      = 129
-            ExpectedStderrPattern = 'E_PREPUSH_CHANGED_FILE_FALLBACK_FAILED: failed to list tracked files for missing-baseline fallback \(exitCode=129\)\. Git output: fatal: ls-files unavailable'
-            ExpectedLogPatterns   = @('git\tls-files')
+            ExpectedStderrPattern = 'E_PREPUSH_CHANGED_FILE_FALLBACK_FAILED: failed to list pushed commit tree for missing-baseline fallback \(exitCode=129\)\. Git output: fatal: ls-tree unavailable'
+            ExpectedLogPatterns   = @('git\tls-tree\t-r\t--name-only\tlocal456')
             UnexpectedLogPattern  = 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1|no changed files to validate'
             AssertFileListCleanup = $false
         }
@@ -1624,7 +1728,16 @@ Describe "pre-push changed-file hook behavior" {
             Remove-Item -LiteralPath (Join-Path -Path $harness.BinRoot -ChildPath "pre-commit") -Force
         }
 
-        $result = Invoke-PrePushHookHarness -Harness $harness -Stdin $Stdin -Environment $Environment
+        $effectiveEnvironment = @{}
+        foreach ($key in @($Environment.Keys)) {
+            $effectiveEnvironment[$key] = $Environment[$key]
+        }
+
+        if ((@($ExpectedLogPatterns) -join "`n") -match 'pwsh|Invoke-PreCommitWithRecovery|pre-commit\\trun') {
+            $effectiveEnvironment["WALLSTOP_PREPUSH_FULL_SUITE"] = "1"
+        }
+
+        $result = Invoke-PrePushHookHarness -Harness $harness -Stdin $Stdin -Environment $effectiveEnvironment
 
         if ($ExpectedExitCode -eq 0) {
             Assert-PrePushHarnessSucceeded -Result $result
@@ -1659,6 +1772,7 @@ Describe "pre-push changed-file hook behavior" {
         $mktempCounterPath = Join-Path -Path $harness.Root -ChildPath "mktemp-count.txt"
         $result = Invoke-PrePushHookHarness -Harness $harness -Stdin "refs/heads/main local456 refs/heads/main remote123`n" -TimeoutMilliseconds 25000 -Environment @{
             WALLSTOP_PREPUSH_TIMEOUT_SECONDS     = "60"
+            WALLSTOP_PREPUSH_FULL_SUITE          = "1"
             WALLSTOP_TEST_DIFF_OUTPUT            = "README.md`nScripts/Utils/SlowSetup.ps1`n"
             WALLSTOP_TEST_MKTEMP_COUNTER_PATH    = ConvertTo-BashPath -Path $mktempCounterPath
             WALLSTOP_TEST_MKTEMP_DELAY_CALL      = "3"
@@ -1680,6 +1794,72 @@ Describe "pre-push changed-file hook behavior" {
         Assert-NoDeepPrePushCommand -CommandLog $result.Log
     }
 
+    It "validates supported non-HEAD pushed blobs in the fast gate" {
+        $harness = New-PrePushHookHarness
+        $result = Invoke-PrePushHookHarness -Harness $harness -Stdin "refs/heads/release local456 refs/heads/release remote123`n" -Environment @{
+            WALLSTOP_TEST_NON_HEAD_PUSH = "1"
+            WALLSTOP_TEST_DIFF_OUTPUT   = ".githooks/pre-push`n"
+        }
+
+        Assert-PrePushHarnessSucceeded -Result $result
+        $result.Log | Should -Match 'git\tcat-file\t-e\tlocal456:\.githooks/pre-push'
+        $result.Log | Should -Match 'git\tshow\tlocal456:\.githooks/pre-push'
+        $result.Log | Should -Not -Match 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
+        Assert-NoDeepPrePushCommand -CommandLog $result.Log
+    }
+
+    It "fails on invalid pushed shell blobs even when validation is independent of the worktree" {
+        $harness = New-PrePushHookHarness
+        $result = Invoke-PrePushHookHarness -Harness $harness -Stdin "refs/heads/release local456 refs/heads/release remote123`n" -Environment @{
+            WALLSTOP_TEST_NON_HEAD_PUSH = "1"
+            WALLSTOP_TEST_DIFF_OUTPUT   = ".githooks/pre-push`n"
+            WALLSTOP_TEST_SHOW_OUTPUT   = "if broken`n"
+        }
+
+        $result.ExitCode | Should -Be 1 -Because (
+            "stdout={0}; stderr={1}; commandLog={2}" -f $result.Stdout, $result.Stderr, $result.Log
+        )
+        $result.Stderr | Should -Match 'E_PREPUSH_FAST_SHELL_PARSE_FAILED'
+        $result.Log | Should -Match 'git\tshow\tlocal456:\.githooks/pre-push'
+        $result.Log | Should -Not -Match 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
+        Assert-NoDeepPrePushCommand -CommandLog $result.Log
+    }
+
+    It "fails closed for recovery-backed pre-push validation when pushed commits differ from HEAD" {
+        $harness = New-PrePushHookHarness
+        $result = Invoke-PrePushHookHarness -Harness $harness -Stdin "refs/heads/release local456 refs/heads/release remote123`n" -Environment @{
+            WALLSTOP_PREPUSH_FULL_SUITE  = "1"
+            WALLSTOP_TEST_NON_HEAD_PUSH  = "1"
+            WALLSTOP_TEST_DIFF_OUTPUT    = ".githooks/pre-push`n"
+            WALLSTOP_TEST_SHOW_OUTPUT    = "#!/usr/bin/env bash`ntrue`n"
+        }
+
+        $result.ExitCode | Should -Be 1 -Because (
+            "stdout={0}; stderr={1}; commandLog={2}" -f $result.Stdout, $result.Stderr, $result.Log
+        )
+        $result.Stderr | Should -Match 'E_PREPUSH_FULL_NON_HEAD_REF'
+        $result.Log | Should -Not -Match 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
+        Assert-NoDeepPrePushCommand -CommandLog $result.Log
+    }
+
+    It "fails closed for recovery-backed pre-push validation when a pushed target is deleted from the worktree" {
+        $harness = New-PrePushHookHarness
+        $result = Invoke-PrePushHookHarness -Harness $harness -Stdin "refs/heads/main local456 refs/heads/main remote123`n" -Environment @{
+            WALLSTOP_PREPUSH_FULL_SUITE        = "1"
+            WALLSTOP_TEST_DIFF_OUTPUT          = ".githooks/pre-push`n"
+            WALLSTOP_TEST_BLOB_MISSING         = "0"
+            WALLSTOP_TEST_SKIP_WORKTREE_FIXTURE = "1"
+        }
+
+        $result.ExitCode | Should -Be 1 -Because (
+            "stdout={0}; stderr={1}; commandLog={2}" -f $result.Stdout, $result.Stderr, $result.Log
+        )
+        $result.Stderr | Should -Match 'E_PREPUSH_FULL_WORKTREE_DRIFT'
+        $result.Log | Should -Match 'git\tcat-file\t-e\tlocal456:\.githooks/pre-push'
+        $result.Log | Should -Not -Match 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
+        Assert-NoDeepPrePushCommand -CommandLog $result.Log
+    }
+
     It "preserves harness arguments with spaces and braces in paths" {
         $harness = New-PrePushHookHarness -RootLeafName ("pre push harness {{argument path}} {0}" -f [guid]::NewGuid().ToString("N"))
         $mktempRoot = Join-Path -Path $harness.Root -ChildPath "temp files {argument path}"
@@ -1688,6 +1868,7 @@ Describe "pre-push changed-file hook behavior" {
         $result = Invoke-PrePushHookHarness -Harness $harness -Stdin "refs/heads/main local456 refs/heads/main remote123`n" -Environment @{
             WALLSTOP_TEST_DIFF_OUTPUT      = "Scripts/Utils/Path With {Braces}.ps1`nREADME with spaces.md`n"
             WALLSTOP_TEST_MKTEMP_DIRECTORY = ConvertTo-BashPath -Path $mktempRoot
+            WALLSTOP_PREPUSH_FULL_SUITE    = "1"
         }
 
         Assert-PrePushHarnessSucceeded -Result $result

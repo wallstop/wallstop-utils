@@ -43,6 +43,16 @@ if [[ $repo_root_exit -ne 0 || -z "$repo_root" ]]; then
 fi
 cd "$repo_root"
 
+precommit_home="${repo_root}/.tools/precommit-cli/pre-commit-home"
+if mkdir -p "$precommit_home" > /dev/null 2>&1; then
+  export PRE_COMMIT_HOME="$precommit_home"
+else
+  emit_diagnostic "W_PRECOMMIT_HOME_UNAVAILABLE: unable to create managed PRE_COMMIT_HOME at '${precommit_home}'; pre-commit will use its host default cache."
+fi
+
+fast_validation_root_path=""
+trap 'if [[ -n "$fast_validation_root_path" ]]; then rm -rf "$fast_validation_root_path"; fi' EXIT
+
 hook_timeout_helpers_path="${repo_root}/Scripts/Utils/Common/HookTimeout.sh"
 if [[ ! -f "$hook_timeout_helpers_path" ]]; then
   emit_diagnostic "E_HOOK_TIMEOUT_HELPER_MISSING: timeout helper file not found at '$hook_timeout_helpers_path'."
@@ -87,6 +97,9 @@ runtime_budget_seconds() {
   case "$label" in
     "pre-commit hook-stage pre-commit" | "legacy pre-commit PowerShell validation" | "pre-commit safe auto-repair")
       printf '%s\n' "${WALLSTOP_PRECOMMIT_ACTIVE_RUNTIME_BUDGET_SECONDS:-30}"
+      ;;
+    "pre-commit fast gate" | "pre-commit fast actionlint" | "pre-commit fast actionlint bootstrap")
+      printf '%s\n' "${WALLSTOP_PRECOMMIT_FAST_RUNTIME_BUDGET_SECONDS:-1}"
       ;;
     *)
       printf '%s\n' "${WALLSTOP_PRECOMMIT_NOOP_RUNTIME_BUDGET_SECONDS:-1}"
@@ -279,6 +292,439 @@ has_any_staged_files() {
   [[ -n "$staged_files" ]]
 }
 
+is_truthy() {
+  case "${1:-}" in
+    1 | true | TRUE | yes | YES | on | ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+current_platform_key() {
+  local os_name
+  local arch_name
+
+  case "$(uname -s 2> /dev/null || printf unknown)" in
+    Darwin)
+      os_name="darwin"
+      ;;
+    Linux)
+      os_name="linux"
+      ;;
+    MINGW* | MSYS* | CYGWIN*)
+      os_name="windows"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  case "$(uname -m 2> /dev/null || printf unknown)" in
+    x86_64 | amd64)
+      arch_name="x64"
+      ;;
+    arm64 | aarch64)
+      arch_name="arm64"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  printf '%s-%s\n' "$os_name" "$arch_name"
+}
+
+read_fast_tool_json_string_property() {
+  local json_path="$1"
+  local property_name="$2"
+
+  sed -n "s/.*\"${property_name}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$json_path" | head -n 1
+}
+
+read_fast_tool_manifest_version() {
+  local manifest_path="$1"
+  local tool_name="$2"
+
+  awk -v tool_name="$tool_name" '
+    $0 ~ "\"" tool_name "\"[[:space:]]*:" { in_tool = 1; next }
+    in_tool && $0 ~ /"version"[[:space:]]*:/ {
+      line = $0
+      sub(/^[^:]*:[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      print line
+      exit
+    }
+  ' "$manifest_path"
+}
+
+read_fast_tool_size() {
+  local tool_path="$1"
+  wc -c < "$tool_path" | tr -d '[:space:]'
+}
+
+read_fast_tool_mtime() {
+  local tool_path="$1"
+
+  if stat -c '%Y' "$tool_path" > /dev/null 2>&1; then
+    stat -c '%Y' "$tool_path"
+    return 0
+  fi
+
+  if stat -f '%m' "$tool_path" > /dev/null 2>&1; then
+    stat -f '%m' "$tool_path"
+    return 0
+  fi
+
+  return 1
+}
+
+compute_fast_stdin_sha256() {
+  if command -v sha256sum > /dev/null 2>&1; then
+    sha256sum | awk '{ print tolower($1) }'
+    return 0
+  fi
+
+  if command -v shasum > /dev/null 2>&1; then
+    shasum -a 256 | awk '{ print tolower($1) }'
+    return 0
+  fi
+
+  if command -v openssl > /dev/null 2>&1; then
+    openssl dgst -sha256 -r | awk '{ print tolower($1) }'
+    return 0
+  fi
+
+  return 1
+}
+
+fast_tool_fingerprint_version() {
+  printf '%s\n' "sampled-sha256-v1-65536"
+}
+
+emit_fast_tool_fingerprint_segment() {
+  local tool_path="$1"
+  local offset="$2"
+  local length="$3"
+  local sample_bytes="$4"
+
+  printf 'segment=%s:%s\n' "$offset" "$length"
+  if [[ "$length" -le 0 ]]; then
+    return 0
+  fi
+
+  if [[ "$offset" -eq 0 && "$length" -eq "$sample_bytes" ]]; then
+    dd if="$tool_path" bs="$sample_bytes" count=1 2> /dev/null
+    printf '\n'
+    return 0
+  fi
+
+  if [[ "$offset" -gt 0 && "$length" -eq "$sample_bytes" && $((offset % sample_bytes)) -eq 0 ]]; then
+    dd if="$tool_path" bs="$sample_bytes" skip="$((offset / sample_bytes))" count=1 2> /dev/null
+    printf '\n'
+    return 0
+  fi
+
+  tail -c "$length" "$tool_path"
+  printf '\n'
+}
+
+compute_fast_tool_fingerprint() {
+  local tool_path="$1"
+  local tool_size="$2"
+  local sample_bytes=65536
+  local middle_offset
+  local end_offset
+
+  {
+    printf 'wallstop-fast-fingerprint-v1\n'
+    printf 'size=%s\n' "$tool_size"
+    printf 'sampleBytes=%s\n' "$sample_bytes"
+
+    if [[ "$tool_size" -le $((sample_bytes * 3)) ]]; then
+      printf 'segment=0:%s\n' "$tool_size"
+      cat "$tool_path"
+      printf '\n'
+    else
+      middle_offset=$(((((tool_size - sample_bytes) / 2) / sample_bytes) * sample_bytes))
+      end_offset=$((tool_size - sample_bytes))
+      emit_fast_tool_fingerprint_segment "$tool_path" 0 "$sample_bytes" "$sample_bytes"
+      emit_fast_tool_fingerprint_segment "$tool_path" "$middle_offset" "$sample_bytes" "$sample_bytes"
+      emit_fast_tool_fingerprint_segment "$tool_path" "$end_offset" "$sample_bytes" "$sample_bytes"
+    fi
+  } | compute_fast_stdin_sha256
+}
+
+validate_managed_fast_tool_candidate() {
+  local tool_name="$1"
+  local expected_version="$2"
+  local candidate_key="$3"
+  local tool_path="$4"
+  local marker_path
+  local marker_tool
+  local marker_version
+  local marker_asset_key
+  local marker_executable_sha256
+  local marker_executable_size
+  local marker_executable_mtime
+  local marker_fast_fingerprint_version
+  local marker_fast_fingerprint
+  local actual_executable_size
+  local actual_executable_mtime
+  local actual_fast_fingerprint
+
+  marker_path="${tool_path%/bin/*}/asset.json"
+  if [[ -z "$expected_version" || ! -f "$marker_path" ]]; then
+    return 1
+  fi
+
+  marker_tool="$(read_fast_tool_json_string_property "$marker_path" "tool")"
+  marker_version="$(read_fast_tool_json_string_property "$marker_path" "version")"
+  marker_asset_key="$(read_fast_tool_json_string_property "$marker_path" "assetKey")"
+  marker_executable_sha256="$(read_fast_tool_json_string_property "$marker_path" "executableSha256")"
+  marker_executable_size="$(read_fast_tool_json_string_property "$marker_path" "executableSize")"
+  marker_executable_mtime="$(read_fast_tool_json_string_property "$marker_path" "executableMtime")"
+  marker_fast_fingerprint_version="$(read_fast_tool_json_string_property "$marker_path" "executableFastFingerprintVersion")"
+  marker_fast_fingerprint="$(read_fast_tool_json_string_property "$marker_path" "executableFastFingerprint")"
+
+  if [[ "$marker_tool" != "$tool_name" || "$marker_version" != "$expected_version" || "$marker_asset_key" != "$candidate_key" ]]; then
+    return 1
+  fi
+
+  if [[ ! "$marker_executable_sha256" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+    return 1
+  fi
+
+  if [[ "$marker_fast_fingerprint_version" != "$(fast_tool_fingerprint_version)" || ! "$marker_fast_fingerprint" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+    return 1
+  fi
+
+  actual_executable_size="$(read_fast_tool_size "$tool_path" || true)"
+  actual_executable_mtime="$(read_fast_tool_mtime "$tool_path" || true)"
+  if [[ -z "$marker_executable_size" || -z "$marker_executable_mtime" || "$actual_executable_size" != "$marker_executable_size" || "$actual_executable_mtime" != "$marker_executable_mtime" ]]; then
+    return 1
+  fi
+
+  if ! actual_fast_fingerprint="$(compute_fast_tool_fingerprint "$tool_path" "$actual_executable_size")"; then
+    return 1
+  fi
+
+  if [[ "$actual_fast_fingerprint" != "$(printf '%s' "$marker_fast_fingerprint" | tr '[:upper:]' '[:lower:]')" ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+resolve_managed_fast_tool() {
+  local suite_root="$1"
+  local tool_name="$2"
+  local platform_key
+  local executable_suffix=""
+  local manifest_path
+  local expected_version
+
+  if ! platform_key="$(current_platform_key)"; then
+    return 1
+  fi
+
+  case "$platform_key" in
+    windows-*)
+      executable_suffix=".exe"
+      ;;
+  esac
+
+  case "$suite_root" in
+    ".tools/native-quality")
+      manifest_path="${repo_root}/Scripts/Utils/Quality/native-quality-tools.json"
+      ;;
+    ".tools/shell-quality")
+      manifest_path="${repo_root}/Scripts/Utils/Quality/shell-quality-tools.json"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [[ ! -f "$manifest_path" ]]; then
+    return 1
+  fi
+
+  expected_version="$(read_fast_tool_manifest_version "$manifest_path" "$tool_name")"
+  if [[ -z "$expected_version" ]]; then
+    return 1
+  fi
+
+  local candidate=""
+  local tool_path
+  local fallback_key=""
+  local candidate_key
+
+  if [[ "$platform_key" == "windows-arm64" ]]; then
+    fallback_key="windows-x64"
+  fi
+
+  for candidate_key in "$platform_key" "$fallback_key"; do
+    [[ -n "$candidate_key" ]] || continue
+    tool_path="${repo_root}/${suite_root}/${tool_name}/${expected_version}/${candidate_key}/bin/${tool_name}${executable_suffix}"
+    if [[ -f "$tool_path" ]] && validate_managed_fast_tool_candidate "$tool_name" "$expected_version" "$candidate_key" "$tool_path"; then
+      candidate="$tool_path"
+    fi
+    if [[ -n "$candidate" ]]; then
+      break
+    fi
+  done
+
+  if [[ -n "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+  fi
+}
+
+ensure_fast_validation_root() {
+  if [[ -n "$fast_validation_root_path" ]]; then
+    return 0
+  fi
+
+  fast_validation_root_path="$(mktemp -d 2> /dev/null || true)"
+  if [[ -z "$fast_validation_root_path" ]]; then
+    fast_validation_root_path="/tmp/wallstop-precommit-fast.$$.$RANDOM"
+    if ! mkdir -p "$fast_validation_root_path" > /dev/null 2>&1; then
+      emit_diagnostic "E_PRECOMMIT_FAST_TEMP_UNAVAILABLE: failed to create temporary directory for staged-blob validation."
+      return 1
+    fi
+  fi
+}
+
+extract_precommit_index_blob_for_fast_validation() {
+  local staged_file="$1"
+  local target_path
+  local target_dir
+
+  if ! git cat-file -e ":${staged_file}" > /dev/null 2>&1; then
+    emit_diagnostic "E_PRECOMMIT_FAST_BLOB_MISSING: staged fast-gate target is missing from the git index. file=${staged_file}"
+    return 1
+  fi
+
+  if ! ensure_fast_validation_root; then
+    return 1
+  fi
+
+  target_path="${fast_validation_root_path}/index/${staged_file}"
+  target_dir="${target_path%/*}"
+  if [[ "$target_dir" != "$target_path" ]]; then
+    if ! mkdir -p "$target_dir" > /dev/null 2>&1; then
+      emit_diagnostic "E_PRECOMMIT_FAST_TEMP_UNAVAILABLE: failed to create temporary parent directory for staged-blob validation. file=${staged_file}"
+      return 1
+    fi
+  fi
+
+  if ! git show ":${staged_file}" > "$target_path"; then
+    emit_diagnostic "E_PRECOMMIT_FAST_BLOB_EXTRACT_FAILED: failed to extract staged blob for validation. file=${staged_file}"
+    return 1
+  fi
+
+  printf '%s\n' "$target_path"
+}
+
+ensure_precommit_fast_actionlint_tools() {
+  actionlint_path="$(resolve_managed_fast_tool ".tools/native-quality" "actionlint" || true)"
+  shellcheck_path="$(resolve_managed_fast_tool ".tools/shell-quality" "shellcheck" || true)"
+
+  if [[ -n "$actionlint_path" && -n "$shellcheck_path" ]]; then
+    return 0
+  fi
+
+  if command -v pwsh > /dev/null 2>&1; then
+    local remaining_seconds
+    if ! remaining_seconds="$(remaining_timeout_seconds "pre-commit fast actionlint bootstrap")"; then
+      return 124
+    fi
+
+    set +e
+    run_with_timeout "$remaining_seconds" "pre-commit fast actionlint bootstrap" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1" -Tool actionlint -EnsureOnly
+    local ensure_exit=$?
+    set -e
+    if [[ $ensure_exit -ne 0 ]]; then
+      return "$ensure_exit"
+    fi
+
+    actionlint_path="$(resolve_managed_fast_tool ".tools/native-quality" "actionlint" || true)"
+    shellcheck_path="$(resolve_managed_fast_tool ".tools/shell-quality" "shellcheck" || true)"
+    if [[ -n "$actionlint_path" && -n "$shellcheck_path" ]]; then
+      return 0
+    fi
+  fi
+
+  emit_diagnostic "E_PRECOMMIT_FAST_NATIVE_TOOL_MISSING: repo-managed actionlint/shellcheck assets are unavailable and automated bootstrap did not make them available. Run validation preflight."
+  return 1
+}
+
+run_fast_precommit_gate() {
+  local phase_start_seconds=$SECONDS
+  local staged_files
+  local file
+  local extracted_file
+  local actionlint_path
+  local shellcheck_path
+  local workflow_targets=()
+
+  if is_truthy "${WALLSTOP_PRECOMMIT_FAST_DIFF_CHECK:-0}"; then
+    if ! git -C "$repo_root" diff --cached --check --; then
+      return 1
+    fi
+  fi
+
+  if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMR -- 2> /dev/null)"; then
+    emit_diagnostic "E_PRECOMMIT_FAST_STAGED_DISCOVERY_FAILED: unable to read staged files for fast hook gate."
+    return 1
+  fi
+
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+
+    case "$file" in
+      Scripts/*.sh | .devcontainer/*.sh | .githooks/pre-commit | .githooks/pre-push)
+        if ! extracted_file="$(extract_precommit_index_blob_for_fast_validation "$file")"; then
+          return 1
+        fi
+        if ! bash -n "$extracted_file"; then
+          emit_diagnostic "E_PRECOMMIT_FAST_SHELL_PARSE_FAILED: bash syntax check failed. file=${file}"
+          return 1
+        fi
+        ;;
+      .github/workflows/*.yml | .github/workflows/*.yaml)
+        if ! extracted_file="$(extract_precommit_index_blob_for_fast_validation "$file")"; then
+          return 1
+        fi
+        workflow_targets+=("$extracted_file")
+        ;;
+    esac
+  done <<< "$staged_files"
+
+  if [[ ${#workflow_targets[@]} -gt 0 ]]; then
+    set +e
+    ensure_precommit_fast_actionlint_tools
+    local ensure_actionlint_exit=$?
+    set -e
+    if [[ $ensure_actionlint_exit -ne 0 ]]; then
+      return "$ensure_actionlint_exit"
+    fi
+
+    local remaining_seconds
+    if ! remaining_seconds="$(remaining_timeout_seconds "pre-commit fast actionlint")"; then
+      return 124
+    fi
+
+    run_with_timeout "$remaining_seconds" "pre-commit fast actionlint" "$actionlint_path" -shellcheck "$shellcheck_path" "${workflow_targets[@]}"
+    return $?
+  fi
+
+  emit_runtime_budget_warning "pre-commit fast gate" "$((SECONDS - phase_start_seconds))"
+  return 0
+}
+
 run_safe_autorepair() {
   if command -v pwsh > /dev/null 2>&1; then
     if ! has_staged_windows_language_targets; then
@@ -309,7 +755,20 @@ if command -v pwsh > /dev/null 2>&1; then
     safe_autorepair_exit=$?
     exit $safe_autorepair_exit
   fi
+fi
 
+if ! is_truthy "${WALLSTOP_PRECOMMIT_FULL_SUITE:-0}"; then
+  run_fast_precommit_gate
+  fast_gate_exit=$?
+  if [[ $fast_gate_exit -eq 0 ]]; then
+    emit_runtime_budget_warning "pre-commit fast gate" "$((SECONDS - hook_start_seconds))"
+    exit 0
+  fi
+
+  exit $fast_gate_exit
+fi
+
+if command -v pwsh > /dev/null 2>&1; then
   if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
     inner_timeout_seconds=$((remaining_seconds - precommit_recovery_shutdown_buffer_seconds))
     required_remaining_seconds=$((precommit_recovery_inner_timeout_seconds + precommit_recovery_shutdown_buffer_seconds))

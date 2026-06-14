@@ -62,6 +62,45 @@ Describe "Resolve-PowerShellExecutablePath" {
         Get-Command Resolve-PowerShellExecutablePath -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
     }
 
+    It "accepts a PowerShell candidate once it executes the bounded sentinel probe" {
+        $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
+        if ($null -eq $pwshCommand) {
+            Set-ItResult -Skipped -Because "pwsh is not available in this environment."
+            return
+        }
+
+        $candidate = (
+            Get-Command -Name 'pwsh' -All -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    if ($null -eq $_) {
+                        return
+                    }
+
+                    if ($null -ne $_.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Source)) {
+                        [string]$_.Source
+                        return
+                    }
+
+                    if ($null -ne $_.PSObject.Properties['Path'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Path)) {
+                        [string]$_.Path
+                    }
+                } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique |
+                Where-Object {
+                    $probe = Test-PowerShellExecutableCandidate -ExecutablePath $_ -TimeoutSeconds 10
+                    [bool]$probe.Usable
+                } |
+                Select-Object -First 1
+        )
+
+        $candidate | Should -Not -BeNullOrEmpty
+        $candidate = [string]$candidate
+        $probe = Test-PowerShellExecutableCandidate -ExecutablePath $candidate -TimeoutSeconds 10
+        $probe.Usable | Should -BeTrue -Because "the resolver probe should not require slow PowerShell shutdown to complete"
+        $probe.Diagnostic | Should -BeExactly "ok"
+    }
+
     It "returns the discovered pwsh path when pwsh is available" {
         $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
         if ($null -eq $pwshCommand) {

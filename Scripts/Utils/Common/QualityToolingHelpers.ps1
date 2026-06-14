@@ -470,6 +470,59 @@ function Test-QualityToolingToolReady {
             return $false
         }
 
+        if ($null -eq $marker.PSObject.Properties["executableSha256"] -or [string]::IsNullOrWhiteSpace([string]$marker.executableSha256)) {
+            Write-Verbose "$($AssetSpec.ToolName) marker is missing executableSha256; reinstalling."
+            return $false
+        }
+
+        if ($null -eq $marker.PSObject.Properties["executableSize"] -or [string]::IsNullOrWhiteSpace([string]$marker.executableSize)) {
+            Write-Verbose "$($AssetSpec.ToolName) marker is missing executableSize; reinstalling."
+            return $false
+        }
+
+        if ($null -eq $marker.PSObject.Properties["executableMtime"] -or [string]::IsNullOrWhiteSpace([string]$marker.executableMtime)) {
+            Write-Verbose "$($AssetSpec.ToolName) marker is missing executableMtime; reinstalling."
+            return $false
+        }
+
+        if ($null -eq $marker.PSObject.Properties["executableFastFingerprintVersion"] -or [string]::IsNullOrWhiteSpace([string]$marker.executableFastFingerprintVersion)) {
+            Write-Verbose "$($AssetSpec.ToolName) marker is missing executableFastFingerprintVersion; reinstalling."
+            return $false
+        }
+
+        if ([string]$marker.executableFastFingerprintVersion -ne (Get-QualityToolingExecutableFastFingerprintVersion)) {
+            Write-Verbose "$($AssetSpec.ToolName) marker has unsupported executableFastFingerprintVersion; reinstalling."
+            return $false
+        }
+
+        if ($null -eq $marker.PSObject.Properties["executableFastFingerprint"] -or [string]::IsNullOrWhiteSpace([string]$marker.executableFastFingerprint)) {
+            Write-Verbose "$($AssetSpec.ToolName) marker is missing executableFastFingerprint; reinstalling."
+            return $false
+        }
+
+        $actualExecutableItem = Get-Item -LiteralPath $executablePath -ErrorAction Stop
+        if ([string]$actualExecutableItem.Length -ne [string]$marker.executableSize) {
+            Write-Verbose "$($AssetSpec.ToolName) executable size does not match marker; reinstalling."
+            return $false
+        }
+
+        if ([string](Get-QualityToolingFileModifiedUnixSeconds -Path $executablePath) -ne [string]$marker.executableMtime) {
+            Write-Verbose "$($AssetSpec.ToolName) executable mtime does not match marker; reinstalling."
+            return $false
+        }
+
+        $actualFastFingerprint = Get-QualityToolingExecutableFastFingerprint -Path $executablePath
+        if ($actualFastFingerprint -ne ([string]$marker.executableFastFingerprint).ToLowerInvariant()) {
+            Write-Verbose "$($AssetSpec.ToolName) executable fast fingerprint does not match marker; reinstalling."
+            return $false
+        }
+
+        $actualExecutableSha256 = Get-QualityToolingFileSha256 -Path $executablePath
+        if ($actualExecutableSha256 -ne ([string]$marker.executableSha256).ToLowerInvariant()) {
+            Write-Verbose "$($AssetSpec.ToolName) executable hash does not match marker; reinstalling."
+            return $false
+        }
+
         Assert-QualityToolingToolVersion -Context $Context -ExecutablePath $executablePath -AssetSpec $AssetSpec -RepositoryRoot $RepositoryRoot
         return $true
     }
@@ -497,6 +550,113 @@ function Assert-QualityToolingHash {
     $actualHash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
     if ($actualHash -ne $ExpectedSha256.ToLowerInvariant()) {
         throw "E_$($Context.DiagnosticPrefix)_HASH_MISMATCH: downloaded $ToolName asset hash mismatch (expected=$ExpectedSha256; actual=$actualHash; path='$Path')."
+    }
+}
+
+function Get-QualityToolingFileSha256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    return ((Get-FileHash -LiteralPath $resolvedPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant())
+}
+
+function Get-QualityToolingFileModifiedUnixSeconds {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $resolvedItem = Get-Item -LiteralPath (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path -ErrorAction Stop
+    $unixEpochUtc = [datetime]::SpecifyKind([datetime]"1970-01-01T00:00:00Z", [System.DateTimeKind]::Utc)
+    return [int64][math]::Floor(($resolvedItem.LastWriteTimeUtc - $unixEpochUtc).TotalSeconds)
+}
+
+function Get-QualityToolingExecutableFastFingerprintVersion {
+    return "sampled-sha256-v1-65536"
+}
+
+function Get-QualityToolingExecutableFastFingerprint {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(4096, 1048576)]
+        [int]$SampleBytes = 65536
+    )
+
+    $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    $fileItem = Get-Item -LiteralPath $resolvedPath -ErrorAction Stop
+    $fileLength = [int64]$fileItem.Length
+    $payload = [System.IO.MemoryStream]::new()
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+
+    try {
+        $headerBytes = $utf8NoBom.GetBytes("wallstop-fast-fingerprint-v1`nsize=$fileLength`nsampleBytes=$SampleBytes`n")
+        $payload.Write($headerBytes, 0, $headerBytes.Length)
+
+        $segments = @()
+        if ($fileLength -le ([int64]$SampleBytes * 3L)) {
+            $segments = @([pscustomobject]@{ Offset = [int64]0; Length = $fileLength })
+        }
+        else {
+            $middleOffset = [int64]([math]::Floor(([double]($fileLength - $SampleBytes) / 2.0 / $SampleBytes)) * $SampleBytes)
+            $endOffset = [int64]($fileLength - $SampleBytes)
+            $segments = @(
+                [pscustomobject]@{ Offset = [int64]0; Length = [int64]$SampleBytes },
+                [pscustomobject]@{ Offset = $middleOffset; Length = [int64]$SampleBytes },
+                [pscustomobject]@{ Offset = $endOffset; Length = [int64]$SampleBytes }
+            )
+        }
+
+        $stream = [System.IO.File]::Open($resolvedPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            foreach ($segment in @($segments)) {
+                $segmentOffset = [int64]$segment.Offset
+                $segmentLength = [int64]$segment.Length
+                $segmentHeaderBytes = $utf8NoBom.GetBytes("segment=$($segmentOffset):$segmentLength`n")
+                $payload.Write($segmentHeaderBytes, 0, $segmentHeaderBytes.Length)
+                $separatorBytes = $utf8NoBom.GetBytes("`n")
+
+                if ($segmentLength -le 0) {
+                    $payload.Write($separatorBytes, 0, $separatorBytes.Length)
+                    continue
+                }
+
+                [void]$stream.Seek($segmentOffset, [System.IO.SeekOrigin]::Begin)
+                $buffer = New-Object byte[] ([int]$segmentLength)
+                $totalRead = 0
+                while ($totalRead -lt $segmentLength) {
+                    $read = $stream.Read($buffer, $totalRead, ([int]$segmentLength - $totalRead))
+                    if ($read -le 0) {
+                        throw "E_QUALITY_TOOL_FAST_FINGERPRINT_READ_SHORT: unable to read $segmentLength byte sample at offset $segmentOffset from '$resolvedPath'."
+                    }
+
+                    $totalRead += $read
+                }
+
+                $payload.Write($buffer, 0, $totalRead)
+                $payload.Write($separatorBytes, 0, $separatorBytes.Length)
+            }
+        }
+        finally {
+            $stream.Dispose()
+        }
+
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $sha256.ComputeHash($payload.ToArray())
+            return (($hashBytes | ForEach-Object { $_.ToString("x2") }) -join "")
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $payload.Dispose()
     }
 }
 
@@ -751,10 +911,14 @@ function Save-QualityToolingAssetMarker {
         [string]$InstallRoot,
 
         [Parameter(Mandatory = $true)]
-        [pscustomobject]$AssetSpec
+        [pscustomobject]$AssetSpec,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExecutablePath
     )
 
     $markerPath = Join-Path -Path $InstallRoot -ChildPath "asset.json"
+    $executableItem = Get-Item -LiteralPath (Resolve-Path -LiteralPath $ExecutablePath -ErrorAction Stop).Path -ErrorAction Stop
     $marker = [ordered]@{
         tool              = $AssetSpec.ToolName
         version           = $AssetSpec.Version
@@ -764,6 +928,11 @@ function Save-QualityToolingAssetMarker {
         requestedAssetKey = $AssetSpec.RequestedAssetKey
         assetName         = $AssetSpec.AssetName
         sha256            = $AssetSpec.Sha256
+        executableSha256  = Get-QualityToolingFileSha256 -Path $ExecutablePath
+        executableSize    = [string]$executableItem.Length
+        executableMtime   = [string](Get-QualityToolingFileModifiedUnixSeconds -Path $ExecutablePath)
+        executableFastFingerprintVersion = Get-QualityToolingExecutableFastFingerprintVersion
+        executableFastFingerprint        = Get-QualityToolingExecutableFastFingerprint -Path $ExecutablePath
         downloadUrl       = $AssetSpec.DownloadUrl
     }
     $markerJson = ($marker | ConvertTo-Json -Depth 4) + [Environment]::NewLine
@@ -869,7 +1038,7 @@ function Install-QualityToolingToolAsset {
 
         Set-QualityToolingExecutableMode -Context $Context -ExecutablePath $executablePath
         Assert-QualityToolingToolVersion -Context $Context -ExecutablePath $executablePath -AssetSpec $AssetSpec -RepositoryRoot $RepositoryRoot
-        Save-QualityToolingAssetMarker -InstallRoot $stagingRoot -AssetSpec $AssetSpec
+        Save-QualityToolingAssetMarker -InstallRoot $stagingRoot -AssetSpec $AssetSpec -ExecutablePath $executablePath
 
         if (Test-Path -LiteralPath $InstallRoot) {
             Remove-Item -LiteralPath $InstallRoot -Recurse -Force

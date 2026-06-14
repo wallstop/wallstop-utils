@@ -15,6 +15,33 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
 
     BeforeEach {
         $script:installModuleCalls = [System.Collections.Generic.List[hashtable]]::new()
+        $script:installPsResourceCalls = [System.Collections.Generic.List[hashtable]]::new()
+
+        function Global:Set-PSRepository {
+            [CmdletBinding()]
+            param(
+                [string]$Name,
+                [string]$InstallationPolicy
+            )
+        }
+
+        function Global:Get-PackageProvider {
+            [CmdletBinding()]
+            param(
+                [string]$Name,
+                [switch]$ForceBootstrap
+            )
+        }
+
+        function Global:Get-PSRepository {
+            [CmdletBinding()]
+            param(
+                [string]$Name
+            )
+
+            return [pscustomobject]@{ Name = "PSGallery"; InstallationPolicy = "Trusted" }
+        }
+
         Mock Set-PSRepository {}
         Mock Get-PackageProvider {}
         Mock Get-PSRepository { [pscustomobject]@{ Name = "PSGallery"; InstallationPolicy = "Trusted" } }
@@ -27,6 +54,7 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         # that cannot use Mock here; everything else uses Mock (which correctly intercepts the
         # dot-sourced ModuleHelpers functions).
         $global:WallstopInstallModuleShouldThrow = $false
+        $global:WallstopInstallPSResourceShouldThrow = $false
         function Global:Install-Module {
             [CmdletBinding()]
             param(
@@ -49,6 +77,30 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
             }
         }
 
+        function Global:Install-PSResource {
+            [CmdletBinding()]
+            param(
+                [string[]]$Name,
+                [string[]]$Repository,
+                [string]$Scope,
+                [string]$Version,
+                [switch]$Reinstall,
+                [switch]$Quiet,
+                [switch]$AcceptLicense,
+                [switch]$TrustRepository
+            )
+
+            $parameters = @{}
+            foreach ($key in $PSBoundParameters.Keys) {
+                $parameters[$key] = $PSBoundParameters[$key]
+            }
+
+            $script:installPsResourceCalls.Add($parameters) | Out-Null
+            if ($global:WallstopInstallPSResourceShouldThrow) {
+                throw "simulated psresource failure"
+            }
+        }
+
         $global:WallstopRegisterPSRepositoryCalls = [System.Collections.Generic.List[object]]::new()
         $global:WallstopRegisterPSRepositoryShouldThrow = $false
         function Global:Register-PSRepository {
@@ -67,8 +119,13 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
 
     AfterEach {
         Remove-Item -Path Function:Install-Module -ErrorAction SilentlyContinue
+        Remove-Item -Path Function:Install-PSResource -ErrorAction SilentlyContinue
         Remove-Item -Path Function:Register-PSRepository -ErrorAction SilentlyContinue
+        Remove-Item -Path Function:Set-PSRepository -ErrorAction SilentlyContinue
+        Remove-Item -Path Function:Get-PackageProvider -ErrorAction SilentlyContinue
+        Remove-Item -Path Function:Get-PSRepository -ErrorAction SilentlyContinue
         Remove-Variable -Name WallstopInstallModuleShouldThrow -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name WallstopInstallPSResourceShouldThrow -Scope Global -ErrorAction SilentlyContinue
         Remove-Variable -Name WallstopRegisterPSRepositoryCalls -Scope Global -ErrorAction SilentlyContinue
         Remove-Variable -Name WallstopRegisterPSRepositoryShouldThrow -Scope Global -ErrorAction SilentlyContinue
     }
@@ -105,6 +162,7 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester
 
         @($script:installModuleCalls).Count | Should -Be 1
+        @($script:installPsResourceCalls).Count | Should -Be 0
     }
 
     It "installs without SkipPublisherCheck when PSGallery trust setup succeeds" {
@@ -118,6 +176,7 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
 
         @($script:installModuleCalls).Count | Should -Be 1
         $script:installModuleCalls[0].ContainsKey("SkipPublisherCheck") | Should -BeFalse
+        @($script:installPsResourceCalls).Count | Should -Be 0
         Should -Invoke Write-Warning -ParameterFilter { $Message -match "W_MODULE_BOOTSTRAP_SKIP_PUBLISHER_CHECK_FALLBACK" } -Times 0
     }
 
@@ -132,6 +191,7 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
 
         @($script:installModuleCalls).Count | Should -Be 1
         $script:installModuleCalls[0].ContainsKey("SkipPublisherCheck") | Should -BeTrue
+        @($script:installPsResourceCalls).Count | Should -Be 0
         Should -Invoke Write-Warning -ParameterFilter { $Message -match "W_MODULE_BOOTSTRAP_SKIP_PUBLISHER_CHECK_FALLBACK" -and $Message -match "SkipPSGalleryTrust" } -Times 1
     }
 
@@ -149,16 +209,34 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
 
         @($script:installModuleCalls).Count | Should -Be 1
         $script:installModuleCalls[0].ContainsKey("SkipPublisherCheck") | Should -BeTrue
+        @($script:installPsResourceCalls).Count | Should -Be 0
         Should -Invoke Write-Warning -ParameterFilter { $Message -match "W_MODULE_BOOTSTRAP_SKIP_PUBLISHER_CHECK_FALLBACK" -and $Message -match "gallery-register-failed" -and $Message -match "gallery-trust-update-failed" } -Times 1
+    }
+
+    It "falls back to Install-PSResource when Install-Module fails" {
+        $state = @{ Count = 0 }
+        Mock Get-CommandWithOptionalModuleImport {
+            $state.Count++
+            if ($state.Count -eq 1) { $null } else { [pscustomobject]@{ Name = "Invoke-Pester" } }
+        }.GetNewClosure()
+        $global:WallstopInstallModuleShouldThrow = $true
+
+        Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester
+
+        @($script:installModuleCalls).Count | Should -Be 1
+        @($script:installPsResourceCalls).Count | Should -Be 1
+        $script:installPsResourceCalls[0]["Version"] | Should -Be "[5.5.0,)"
+        Should -Invoke Write-Warning -ParameterFilter { $Message -match "W_MODULE_BOOTSTRAP_PSRESOURCE_FALLBACK" } -Times 1
     }
 
     It "throws an actionable diagnostic when installation fails" {
         Mock Get-CommandWithOptionalModuleImport { $null }
         $global:WallstopInstallModuleShouldThrow = $true
+        $global:WallstopInstallPSResourceShouldThrow = $true
         Mock Get-AvailableModuleVersionsText { "(none)" }
         Mock Get-ModulePathDiagnosticsText { "entryCount=0; existingEntryCount=0; entries=(none)" }
 
-        { Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester } | Should -Throw -ExpectedMessage "*E_MODULE_BOOTSTRAP_INSTALL_FAILED*"
+        { Invoke-PowerShellQualityModuleBootstrap -RequestedModules Pester } | Should -Throw -ExpectedMessage "*E_MODULE_BOOTSTRAP_INSTALL_FAILED*simulated install failure*simulated psresource failure*"
     }
 
     It "throws an actionable diagnostic when verification fails after install" {
