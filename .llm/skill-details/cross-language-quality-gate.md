@@ -32,6 +32,7 @@ Current invariants to preserve:
 8. Keep raw Pester configuration construction inside the shared quality gate; workflows must not build ad-hoc Pester configuration objects or pass `Invoke-Pester -Configuration` directly.
 9. Cover extreme test scenarios systematically: empty/null input, maximum-size input, special characters (spaces, brackets, unicode, globs), concurrent access, and platform boundary conditions. See [adversarial-handoff-protocol](adversarial-handoff-protocol.md) for the full checklist.
 10. Keep backup automation deterministic: `Scripts/Backup.ps1` must fail preflight on dirty trees, stage only managed backup outputs (`Config/`), and use bounded commit retries only for hook autofix flows.
+11. PowerShell 7 owns full Pester runtime coverage; Windows PowerShell 5.1 CI should run a focused compatibility-critical subset. When editing 5.1-sensitive helpers, update that subset or the runtime smoke test.
 
 ## Commands
 

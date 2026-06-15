@@ -31,6 +31,9 @@ Describe "Invoke-FullValidation workflow contract" {
         "E_VALIDATION_NATIVE_TOOL_SCRIPT_MISSING"
         "E_VALIDATION_PRECOMMIT_RECOVERY_SCRIPT_MISSING"
         "E_VALIDATION_PRECOMMIT_ENV_PREFLIGHT_FAILED"
+        "E_VALIDATION_HOOK_FAST_RESOLVER_BASH_NOT_AVAILABLE"
+        "E_VALIDATION_HOOK_FAST_RESOLVER_MISSING"
+        "E_VALIDATION_HOOK_FAST_RESOLVER_FAILED"
         "E_VALIDATION_PRECOMMIT_VERSION_MISMATCH"
         "E_VALIDATION_STATUS_BEFORE_NULL"
         "E_VALIDATION_STATUS_AFTER_NULL"
@@ -87,6 +90,10 @@ Describe "Invoke-FullValidation workflow contract" {
         $script:validationScript | Should -Match 'Assert-NativeQualityToolAvailability'
         $script:validationScript | Should -Match 'Invoke-NativeQualityChecks\.ps1'
         $script:validationScript | Should -Match 'native quality tool prerequisite check'
+        $script:validationScript | Should -Match 'Assert-HookFastToolResolverAvailability'
+        $script:validationScript | Should -Match 'HookFastToolResolver\.sh'
+        $script:validationScript | Should -Match 'hook fast-tool resolver preflight'
+        $script:validationScript | Should -Match 'wallstop_resolve_managed_fast_tool'
         $script:validationScript | Should -Match 'Assert-PreCommitHookEnvironmentAvailability'
         $script:validationScript | Should -Match 'Invoke-PreCommitWithRecovery\.ps1'
         $script:validationScript | Should -Match 'pre-commit hook environment preflight'

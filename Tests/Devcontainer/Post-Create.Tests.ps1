@@ -639,7 +639,8 @@ exit 1
 
     It "invokes Codex install/update as non-blocking in the main flow" {
         $script:postCreateContent | Should -Match '_should_enable_codex_bootstrap'
-        $script:postCreateContent | Should -Match 'Codex CLI bootstrap disabled'
+        $script:postCreateContent | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_CODEX:-1'
+        $script:postCreateContent | Should -Match 'Codex CLI bootstrap explicitly disabled \(set WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1 to re-enable\)\.'
         $script:postCreateContent | Should -Match '_install_codex_cli\s*\|\|\s*_warn\s+"Codex CLI install/update failed \(non-blocking\)\."'
     }
 }
@@ -708,7 +709,7 @@ Describe "devcontainer-validate.yml Codex verification contract" {
             -Because "Codex idempotence validation must run after the second post-create execution"
     }
 
-    It "explicitly enables Codex bootstrap only for Codex verification steps" {
+    It "keeps Codex bootstrap explicitly enabled for Codex verification steps" {
         $script:runPostCreateStep | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_CODEX:\s*"1"'
         $script:confirmIdempotenceStep | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_CODEX:\s*"1"'
     }

@@ -6,6 +6,16 @@ BeforeAll {
     $script:helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PreCommitCliHelpers.ps1"
     $script:helperContent = [System.IO.File]::ReadAllText($script:helperPath, [System.Text.Encoding]::UTF8)
     . $script:helperPath
+
+    function Get-TestManagedPreCommitExecutable {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$ToolBinDirectory
+        )
+
+        $preCommitExecutableName = if (Test-IsWindowsPlatform) { "pre-commit.exe" } else { "pre-commit" }
+        return (Join-Path -Path $ToolBinDirectory -ChildPath $preCommitExecutableName)
+    }
 }
 
 Describe "PreCommitCliHelpers" {
@@ -80,7 +90,13 @@ Describe "PreCommitCliHelpers" {
         $result = Install-PreCommitPyzFallback -RepositoryRoot $script:repoRoot -ExpectedVersion "0.0.0" -DeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
 
         $result.Succeeded | Should -BeFalse
-        @($result.Diagnostics) -join "`n" | Should -Match "no pinned SHA256"
+        $expectedDiagnosticPattern = if (Test-IsWindowsPlatform) {
+            "direct \.pyz execution is not portable"
+        }
+        else {
+            "no pinned SHA256"
+        }
+        @($result.Diagnostics) -join "`n" | Should -Match $expectedDiagnosticPattern
     }
 
     It "verifies cached pre-commit pyz hashes before adding them as executable candidates" {
@@ -111,6 +127,7 @@ Describe "PreCommitCliHelpers" {
         $script:uvInstallExecutable = ""
         $script:uvInstallArguments = @()
         $script:uvInstallEnvironment = @{}
+        $script:uvProbeExecutable = ""
 
         Mock Get-Command {
             return $null
@@ -138,7 +155,7 @@ Describe "PreCommitCliHelpers" {
             ([string]$Environment.UV_TOOL_BIN_DIR).EndsWith((Join-Path -Path $expectedUvStateSuffix -ChildPath "bin"), [System.StringComparison]::Ordinal) | Should -BeTrue
             $Environment.UV_NO_MODIFY_PATH | Should -Be "1"
 
-            $preCommitExecutable = Join-Path -Path ([string]$Environment.UV_TOOL_BIN_DIR) -ChildPath "pre-commit"
+            $preCommitExecutable = Get-TestManagedPreCommitExecutable -ToolBinDirectory ([string]$Environment.UV_TOOL_BIN_DIR)
             [System.IO.File]::WriteAllText($preCommitExecutable, "shim", [System.Text.UTF8Encoding]::new($false))
             return [pscustomobject]@{
                 ExitCode = 0
@@ -147,13 +164,28 @@ Describe "PreCommitCliHelpers" {
             }
         } -ParameterFilter { $ContextLabel -like "uv tool install pre-commit==*" }
 
+        Mock Get-PreCommitVersionProbeClassification {
+            param($PreCommitExecutable, $RepositoryRoot, $ExpectedVersion, $TimeoutSeconds)
+
+            $script:uvProbeExecutable = $PreCommitExecutable
+            $RepositoryRoot | Should -Be $repoRoot
+            $ExpectedVersion | Should -Be "4.6.0"
+            $TimeoutSeconds | Should -BeGreaterThan 0
+            return [pscustomobject]@{
+                Status        = "ok"
+                ActualVersion = "4.6.0"
+                Diagnostic    = ""
+            }
+        }
+
         $result = Invoke-PreCommitCliAutoRepair -RepositoryRoot $repoRoot -ExpectedVersion "4.6.0" -TimeoutSeconds 30
 
         $result.Succeeded | Should -BeTrue
         $result.Strategy | Should -Be "uv-tool-install"
         $script:uvInstallExecutable | Should -Be $script:resolvedUvPath
         $script:uvInstallArguments | Should -Be @("tool", "install", "--force", "pre-commit==4.6.0")
-        $result.RepairedExecutable | Should -Be (Join-Path -Path ([string]$script:uvInstallEnvironment.UV_TOOL_BIN_DIR) -ChildPath "pre-commit")
+        $result.RepairedExecutable | Should -Be (Get-TestManagedPreCommitExecutable -ToolBinDirectory ([string]$script:uvInstallEnvironment.UV_TOOL_BIN_DIR))
+        $script:uvProbeExecutable | Should -Be $result.RepairedExecutable
     }
 
     It "tries repo-managed uv when ambient uv exists but fails during auto-repair" {
@@ -162,6 +194,7 @@ Describe "PreCommitCliHelpers" {
         $script:ambientUvPath = Join-Path -Path $repoRoot -ChildPath "ambient-uv"
         $script:managedUvPath = Join-Path -Path $repoRoot -ChildPath "managed-uv"
         $script:uvAttempts = New-Object System.Collections.Generic.List[string]
+        $script:uvProbeExecutable = ""
 
         Mock Get-Command {
             return [pscustomobject]@{
@@ -189,7 +222,7 @@ Describe "PreCommitCliHelpers" {
                 }
             }
 
-            $preCommitExecutable = Join-Path -Path ([string]$Environment.UV_TOOL_BIN_DIR) -ChildPath "pre-commit"
+            $preCommitExecutable = Get-TestManagedPreCommitExecutable -ToolBinDirectory ([string]$Environment.UV_TOOL_BIN_DIR)
             [System.IO.File]::WriteAllText($preCommitExecutable, "shim", [System.Text.UTF8Encoding]::new($false))
             return [pscustomobject]@{
                 ExitCode = 0
@@ -198,11 +231,66 @@ Describe "PreCommitCliHelpers" {
             }
         } -ParameterFilter { $ContextLabel -like "uv tool install pre-commit==*" }
 
+        Mock Get-PreCommitVersionProbeClassification {
+            param($PreCommitExecutable, $RepositoryRoot, $ExpectedVersion, $TimeoutSeconds)
+
+            $script:uvProbeExecutable = $PreCommitExecutable
+            $RepositoryRoot | Should -Be $repoRoot
+            $ExpectedVersion | Should -Be "4.6.0"
+            $TimeoutSeconds | Should -BeGreaterThan 0
+            return [pscustomobject]@{
+                Status        = "ok"
+                ActualVersion = "4.6.0"
+                Diagnostic    = ""
+            }
+        }
+
         $result = Invoke-PreCommitCliAutoRepair -RepositoryRoot $repoRoot -ExpectedVersion "4.6.0" -TimeoutSeconds 30
 
         $result.Succeeded | Should -BeTrue
         $result.Strategy | Should -Be "uv-tool-install"
         @($script:uvAttempts) | Should -Be @($script:ambientUvPath, $script:managedUvPath)
+        $script:uvProbeExecutable | Should -Be $result.RepairedExecutable
+    }
+
+    It "does not report uv auto-repair success until the repaired executable passes a version probe" {
+        $repoRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString("N"))
+        [System.IO.Directory]::CreateDirectory($repoRoot) | Out-Null
+        $script:resolvedUvPath = Join-Path -Path $repoRoot -ChildPath "uv"
+
+        Mock Get-Command {
+            return $null
+        }
+
+        Mock Resolve-PreCommitCliUvExecutable {
+            return $script:resolvedUvPath
+        }
+
+        Mock Invoke-PreCommitExternalCommand {
+            param($Executable, $Arguments, $RepositoryRoot, $TimeoutSeconds, $ContextLabel, $Environment)
+
+            $preCommitExecutable = Get-TestManagedPreCommitExecutable -ToolBinDirectory ([string]$Environment.UV_TOOL_BIN_DIR)
+            [System.IO.File]::WriteAllText($preCommitExecutable, "shim", [System.Text.UTF8Encoding]::new($false))
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout   = ""
+                Stderr   = ""
+            }
+        } -ParameterFilter { $ContextLabel -like "uv tool install pre-commit==*" }
+
+        Mock Get-PreCommitVersionProbeClassification {
+            return [pscustomobject]@{
+                Status        = "parse_failed"
+                ActualVersion = ""
+                Diagnostic    = "E_VALIDATION_PRECOMMIT_VERSION_PARSE_FAILED: simulated bad shim"
+            }
+        }
+
+        $result = Invoke-PreCommitCliAutoRepair -RepositoryRoot $repoRoot -ExpectedVersion "4.6.0" -TimeoutSeconds 30
+
+        $result.Succeeded | Should -BeFalse
+        @($result.Diagnostics) -join "`n" | Should -Match "version probe did not pass"
+        @($result.Diagnostics) -join "`n" | Should -Match "simulated bad shim"
     }
 
     It "uses bounded subprocess stream capture helpers for pre-commit CLI subprocesses" {

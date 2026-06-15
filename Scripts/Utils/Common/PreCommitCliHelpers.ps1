@@ -867,6 +867,77 @@ function Get-PreCommitVersionProbeClassification {
     }
 }
 
+function Resolve-PreCommitVerifiedRepairCandidate {
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$CandidatePaths,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedVersion,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$DeadlineUtc,
+
+        [Parameter(Mandatory = $true)]
+        [string]$StrategyLabel,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [System.Collections.Generic.List[string]]$Diagnostics
+    )
+
+    $pathComparer = if (Test-IsWindowsPlatform) {
+        [System.StringComparer]::OrdinalIgnoreCase
+    }
+    else {
+        [System.StringComparer]::Ordinal
+    }
+    $seenCandidates = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+    $existingCandidateCount = 0
+
+    foreach ($candidatePath in @($CandidatePaths)) {
+        if ([string]::IsNullOrWhiteSpace([string]$candidatePath)) {
+            continue
+        }
+
+        $candidatePath = [string]$candidatePath
+        if (-not $seenCandidates.Add($candidatePath)) {
+            continue
+        }
+
+        if (-not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
+            continue
+        }
+
+        $existingCandidateCount++
+        $remainingProbeSeconds = Get-PreCommitRemainingTimeoutSeconds -DeadlineUtc $DeadlineUtc
+        if ($remainingProbeSeconds -le 0) {
+            $Diagnostics.Add("${StrategyLabel} strategy produced candidate '$candidatePath' but auto-repair timeout expired before version probe.") | Out-Null
+            return ""
+        }
+
+        $probeTimeoutSeconds = [Math]::Min($remainingProbeSeconds, 30)
+        $probeResult = Get-PreCommitVersionProbeClassification -PreCommitExecutable $candidatePath -RepositoryRoot $RepositoryRoot -ExpectedVersion $ExpectedVersion -TimeoutSeconds $probeTimeoutSeconds
+        if ($probeResult.Status -eq "ok") {
+            return $candidatePath
+        }
+
+        $Diagnostics.Add("${StrategyLabel} strategy produced candidate '$candidatePath' but version probe did not pass. $($probeResult.Diagnostic)") | Out-Null
+    }
+
+    if ($existingCandidateCount -eq 0) {
+        $candidateText = @($CandidatePaths) -join " "
+        $candidatePreview = Get-PreCommitFailureOutputPreview -Output $candidateText
+        $Diagnostics.Add("${StrategyLabel} strategy completed but no expected pre-commit executable candidate was found. candidates=$candidatePreview") | Out-Null
+    }
+
+    return ""
+}
+
 function Invoke-PreCommitCliAutoRepair {
     param(
         [Parameter(Mandatory = $true)]
@@ -931,19 +1002,27 @@ function Invoke-PreCommitCliAutoRepair {
                 -TimeoutSeconds $uvTimeoutSeconds `
                 -ContextLabel "uv tool install pre-commit==$ExpectedVersion" `
                 -Environment $uvState.Environment
-            if ($uvResult.ExitCode -eq 0 -and (Test-Path -LiteralPath $uvState.PreCommitExecutable -PathType Leaf)) {
+            $verifiedUvExecutable = ""
+            if ($uvResult.ExitCode -eq 0) {
+                $verifiedUvExecutable = Resolve-PreCommitVerifiedRepairCandidate `
+                    -CandidatePaths @($uvState.PreCommitExecutable) `
+                    -RepositoryRoot $RepositoryRoot `
+                    -ExpectedVersion $ExpectedVersion `
+                    -DeadlineUtc $repairDeadlineUtc `
+                    -StrategyLabel $uvCandidateLabel `
+                    -Diagnostics $repairDiagnostics
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($verifiedUvExecutable)) {
                 return [pscustomobject]@{
                     Succeeded          = $true
                     Strategy           = "uv-tool-install"
-                    RepairedExecutable = $uvState.PreCommitExecutable
+                    RepairedExecutable = $verifiedUvExecutable
                     Diagnostics        = @()
                 }
             }
 
-            if ($uvResult.ExitCode -eq 0) {
-                $repairDiagnostics.Add("${uvCandidateLabel} strategy completed but did not create expected pre-commit executable '$($uvState.PreCommitExecutable)'.") | Out-Null
-            }
-            else {
+            if ($uvResult.ExitCode -ne 0) {
                 $repairDiagnostics.Add("${uvCandidateLabel} strategy failed (exitCode=$([int]$uvResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $uvResult.Stdout -Stderr $uvResult.Stderr))).") | Out-Null
             }
         }
@@ -957,15 +1036,25 @@ function Invoke-PreCommitCliAutoRepair {
             $pipxTimeoutSeconds = [Math]::Min($remainingSeconds, 180)
             $pipxResult = Invoke-PreCommitExternalCommand -Executable $pipxCommandPath -Arguments @("install", "--force", "pre-commit==$ExpectedVersion") -RepositoryRoot $RepositoryRoot -TimeoutSeconds $pipxTimeoutSeconds -ContextLabel "pipx install pre-commit==$ExpectedVersion"
             if ($pipxResult.ExitCode -eq 0) {
-                return [pscustomobject]@{
-                    Succeeded          = $true
-                    Strategy           = "pipx-install"
-                    RepairedExecutable = ""
-                    Diagnostics        = @()
+                $verifiedPipxExecutable = Resolve-PreCommitVerifiedRepairCandidate `
+                    -CandidatePaths @(Get-PreCommitCandidateExecutablePaths -RepositoryRoot $RepositoryRoot) `
+                    -RepositoryRoot $RepositoryRoot `
+                    -ExpectedVersion $ExpectedVersion `
+                    -DeadlineUtc $repairDeadlineUtc `
+                    -StrategyLabel "pipx" `
+                    -Diagnostics $repairDiagnostics
+                if (-not [string]::IsNullOrWhiteSpace($verifiedPipxExecutable)) {
+                    return [pscustomobject]@{
+                        Succeeded          = $true
+                        Strategy           = "pipx-install"
+                        RepairedExecutable = $verifiedPipxExecutable
+                        Diagnostics        = @()
+                    }
                 }
             }
-
-            $repairDiagnostics.Add("pipx strategy failed (exitCode=$([int]$pipxResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $pipxResult.Stdout -Stderr $pipxResult.Stderr))).") | Out-Null
+            else {
+                $repairDiagnostics.Add("pipx strategy failed (exitCode=$([int]$pipxResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $pipxResult.Stdout -Stderr $pipxResult.Stderr))).") | Out-Null
+            }
         }
     }
 
@@ -1034,16 +1123,29 @@ function Invoke-PreCommitCliAutoRepair {
                     if ($remainingSeconds -gt 0) {
                         $pipInstallTimeoutSeconds = [Math]::Min($remainingSeconds, 240)
                         $pipInstallResult = Invoke-PreCommitExternalCommand -Executable $venvPythonPath -Arguments @("-m", "pip", "install", "--disable-pip-version-check", "--upgrade", "pre-commit==$ExpectedVersion") -RepositoryRoot $RepositoryRoot -TimeoutSeconds $pipInstallTimeoutSeconds -ContextLabel "venv pip install pre-commit==$ExpectedVersion"
-                        if ($pipInstallResult.ExitCode -eq 0 -and (Test-Path -LiteralPath $venvPreCommitPath -PathType Leaf)) {
+                        $verifiedVenvExecutable = ""
+                        if ($pipInstallResult.ExitCode -eq 0) {
+                            $verifiedVenvExecutable = Resolve-PreCommitVerifiedRepairCandidate `
+                                -CandidatePaths @($venvPreCommitPath) `
+                                -RepositoryRoot $RepositoryRoot `
+                                -ExpectedVersion $ExpectedVersion `
+                                -DeadlineUtc $repairDeadlineUtc `
+                                -StrategyLabel "venv" `
+                                -Diagnostics $repairDiagnostics
+                        }
+
+                        if (-not [string]::IsNullOrWhiteSpace($verifiedVenvExecutable)) {
                             return [pscustomobject]@{
                                 Succeeded          = $true
                                 Strategy           = "python-venv"
-                                RepairedExecutable = $venvPreCommitPath
+                                RepairedExecutable = $verifiedVenvExecutable
                                 Diagnostics        = @()
                             }
                         }
 
-                        $repairDiagnostics.Add("venv pip install failed (exitCode=$([int]$pipInstallResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $pipInstallResult.Stdout -Stderr $pipInstallResult.Stderr))).") | Out-Null
+                        if ($pipInstallResult.ExitCode -ne 0) {
+                            $repairDiagnostics.Add("venv pip install failed (exitCode=$([int]$pipInstallResult.ExitCode); output=$(Get-PreCommitFailureOutputPreview -Output (Join-PreCommitCommandOutput -Stdout $pipInstallResult.Stdout -Stderr $pipInstallResult.Stderr))).") | Out-Null
+                        }
                     }
                 }
                 else {

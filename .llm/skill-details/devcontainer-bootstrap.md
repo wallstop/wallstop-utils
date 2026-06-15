@@ -15,7 +15,7 @@ Prefer an image-first devcontainer contract for reliability and rebuild speed:
 - Keep `init: true` in `.devcontainer/devcontainer.json` for stronger startup/shutdown process hygiene.
 - Keep persistent cache mounts for `/home/vscode/.cache/pip`, `/home/vscode/.cache/pre-commit`, and `/home/vscode/.npm` to reduce repeat cold-start bootstrap cost.
 - Keep project-specific tool bootstrap in `.devcontainer/post-create.sh`, bounded by timeout guards and explicit non-blocking diagnostics.
-- Keep Codex bootstrap opt-in via `WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1` so default cold-start attach remains fast and reliable.
+- Keep Codex bootstrap enabled by default so `codex` is available in devcontainers; use `WALLSTOP_DEVCONTAINER_ENABLE_CODEX=0` only for explicit opt-out scenarios.
 
 ## Post-Create Bootstrap Expectations
 

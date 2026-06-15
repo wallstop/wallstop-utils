@@ -181,7 +181,7 @@ The devcontainer follows an image-first reliability contract:
 - The container runs with `init: true` for improved process reaping and shutdown behavior.
 - Project-specific setup remains in `.devcontainer/post-create.sh` with bounded timeouts and non-blocking fallback diagnostics.
 - Persistent cache mounts are configured for `pip`, `pre-commit`, and `npm` to reduce repeat bootstrap cost on rebuilds.
-- Codex bootstrap is opt-in (`WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1`) so default cold-start attach prioritizes speed and reliability.
+- Codex bootstrap is enabled by default so `codex` is available immediately in devcontainers; set `WALLSTOP_DEVCONTAINER_ENABLE_CODEX=0` only when you need to opt out.
 
 What it provides:
 
@@ -189,7 +189,7 @@ What it provides:
 - PowerShell and Python preinstalled in the base image
 - Pre-commit bootstrap and hook installation on first create
 - PowerShell quality module bootstrap (`Pester`, `PSScriptAnalyzer`)
-- Optional Codex CLI bootstrap as a non-blocking best-effort step in `.devcontainer/post-create.sh` when explicitly enabled
+- Codex CLI bootstrap as a non-blocking best-effort step in `.devcontainer/post-create.sh`
 - Curated extension pack for script-heavy workflows plus polished themes/icons
 
 Open it in VS Code:
@@ -206,10 +206,10 @@ pre-commit run --all-files
 pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1
 ```
 
-Enable Codex bootstrap only when you need it (for example, targeted validation or local experimentation):
+Disable Codex bootstrap only for explicit opt-out runs:
 
 ```bash
-WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1 bash .devcontainer/post-create.sh
+WALLSTOP_DEVCONTAINER_ENABLE_CODEX=0 bash .devcontainer/post-create.sh
 ```
 
 ## GitHub Utilities

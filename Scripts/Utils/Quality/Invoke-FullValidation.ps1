@@ -261,6 +261,29 @@ function Assert-NativeQualityToolAvailability {
     & $nativeQualityScript -Tool All -EnsureOnly
 }
 
+function Assert-HookFastToolResolverAvailability {
+    $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+    if ($null -eq $bashCommand) {
+        throw "E_VALIDATION_HOOK_FAST_RESOLVER_BASH_NOT_AVAILABLE: bash is required to preflight git hook fast-tool resolution but was not found on PATH."
+    }
+
+    $fastToolResolver = Join-Path -Path $PSScriptRoot -ChildPath "../Common/HookFastToolResolver.sh"
+    if (-not (Test-Path -LiteralPath $fastToolResolver -PathType Leaf)) {
+        throw "E_VALIDATION_HOOK_FAST_RESOLVER_MISSING: hook fast-tool resolver not found at '$fastToolResolver'."
+    }
+
+    $resolverProbe = @'
+set -euo pipefail
+. "Scripts/Utils/Common/HookFastToolResolver.sh"
+wallstop_resolve_managed_fast_tool "$(pwd)" ".tools/native-quality" "actionlint" >/dev/null
+'@
+
+    & $bashCommand.Source --noprofile --norc -c $resolverProbe
+    if ($LASTEXITCODE -ne 0) {
+        throw "E_VALIDATION_HOOK_FAST_RESOLVER_FAILED: hook fast-tool resolver could not resolve the repo-managed actionlint executable after native tool bootstrap (exitCode=$LASTEXITCODE)."
+    }
+}
+
 function Assert-PreCommitHookEnvironmentAvailability {
     param(
         [Parameter(Mandatory = $true)]
@@ -348,6 +371,9 @@ try {
 
     Write-Host "[validation] native quality tool prerequisite check"
     Assert-NativeQualityToolAvailability
+
+    Write-Host "[validation] hook fast-tool resolver preflight"
+    Assert-HookFastToolResolverAvailability
 
     Write-Host "[validation] pre-commit hook environment preflight"
     Assert-PreCommitHookEnvironmentAvailability -PwshExecutable $pwshExecutable

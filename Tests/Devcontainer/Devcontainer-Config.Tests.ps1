@@ -58,12 +58,12 @@ Describe "devcontainer.json image-first contract" {
         $normalizedMounts -join "`n" | Should -Match 'target=/home/vscode/\.npm,type=volume'
     }
 
-    It "disables Codex bootstrap by default to prioritize cold-start attach" {
+    It "enables Codex bootstrap by default so codex is available in devcontainers" {
         $containerEnvProperty = $script:devcontainer.PSObject.Properties["containerEnv"]
         $null -eq $containerEnvProperty | Should -BeFalse
 
         $containerEnv = $containerEnvProperty.Value
-        $containerEnv.WALLSTOP_DEVCONTAINER_ENABLE_CODEX | Should -Be "0"
+        $containerEnv.WALLSTOP_DEVCONTAINER_ENABLE_CODEX | Should -Be "1"
     }
 
     It "defines an explicit bounded Codex npm install timeout" {

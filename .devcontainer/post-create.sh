@@ -625,7 +625,7 @@ _install_codex_cli() {
 }
 
 _should_enable_codex_bootstrap() {
-  local codex_toggle="${WALLSTOP_DEVCONTAINER_ENABLE_CODEX:-0}"
+  local codex_toggle="${WALLSTOP_DEVCONTAINER_ENABLE_CODEX:-1}"
   codex_toggle="$(printf '%s' "${codex_toggle}" | tr '[:upper:]' '[:lower:]')"
 
   case "${codex_toggle}" in
@@ -859,7 +859,7 @@ fi
 if _should_enable_codex_bootstrap; then
   _install_codex_cli || _warn "Codex CLI install/update failed (non-blocking)."
 else
-  _log "Codex CLI bootstrap disabled (set WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1 to enable)."
+  _log "Codex CLI bootstrap explicitly disabled (set WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1 to re-enable)."
 fi
 ensure_local_bin_on_path || _warn "PATH refresh failed after Codex install; continuing without profile updates."
 

@@ -804,7 +804,14 @@ jobs:
             if (-not (Test-Path -Path $pesterGateScript -PathType Leaf)) {
               throw "E_CI_PESTER_GATE_SCRIPT_MISSING: Pester quality gate script not found at '$pesterGateScript'."
             }
-            & $pesterGateScript -TestPath "Tests" -OutputVerbosity None -DiagnosticsPrefix "WinPS5.1 Pester" -TestResultOutputPath "testresults-winps51.xml"
+            $winPs51TestPaths = @(
+              "Tests/Utils/WindowsPowerShell51RuntimeSmoke.Tests.ps1",
+              "Tests/Utils/CompatibilityHelpers.Tests.ps1",
+              "Tests/Utils/CompatibilityConventions.Tests.ps1",
+              "Tests/Utils/Install-PowerShellQualityModules.Tests.ps1",
+              "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+            )
+            & $pesterGateScript -TestPath $winPs51TestPaths -OutputVerbosity None -DiagnosticsPrefix "WinPS5.1 Pester" -TestResultOutputPath "testresults-winps51.xml"
           } finally {
             $elapsedSeconds = [int]([Math]::Round(((Get-Date) - $start).TotalSeconds, 0))
             Write-Host "Windows PowerShell 5.1 Pester duration: $elapsedSeconds seconds"

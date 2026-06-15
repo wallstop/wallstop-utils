@@ -45,6 +45,7 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         Mock Set-PSRepository {}
         Mock Get-PackageProvider {}
         Mock Get-PSRepository { [pscustomobject]@{ Name = "PSGallery"; InstallationPolicy = "Trusted" } }
+        Mock Import-Module {} -ParameterFilter { $Name -in @("PowerShellGet", "Microsoft.PowerShell.PSResourceGet") }
         Mock Write-Host {}
         Mock Write-Warning {}
 

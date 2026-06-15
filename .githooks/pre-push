@@ -71,6 +71,7 @@ saw_pre_push_ref_update=0
 saw_non_head_push_ref=0
 changed_file_list_path=""
 fast_validation_root_path=""
+fast_tool_resolver_loaded=0
 
 trap 'if [[ -n "$changed_file_list_path" ]]; then rm -f "$changed_file_list_path"; fi; if [[ -n "$fast_validation_root_path" ]]; then rm -rf "$fast_validation_root_path"; fi' EXIT
 
@@ -247,283 +248,20 @@ is_truthy() {
   esac
 }
 
-current_platform_key() {
-  local os_name
-  local arch_name
-
-  case "$(uname -s 2> /dev/null || printf unknown)" in
-    Darwin)
-      os_name="darwin"
-      ;;
-    Linux)
-      os_name="linux"
-      ;;
-    MINGW* | MSYS* | CYGWIN*)
-      os_name="windows"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-
-  case "$(uname -m 2> /dev/null || printf unknown)" in
-    x86_64 | amd64)
-      arch_name="x64"
-      ;;
-    arm64 | aarch64)
-      arch_name="arm64"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-
-  printf '%s-%s\n' "$os_name" "$arch_name"
-}
-
-read_fast_tool_json_string_property() {
-  local json_path="$1"
-  local property_name="$2"
-
-  sed -n "s/.*\"${property_name}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$json_path" | head -n 1
-}
-
-read_fast_tool_manifest_version() {
-  local manifest_path="$1"
-  local tool_name="$2"
-
-  awk -v tool_name="$tool_name" '
-    $0 ~ "\"" tool_name "\"[[:space:]]*:" { in_tool = 1; next }
-    in_tool && $0 ~ /"version"[[:space:]]*:/ {
-      line = $0
-      sub(/^[^:]*:[[:space:]]*"/, "", line)
-      sub(/".*$/, "", line)
-      print line
-      exit
-    }
-  ' "$manifest_path"
-}
-
-read_fast_tool_size() {
-  local tool_path="$1"
-  wc -c < "$tool_path" | tr -d '[:space:]'
-}
-
-read_fast_tool_mtime() {
-  local tool_path="$1"
-
-  if stat -c '%Y' "$tool_path" > /dev/null 2>&1; then
-    stat -c '%Y' "$tool_path"
+load_fast_tool_resolver() {
+  if [[ "$fast_tool_resolver_loaded" -eq 1 ]]; then
     return 0
   fi
 
-  if stat -f '%m' "$tool_path" > /dev/null 2>&1; then
-    stat -f '%m' "$tool_path"
-    return 0
-  fi
-
-  return 1
-}
-
-compute_fast_stdin_sha256() {
-  if command -v sha256sum > /dev/null 2>&1; then
-    sha256sum | awk '{ print tolower($1) }'
-    return 0
-  fi
-
-  if command -v shasum > /dev/null 2>&1; then
-    shasum -a 256 | awk '{ print tolower($1) }'
-    return 0
-  fi
-
-  if command -v openssl > /dev/null 2>&1; then
-    openssl dgst -sha256 -r | awk '{ print tolower($1) }'
-    return 0
-  fi
-
-  return 1
-}
-
-fast_tool_fingerprint_version() {
-  printf '%s\n' "sampled-sha256-v1-65536"
-}
-
-emit_fast_tool_fingerprint_segment() {
-  local tool_path="$1"
-  local offset="$2"
-  local length="$3"
-  local sample_bytes="$4"
-
-  printf 'segment=%s:%s\n' "$offset" "$length"
-  if [[ "$length" -le 0 ]]; then
-    return 0
-  fi
-
-  if [[ "$offset" -eq 0 && "$length" -eq "$sample_bytes" ]]; then
-    dd if="$tool_path" bs="$sample_bytes" count=1 2> /dev/null
-    printf '\n'
-    return 0
-  fi
-
-  if [[ "$offset" -gt 0 && "$length" -eq "$sample_bytes" && $((offset % sample_bytes)) -eq 0 ]]; then
-    dd if="$tool_path" bs="$sample_bytes" skip="$((offset / sample_bytes))" count=1 2> /dev/null
-    printf '\n'
-    return 0
-  fi
-
-  tail -c "$length" "$tool_path"
-  printf '\n'
-}
-
-compute_fast_tool_fingerprint() {
-  local tool_path="$1"
-  local tool_size="$2"
-  local sample_bytes=65536
-  local middle_offset
-  local end_offset
-
-  {
-    printf 'wallstop-fast-fingerprint-v1\n'
-    printf 'size=%s\n' "$tool_size"
-    printf 'sampleBytes=%s\n' "$sample_bytes"
-
-    if [[ "$tool_size" -le $((sample_bytes * 3)) ]]; then
-      printf 'segment=0:%s\n' "$tool_size"
-      cat "$tool_path"
-      printf '\n'
-    else
-      middle_offset=$(((((tool_size - sample_bytes) / 2) / sample_bytes) * sample_bytes))
-      end_offset=$((tool_size - sample_bytes))
-      emit_fast_tool_fingerprint_segment "$tool_path" 0 "$sample_bytes" "$sample_bytes"
-      emit_fast_tool_fingerprint_segment "$tool_path" "$middle_offset" "$sample_bytes" "$sample_bytes"
-      emit_fast_tool_fingerprint_segment "$tool_path" "$end_offset" "$sample_bytes" "$sample_bytes"
-    fi
-  } | compute_fast_stdin_sha256
-}
-
-validate_managed_fast_tool_candidate() {
-  local tool_name="$1"
-  local expected_version="$2"
-  local candidate_key="$3"
-  local tool_path="$4"
-  local marker_path
-  local marker_tool
-  local marker_version
-  local marker_asset_key
-  local marker_executable_sha256
-  local marker_executable_size
-  local marker_executable_mtime
-  local marker_fast_fingerprint_version
-  local marker_fast_fingerprint
-  local actual_executable_size
-  local actual_executable_mtime
-  local actual_fast_fingerprint
-
-  marker_path="${tool_path%/bin/*}/asset.json"
-  if [[ -z "$expected_version" || ! -f "$marker_path" ]]; then
+  local fast_tool_resolver_path="${repo_root}/Scripts/Utils/Common/HookFastToolResolver.sh"
+  if [[ ! -f "$fast_tool_resolver_path" ]]; then
+    emit_diagnostic "E_PREPUSH_FAST_TOOL_RESOLVER_MISSING: fast tool resolver file not found at '$fast_tool_resolver_path'."
     return 1
   fi
 
-  marker_tool="$(read_fast_tool_json_string_property "$marker_path" "tool")"
-  marker_version="$(read_fast_tool_json_string_property "$marker_path" "version")"
-  marker_asset_key="$(read_fast_tool_json_string_property "$marker_path" "assetKey")"
-  marker_executable_sha256="$(read_fast_tool_json_string_property "$marker_path" "executableSha256")"
-  marker_executable_size="$(read_fast_tool_json_string_property "$marker_path" "executableSize")"
-  marker_executable_mtime="$(read_fast_tool_json_string_property "$marker_path" "executableMtime")"
-  marker_fast_fingerprint_version="$(read_fast_tool_json_string_property "$marker_path" "executableFastFingerprintVersion")"
-  marker_fast_fingerprint="$(read_fast_tool_json_string_property "$marker_path" "executableFastFingerprint")"
-
-  if [[ "$marker_tool" != "$tool_name" || "$marker_version" != "$expected_version" || "$marker_asset_key" != "$candidate_key" ]]; then
-    return 1
-  fi
-
-  if [[ ! "$marker_executable_sha256" =~ ^[A-Fa-f0-9]{64}$ ]]; then
-    return 1
-  fi
-
-  if [[ "$marker_fast_fingerprint_version" != "$(fast_tool_fingerprint_version)" || ! "$marker_fast_fingerprint" =~ ^[A-Fa-f0-9]{64}$ ]]; then
-    return 1
-  fi
-
-  actual_executable_size="$(read_fast_tool_size "$tool_path" || true)"
-  actual_executable_mtime="$(read_fast_tool_mtime "$tool_path" || true)"
-  if [[ -z "$marker_executable_size" || -z "$marker_executable_mtime" || "$actual_executable_size" != "$marker_executable_size" || "$actual_executable_mtime" != "$marker_executable_mtime" ]]; then
-    return 1
-  fi
-
-  if ! actual_fast_fingerprint="$(compute_fast_tool_fingerprint "$tool_path" "$actual_executable_size")"; then
-    return 1
-  fi
-
-  if [[ "$actual_fast_fingerprint" != "$(printf '%s' "$marker_fast_fingerprint" | tr '[:upper:]' '[:lower:]')" ]]; then
-    return 1
-  fi
-
-  return 0
-}
-
-resolve_managed_fast_tool() {
-  local suite_root="$1"
-  local tool_name="$2"
-  local platform_key
-  local executable_suffix=""
-  local manifest_path
-  local expected_version
-
-  if ! platform_key="$(current_platform_key)"; then
-    return 1
-  fi
-
-  case "$platform_key" in
-    windows-*)
-      executable_suffix=".exe"
-      ;;
-  esac
-
-  case "$suite_root" in
-    ".tools/native-quality")
-      manifest_path="${repo_root}/Scripts/Utils/Quality/native-quality-tools.json"
-      ;;
-    ".tools/shell-quality")
-      manifest_path="${repo_root}/Scripts/Utils/Quality/shell-quality-tools.json"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-
-  if [[ ! -f "$manifest_path" ]]; then
-    return 1
-  fi
-
-  expected_version="$(read_fast_tool_manifest_version "$manifest_path" "$tool_name")"
-  if [[ -z "$expected_version" ]]; then
-    return 1
-  fi
-
-  local candidate=""
-  local tool_path
-  local fallback_key=""
-  local candidate_key
-
-  if [[ "$platform_key" == "windows-arm64" ]]; then
-    fallback_key="windows-x64"
-  fi
-
-  for candidate_key in "$platform_key" "$fallback_key"; do
-    [[ -n "$candidate_key" ]] || continue
-    tool_path="${repo_root}/${suite_root}/${tool_name}/${expected_version}/${candidate_key}/bin/${tool_name}${executable_suffix}"
-    if [[ -f "$tool_path" ]] && validate_managed_fast_tool_candidate "$tool_name" "$expected_version" "$candidate_key" "$tool_path"; then
-      candidate="$tool_path"
-    fi
-    if [[ -n "$candidate" ]]; then
-      break
-    fi
-  done
-
-  if [[ -n "$candidate" ]]; then
-    printf '%s\n' "$candidate"
-  fi
+  # shellcheck source=Scripts/Utils/Common/HookFastToolResolver.sh
+  . "$fast_tool_resolver_path"
+  fast_tool_resolver_loaded=1
 }
 
 ensure_fast_validation_root() {
@@ -572,11 +310,30 @@ extract_prepush_blob_for_fast_validation() {
   printf '%s\n' "$target_path"
 }
 
-ensure_prepush_fast_actionlint_tools() {
-  actionlint_path="$(resolve_managed_fast_tool ".tools/native-quality" "actionlint" || true)"
-  shellcheck_path="$(resolve_managed_fast_tool ".tools/shell-quality" "shellcheck" || true)"
+validate_prepush_shell_blob() {
+  local local_oid="$1"
+  local changed_file="$2"
 
-  if [[ -n "$actionlint_path" && -n "$shellcheck_path" ]]; then
+  if ! git cat-file -e "${local_oid}:${changed_file}" > /dev/null 2>&1; then
+    return 0
+  fi
+
+  if git cat-file blob "${local_oid}:${changed_file}" | bash -n; then
+    return 0
+  fi
+
+  emit_diagnostic "E_PREPUSH_FAST_SHELL_PARSE_FAILED: bash syntax check failed for pushed blob. file=${changed_file} localOid=${local_oid}"
+  return 1
+}
+
+ensure_prepush_fast_actionlint_tools() {
+  if ! load_fast_tool_resolver; then
+    return 1
+  fi
+
+  actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+
+  if [[ -n "$actionlint_path" ]]; then
     return 0
   fi
 
@@ -594,14 +351,13 @@ ensure_prepush_fast_actionlint_tools() {
       return "$ensure_exit"
     fi
 
-    actionlint_path="$(resolve_managed_fast_tool ".tools/native-quality" "actionlint" || true)"
-    shellcheck_path="$(resolve_managed_fast_tool ".tools/shell-quality" "shellcheck" || true)"
-    if [[ -n "$actionlint_path" && -n "$shellcheck_path" ]]; then
+    actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+    if [[ -n "$actionlint_path" ]]; then
       return 0
     fi
   fi
 
-  emit_diagnostic "E_PREPUSH_FAST_NATIVE_TOOL_MISSING: repo-managed actionlint/shellcheck assets are unavailable and automated bootstrap did not make them available. Run validation preflight."
+  emit_diagnostic "E_PREPUSH_FAST_NATIVE_TOOL_MISSING: repo-managed actionlint asset is unavailable and automated bootstrap did not make it available. Run validation preflight."
   return 1
 }
 
@@ -612,8 +368,12 @@ run_fast_prepush_gate() {
   local extracted_file
   local index
   local actionlint_path
-  local shellcheck_path
+  local run_workflow_lint=0
   local workflow_targets=()
+
+  if is_truthy "${WALLSTOP_PREPUSH_FAST_WORKFLOW_LINT:-0}"; then
+    run_workflow_lint=1
+  fi
 
   for index in "${!resolved_changed_files[@]}"; do
     file="${resolved_changed_files[$index]}"
@@ -623,16 +383,14 @@ run_fast_prepush_gate() {
 
     case "$file" in
       Scripts/*.sh | .devcontainer/*.sh | .githooks/pre-commit | .githooks/pre-push)
-        if ! extracted_file="$(extract_prepush_blob_for_fast_validation "$local_oid" "$file")"; then
-          return 1
-        fi
-        [[ -n "$extracted_file" ]] || continue
-        if ! bash -n "$extracted_file"; then
-          emit_diagnostic "E_PREPUSH_FAST_SHELL_PARSE_FAILED: bash syntax check failed. file=${file} localOid=${local_oid}"
+        if ! validate_prepush_shell_blob "$local_oid" "$file"; then
           return 1
         fi
         ;;
       .github/workflows/*.yml | .github/workflows/*.yaml)
+        if [[ "$run_workflow_lint" -ne 1 ]]; then
+          continue
+        fi
         if ! extracted_file="$(extract_prepush_blob_for_fast_validation "$local_oid" "$file")"; then
           return 1
         fi
@@ -656,11 +414,10 @@ run_fast_prepush_gate() {
       return 124
     fi
 
-    run_with_timeout "$remaining_seconds" "pre-push fast actionlint" "$actionlint_path" -shellcheck "$shellcheck_path" "${workflow_targets[@]}"
+    run_with_timeout "$remaining_seconds" "pre-push fast actionlint" "$actionlint_path" -shellcheck "" -pyflakes "" "${workflow_targets[@]}"
     return $?
   fi
 
-  emit_runtime_budget_warning "pre-push fast gate" "$((SECONDS - phase_start_seconds))"
   return 0
 }
 

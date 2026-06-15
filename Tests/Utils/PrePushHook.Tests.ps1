@@ -975,6 +975,23 @@ if [[ "$1" == "cat-file" && "${2:-}" == "-e" ]]; then
   exit 0
 fi
 
+if [[ "$1" == "cat-file" && "${2:-}" == "blob" ]]; then
+  if [[ -n "${WALLSTOP_TEST_CAT_FILE_BLOB_OUTPUT+x}" ]]; then
+    printf '%b' "$WALLSTOP_TEST_CAT_FILE_BLOB_OUTPUT"
+    exit "${WALLSTOP_TEST_CAT_FILE_BLOB_EXIT:-0}"
+  fi
+
+  case "${3:-}" in
+    *".github/workflows/"*.yml|*".github/workflows/"*.yaml)
+      printf 'name: test\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n'
+      ;;
+    *)
+      printf '#!/usr/bin/env bash\ntrue\n'
+      ;;
+  esac
+  exit "${WALLSTOP_TEST_CAT_FILE_BLOB_EXIT:-0}"
+fi
+
 if [[ "$1" == "show" ]]; then
   if [[ -n "${WALLSTOP_TEST_SHOW_OUTPUT:-}" ]]; then
     printf '%b' "$WALLSTOP_TEST_SHOW_OUTPUT"
@@ -1803,7 +1820,8 @@ Describe "pre-push changed-file hook behavior" {
 
         Assert-PrePushHarnessSucceeded -Result $result
         $result.Log | Should -Match 'git\tcat-file\t-e\tlocal456:\.githooks/pre-push'
-        $result.Log | Should -Match 'git\tshow\tlocal456:\.githooks/pre-push'
+        $result.Log | Should -Match 'git\tcat-file\tblob\tlocal456:\.githooks/pre-push'
+        $result.Log | Should -Not -Match 'git\tshow\tlocal456:\.githooks/pre-push'
         $result.Log | Should -Not -Match 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
         Assert-NoDeepPrePushCommand -CommandLog $result.Log
     }
@@ -1811,16 +1829,17 @@ Describe "pre-push changed-file hook behavior" {
     It "fails on invalid pushed shell blobs even when validation is independent of the worktree" {
         $harness = New-PrePushHookHarness
         $result = Invoke-PrePushHookHarness -Harness $harness -Stdin "refs/heads/release local456 refs/heads/release remote123`n" -Environment @{
-            WALLSTOP_TEST_NON_HEAD_PUSH = "1"
-            WALLSTOP_TEST_DIFF_OUTPUT   = ".githooks/pre-push`n"
-            WALLSTOP_TEST_SHOW_OUTPUT   = "if broken`n"
+            WALLSTOP_TEST_NON_HEAD_PUSH       = "1"
+            WALLSTOP_TEST_DIFF_OUTPUT         = ".githooks/pre-push`n"
+            WALLSTOP_TEST_CAT_FILE_BLOB_OUTPUT = "if broken`n"
         }
 
         $result.ExitCode | Should -Be 1 -Because (
             "stdout={0}; stderr={1}; commandLog={2}" -f $result.Stdout, $result.Stderr, $result.Log
         )
         $result.Stderr | Should -Match 'E_PREPUSH_FAST_SHELL_PARSE_FAILED'
-        $result.Log | Should -Match 'git\tshow\tlocal456:\.githooks/pre-push'
+        $result.Log | Should -Match 'git\tcat-file\tblob\tlocal456:\.githooks/pre-push'
+        $result.Log | Should -Not -Match 'git\tshow\tlocal456:\.githooks/pre-push'
         $result.Log | Should -Not -Match 'Invoke-PreCommitWithRecovery\.ps1|pre-commit\trun|Run-PreCommitValidation\.ps1'
         Assert-NoDeepPrePushCommand -CommandLog $result.Log
     }
