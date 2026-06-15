@@ -43,6 +43,16 @@ if [[ $repo_root_exit -ne 0 || -z "$repo_root" ]]; then
 fi
 cd "$repo_root"
 
+precommit_home="${repo_root}/.tools/precommit-cli/pre-commit-home"
+if mkdir -p "$precommit_home" > /dev/null 2>&1; then
+  export PRE_COMMIT_HOME="$precommit_home"
+else
+  emit_diagnostic "W_PRECOMMIT_HOME_UNAVAILABLE: unable to create managed PRE_COMMIT_HOME at '${precommit_home}'; pre-commit will use its host default cache."
+fi
+
+fast_validation_root_path=""
+trap 'if [[ -n "$fast_validation_root_path" ]]; then rm -rf "$fast_validation_root_path"; fi' EXIT
+
 hook_timeout_helpers_path="${repo_root}/Scripts/Utils/Common/HookTimeout.sh"
 if [[ ! -f "$hook_timeout_helpers_path" ]]; then
   emit_diagnostic "E_HOOK_TIMEOUT_HELPER_MISSING: timeout helper file not found at '$hook_timeout_helpers_path'."
@@ -51,6 +61,8 @@ fi
 
 # shellcheck source=Scripts/Utils/Common/HookTimeout.sh
 . "$hook_timeout_helpers_path"
+
+fast_tool_resolver_loaded=0
 
 precommit_timeout_seconds="${WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS:-600}"
 precommit_recovery_inner_timeout_seconds=30
@@ -87,6 +99,9 @@ runtime_budget_seconds() {
   case "$label" in
     "pre-commit hook-stage pre-commit" | "legacy pre-commit PowerShell validation" | "pre-commit safe auto-repair")
       printf '%s\n' "${WALLSTOP_PRECOMMIT_ACTIVE_RUNTIME_BUDGET_SECONDS:-30}"
+      ;;
+    "pre-commit fast gate" | "pre-commit fast actionlint" | "pre-commit fast actionlint bootstrap")
+      printf '%s\n' "${WALLSTOP_PRECOMMIT_FAST_RUNTIME_BUDGET_SECONDS:-1}"
       ;;
     *)
       printf '%s\n' "${WALLSTOP_PRECOMMIT_NOOP_RUNTIME_BUDGET_SECONDS:-1}"
@@ -127,13 +142,21 @@ run_with_timeout() {
   local label="$1"
   shift
   local phase_start_seconds=$SECONDS
+  local caller_errexit_enabled=0
+  case "$-" in
+    *e*) caller_errexit_enabled=1 ;;
+  esac
 
   local timeout_command
   if timeout_command="$(resolve_timeout_command)"; then
     set +e
     "$timeout_command" -k 2s "${timeout_seconds}s" "$@"
     local command_exit=$?
-    set -e
+    if [[ $caller_errexit_enabled -eq 1 ]]; then
+      set -e
+    else
+      set +e
+    fi
 
     if [[ $command_exit -eq 124 || $command_exit -eq 137 ]]; then
       emit_diagnostic "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PRECOMMIT_TIMEOUT_SECONDS."
@@ -174,7 +197,11 @@ run_with_timeout() {
   kill "$watchdog_pid" > /dev/null 2>&1 || true
   wait "$watchdog_pid" > /dev/null 2>&1 || true
   wallstop_cleanup_timeout_command_processes "$command_pid" "$command_process_group_mode" "$label"
-  set -e
+  if [[ $caller_errexit_enabled -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
 
   if [[ -f "$timeout_flag_file" ]]; then
     rm -f "$timeout_flag_file"
@@ -251,12 +278,50 @@ run_legacy_validation() {
   exit 1
 }
 
-has_staged_windows_language_targets() {
-  local staged_files
-  if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMRD -- 2> /dev/null)"; then
-    emit_diagnostic "W_PRECOMMIT_AUTOREPAIR_PREFILTER_FAILED: unable to read staged files for auto-repair prefilter; running pwsh auto-repair fallback."
-    return 0
+is_truthy() {
+  case "${1:-}" in
+    1 | true | TRUE | yes | YES | on | ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+get_staged_precommit_fast_files() {
+  if ! git -C "$repo_root" diff --cached --name-only --diff-filter=ACMR -- \
+    "Scripts/*.sh" \
+    ".devcontainer/*.sh" \
+    ".githooks/pre-commit" \
+    ".githooks/pre-push" \
+    ".github/workflows/*.yml" \
+    ".github/workflows/*.yaml" \
+    "Scripts/AutoHotKey/*.ahk" \
+    "Config/.config/*.ahk" \
+    "Scripts/*.bat" 2> /dev/null; then
+    emit_diagnostic "W_PRECOMMIT_FAST_STAGED_DISCOVERY_FAILED: unable to read staged files for fast hook gate; running recovery-backed validation."
+    return 1
   fi
+}
+
+get_staged_precommit_files() {
+  if ! git -C "$repo_root" diff --cached --name-only --diff-filter=ACMRD -- 2> /dev/null; then
+    emit_diagnostic "W_PRECOMMIT_STAGED_DISCOVERY_FAILED: unable to read staged files for hook gate; running recovery-backed validation."
+    return 1
+  fi
+}
+
+run_precommit_fast_diff_check() {
+  if is_truthy "${WALLSTOP_PRECOMMIT_FAST_DIFF_CHECK:-0}"; then
+    if ! git -C "$repo_root" diff --cached --check --; then
+      return 1
+    fi
+  fi
+}
+
+has_staged_windows_language_targets() {
+  local staged_files="$1"
 
   if [[ -z "$staged_files" ]]; then
     return 1
@@ -269,19 +334,187 @@ has_staged_windows_language_targets() {
   return 1
 }
 
-has_any_staged_files() {
-  local staged_files
-  if ! staged_files="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMRD -- 2> /dev/null)"; then
-    emit_diagnostic "W_PRECOMMIT_NOOP_PREFILTER_FAILED: unable to read staged files for no-op fast path; running pre-commit."
+load_fast_tool_resolver() {
+  if [[ "$fast_tool_resolver_loaded" -eq 1 ]]; then
     return 0
   fi
 
-  [[ -n "$staged_files" ]]
+  local fast_tool_resolver_path="${repo_root}/Scripts/Utils/Common/HookFastToolResolver.sh"
+  if [[ ! -f "$fast_tool_resolver_path" ]]; then
+    emit_diagnostic "E_PRECOMMIT_FAST_TOOL_RESOLVER_MISSING: fast tool resolver file not found at '$fast_tool_resolver_path'."
+    return 1
+  fi
+
+  # shellcheck source=Scripts/Utils/Common/HookFastToolResolver.sh
+  . "$fast_tool_resolver_path"
+  fast_tool_resolver_loaded=1
+}
+
+ensure_fast_validation_root() {
+  if [[ -n "$fast_validation_root_path" ]]; then
+    return 0
+  fi
+
+  fast_validation_root_path="$(mktemp -d 2> /dev/null || true)"
+  if [[ -z "$fast_validation_root_path" ]]; then
+    fast_validation_root_path="/tmp/wallstop-precommit-fast.$$.$RANDOM"
+    if ! mkdir -p "$fast_validation_root_path" > /dev/null 2>&1; then
+      emit_diagnostic "E_PRECOMMIT_FAST_TEMP_UNAVAILABLE: failed to create temporary directory for staged-blob validation."
+      return 1
+    fi
+  fi
+}
+
+extract_precommit_index_blob_for_fast_validation() {
+  local staged_file="$1"
+  local target_path
+  local target_dir
+
+  if ! ensure_fast_validation_root; then
+    return 1
+  fi
+
+  target_path="${fast_validation_root_path}/index/${staged_file}"
+  target_dir="${target_path%/*}"
+  if [[ "$target_dir" != "$target_path" ]]; then
+    if ! mkdir -p "$target_dir" > /dev/null 2>&1; then
+      emit_diagnostic "E_PRECOMMIT_FAST_TEMP_UNAVAILABLE: failed to create temporary parent directory for staged-blob validation. file=${staged_file}"
+      return 1
+    fi
+  fi
+
+  if ! git show ":${staged_file}" > "$target_path"; then
+    emit_diagnostic "E_PRECOMMIT_FAST_BLOB_EXTRACT_FAILED: failed to extract staged blob for validation. file=${staged_file}"
+    return 1
+  fi
+
+  printf '%s\n' "$target_path"
+}
+
+validate_precommit_shell_blob() {
+  local staged_file="$1"
+
+  if git -C "$repo_root" cat-file blob ":${staged_file}" | bash -n; then
+    return 0
+  fi
+
+  emit_diagnostic "E_PRECOMMIT_FAST_SHELL_PARSE_FAILED: bash syntax check failed for staged blob. file=${staged_file}"
+  return 1
+}
+
+# Ensures the repo-managed actionlint asset is bootstrapped. Returns 0 only when the asset
+# resolves to a non-empty path. The resolved path is kept local so callers do not depend on
+# a dynamic-scope side effect; callers re-resolve explicitly (see run_fast_precommit_gate).
+ensure_precommit_fast_actionlint_tools() {
+  if ! load_fast_tool_resolver; then
+    return 1
+  fi
+
+  local resolved_actionlint_path
+  resolved_actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+
+  if [[ -n "$resolved_actionlint_path" ]]; then
+    return 0
+  fi
+
+  if command -v pwsh > /dev/null 2>&1; then
+    local remaining_seconds
+    if ! remaining_seconds="$(remaining_timeout_seconds "pre-commit fast actionlint bootstrap")"; then
+      return 124
+    fi
+
+    set +e
+    run_with_timeout "$remaining_seconds" "pre-commit fast actionlint bootstrap" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1" -Tool actionlint -EnsureOnly
+    local ensure_exit=$?
+    set -e
+    if [[ $ensure_exit -ne 0 ]]; then
+      return "$ensure_exit"
+    fi
+
+    resolved_actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+    if [[ -n "$resolved_actionlint_path" ]]; then
+      return 0
+    fi
+  fi
+
+  emit_diagnostic "E_PRECOMMIT_FAST_NATIVE_TOOL_MISSING: repo-managed actionlint asset is unavailable and automated bootstrap did not make it available. Run validation preflight."
+  return 1
+}
+
+run_fast_precommit_gate() {
+  local staged_files="$1"
+  local phase_start_seconds=$SECONDS
+  local file
+  local extracted_file
+  local run_workflow_lint=0
+  local workflow_targets=()
+
+  if is_truthy "${WALLSTOP_PRECOMMIT_FAST_WORKFLOW_LINT:-0}"; then
+    run_workflow_lint=1
+  fi
+
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+
+    case "$file" in
+      Scripts/*.sh | .devcontainer/*.sh | .githooks/pre-commit | .githooks/pre-push)
+        if ! validate_precommit_shell_blob "$file"; then
+          return 1
+        fi
+        ;;
+      .github/workflows/*.yml | .github/workflows/*.yaml)
+        if [[ "$run_workflow_lint" -ne 1 ]]; then
+          continue
+        fi
+        if ! extracted_file="$(extract_precommit_index_blob_for_fast_validation "$file")"; then
+          return 1
+        fi
+        workflow_targets+=("$extracted_file")
+        ;;
+    esac
+  done <<< "$staged_files"
+
+  if [[ ${#workflow_targets[@]} -gt 0 ]]; then
+    set +e
+    ensure_precommit_fast_actionlint_tools
+    local ensure_actionlint_exit=$?
+    set -e
+    if [[ $ensure_actionlint_exit -ne 0 ]]; then
+      return "$ensure_actionlint_exit"
+    fi
+
+    # Resolve the executable explicitly (ensure_* loaded the resolver) instead of relying on
+    # a dynamic-scope side effect, then refuse to invoke an empty path so a resolver
+    # regression can never exec an empty string under run_with_timeout.
+    local actionlint_path
+    actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+    if [[ -z "$actionlint_path" ]]; then
+      emit_diagnostic "E_PRECOMMIT_FAST_ACTIONLINT_PATH_EMPTY: actionlint resolved to an empty path after bootstrap reported success; refusing to invoke an empty executable. Run validation preflight."
+      return 1
+    fi
+
+    local remaining_seconds
+    if ! remaining_seconds="$(remaining_timeout_seconds "pre-commit fast actionlint")"; then
+      return 124
+    fi
+
+    run_with_timeout "$remaining_seconds" "pre-commit fast actionlint" "$actionlint_path" -shellcheck "" -pyflakes "" "${workflow_targets[@]}"
+    return $?
+  fi
+
+  return 0
 }
 
 run_safe_autorepair() {
+  local staged_files="$1"
+  local force_discovery="${2:-0}"
+
   if command -v pwsh > /dev/null 2>&1; then
-    if ! has_staged_windows_language_targets; then
+    # When staged fast-discovery failed (force_discovery=1) the staged_files list is empty
+    # and unreliable, so skipping here would silently bypass repair of staged AHK/batch
+    # drift. In that case let Invoke-PreCommitAutoRepair.ps1 run its own safe staged-target
+    # discovery instead; otherwise only spawn pwsh when a Windows-language target is staged.
+    if [[ "$force_discovery" -ne 1 ]] && ! has_staged_windows_language_targets "$staged_files"; then
       return 0
     fi
 
@@ -297,38 +530,101 @@ run_safe_autorepair() {
   return 0
 }
 
-if ! has_any_staged_files; then
+precommit_force_recovery_suite=0
+set +e
+staged_precommit_files="$(get_staged_precommit_files)"
+staged_precommit_discovery_exit=$?
+set -e
+if [[ $staged_precommit_discovery_exit -ne 0 ]]; then
+  precommit_force_recovery_suite=1
+fi
+
+if [[ "$precommit_force_recovery_suite" -eq 0 && -z "$staged_precommit_files" ]]; then
   emit_runtime_budget_warning "pre-commit no staged files" "$((SECONDS - hook_start_seconds))"
   exit 0
 fi
 
-if command -v pre-commit > /dev/null 2>&1; then
-  if command -v pwsh > /dev/null 2>&1; then
-    if run_safe_autorepair; then
-      :
-    else
-      safe_autorepair_exit=$?
-      exit $safe_autorepair_exit
+staged_precommit_fast_files=""
+if [[ "$precommit_force_recovery_suite" -eq 0 ]]; then
+  if ! run_precommit_fast_diff_check; then
+    exit 1
+  fi
+
+  set +e
+  staged_precommit_fast_files="$(get_staged_precommit_fast_files)"
+  staged_precommit_fast_discovery_exit=$?
+  set -e
+  if [[ $staged_precommit_fast_discovery_exit -ne 0 ]]; then
+    precommit_force_recovery_suite=1
+  fi
+fi
+
+if command -v pwsh > /dev/null 2>&1; then
+  if run_safe_autorepair "$staged_precommit_fast_files" "$precommit_force_recovery_suite"; then
+    :
+  else
+    safe_autorepair_exit=$?
+    exit $safe_autorepair_exit
+  fi
+fi
+
+if [[ "$precommit_force_recovery_suite" -eq 0 ]] && ! is_truthy "${WALLSTOP_PRECOMMIT_FULL_SUITE:-0}"; then
+  if [[ -z "$staged_precommit_fast_files" ]]; then
+    emit_runtime_budget_warning "pre-commit fast gate" "$((SECONDS - hook_start_seconds))"
+    exit 0
+  fi
+
+  run_fast_precommit_gate "$staged_precommit_fast_files"
+  fast_gate_exit=$?
+  if [[ $fast_gate_exit -eq 0 ]]; then
+    emit_runtime_budget_warning "pre-commit fast gate" "$((SECONDS - hook_start_seconds))"
+    exit 0
+  fi
+
+  exit $fast_gate_exit
+fi
+
+if command -v pwsh > /dev/null 2>&1; then
+  if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
+    inner_timeout_seconds=$((remaining_seconds - precommit_recovery_shutdown_buffer_seconds))
+    required_remaining_seconds=$((precommit_recovery_inner_timeout_seconds + precommit_recovery_shutdown_buffer_seconds))
+    if [[ "$inner_timeout_seconds" -lt "$precommit_recovery_inner_timeout_seconds" ]]; then
+      emit_recovery_budget_diagnostic "pre-commit hook-stage pre-commit" "$remaining_seconds" "$required_remaining_seconds" "$inner_timeout_seconds"
+      exit 124
     fi
 
-    if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
-      inner_timeout_seconds=$((remaining_seconds - precommit_recovery_shutdown_buffer_seconds))
-      required_remaining_seconds=$((precommit_recovery_inner_timeout_seconds + precommit_recovery_shutdown_buffer_seconds))
-      if [[ "$inner_timeout_seconds" -lt "$precommit_recovery_inner_timeout_seconds" ]]; then
-        emit_recovery_budget_diagnostic "pre-commit hook-stage pre-commit" "$remaining_seconds" "$required_remaining_seconds" "$inner_timeout_seconds"
-        exit 124
-      fi
+    set +e
+    run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-commit -TimeoutSeconds "$inner_timeout_seconds"
+    recovery_exit=$?
+    set -e
+    if [[ $recovery_exit -eq 0 ]]; then
+      exit 0
+    fi
 
-      run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-commit -TimeoutSeconds "$inner_timeout_seconds"
+    if [[ $recovery_exit -eq 125 ]]; then
+      emit_diagnostic "W_PRECOMMIT_RECOVERY_DEGRADED: the pinned pre-commit CLI could not be prepared (missing CLI, pinned-version mismatch, or resolution failure - see the E_VALIDATION_PRECOMMIT_* diagnostic above); falling back to legacy PowerShell checks. CI still runs the pinned pre-commit CLI."
+      emit_diagnostic "Recommended bootstrap:"
+      print_precommit_bootstrap_guidance
+      emit_diagnostic "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"
+      emit_diagnostic "  pre-commit install --hook-type pre-commit --hook-type pre-push"
+      emit_diagnostic "Major changes should close with: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1"
+      run_legacy_validation
       exit $?
     fi
 
-    exit 124
+    exit $recovery_exit
   fi
 
+  exit 124
+fi
+
+if command -v pre-commit > /dev/null 2>&1; then
   if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-commit")"; then
+    set +e
     run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-commit" pre-commit run --hook-stage pre-commit --show-diff-on-failure --color always
-    exit $?
+    precommit_hook_exit=$?
+    set -e
+    exit $precommit_hook_exit
   fi
 
   exit 124

@@ -19,3 +19,5 @@ pr-description.md
 .tmp_logs/
 .venv/
 pr-description.md
+ModuleAnalysisCache*
+StartupProfileData*

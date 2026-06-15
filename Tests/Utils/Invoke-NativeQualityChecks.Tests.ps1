@@ -115,17 +115,20 @@ Describe "Invoke-NativeQualityChecks target scoping" {
     It "skips zero selected targets before reading the manifest or resolving tools" {
         Mock Read-NativeQualityToolManifest { throw "manifest should not be read for zero-target checks" }
         Mock Resolve-NativeQualityToolExecutable { throw "tool resolution should not run for zero-target checks" }
+        Mock Resolve-NativeEmbeddedShellCheckExecutable { throw "embedded shellcheck resolution should not run for zero-target checks" }
 
         { Invoke-NativeQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("does-not-exist.lua") } |
             Should -Not -Throw
 
         Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
         Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
     }
 
     It "skips workflow-only targets in stylua mode before reading the manifest or resolving tools" {
         Mock Read-NativeQualityToolManifest { throw "manifest should not be read for non-stylua targets" }
         Mock Resolve-NativeQualityToolExecutable { throw "tool resolution should not run for non-stylua targets" }
+        Mock Resolve-NativeEmbeddedShellCheckExecutable { throw "embedded shellcheck resolution should not run for non-stylua targets" }
         Mock Invoke-StyluaQualityCheck { throw "stylua should not run for workflow-only targets" }
 
         { Invoke-NativeQualityChecksMain -SelectedTool stylua -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @(".github/workflows/script-quality.yml") } |
@@ -133,12 +136,14 @@ Describe "Invoke-NativeQualityChecks target scoping" {
 
         Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
         Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
         Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 0 -Exactly
     }
 
     It "skips Lua-only targets in actionlint mode before reading the manifest or resolving tools" {
         Mock Read-NativeQualityToolManifest { throw "manifest should not be read for non-workflow targets" }
         Mock Resolve-NativeQualityToolExecutable { throw "tool resolution should not run for non-workflow targets" }
+        Mock Resolve-NativeEmbeddedShellCheckExecutable { throw "embedded shellcheck resolution should not run for non-workflow targets" }
         Mock Invoke-ActionlintQualityCheck { throw "actionlint should not run for Lua-only targets" }
 
         { Invoke-NativeQualityChecksMain -SelectedTool actionlint -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("Config/Wezterm/wezterm.lua") } |
@@ -146,6 +151,7 @@ Describe "Invoke-NativeQualityChecks target scoping" {
 
         Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
         Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
         Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 0 -Exactly
     }
 
@@ -165,6 +171,7 @@ Describe "Invoke-NativeQualityChecks target scoping" {
             param($ExecutablePath, $RepositoryRoot, $Files, $ApplyFix)
             $script:styluaSingleToolTargets = @($Files)
         }
+        Mock Resolve-NativeEmbeddedShellCheckExecutable { throw "embedded shellcheck should not resolve in stylua mode" }
         Mock Invoke-ActionlintQualityCheck { throw "actionlint should not run in stylua mode" }
 
         Invoke-NativeQualityChecksMain -SelectedTool stylua -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @(
@@ -177,11 +184,13 @@ Describe "Invoke-NativeQualityChecks target scoping" {
         (ConvertTo-NativeQualityRelativePath -RepositoryRoot $script:repoRoot -Path $script:styluaSingleToolTargets[0]) |
             Should -Be "Config/Wezterm/wezterm.lua"
         Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 1 -Exactly
+        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
         Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 0 -Exactly
     }
 
     It "resolves only tools with matching targets in All mode" {
         $script:resolvedNativeTools = New-Object System.Collections.Generic.List[string]
+        $script:actionlintShellCheckPath = ""
         $workflowPath = ".github/workflows/script-quality.yml"
 
         Mock Read-NativeQualityToolManifest {
@@ -192,18 +201,27 @@ Describe "Invoke-NativeQualityChecks target scoping" {
             $script:resolvedNativeTools.Add($ToolName) | Out-Null
             return "/tmp/$ToolName"
         }
-        Mock Invoke-ActionlintQualityCheck {}
+        Mock Resolve-NativeEmbeddedShellCheckExecutable {
+            return "/tmp/shellcheck"
+        }
+        Mock Invoke-ActionlintQualityCheck {
+            param($ExecutablePath, $ShellCheckExecutablePath, $RepositoryRoot, $Files)
+            $script:actionlintShellCheckPath = $ShellCheckExecutablePath
+        }
         Mock Invoke-StyluaQualityCheck { throw "stylua should not run for workflow-only targets" }
 
         Invoke-NativeQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @($workflowPath)
 
         @($script:resolvedNativeTools.ToArray()) | Should -Be @("actionlint")
+        $script:actionlintShellCheckPath | Should -Be "/tmp/shellcheck"
+        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 1 -Exactly
         Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 1 -Exactly
         Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 0 -Exactly
     }
 
     It "still resolves all requested tools in EnsureOnly mode" {
         $script:resolvedNativeEnsureTools = New-Object System.Collections.Generic.List[string]
+        $script:resolvedNativeEnsureShellCheck = $false
 
         Mock Read-NativeQualityToolManifest {
             return [pscustomobject]@{ tools = [pscustomobject]@{} }
@@ -213,10 +231,33 @@ Describe "Invoke-NativeQualityChecks target scoping" {
             $script:resolvedNativeEnsureTools.Add($ToolName) | Out-Null
             return "/tmp/$ToolName"
         }
+        Mock Resolve-NativeEmbeddedShellCheckExecutable {
+            $script:resolvedNativeEnsureShellCheck = $true
+            return "/tmp/shellcheck"
+        }
 
         Invoke-NativeQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$true -InputFiles @()
 
         @($script:resolvedNativeEnsureTools.ToArray()) | Should -Be @("stylua", "actionlint")
+        $script:resolvedNativeEnsureShellCheck | Should -BeTrue
+    }
+}
+
+Describe "Invoke-NativeQualityChecks actionlint embedded shellcheck" {
+    It "passes repo-managed shellcheck explicitly to actionlint" {
+        $script:capturedActionlintArguments = @()
+
+        Mock Invoke-QualityToolingProcess {
+            param($Context, $FilePath, $ArgumentList, $WorkingDirectory)
+            $script:capturedActionlintArguments = @($ArgumentList)
+            return 0
+        }
+
+        Invoke-ActionlintQualityCheck -ExecutablePath "/tmp/actionlint" -ShellCheckExecutablePath "/tmp/shellcheck" -RepositoryRoot $script:repoRoot -Files @(".github/workflows/script-quality.yml")
+
+        $script:capturedActionlintArguments[0] | Should -Be "-shellcheck"
+        $script:capturedActionlintArguments[1] | Should -Be "/tmp/shellcheck"
+        $script:capturedActionlintArguments | Should -Contain ".github/workflows/script-quality.yml"
     }
 }
 
@@ -251,6 +292,150 @@ Describe "Invoke-NativeQualityChecks manifest contract" {
 }
 
 Describe "Invoke-NativeQualityChecks install robustness" {
+    It "requires executable integrity markers before treating cached native tools as ready" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("native-quality-ready-marker-{0}" -f [guid]::NewGuid().ToString("N"))
+        $installRoot = Join-Path -Path $tempRoot -ChildPath "actionlint/1.7.12/linux-x64"
+        $binRoot = Join-Path -Path $installRoot -ChildPath "bin"
+        $executablePath = Join-Path -Path $binRoot -ChildPath "actionlint"
+        $markerPath = Join-Path -Path $installRoot -ChildPath "asset.json"
+        $assetSpec = [pscustomobject]@{
+            ToolName         = "actionlint"
+            Version          = "1.7.12"
+            VersionPattern   = "1\\.7\\.12"
+            VersionArguments = @("-version")
+            Repository       = "rhysd/actionlint"
+            ReleaseTag       = "v1.7.12"
+            AssetKey         = "linux-x64"
+            RequestedAssetKey = "linux-x64"
+            AssetName        = "actionlint_1.7.12_linux_amd64.tar.gz"
+            Sha256           = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+            Kind             = "tar.gz"
+            ExecutableName   = "actionlint"
+            DownloadUrl      = "https://example.invalid/actionlint.tar.gz"
+            FallbackReason   = ""
+        }
+
+        try {
+            [System.IO.Directory]::CreateDirectory($binRoot) | Out-Null
+            [System.IO.File]::WriteAllText($executablePath, "test executable", [System.Text.UTF8Encoding]::new($false))
+
+            $writeMarker = {
+                param(
+                    [AllowNull()]
+                    [string]$ExecutableSha256,
+
+                    [Parameter(Mandatory = $false)]
+                    [switch]$IncludeMetadata,
+
+                    [Parameter(Mandatory = $false)]
+                    [switch]$IncludeFastFingerprint,
+
+                    [Parameter(Mandatory = $false)]
+                    [string]$FastFingerprint = ""
+                )
+
+                $marker = [ordered]@{
+                    tool              = $assetSpec.ToolName
+                    version           = $assetSpec.Version
+                    repository        = $assetSpec.Repository
+                    releaseTag        = $assetSpec.ReleaseTag
+                    assetKey          = $assetSpec.AssetKey
+                    requestedAssetKey = $assetSpec.RequestedAssetKey
+                    assetName         = $assetSpec.AssetName
+                    sha256            = $assetSpec.Sha256
+                    downloadUrl       = $assetSpec.DownloadUrl
+                }
+                if ($null -ne $ExecutableSha256) {
+                    $marker["executableSha256"] = $ExecutableSha256
+                }
+                if ($IncludeMetadata.IsPresent) {
+                    $executableItem = Get-Item -LiteralPath $executablePath -ErrorAction Stop
+                    $marker["executableSize"] = [string]$executableItem.Length
+                    $marker["executableMtime"] = [string](Get-QualityToolingFileModifiedUnixSeconds -Path $executablePath)
+                }
+                if ($IncludeFastFingerprint.IsPresent) {
+                    $marker["executableFastFingerprintVersion"] = Get-QualityToolingExecutableFastFingerprintVersion
+                    $marker["executableFastFingerprint"] = if ([string]::IsNullOrWhiteSpace($FastFingerprint)) {
+                        Get-QualityToolingExecutableFastFingerprint -Path $executablePath
+                    }
+                    else {
+                        $FastFingerprint
+                    }
+                }
+
+                [System.IO.File]::WriteAllText($markerPath, (($marker | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+            }
+
+            & $writeMarker $null
+            Test-QualityToolingToolReady -Context $script:NativeQualityContext -InstallRoot $installRoot -AssetSpec $assetSpec -RepositoryRoot $script:repoRoot |
+                Should -BeFalse
+
+            & $writeMarker ("0" * 64)
+            Test-QualityToolingToolReady -Context $script:NativeQualityContext -InstallRoot $installRoot -AssetSpec $assetSpec -RepositoryRoot $script:repoRoot |
+                Should -BeFalse
+
+            $actualExecutableSha256 = Get-QualityToolingFileSha256 -Path $executablePath
+            & $writeMarker $actualExecutableSha256 -IncludeMetadata
+            Test-QualityToolingToolReady -Context $script:NativeQualityContext -InstallRoot $installRoot -AssetSpec $assetSpec -RepositoryRoot $script:repoRoot |
+                Should -BeFalse
+
+            & $writeMarker $actualExecutableSha256 -IncludeMetadata -IncludeFastFingerprint -FastFingerprint ("1" * 64)
+            Test-QualityToolingToolReady -Context $script:NativeQualityContext -InstallRoot $installRoot -AssetSpec $assetSpec -RepositoryRoot $script:repoRoot |
+                Should -BeFalse
+
+            & $writeMarker $actualExecutableSha256 -IncludeMetadata -IncludeFastFingerprint
+            Mock Assert-QualityToolingToolVersion { }
+
+            Test-QualityToolingToolReady -Context $script:NativeQualityContext -InstallRoot $installRoot -AssetSpec $assetSpec -RepositoryRoot $script:repoRoot |
+                Should -BeTrue
+            Assert-MockCalled -CommandName Assert-QualityToolingToolVersion -Times 1 -Exactly
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRoot) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "changes the executable fast fingerprint for sampled-byte tampering with restored size and mtime" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("native-quality-fast-fingerprint-{0}" -f [guid]::NewGuid().ToString("N"))
+        $executablePath = Join-Path -Path $tempRoot -ChildPath "sample-tool"
+
+        try {
+            [System.IO.Directory]::CreateDirectory($tempRoot) | Out-Null
+            $bytes = New-Object byte[] (256 * 1024)
+            for ($index = 0; $index -lt $bytes.Length; $index++) {
+                $bytes[$index] = [byte]($index % 251)
+            }
+
+            [System.IO.File]::WriteAllBytes($executablePath, $bytes)
+            $originalItem = Get-Item -LiteralPath $executablePath -ErrorAction Stop
+            $originalMtime = $originalItem.LastWriteTimeUtc
+            $originalUnixMtime = Get-QualityToolingFileModifiedUnixSeconds -Path $executablePath
+            $originalFingerprint = Get-QualityToolingExecutableFastFingerprint -Path $executablePath
+
+            $stream = [System.IO.File]::Open($executablePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::ReadWrite)
+            try {
+                [void]$stream.Seek(65536, [System.IO.SeekOrigin]::Begin)
+                $stream.WriteByte(42)
+            }
+            finally {
+                $stream.Dispose()
+            }
+
+            (Get-Item -LiteralPath $executablePath -ErrorAction Stop).LastWriteTimeUtc = $originalMtime
+
+            (Get-Item -LiteralPath $executablePath -ErrorAction Stop).Length | Should -Be $originalItem.Length
+            Get-QualityToolingFileModifiedUnixSeconds -Path $executablePath | Should -Be $originalUnixMtime
+            Get-QualityToolingExecutableFastFingerprint -Path $executablePath | Should -Not -Be $originalFingerprint
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempRoot) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "rechecks readiness under the install lock and invokes the install command without network access" {
         $script:nativeReadyCheckCount = 0
         $script:nativeInstallCommandCount = 0

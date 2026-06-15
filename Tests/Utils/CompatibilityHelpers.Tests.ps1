@@ -62,6 +62,45 @@ Describe "Resolve-PowerShellExecutablePath" {
         Get-Command Resolve-PowerShellExecutablePath -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
     }
 
+    It "accepts a PowerShell candidate once it executes the bounded sentinel probe" {
+        $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
+        if ($null -eq $pwshCommand) {
+            Set-ItResult -Skipped -Because "pwsh is not available in this environment."
+            return
+        }
+
+        $candidate = (
+            Get-Command -Name 'pwsh' -All -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    if ($null -eq $_) {
+                        return
+                    }
+
+                    if ($null -ne $_.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Source)) {
+                        [string]$_.Source
+                        return
+                    }
+
+                    if ($null -ne $_.PSObject.Properties['Path'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Path)) {
+                        [string]$_.Path
+                    }
+                } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique |
+                Where-Object {
+                    $probe = Test-PowerShellExecutableCandidate -ExecutablePath $_ -TimeoutSeconds 10
+                    [bool]$probe.Usable
+                } |
+                Select-Object -First 1
+        )
+
+        $candidate | Should -Not -BeNullOrEmpty
+        $candidate = [string]$candidate
+        $probe = Test-PowerShellExecutableCandidate -ExecutablePath $candidate -TimeoutSeconds 10
+        $probe.Usable | Should -BeTrue -Because "the resolver probe should not require slow PowerShell shutdown to complete"
+        $probe.Diagnostic | Should -BeExactly "ok"
+    }
+
     It "returns the discovered pwsh path when pwsh is available" {
         $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
         if ($null -eq $pwshCommand) {
@@ -69,7 +108,30 @@ Describe "Resolve-PowerShellExecutablePath" {
             return
         }
 
-        (Resolve-PowerShellExecutablePath) | Should -BeExactly ([string]$pwshCommand.Source)
+        $resolvedExecutable = Resolve-PowerShellExecutablePath
+        $resolvedExecutable | Should -Not -BeNullOrEmpty
+        (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf) | Should -BeTrue
+
+        $pwshCandidates = @(
+            Get-Command -Name 'pwsh' -All -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    if ($null -eq $_) {
+                        return
+                    }
+
+                    if ($null -ne $_.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Source)) {
+                        [string]$_.Source
+                        return
+                    }
+
+                    if ($null -ne $_.PSObject.Properties['Path'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Path)) {
+                        [string]$_.Path
+                    }
+                } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique
+        )
+        $pwshCandidates | Should -Contain $resolvedExecutable
     }
 
     It "prefers pwsh over powershell.exe on Windows-capable probes" {
@@ -79,6 +141,12 @@ Describe "Resolve-PowerShellExecutablePath" {
         }
         Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
             return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        }
+        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Program Files\PowerShell\7\pwsh.exe' } -MockWith {
+            return [pscustomobject]@{ Usable = $true; Diagnostic = 'ok' }
+        }
+        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' } -MockWith {
+            return [pscustomobject]@{ Usable = $true; Diagnostic = 'ok' }
         }
 
         $verboseRecords = @(& { Resolve-PowerShellExecutablePath -Verbose } 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
@@ -92,6 +160,9 @@ Describe "Resolve-PowerShellExecutablePath" {
         Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith { return $null }
         Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
             return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        }
+        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' } -MockWith {
+            return [pscustomobject]@{ Usable = $true; Diagnostic = 'ok' }
         }
 
         $resolvedExecutable = Resolve-PowerShellExecutablePath
@@ -112,6 +183,45 @@ Describe "Resolve-PowerShellExecutablePath" {
         {
             Resolve-PowerShellExecutablePath
         } | Should -Throw -ExpectedMessage '*E_COMPATIBILITY_POWERSHELL_EXECUTABLE_NOT_FOUND*'
+    }
+
+    It "resolves the same pwsh path stably across repeated probes (race regression guard)" {
+        # The intermittent WinPS 5.1 failure was a probe race: a usable pwsh wrote its
+        # sentinel and exited inside a single poll window, so the candidate was spuriously
+        # rejected. Re-run the real resolver several times; every run must succeed.
+        $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
+        if ($null -eq $pwshCommand) {
+            Set-ItResult -Skipped -Because "pwsh is not available in this environment."
+            return
+        }
+
+        $resolved = @(1..3 | ForEach-Object { Resolve-PowerShellExecutablePath })
+        $resolved | Should -Not -Contain $null
+        @($resolved | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count | Should -Be 0
+        @($resolved | Sort-Object -Unique).Count | Should -Be 1
+    }
+}
+
+Describe "Get-PowerShellProbeOutcome" {
+    # Deterministic truth-table coverage for the pure probe classifier extracted from
+    # Test-PowerShellExecutableCandidate. The authoritative invariant - "a present sentinel
+    # means usable, regardless of process exit/exit-code state" - is the fix for the probe
+    # race; the remaining rows pin the failure-mode classification.
+    It "exposes the probe classifier helper" {
+        Get-Command Get-PowerShellProbeOutcome -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+    }
+
+    It "classifies probe state: <Name>" -ForEach @(
+        @{ Name = "sentinel-present-exited-zero"; SentinelExists = $true; ProcessExited = $true; ExitCode = 0; StderrPreview = "<empty>"; ExpectedUsable = $true; ExpectedDiagnostic = "ok" }
+        @{ Name = "sentinel-present-exited-nonzero"; SentinelExists = $true; ProcessExited = $true; ExitCode = 9; StderrPreview = "noise"; ExpectedUsable = $true; ExpectedDiagnostic = "ok" }
+        @{ Name = "sentinel-present-still-running"; SentinelExists = $true; ProcessExited = $false; ExitCode = 0; StderrPreview = "<empty>"; ExpectedUsable = $true; ExpectedDiagnostic = "ok" }
+        @{ Name = "no-sentinel-still-running"; SentinelExists = $false; ProcessExited = $false; ExitCode = 0; StderrPreview = "<empty>"; ExpectedUsable = $false; ExpectedDiagnostic = "probe-timeout" }
+        @{ Name = "no-sentinel-exited-nonzero"; SentinelExists = $false; ProcessExited = $true; ExitCode = 3; StderrPreview = "kaboom"; ExpectedUsable = $false; ExpectedDiagnostic = "probe-exit-3:kaboom" }
+        @{ Name = "no-sentinel-exited-zero"; SentinelExists = $false; ProcessExited = $true; ExitCode = 0; StderrPreview = "<empty>"; ExpectedUsable = $false; ExpectedDiagnostic = "probe-no-sentinel" }
+    ) {
+        $outcome = Get-PowerShellProbeOutcome -SentinelExists $SentinelExists -ProcessExited $ProcessExited -ExitCode $ExitCode -StderrPreview $StderrPreview
+        [bool]$outcome.Usable | Should -Be $ExpectedUsable
+        $outcome.Diagnostic | Should -BeExactly $ExpectedDiagnostic
     }
 }
 

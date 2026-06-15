@@ -365,12 +365,19 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
     }
 
     It "caps pre-commit version probe timeout to helper range" {
+        $script:capturedResolverTimeout = 0
         $script:capturedVersionProbeTimeout = 0
-        Mock Get-Command {
+        Mock Resolve-PreCommitCliExecutable {
+            param($RepositoryRoot, $TimeoutSeconds, $EnableAutoRepair, $AutoRepairTimeoutSeconds)
+
+            $script:capturedResolverTimeout = [int]$TimeoutSeconds
             return [pscustomobject]@{
-                Source = "pre-commit"
+                Executable      = "pre-commit"
+                ExpectedVersion = "4.6.0"
+                ActualVersion   = "4.6.0"
+                AutoRepaired    = $false
             }
-        } -ParameterFilter { $Name -eq "pre-commit" }
+        }
         Mock Assert-PreCommitCliVersion {
             param($PreCommitExecutable, $RepositoryRoot, $TimeoutSeconds)
 
@@ -385,6 +392,7 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
         Get-PreCommitExecutableOrThrow -RepositoryRoot $script:repoRoot -DeadlineUtc ([datetime]::UtcNow.AddSeconds(500)) -OverallTimeoutSeconds 500 |
             Should -Be "pre-commit"
 
+        $script:capturedResolverTimeout | Should -Be 120
         $script:capturedVersionProbeTimeout | Should -Be 120
     }
 

@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [string]$TestPath,
+    [string[]]$TestPath,
 
     [Parameter(Mandatory = $false)]
     [ValidateSet("None", "Normal", "Detailed", "Diagnostic")]
@@ -198,8 +198,10 @@ function Get-PesterResultCount {
 
 $minimumPesterVersion = [version]"5.5.0"
 
-if (-not (Test-Path -Path $TestPath)) {
-    throw "E_CI_PESTER_TEST_PATH_MISSING: test path was not found at '$TestPath'."
+foreach ($path in @($TestPath)) {
+    if (-not (Test-Path -Path $path)) {
+        throw "E_CI_PESTER_TEST_PATH_MISSING: test path was not found at '$path'."
+    }
 }
 
 if ($EnableCoverage) {
@@ -328,7 +330,7 @@ if ($failedContainersCount -gt 0) {
 }
 
 if ($totalCount -eq 0) {
-    throw "E_CI_PESTER_NO_TESTS_DISCOVERED: Pester discovered zero tests for '$TestPath'."
+    throw "E_CI_PESTER_NO_TESTS_DISCOVERED: Pester discovered zero tests for '$($TestPath -join ', ')'."
 }
 
 if ((Get-PesterResultCount -Result $result -PropertyName "FailedCount") -gt 0) {

@@ -68,7 +68,54 @@ function Install-PowerShellQualityModuleRequirement {
         $installModuleParameters["SkipPublisherCheck"] = $true
     }
 
-    Install-Module @installModuleParameters
+    $installModuleError = $null
+    try {
+        Install-Module @installModuleParameters
+        return
+    }
+    catch {
+        $installModuleError = $_
+        Write-Verbose ("PowerShell module bootstrap diagnostics: Install-Module failed for '{0}': {1}" -f $Requirement.ModuleName, $_.Exception.Message)
+    }
+
+    $installPsResourceCommand = Get-Command -Name "Install-PSResource" -ErrorAction SilentlyContinue
+    if ($null -ne $installPsResourceCommand) {
+        $installPsResourceParameters = @{
+            Name = $Requirement.ModuleName
+            Repository = "PSGallery"
+            Scope = "CurrentUser"
+            Version = "[{0},)" -f $Requirement.MinimumVersion
+            Reinstall = $true
+            Quiet = $true
+            AcceptLicense = $true
+            ErrorAction = "Stop"
+        }
+
+        if ($installPsResourceCommand.Parameters.ContainsKey("TrustRepository")) {
+            $installPsResourceParameters["TrustRepository"] = $true
+        }
+
+        try {
+            Write-Warning (
+                "W_MODULE_BOOTSTRAP_PSRESOURCE_FALLBACK: Install-Module failed for '{0}'; retrying with Install-PSResource." -f
+                $Requirement.ModuleName
+            )
+            Install-PSResource @installPsResourceParameters
+            return
+        }
+        catch {
+            throw (
+                "Install-Module failed: {0}; Install-PSResource failed: {1}" -f
+                [string]$installModuleError.Exception.Message,
+                [string]$_.Exception.Message
+            )
+        }
+    }
+
+    throw (
+        "Install-Module failed: {0}; Install-PSResource unavailable." -f
+        [string]$installModuleError.Exception.Message
+    )
 }
 
 function Test-PSGalleryRepositoryIsTrusted {
@@ -110,6 +157,16 @@ function Invoke-PowerShellQualityModuleBootstrap {
     }
 
     if (-not $SkipPSGalleryTrust) {
+        foreach ($galleryModuleName in @("PowerShellGet", "Microsoft.PowerShell.PSResourceGet")) {
+            try {
+                Import-Module -Name $galleryModuleName -ErrorAction Stop
+                Write-Verbose ("PowerShell module bootstrap diagnostics: imported gallery helper module '{0}'." -f $galleryModuleName)
+            }
+            catch {
+                Write-Verbose ("PowerShell module bootstrap diagnostics: gallery helper module import skipped for '{0}': {1}" -f $galleryModuleName, $_.Exception.Message)
+            }
+        }
+
         # Enable TLS 1.2 on Windows PowerShell 5.1 (Desktop edition) only; the .NET Framework default
         # protocol set predates TLS 1.2 and PSGallery requires it. Gate on PSEdition (never bare
         # $IsWindows, which is undefined under StrictMode on 5.1) so PowerShell 7+ is unaffected.
@@ -240,9 +297,10 @@ function Invoke-PowerShellQualityModuleBootstrap {
             $installedVersions = Get-AvailableModuleVersionsText -ModuleName $requirement.ModuleName
             $modulePathDiagnostics = Get-ModulePathDiagnosticsText
             throw (
-                "E_MODULE_BOOTSTRAP_INSTALL_FAILED: failed to install module '{0}' (minimumVersion={1}). Installed versions: {2}. Module path diagnostics: {3}. Manual remediation: Install-Module {0} -Repository PSGallery -Scope CurrentUser -MinimumVersion {1} -Force" -f
+                "E_MODULE_BOOTSTRAP_INSTALL_FAILED: failed to install module '{0}' (minimumVersion={1}). Install error: {2}. Installed versions: {3}. Module path diagnostics: {4}. Manual remediation: Install-Module {0} -Repository PSGallery -Scope CurrentUser -MinimumVersion {1} -Force" -f
                 $requirement.ModuleName,
                 $requirement.MinimumVersion,
+                $_.Exception.Message,
                 $installedVersions,
                 $modulePathDiagnostics
             )

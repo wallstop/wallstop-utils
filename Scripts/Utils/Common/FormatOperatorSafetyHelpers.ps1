@@ -1,3 +1,18 @@
+# FormatOperatorSafetyHelpers.ps1
+#
+# Static guard for the ONE real PowerShell operator-binding hazard in this category: a
+# multiline '-f' (Format) whose single, non-array right operand starts on a later line and is
+# followed by a same-line continuation comma. In an invocation/argument context that trailing
+# comma steals the operand into an OUTER comma list, so '-f' under-binds (formats with too few
+# arguments). That is what Get-FormatOperatorContinuationViolations detects.
+#
+# Deliberately NOT guarded, because it is not a mis-binding: '@(a, b -join c)' and similar
+# '@(... -join/-split/-replace/-f ...)' forms. The comma (array) operator binds TIGHTER than
+# those binary operators, so '@(a, b -join c)' parses as '@( (a, b) -join c )' - the operator
+# receives the WHOLE array, joins both elements, and merely wraps the scalar result in a
+# redundant 1-element array (which coerces away at any [string]/[string[]] parameter). It is a
+# readability nit, not a correctness bug; prefer the explicit '@(a, b) -join c' form, but do
+# not add a static guard that would flag the harmless pattern as a defect.
 $compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath 'CompatibilityHelpers.ps1'
 if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
     throw "E_CONFIG_ERROR: Compatibility helper file not found at '$compatibilityHelpersPath' (PSScriptRoot='$PSScriptRoot')."

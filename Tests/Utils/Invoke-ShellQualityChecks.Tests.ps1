@@ -132,11 +132,14 @@ Describe "Invoke-ShellQualityChecks target scoping" {
 Describe "Invoke-ShellQualityChecks bounded process execution" {
     It "kills a long-running child process when the timeout elapses" {
         $pwshPath = $null
-        $pwshCommand = Get-Command -Name pwsh -ErrorAction SilentlyContinue
-        if ($null -ne $pwshCommand) {
-            $pwshPath = $pwshCommand.Source
+        try {
+            $pwshPath = Resolve-PowerShellExecutablePath
         }
-        else {
+        catch {
+            $pwshPath = $null
+        }
+
+        if ([string]::IsNullOrWhiteSpace($pwshPath)) {
             try {
                 $pwshPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
             }

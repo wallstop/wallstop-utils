@@ -21,8 +21,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $script:NativeQualityManifestPath = Join-Path -Path $PSScriptRoot -ChildPath "native-quality-tools.json"
+$script:NativeEmbeddedShellQualityManifestPath = Join-Path -Path $PSScriptRoot -ChildPath "shell-quality-tools.json"
 $script:NativeQualityToolRootName = ".tools/native-quality"
+$script:NativeEmbeddedShellQualityToolRootName = ".tools/shell-quality"
 $script:NativeQualityDownloadTimeoutSeconds = 300
+$script:NativeEmbeddedShellQualityDownloadTimeoutSeconds = 180
 $script:NativeQualityLockTimeoutSeconds = 60
 $script:NativeQualityLockRetryMilliseconds = 200
 
@@ -32,6 +35,14 @@ if (-not [string]::IsNullOrWhiteSpace($env:WALLSTOP_NATIVE_TOOL_DOWNLOAD_TIMEOUT
     }
 
     $script:NativeQualityDownloadTimeoutSeconds = [int]$env:WALLSTOP_NATIVE_TOOL_DOWNLOAD_TIMEOUT_SECONDS
+}
+
+if (-not [string]::IsNullOrWhiteSpace($env:WALLSTOP_SHELL_TOOL_DOWNLOAD_TIMEOUT_SECONDS)) {
+    if ($env:WALLSTOP_SHELL_TOOL_DOWNLOAD_TIMEOUT_SECONDS -notmatch '^[0-9]+$' -or [int]$env:WALLSTOP_SHELL_TOOL_DOWNLOAD_TIMEOUT_SECONDS -lt 30) {
+        throw "E_SHELL_TOOL_TIMEOUT_CONFIG: WALLSTOP_SHELL_TOOL_DOWNLOAD_TIMEOUT_SECONDS must be an integer >= 30 seconds (received '$env:WALLSTOP_SHELL_TOOL_DOWNLOAD_TIMEOUT_SECONDS')."
+    }
+
+    $script:NativeEmbeddedShellQualityDownloadTimeoutSeconds = [int]$env:WALLSTOP_SHELL_TOOL_DOWNLOAD_TIMEOUT_SECONDS
 }
 
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/StrictModeHelpers.ps1"
@@ -58,6 +69,17 @@ $script:NativeQualityContext = New-QualityToolingContext `
     -ToolSuiteLabel "native" `
     -ManifestContextLabel "native quality tool manifest" `
     -MarkerContextLabel "native quality asset marker"
+
+$script:NativeEmbeddedShellQualityContext = New-QualityToolingContext `
+    -DiagnosticPrefix "SHELL_TOOL" `
+    -TargetDiagnosticPrefix "SHELL_QUALITY" `
+    -LogPrefix "[shell-quality]" `
+    -ManifestPath $script:NativeEmbeddedShellQualityManifestPath `
+    -ToolRootName $script:NativeEmbeddedShellQualityToolRootName `
+    -DownloadTimeoutSeconds $script:NativeEmbeddedShellQualityDownloadTimeoutSeconds `
+    -ToolSuiteLabel "shell" `
+    -ManifestContextLabel "shell quality tool manifest" `
+    -MarkerContextLabel "shell quality asset marker"
 
 function Get-NativeQualityRepositoryRoot {
     return (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "../../..") -ErrorAction Stop).Path
@@ -166,6 +188,40 @@ function Resolve-NativeQualityToolExecutable {
     )
 
     return Resolve-QualityToolingToolExecutable -Context $script:NativeQualityContext -Manifest $Manifest -ToolName $ToolName -RepositoryRoot $RepositoryRoot -LockTimeoutSeconds $script:NativeQualityLockTimeoutSeconds -LockRetryMilliseconds $script:NativeQualityLockRetryMilliseconds -InstallCommand { param($InstallRoot, $AssetSpec, $RepositoryRoot) Install-NativeQualityToolAsset -InstallRoot $InstallRoot -AssetSpec $AssetSpec -RepositoryRoot $RepositoryRoot }
+}
+
+function Read-NativeEmbeddedShellQualityToolManifest {
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$ManifestPath = $script:NativeEmbeddedShellQualityManifestPath
+    )
+
+    return Read-QualityToolingManifest -Context $script:NativeEmbeddedShellQualityContext -ManifestPath $ManifestPath
+}
+
+function Install-NativeEmbeddedShellQualityToolAsset {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallRoot,
+
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$AssetSpec,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    Install-QualityToolingToolAsset -Context $script:NativeEmbeddedShellQualityContext -InstallRoot $InstallRoot -AssetSpec $AssetSpec -RepositoryRoot $RepositoryRoot -DownloadCommand { param($AssetSpec, $DownloadPath) Invoke-QualityToolingDownload -Context $script:NativeEmbeddedShellQualityContext -AssetSpec $AssetSpec -DownloadPath $DownloadPath }
+}
+
+function Resolve-NativeEmbeddedShellCheckExecutable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot
+    )
+
+    $manifest = Read-NativeEmbeddedShellQualityToolManifest
+    return Resolve-QualityToolingToolExecutable -Context $script:NativeEmbeddedShellQualityContext -Manifest $manifest -ToolName "shellcheck" -RepositoryRoot $RepositoryRoot -LockTimeoutSeconds $script:NativeQualityLockTimeoutSeconds -LockRetryMilliseconds $script:NativeQualityLockRetryMilliseconds -InstallCommand { param($InstallRoot, $AssetSpec, $RepositoryRoot) Install-NativeEmbeddedShellQualityToolAsset -InstallRoot $InstallRoot -AssetSpec $AssetSpec -RepositoryRoot $RepositoryRoot }
 }
 
 function Resolve-NativeQualityTargetFiles {
@@ -285,13 +341,16 @@ function Invoke-ActionlintQualityCheck {
         [string]$ExecutablePath,
 
         [Parameter(Mandatory = $true)]
+        [string]$ShellCheckExecutablePath,
+
+        [Parameter(Mandatory = $true)]
         [string]$RepositoryRoot,
 
         [Parameter(Mandatory = $true)]
         [string[]]$Files
     )
 
-    $arguments = @()
+    $arguments = @("-shellcheck", $ShellCheckExecutablePath)
     foreach ($file in @($Files)) {
         $arguments += (ConvertTo-NativeQualityRelativePath -RepositoryRoot $RepositoryRoot -Path $file)
     }
@@ -351,6 +410,11 @@ function Invoke-NativeQualityChecksMain {
         $toolExecutables[$toolName] = Resolve-NativeQualityToolExecutable -Manifest $manifest -ToolName $toolName -RepositoryRoot $repositoryRoot
     }
 
+    $embeddedShellCheckExecutable = ""
+    if ($toolNames -contains "actionlint") {
+        $embeddedShellCheckExecutable = Resolve-NativeEmbeddedShellCheckExecutable -RepositoryRoot $repositoryRoot
+    }
+
     if ($OnlyEnsureTools) {
         Write-Host "[native-quality] Native quality tools are ready."
         return
@@ -366,7 +430,7 @@ function Invoke-NativeQualityChecksMain {
     if ($toolExecutables.ContainsKey("actionlint")) {
         $actionlintTargets = @($toolTargetMap["actionlint"])
         if ($actionlintTargets.Count -gt 0) {
-            Invoke-ActionlintQualityCheck -ExecutablePath $toolExecutables["actionlint"] -RepositoryRoot $repositoryRoot -Files $actionlintTargets
+            Invoke-ActionlintQualityCheck -ExecutablePath $toolExecutables["actionlint"] -ShellCheckExecutablePath $embeddedShellCheckExecutable -RepositoryRoot $repositoryRoot -Files $actionlintTargets
         }
     }
 }

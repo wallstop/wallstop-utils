@@ -43,6 +43,13 @@ if [[ $repo_root_exit -ne 0 || -z "$repo_root" ]]; then
 fi
 cd "$repo_root"
 
+precommit_home="${repo_root}/.tools/precommit-cli/pre-commit-home"
+if mkdir -p "$precommit_home" > /dev/null 2>&1; then
+  export PRE_COMMIT_HOME="$precommit_home"
+else
+  emit_diagnostic "W_PREPUSH_PRECOMMIT_HOME_UNAVAILABLE: unable to create managed PRE_COMMIT_HOME at '${precommit_home}'; pre-commit will use its host default cache."
+fi
+
 hook_timeout_helpers_path="${repo_root}/Scripts/Utils/Common/HookTimeout.sh"
 if [[ ! -f "$hook_timeout_helpers_path" ]]; then
   emit_diagnostic "E_HOOK_TIMEOUT_HELPER_MISSING: timeout helper file not found at '$hook_timeout_helpers_path'."
@@ -59,10 +66,14 @@ prepush_recovery_setup_slack_seconds=15
 minimum_prepush_timeout_seconds=$((prepush_recovery_inner_timeout_seconds + prepush_recovery_shutdown_buffer_seconds + prepush_recovery_setup_slack_seconds))
 zero_oid="0000000000000000000000000000000000000000"
 resolved_changed_files=()
+resolved_changed_file_oids=()
 saw_pre_push_ref_update=0
+saw_non_head_push_ref=0
 changed_file_list_path=""
+fast_validation_root_path=""
+fast_tool_resolver_loaded=0
 
-trap 'if [[ -n "$changed_file_list_path" ]]; then rm -f "$changed_file_list_path"; fi' EXIT
+trap 'if [[ -n "$changed_file_list_path" ]]; then rm -f "$changed_file_list_path"; fi; if [[ -n "$fast_validation_root_path" ]]; then rm -rf "$fast_validation_root_path"; fi' EXIT
 
 validate_timeout_seconds() {
   local timeout_value="$1"
@@ -93,6 +104,9 @@ runtime_budget_seconds() {
   case "$label" in
     "pre-push changed-file pre-commit validation" | "legacy pre-push PowerShell validation")
       printf '%s\n' "${WALLSTOP_PREPUSH_ACTIVE_RUNTIME_BUDGET_SECONDS:-30}"
+      ;;
+    "pre-push fast gate" | "pre-push fast actionlint" | "pre-push fast actionlint bootstrap")
+      printf '%s\n' "${WALLSTOP_PREPUSH_FAST_RUNTIME_BUDGET_SECONDS:-1}"
       ;;
     *)
       printf '%s\n' "${WALLSTOP_PREPUSH_NOOP_RUNTIME_BUDGET_SECONDS:-1}"
@@ -133,13 +147,21 @@ run_with_timeout() {
   local label="$1"
   shift
   local phase_start_seconds=$SECONDS
+  local caller_errexit_enabled=0
+  case "$-" in
+    *e*) caller_errexit_enabled=1 ;;
+  esac
 
   local timeout_command
   if timeout_command="$(resolve_timeout_command)"; then
     set +e
     "$timeout_command" -k 2s "${timeout_seconds}s" "$@"
     local command_exit=$?
-    set -e
+    if [[ $caller_errexit_enabled -eq 1 ]]; then
+      set -e
+    else
+      set +e
+    fi
 
     if [[ $command_exit -eq 124 || $command_exit -eq 137 ]]; then
       emit_diagnostic "E_HOOK_TIMEOUT: ${label} exceeded ${timeout_seconds}s. Override with WALLSTOP_PREPUSH_TIMEOUT_SECONDS."
@@ -180,7 +202,11 @@ run_with_timeout() {
   kill "$watchdog_pid" > /dev/null 2>&1 || true
   wait "$watchdog_pid" > /dev/null 2>&1 || true
   wallstop_cleanup_timeout_command_processes "$command_pid" "$command_process_group_mode" "$label"
-  set -e
+  if [[ $caller_errexit_enabled -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
 
   if [[ -f "$timeout_flag_file" ]]; then
     rm -f "$timeout_flag_file"
@@ -211,6 +237,203 @@ remaining_timeout_seconds() {
 
 validate_timeout_seconds "$prepush_timeout_seconds" "WALLSTOP_PREPUSH_TIMEOUT_SECONDS"
 
+is_truthy() {
+  case "${1:-}" in
+    1 | true | TRUE | yes | YES | on | ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+load_fast_tool_resolver() {
+  if [[ "$fast_tool_resolver_loaded" -eq 1 ]]; then
+    return 0
+  fi
+
+  local fast_tool_resolver_path="${repo_root}/Scripts/Utils/Common/HookFastToolResolver.sh"
+  if [[ ! -f "$fast_tool_resolver_path" ]]; then
+    emit_diagnostic "E_PREPUSH_FAST_TOOL_RESOLVER_MISSING: fast tool resolver file not found at '$fast_tool_resolver_path'."
+    return 1
+  fi
+
+  # shellcheck source=Scripts/Utils/Common/HookFastToolResolver.sh
+  . "$fast_tool_resolver_path"
+  fast_tool_resolver_loaded=1
+}
+
+ensure_fast_validation_root() {
+  if [[ -n "$fast_validation_root_path" ]]; then
+    return 0
+  fi
+
+  fast_validation_root_path="$(mktemp -d 2> /dev/null || true)"
+  if [[ -z "$fast_validation_root_path" ]]; then
+    fast_validation_root_path="/tmp/wallstop-prepush-fast.$$.$RANDOM"
+    if ! mkdir -p "$fast_validation_root_path" > /dev/null 2>&1; then
+      emit_diagnostic "E_PREPUSH_FAST_TEMP_UNAVAILABLE: failed to create temporary directory for pushed-blob validation."
+      return 1
+    fi
+  fi
+}
+
+extract_prepush_blob_for_fast_validation() {
+  local local_oid="$1"
+  local changed_file="$2"
+  local target_path
+  local target_dir
+
+  if ! git cat-file -e "${local_oid}:${changed_file}" > /dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! ensure_fast_validation_root; then
+    return 1
+  fi
+
+  target_path="${fast_validation_root_path}/${local_oid}/${changed_file}"
+  target_dir="${target_path%/*}"
+  if [[ "$target_dir" != "$target_path" ]]; then
+    if ! mkdir -p "$target_dir" > /dev/null 2>&1; then
+      emit_diagnostic "E_PREPUSH_FAST_TEMP_UNAVAILABLE: failed to create temporary parent directory for pushed-blob validation. file=${changed_file}"
+      return 1
+    fi
+  fi
+
+  if ! git show "${local_oid}:${changed_file}" > "$target_path"; then
+    emit_diagnostic "E_PREPUSH_FAST_BLOB_EXTRACT_FAILED: failed to extract pushed blob for validation. file=${changed_file} localOid=${local_oid}"
+    return 1
+  fi
+
+  printf '%s\n' "$target_path"
+}
+
+validate_prepush_shell_blob() {
+  local local_oid="$1"
+  local changed_file="$2"
+
+  if ! git cat-file -e "${local_oid}:${changed_file}" > /dev/null 2>&1; then
+    return 0
+  fi
+
+  if git cat-file blob "${local_oid}:${changed_file}" | bash -n; then
+    return 0
+  fi
+
+  emit_diagnostic "E_PREPUSH_FAST_SHELL_PARSE_FAILED: bash syntax check failed for pushed blob. file=${changed_file} localOid=${local_oid}"
+  return 1
+}
+
+# Ensures the repo-managed actionlint asset is bootstrapped. Returns 0 only when the asset
+# resolves to a non-empty path. The resolved path is kept local so callers do not depend on
+# a dynamic-scope side effect; callers re-resolve explicitly (see run_fast_prepush_gate).
+ensure_prepush_fast_actionlint_tools() {
+  if ! load_fast_tool_resolver; then
+    return 1
+  fi
+
+  local resolved_actionlint_path
+  resolved_actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+
+  if [[ -n "$resolved_actionlint_path" ]]; then
+    return 0
+  fi
+
+  if command -v pwsh > /dev/null 2>&1; then
+    local remaining_seconds
+    if ! remaining_seconds="$(remaining_timeout_seconds "pre-push fast actionlint bootstrap")"; then
+      return 124
+    fi
+
+    set +e
+    run_with_timeout "$remaining_seconds" "pre-push fast actionlint bootstrap" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-NativeQualityChecks.ps1" -Tool actionlint -EnsureOnly
+    local ensure_exit=$?
+    set -e
+    if [[ $ensure_exit -ne 0 ]]; then
+      return "$ensure_exit"
+    fi
+
+    resolved_actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+    if [[ -n "$resolved_actionlint_path" ]]; then
+      return 0
+    fi
+  fi
+
+  emit_diagnostic "E_PREPUSH_FAST_NATIVE_TOOL_MISSING: repo-managed actionlint asset is unavailable and automated bootstrap did not make it available. Run validation preflight."
+  return 1
+}
+
+run_fast_prepush_gate() {
+  local phase_start_seconds=$SECONDS
+  local file
+  local local_oid
+  local extracted_file
+  local index
+  local run_workflow_lint=0
+  local workflow_targets=()
+
+  if is_truthy "${WALLSTOP_PREPUSH_FAST_WORKFLOW_LINT:-0}"; then
+    run_workflow_lint=1
+  fi
+
+  for index in "${!resolved_changed_files[@]}"; do
+    file="${resolved_changed_files[$index]}"
+    local_oid="${resolved_changed_file_oids[$index]}"
+    [[ -n "$file" ]] || continue
+    [[ -n "$local_oid" ]] || continue
+
+    case "$file" in
+      Scripts/*.sh | .devcontainer/*.sh | .githooks/pre-commit | .githooks/pre-push)
+        if ! validate_prepush_shell_blob "$local_oid" "$file"; then
+          return 1
+        fi
+        ;;
+      .github/workflows/*.yml | .github/workflows/*.yaml)
+        if [[ "$run_workflow_lint" -ne 1 ]]; then
+          continue
+        fi
+        if ! extracted_file="$(extract_prepush_blob_for_fast_validation "$local_oid" "$file")"; then
+          return 1
+        fi
+        [[ -n "$extracted_file" ]] || continue
+        workflow_targets+=("$extracted_file")
+        ;;
+    esac
+  done
+
+  if [[ ${#workflow_targets[@]} -gt 0 ]]; then
+    set +e
+    ensure_prepush_fast_actionlint_tools
+    local ensure_actionlint_exit=$?
+    set -e
+    if [[ $ensure_actionlint_exit -ne 0 ]]; then
+      return "$ensure_actionlint_exit"
+    fi
+
+    # Resolve the executable explicitly (ensure_* loaded the resolver) instead of relying on
+    # a dynamic-scope side effect, then refuse to invoke an empty path so a resolver
+    # regression can never exec an empty string under run_with_timeout.
+    local actionlint_path
+    actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+    if [[ -z "$actionlint_path" ]]; then
+      emit_diagnostic "E_PREPUSH_FAST_ACTIONLINT_PATH_EMPTY: actionlint resolved to an empty path after bootstrap reported success; refusing to invoke an empty executable. Run validation preflight."
+      return 1
+    fi
+
+    local remaining_seconds
+    if ! remaining_seconds="$(remaining_timeout_seconds "pre-push fast actionlint")"; then
+      return 124
+    fi
+
+    run_with_timeout "$remaining_seconds" "pre-push fast actionlint" "$actionlint_path" -shellcheck "" -pyflakes "" "${workflow_targets[@]}"
+    return $?
+  fi
+
+  return 0
+}
+
 required_precommit_version() {
   local requirements_path="${repo_root}/requirements.txt"
   local version=""
@@ -240,12 +463,14 @@ print_precommit_bootstrap_guidance() {
 }
 
 append_changed_files_from_output() {
-  local changed_file_output="$1"
+  local local_oid="$1"
+  local changed_file_output="$2"
   local changed_file
 
   while IFS= read -r changed_file; do
     if [[ -n "$changed_file" ]]; then
       resolved_changed_files+=("$changed_file")
+      resolved_changed_file_oids+=("$local_oid")
     fi
   done <<< "$changed_file_output"
 }
@@ -284,7 +509,7 @@ append_diff_changed_files() {
     return "$diff_exit"
   fi
 
-  append_changed_files_from_output "$diff_output"
+  append_changed_files_from_output "$local_oid" "$diff_output"
 }
 
 resolve_new_ref_baseline() {
@@ -320,6 +545,7 @@ resolve_new_ref_baseline() {
 }
 
 append_tracked_files_fallback() {
+  local local_oid="$1"
   local tracked_output
   local tracked_stderr
   local tracked_stderr_path
@@ -329,7 +555,7 @@ append_tracked_files_fallback() {
     tracked_stderr_path="/tmp/wallstop-prepush-ls-files.$$.$RANDOM.err"
   fi
   set +e
-  tracked_output="$(git ls-files 2> "$tracked_stderr_path")"
+  tracked_output="$(git ls-tree -r --name-only "$local_oid" 2> "$tracked_stderr_path")"
   tracked_exit=$?
   tracked_stderr=""
   if [[ -f "$tracked_stderr_path" ]]; then
@@ -347,28 +573,36 @@ append_tracked_files_fallback() {
         tracked_diagnostic_output="$tracked_stderr"
       fi
     fi
-    emit_diagnostic "E_PREPUSH_CHANGED_FILE_FALLBACK_FAILED: failed to list tracked files for missing-baseline fallback (exitCode=${tracked_exit}). Git output: ${tracked_diagnostic_output}"
+    emit_diagnostic "E_PREPUSH_CHANGED_FILE_FALLBACK_FAILED: failed to list pushed commit tree for missing-baseline fallback (exitCode=${tracked_exit}). Git output: ${tracked_diagnostic_output}"
     return "$tracked_exit"
   fi
 
-  append_changed_files_from_output "$tracked_output"
+  append_changed_files_from_output "$local_oid" "$tracked_output"
 }
 
 dedupe_changed_files() {
-  local sorted_files=""
+  local sorted_pairs=""
   local changed_file=""
+  local changed_oid=""
+  local index
 
   if [[ ${#resolved_changed_files[@]} -eq 0 ]]; then
     return 0
   fi
 
-  sorted_files="$(printf '%s\n' "${resolved_changed_files[@]}" | LC_ALL=C sort -u)"
+  sorted_pairs="$(
+    for index in "${!resolved_changed_files[@]}"; do
+      printf '%s\t%s\n' "${resolved_changed_file_oids[$index]}" "${resolved_changed_files[$index]}"
+    done | LC_ALL=C sort -u
+  )"
   resolved_changed_files=()
-  while IFS= read -r changed_file; do
-    if [[ -n "$changed_file" ]]; then
+  resolved_changed_file_oids=()
+  while IFS=$'\t' read -r changed_oid changed_file; do
+    if [[ -n "$changed_file" && -n "$changed_oid" ]]; then
       resolved_changed_files+=("$changed_file")
+      resolved_changed_file_oids+=("$changed_oid")
     fi
-  done <<< "$sorted_files"
+  done <<< "$sorted_pairs"
 }
 
 write_changed_file_list() {
@@ -380,6 +614,63 @@ write_changed_file_list() {
   fi
 
   printf '%s\n' "${resolved_changed_files[@]}" > "$changed_file_list_path"
+}
+
+ensure_prepush_full_suite_can_use_worktree() {
+  local file
+  local local_oid
+  local index
+  local pushed_hash
+  local worktree_hash
+  local index_hash
+
+  if [[ "$saw_non_head_push_ref" -ne 0 ]]; then
+    emit_diagnostic "E_PREPUSH_FULL_NON_HEAD_REF: recovery-backed pre-push validation reads working-tree files and refuses to validate pushed commits that differ from HEAD. The default fast gate validates supported pushed blobs directly."
+    return 1
+  fi
+
+  for index in "${!resolved_changed_files[@]}"; do
+    file="${resolved_changed_files[$index]}"
+    local_oid="${resolved_changed_file_oids[$index]}"
+    [[ -n "$file" ]] || continue
+    [[ -n "$local_oid" ]] || continue
+
+    if ! git cat-file -e "${local_oid}:${file}" > /dev/null 2>&1; then
+      continue
+    fi
+
+    if [[ ! -f "$file" ]]; then
+      emit_diagnostic "E_PREPUSH_FULL_WORKTREE_DRIFT: recovery-backed pre-push validation reads working-tree files and refuses to validate a missing or non-file worktree target. Commit, stash, or restore this file before running WALLSTOP_PREPUSH_FULL_SUITE=1. file=${file}"
+      return 1
+    fi
+
+    if ! pushed_hash="$(git rev-parse "${local_oid}:${file}" 2> /dev/null)"; then
+      emit_diagnostic "E_PREPUSH_FULL_BLOB_COMPARE_FAILED: failed to resolve pushed blob for full-suite worktree guard. file=${file} localOid=${local_oid}"
+      return 1
+    fi
+
+    if ! worktree_hash="$(git hash-object -- "$file" 2> /dev/null)"; then
+      emit_diagnostic "E_PREPUSH_FULL_WORKTREE_HASH_FAILED: failed to hash worktree target for full-suite guard. file=${file}"
+      return 1
+    fi
+
+    if [[ "$worktree_hash" != "$pushed_hash" ]]; then
+      emit_diagnostic "E_PREPUSH_FULL_WORKTREE_DRIFT: recovery-backed pre-push validation reads working-tree files and refuses to validate content that differs from the pushed blob. Commit, stash, or restore this file before running WALLSTOP_PREPUSH_FULL_SUITE=1. file=${file}"
+      return 1
+    fi
+
+    if ! index_hash="$(git rev-parse ":${file}" 2> /dev/null)"; then
+      emit_diagnostic "E_PREPUSH_FULL_INDEX_DRIFT: recovery-backed pre-push validation reads working-tree files and refuses to validate a target missing from the git index. Commit, stash, or restore this file before running WALLSTOP_PREPUSH_FULL_SUITE=1. file=${file}"
+      return 1
+    fi
+
+    if [[ "$index_hash" != "$pushed_hash" ]]; then
+      emit_diagnostic "E_PREPUSH_FULL_INDEX_DRIFT: recovery-backed pre-push validation reads working-tree files and refuses to validate index content that differs from the pushed blob. Commit, stash, or restore this file before running WALLSTOP_PREPUSH_FULL_SUITE=1. file=${file}"
+      return 1
+    fi
+  done
+
+  return 0
 }
 
 resolve_pre_push_changed_files() {
@@ -400,6 +691,10 @@ resolve_pre_push_changed_files() {
     if [[ "$local_oid" == "$zero_oid" ]]; then
       emit_diagnostic "pre-push changed-file validation: skipping delete push for ${remote_ref}."
       continue
+    fi
+
+    if ! git merge-base --is-ancestor "$local_oid" HEAD > /dev/null 2>&1 || ! git merge-base --is-ancestor HEAD "$local_oid" > /dev/null 2>&1; then
+      saw_non_head_push_ref=1
     fi
 
     if [[ "$remote_oid" != "$zero_oid" ]]; then
@@ -426,7 +721,7 @@ resolve_pre_push_changed_files() {
 
     emit_diagnostic "W_PREPUSH_CHANGED_FILE_BASELINE_MISSING: no baseline found for ${local_ref}; falling back to tracked file list."
     set +e
-    append_tracked_files_fallback
+    append_tracked_files_fallback "$local_oid"
     discovery_status=$?
     set -e
     if [[ $discovery_status -ne 0 ]]; then
@@ -458,8 +753,11 @@ run_legacy_validation() {
       return 124
     fi
 
+    set +e
     run_with_timeout "$remaining_seconds" "legacy pre-push PowerShell validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Run-PreCommitValidation.ps1" -IncludePreCommitOwnedChecks -TargetFileListPath "$target_file_list_path"
-    return $?
+    local legacy_validation_exit=$?
+    set -e
+    return $legacy_validation_exit
   fi
 
   emit_diagnostic "pre-commit is unavailable and pwsh was not found; cannot run legacy PowerShell quality gates."
@@ -490,28 +788,65 @@ if [[ ${#resolved_changed_files[@]} -eq 0 ]]; then
   exit 0
 fi
 
-if command -v pre-commit > /dev/null 2>&1; then
-  if command -v pwsh > /dev/null 2>&1; then
-    write_changed_file_list
-    target_file_list_path="$changed_file_list_path"
-    if remaining_seconds="$(remaining_timeout_seconds "pre-push changed-file pre-commit validation")"; then
-      inner_timeout_seconds=$((remaining_seconds - prepush_recovery_shutdown_buffer_seconds))
-      required_remaining_seconds=$((prepush_recovery_inner_timeout_seconds + prepush_recovery_shutdown_buffer_seconds))
-      if [[ "$inner_timeout_seconds" -lt "$prepush_recovery_inner_timeout_seconds" ]]; then
-        emit_recovery_budget_diagnostic "pre-push changed-file pre-commit validation" "$remaining_seconds" "$required_remaining_seconds" "$inner_timeout_seconds"
-        exit 124
-      fi
+if ! is_truthy "${WALLSTOP_PREPUSH_FULL_SUITE:-0}"; then
+  run_fast_prepush_gate
+  fast_gate_exit=$?
+  if [[ $fast_gate_exit -eq 0 ]]; then
+    emit_runtime_budget_warning "pre-push fast gate" "$((SECONDS - hook_start_seconds))"
+    exit 0
+  fi
 
-      run_with_timeout "$remaining_seconds" "pre-push changed-file pre-commit validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-push -TimeoutSeconds "$inner_timeout_seconds" -FileListPath "$target_file_list_path"
+  exit $fast_gate_exit
+fi
+
+if ! ensure_prepush_full_suite_can_use_worktree; then
+  emit_runtime_budget_warning "pre-push full-suite worktree guard" "$((SECONDS - hook_start_seconds))"
+  exit 1
+fi
+
+if command -v pwsh > /dev/null 2>&1; then
+  write_changed_file_list
+  target_file_list_path="$changed_file_list_path"
+  if remaining_seconds="$(remaining_timeout_seconds "pre-push changed-file pre-commit validation")"; then
+    inner_timeout_seconds=$((remaining_seconds - prepush_recovery_shutdown_buffer_seconds))
+    required_remaining_seconds=$((prepush_recovery_inner_timeout_seconds + prepush_recovery_shutdown_buffer_seconds))
+    if [[ "$inner_timeout_seconds" -lt "$prepush_recovery_inner_timeout_seconds" ]]; then
+      emit_recovery_budget_diagnostic "pre-push changed-file pre-commit validation" "$remaining_seconds" "$required_remaining_seconds" "$inner_timeout_seconds"
+      exit 124
+    fi
+
+    set +e
+    run_with_timeout "$remaining_seconds" "pre-push changed-file pre-commit validation" pwsh -NoLogo -NoProfile -File "Scripts/Utils/Quality/Invoke-PreCommitWithRecovery.ps1" -HookStage pre-push -TimeoutSeconds "$inner_timeout_seconds" -FileListPath "$target_file_list_path"
+    recovery_exit=$?
+    set -e
+    if [[ $recovery_exit -eq 0 ]]; then
+      exit 0
+    fi
+
+    if [[ $recovery_exit -eq 125 ]]; then
+      emit_diagnostic "W_PREPUSH_RECOVERY_DEGRADED: the pinned pre-commit CLI could not be prepared (missing CLI, pinned-version mismatch, or resolution failure - see the E_VALIDATION_PRECOMMIT_* diagnostic above); falling back to legacy PowerShell checks. CI still runs the pinned pre-commit CLI."
+      emit_diagnostic "Recommended bootstrap:"
+      print_precommit_bootstrap_guidance
+      emit_diagnostic "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"
+      emit_diagnostic "  pre-commit install --hook-type pre-commit --hook-type pre-push"
+      emit_diagnostic "Major changes should close with the full validation command documented in .llm/validation-workflow.md."
+      run_legacy_validation
       exit $?
     fi
 
-    exit 124
+    exit $recovery_exit
   fi
 
+  exit 124
+fi
+
+if command -v pre-commit > /dev/null 2>&1; then
   if remaining_seconds="$(remaining_timeout_seconds "pre-commit hook-stage pre-push changed files")"; then
+    set +e
     run_with_timeout "$remaining_seconds" "pre-commit hook-stage pre-push changed files" pre-commit run --hook-stage pre-push --files "${resolved_changed_files[@]}" --show-diff-on-failure --color always
-    exit $?
+    precommit_hook_exit=$?
+    set -e
+    exit $precommit_hook_exit
   fi
 
   exit 124

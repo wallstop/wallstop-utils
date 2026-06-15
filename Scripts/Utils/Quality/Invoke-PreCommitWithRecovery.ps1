@@ -239,7 +239,7 @@ function New-PreCommitEnvironmentRepairResult {
 
     return [pscustomobject]@{
         Succeeded = $Succeeded
-        ExitCode   = $ExitCode
+        ExitCode  = $ExitCode
     }
 }
 
@@ -255,20 +255,44 @@ function Get-PreCommitExecutableOrThrow {
         [int]$OverallTimeoutSeconds
     )
 
-    $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
-    if ($null -eq $preCommitCommand) {
-        throw "E_PRECOMMIT_RECOVERY_PREREQ_MISSING: pre-commit is required but was not found on PATH."
-    }
-
-    $versionProbeTimeoutSeconds = Get-PreCommitRecoveryRemainingTimeoutSeconds -DeadlineUtc $DeadlineUtc
-    if ($versionProbeTimeoutSeconds -lt 1) {
+    $remainingTimeoutSeconds = Get-PreCommitRecoveryRemainingTimeoutSeconds -DeadlineUtc $DeadlineUtc
+    if ($remainingTimeoutSeconds -lt 1) {
         throw "E_PRECOMMIT_RECOVERY_TIMEOUT: pre-commit recovery exceeded overall timeout before pre-commit version probe (timeout=${OverallTimeoutSeconds}s)."
     }
-    $versionProbeTimeoutSeconds = [Math]::Min($versionProbeTimeoutSeconds, 120)
+    $versionProbeTimeoutSeconds = [Math]::Min($remainingTimeoutSeconds, 120)
+    $enableCliAutoRepair = $remainingTimeoutSeconds -ge 30
+    $autoRepairTimeoutSeconds = [Math]::Min($remainingTimeoutSeconds, 240)
 
-    [void](Assert-PreCommitCliVersion -PreCommitExecutable $preCommitCommand.Source -RepositoryRoot $RepositoryRoot -TimeoutSeconds $versionProbeTimeoutSeconds)
-    Write-Verbose ("Pre-commit recovery diagnostics: preCommitPath='{0}'" -f $preCommitCommand.Source)
-    return $preCommitCommand.Source
+    try {
+        $resolvedCli = Resolve-PreCommitCliExecutable -RepositoryRoot $RepositoryRoot -TimeoutSeconds $versionProbeTimeoutSeconds -EnableAutoRepair:$enableCliAutoRepair -AutoRepairTimeoutSeconds $autoRepairTimeoutSeconds
+    }
+    catch {
+        $resolutionMessage = [string]$_.Exception.Message
+        if ($resolutionMessage -match "\bE_VALIDATION_PRECOMMIT_NOT_AVAILABLE\b") {
+            throw "E_PRECOMMIT_RECOVERY_PREREQ_MISSING: pre-commit is required but was not found on PATH."
+        }
+
+        throw $resolutionMessage
+    }
+
+    [void](Assert-PreCommitCliVersion -PreCommitExecutable ([string]$resolvedCli.Executable) -RepositoryRoot $RepositoryRoot -TimeoutSeconds $versionProbeTimeoutSeconds)
+
+    if ([bool]$resolvedCli.AutoRepaired) {
+        Write-Warning (
+            "W_PRECOMMIT_RECOVERY_CLI_AUTO_REPAIRED: recovered pinned pre-commit CLI (expectedVersion={0}; executable='{1}')." -f
+            [string]$resolvedCli.ExpectedVersion,
+            [string]$resolvedCli.Executable
+        )
+    }
+
+    Write-Verbose (
+        "Pre-commit recovery diagnostics: preCommitPath='{0}'; expectedVersion='{1}'; actualVersion='{2}'; autoRepaired={3}" -f
+        [string]$resolvedCli.Executable,
+        [string]$resolvedCli.ExpectedVersion,
+        [string]$resolvedCli.ActualVersion,
+        [bool]$resolvedCli.AutoRepaired
+    )
+    return [string]$resolvedCli.Executable
 }
 
 function Invoke-PreCommitCapturedCommand {
@@ -310,6 +334,10 @@ function Invoke-PreCommitCapturedCommand {
 
     # ProcessStartInfo.ArgumentList is .NET Core-only; see Set-PortableProcessArguments.
     Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $Arguments
+    $preCommitEnvironment = Get-PreCommitManagedEnvironment -RepositoryRoot $RepositoryRoot
+    foreach ($environmentKey in @($preCommitEnvironment.Keys)) {
+        Set-PortableProcessEnvironmentVariable -StartInfo $processStartInfo -Name ([string]$environmentKey) -Value ([string]$preCommitEnvironment[$environmentKey])
+    }
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $processStartInfo
@@ -805,9 +833,9 @@ function New-PreCommitAutofixSnapshot {
     )
 
     return [pscustomobject]@{
-        Enabled              = $Enabled
-        StagedFiles          = @($StagedFiles)
-        UnstagedStagedFiles  = @($UnstagedStagedFiles)
+        Enabled             = $Enabled
+        StagedFiles         = @($StagedFiles)
+        UnstagedStagedFiles = @($UnstagedStagedFiles)
     }
 }
 
@@ -1016,9 +1044,14 @@ function Invoke-PreCommitWithRecoveryMain {
         $preCommitExecutable = Get-PreCommitExecutableOrThrow -RepositoryRoot $repositoryRoot -DeadlineUtc $deadlineUtc -OverallTimeoutSeconds $CommandTimeoutSeconds
     }
     catch {
-        [Console]::Error.WriteLine([string]$_.Exception.Message)
-        if ($_.Exception.Message -match '\b(E_PRECOMMIT_RECOVERY_TIMEOUT|E_VALIDATION_PRECOMMIT_VERSION_TIMEOUT)\b') {
+        $setupErrorMessage = [string]$_.Exception.Message
+        [Console]::Error.WriteLine($setupErrorMessage)
+        if ($setupErrorMessage -match '\b(E_PRECOMMIT_RECOVERY_TIMEOUT|E_VALIDATION_PRECOMMIT_VERSION_TIMEOUT)\b') {
             return 124
+        }
+
+        if ($setupErrorMessage -match '\b(E_PRECOMMIT_RECOVERY_PREREQ_MISSING|E_VALIDATION_PRECOMMIT_NOT_AVAILABLE|E_VALIDATION_PRECOMMIT_RESOLUTION_FAILED|E_VALIDATION_PRECOMMIT_AUTO_REPAIR_FAILED|E_VALIDATION_PRECOMMIT_VERSION_FAILED|E_VALIDATION_PRECOMMIT_VERSION_PARSE_FAILED|E_VALIDATION_PRECOMMIT_VERSION_MISMATCH)\b') {
+            return 125
         }
 
         throw

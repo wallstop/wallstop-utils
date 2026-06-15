@@ -86,6 +86,18 @@ function Get-GitExecutableOrThrow {
     return $gitCommand.Source
 }
 
+function Get-PwshExecutableOrThrow {
+    try {
+        $pwshExecutable = Resolve-PowerShellExecutablePath
+    }
+    catch {
+        throw "E_VALIDATION_PWSH_NOT_AVAILABLE: pwsh is required for full validation but no launchable PowerShell executable was found. $($_.Exception.Message)"
+    }
+
+    Write-Verbose ("Validation pwsh diagnostics: pwshPath='{0}'" -f $pwshExecutable)
+    return $pwshExecutable
+}
+
 function Get-StatusSnapshot {
     param(
         [Parameter(Mandatory = $true)]
@@ -249,13 +261,41 @@ function Assert-NativeQualityToolAvailability {
     & $nativeQualityScript -Tool All -EnsureOnly
 }
 
+function Assert-HookFastToolResolverAvailability {
+    $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+    if ($null -eq $bashCommand) {
+        throw "E_VALIDATION_HOOK_FAST_RESOLVER_BASH_NOT_AVAILABLE: bash is required to preflight git hook fast-tool resolution but was not found on PATH."
+    }
+
+    $fastToolResolver = Join-Path -Path $PSScriptRoot -ChildPath "../Common/HookFastToolResolver.sh"
+    if (-not (Test-Path -LiteralPath $fastToolResolver -PathType Leaf)) {
+        throw "E_VALIDATION_HOOK_FAST_RESOLVER_MISSING: hook fast-tool resolver not found at '$fastToolResolver'."
+    }
+
+    $resolverProbe = @'
+set -euo pipefail
+. "Scripts/Utils/Common/HookFastToolResolver.sh"
+wallstop_resolve_managed_fast_tool "$(pwd)" ".tools/native-quality" "actionlint" >/dev/null
+'@
+
+    & $bashCommand.Source --noprofile --norc -c $resolverProbe
+    if ($LASTEXITCODE -ne 0) {
+        throw "E_VALIDATION_HOOK_FAST_RESOLVER_FAILED: hook fast-tool resolver could not resolve the repo-managed actionlint executable after native tool bootstrap (exitCode=$LASTEXITCODE)."
+    }
+}
+
 function Assert-PreCommitHookEnvironmentAvailability {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PwshExecutable
+    )
+
     $preCommitRecoveryScript = Join-Path -Path $PSScriptRoot -ChildPath "Invoke-PreCommitWithRecovery.ps1"
     if (-not (Test-Path -LiteralPath $preCommitRecoveryScript -PathType Leaf)) {
         throw "E_VALIDATION_PRECOMMIT_RECOVERY_SCRIPT_MISSING: pre-commit recovery wrapper not found at '$preCommitRecoveryScript'."
     }
 
-    pwsh -NoLogo -NoProfile -File $preCommitRecoveryScript -InstallHooksOnly
+    & $PwshExecutable -NoLogo -NoProfile -File $preCommitRecoveryScript -InstallHooksOnly
     if ($LASTEXITCODE -ne 0) {
         throw "E_VALIDATION_PRECOMMIT_ENV_PREFLIGHT_FAILED: pre-commit hook environment preflight failed (exitCode=$LASTEXITCODE)."
     }
@@ -267,29 +307,53 @@ function Assert-PreCommitCliAvailability {
         [string]$RepositoryRoot
     )
 
-    $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
-    if ($null -eq $preCommitCommand) {
-        $preCommitGuidance = Get-PreCommitBootstrapVersionGuidance -RepositoryRoot $RepositoryRoot
-        $requirementsDiagnostic = ""
-        if ($preCommitGuidance.IsFallback -and -not [string]::IsNullOrWhiteSpace([string]$preCommitGuidance.RequirementsDiagnostic)) {
-            $requirementsDiagnostic = " requirementsPinDiagnostic='$([string]$preCommitGuidance.RequirementsDiagnostic)'."
+    try {
+        $resolvedPreCommit = Resolve-PreCommitCliExecutable -RepositoryRoot $RepositoryRoot -TimeoutSeconds 30 -EnableAutoRepair -AutoRepairTimeoutSeconds 240
+    }
+    catch {
+        $resolutionMessage = [string]$_.Exception.Message
+        if ($resolutionMessage -match "\bE_VALIDATION_PRECOMMIT_NOT_AVAILABLE\b") {
+            $preCommitGuidance = Get-PreCommitBootstrapVersionGuidance -RepositoryRoot $RepositoryRoot
+            $requirementsDiagnostic = ""
+            if ($preCommitGuidance.IsFallback -and -not [string]::IsNullOrWhiteSpace([string]$preCommitGuidance.RequirementsDiagnostic)) {
+                $requirementsDiagnostic = " requirementsPinDiagnostic='$([string]$preCommitGuidance.RequirementsDiagnostic)'."
+            }
+
+            throw (
+                "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit=={0}' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=`$HOME/.local/bin:`$PATH and persist that export in ~/.bashrc or ~/.zshrc), then rerun validation preflight.{1}" -f
+                [string]$preCommitGuidance.Version,
+                $requirementsDiagnostic
+            )
         }
 
-        throw (
-            "E_VALIDATION_PREREQ_MISSING: pre-commit is required for full validation. Install with 'pipx install pre-commit=={0}' or use the repo-supported venv bootstrap (python3 -m venv ~/.local/venvs/pre-commit; ~/.local/venvs/pre-commit/bin/pip install --requirement requirements.txt; mkdir -p ~/.local/bin; ln -sf ~/.local/venvs/pre-commit/bin/pre-commit ~/.local/bin/pre-commit; export PATH=`$HOME/.local/bin:`$PATH and persist that export in ~/.bashrc or ~/.zshrc), then rerun validation preflight.{1}" -f
-            [string]$preCommitGuidance.Version,
-            $requirementsDiagnostic
+        throw $resolutionMessage
+    }
+
+    if ([bool]$resolvedPreCommit.AutoRepaired) {
+        Write-Warning (
+            "W_VALIDATION_PRECOMMIT_CLI_AUTO_REPAIRED: recovered pinned pre-commit CLI (expectedVersion={0}; executable='{1}')." -f
+            [string]$resolvedPreCommit.ExpectedVersion,
+            [string]$resolvedPreCommit.Executable
         )
     }
 
     # Assert-PreCommitCliVersion emits E_VALIDATION_PRECOMMIT_VERSION_MISMATCH for exact-version drift.
-    [void](Assert-PreCommitCliVersion -PreCommitExecutable $preCommitCommand.Source -RepositoryRoot $RepositoryRoot)
+    [void](Assert-PreCommitCliVersion -PreCommitExecutable ([string]$resolvedPreCommit.Executable) -RepositoryRoot $RepositoryRoot)
+    Write-Verbose (
+        "Validation pre-commit diagnostics: preCommitPath='{0}'; expectedVersion='{1}'; actualVersion='{2}'; autoRepaired={3}" -f
+        [string]$resolvedPreCommit.Executable,
+        [string]$resolvedPreCommit.ExpectedVersion,
+        [string]$resolvedPreCommit.ActualVersion,
+        [bool]$resolvedPreCommit.AutoRepaired
+    )
 }
 
 $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../../..")).Path
 Push-Location -LiteralPath $repoRoot
 
 try {
+    $pwshExecutable = Get-PwshExecutableOrThrow
+
     Write-Host "[validation] PowerShell format-operator binding safety check"
     Assert-NoFormatOperatorContinuationViolations -RootPath $repoRoot -RelativeRoots @("Scripts", "Tests") -ErrorCode "E_VALIDATION_FORMAT_OPERATOR_BINDING" -ContextLabel "PowerShell format-operator safety"
 
@@ -308,8 +372,11 @@ try {
     Write-Host "[validation] native quality tool prerequisite check"
     Assert-NativeQualityToolAvailability
 
+    Write-Host "[validation] hook fast-tool resolver preflight"
+    Assert-HookFastToolResolverAvailability
+
     Write-Host "[validation] pre-commit hook environment preflight"
-    Assert-PreCommitHookEnvironmentAvailability
+    Assert-PreCommitHookEnvironmentAvailability -PwshExecutable $pwshExecutable
 
     if ($PreflightOnly) {
         Write-Host "Validation preflight passed."
@@ -323,11 +390,11 @@ try {
     $preCommitValidationScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
 
     Invoke-NativeCommand -Label "pre-commit stage (all files)" -FailureCode "E_VALIDATION_PRECOMMIT_FAILED" -Remediation "Fix hook findings, then rerun this command." -ScriptBlock {
-        pwsh -NoLogo -NoProfile -File $preCommitRecoveryScript -HookStage pre-commit -AllFiles
+        & $pwshExecutable -NoLogo -NoProfile -File $preCommitRecoveryScript -HookStage pre-commit -AllFiles
     }
 
     Invoke-NativeCommand -Label "PowerShell deep validation" -FailureCode "E_VALIDATION_DEEP_POWERSHELL_FAILED" -Remediation "Fix failing tests/lint/policy checks, then rerun this command." -ScriptBlock {
-        pwsh -NoLogo -NoProfile -File $preCommitValidationScript -All
+        & $pwshExecutable -NoLogo -NoProfile -File $preCommitValidationScript -All
     }
 
     $skillsIndexScript = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1"

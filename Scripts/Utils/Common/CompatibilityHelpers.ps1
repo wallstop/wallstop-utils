@@ -89,6 +89,174 @@ function Test-IsLinuxPlatform {
     return (Get-PortableAutomaticBool -Name 'IsLinux')
 }
 
+function Get-PowerShellProbeOutcome {
+    # Pure classifier for Test-PowerShellExecutableCandidate, separated so the decision
+    # priority is deterministically unit-testable without spawning a process.
+    #
+    # The sentinel file the probe child writes on success is the AUTHORITATIVE signal: a
+    # usable PowerShell can write it and then exit (or shut down slowly) between our poll
+    # iterations, so "sentinel exists" must win even after the process has already exited.
+    # Only when the sentinel is confirmed absent do process state and exit code decide the
+    # failure mode (still-running => timeout; exited non-zero => probe-exit; exited zero
+    # but no sentinel => probe-no-sentinel).
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$SentinelExists,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$ProcessExited,
+
+        [Parameter(Mandatory = $false)]
+        [int]$ExitCode = 0,
+
+        [Parameter(Mandatory = $false)]
+        [string]$StderrPreview = "<empty>"
+    )
+
+    if ($SentinelExists) {
+        return [pscustomobject]@{
+            Usable     = $true
+            Diagnostic = "ok"
+        }
+    }
+
+    if (-not $ProcessExited) {
+        return [pscustomobject]@{
+            Usable     = $false
+            Diagnostic = "probe-timeout"
+        }
+    }
+
+    if ($ExitCode -ne 0) {
+        return [pscustomobject]@{
+            Usable     = $false
+            Diagnostic = ("probe-exit-{0}:{1}" -f $ExitCode, $StderrPreview)
+        }
+    }
+
+    return [pscustomobject]@{
+        Usable     = $false
+        Diagnostic = "probe-no-sentinel"
+    }
+}
+
+function Test-PowerShellExecutableCandidate {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ExecutablePath,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 30)]
+        [int]$TimeoutSeconds = 5
+    )
+
+    if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+        return [pscustomobject]@{
+            Usable     = $false
+            Diagnostic = "path-not-found"
+        }
+    }
+
+    $sentinelPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-pwsh-probe-{0}.txt" -f [guid]::NewGuid().ToString("N"))
+    $escapedSentinelPath = $sentinelPath -replace "'", "''"
+    $probeCommand = "[System.IO.File]::WriteAllText('$escapedSentinelPath', 'ok'); exit 0"
+
+    $processStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $processStartInfo.FileName = $ExecutablePath
+    $processStartInfo.UseShellExecute = $false
+    $processStartInfo.RedirectStandardOutput = $true
+    $processStartInfo.RedirectStandardError = $true
+    $processStartInfo.CreateNoWindow = $true
+    Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', $probeCommand)
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $processStartInfo
+    try {
+        try {
+            [void]$process.Start()
+        }
+        catch {
+            return [pscustomobject]@{
+                Usable     = $false
+                Diagnostic = "start-failed"
+            }
+        }
+
+        # Drain both pipes asynchronously the instant the child starts so it can never block
+        # on a full stdout/stderr buffer while we wait for the sentinel. We only need the
+        # stderr text later (non-zero-exit path); stdout is drained purely to avoid deadlock,
+        # but both tasks are observed once the process has exited (below).
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        # Poll until the success sentinel appears OR the child exits. The sentinel - not
+        # process exit - is the success signal, because a usable PowerShell may shut down
+        # slowly after writing it.
+        $deadlineUtc = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
+        while ([datetime]::UtcNow -lt $deadlineUtc) {
+            if ((Test-Path -LiteralPath $sentinelPath -PathType Leaf) -or $process.HasExited) {
+                break
+            }
+
+            Start-Sleep -Milliseconds 50
+        }
+
+        # Re-check the sentinel authoritatively: the child can write it and exit within a
+        # single poll window, so "exited without the sentinel seen during polling" is not a
+        # reliable failure - only a sentinel confirmed absent after exit is. This re-check
+        # is what closes the race that intermittently rejected a perfectly usable pwsh.
+        $sentinelExists = Test-Path -LiteralPath $sentinelPath -PathType Leaf
+        if ($sentinelExists) {
+            if (-not $process.HasExited -and -not $process.WaitForExit(250)) {
+                try {
+                    Stop-ProcessTreePortably -Process $process
+                }
+                catch {
+                    Write-Verbose "PowerShell executable probe cleanup failed for '$ExecutablePath': $($_.Exception.Message)"
+                }
+            }
+
+            return Get-PowerShellProbeOutcome -SentinelExists $true -ProcessExited $true
+        }
+
+        if (-not $process.HasExited) {
+            try {
+                Stop-ProcessTreePortably -Process $process
+            }
+            catch {
+                Write-Verbose "PowerShell executable probe cleanup failed for '$ExecutablePath': $($_.Exception.Message)"
+            }
+
+            return Get-PowerShellProbeOutcome -SentinelExists $false -ProcessExited $false
+        }
+
+        $exitCode = [int]$process.ExitCode
+        # The process has exited here, so both drained streams are at EOF and their tasks are
+        # complete: observe stdout (we discard its text but must not leave the task unobserved)
+        # and read stderr for the failure preview.
+        [void]$stdoutTask.GetAwaiter().GetResult()
+        $stderrPreview = "<empty>"
+        if ($exitCode -ne 0) {
+            $stderr = [string]$stderrTask.GetAwaiter().GetResult()
+            $stderrPreview = (($stderr -replace "\s+", " ").Trim())
+            if ([string]::IsNullOrWhiteSpace($stderrPreview)) {
+                $stderrPreview = "<empty>"
+            }
+        }
+
+        return Get-PowerShellProbeOutcome -SentinelExists $false -ProcessExited $true -ExitCode $exitCode -StderrPreview $stderrPreview
+    }
+    finally {
+        Remove-Item -LiteralPath $sentinelPath -Force -ErrorAction SilentlyContinue
+        $process.Dispose()
+    }
+}
+
 function Resolve-PowerShellExecutablePath {
     # Resolves the PowerShell executable path used to invoke child scripts.
     # Preference order:
@@ -99,23 +267,75 @@ function Resolve-PowerShellExecutablePath {
     [OutputType([string])]
     param()
 
-    $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
-    if ($null -ne $pwshCommand -and -not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Source)) {
+    $pwshCommands = @(Get-Command -Name 'pwsh' -All -ErrorAction SilentlyContinue)
+    foreach ($pwshCommand in $pwshCommands) {
+        if ($null -eq $pwshCommand) {
+            continue
+        }
+
+        $pwshPath = ""
+        if ($null -ne $pwshCommand.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Source)) {
+            $pwshPath = [string]$pwshCommand.Source
+        }
+        elseif ($null -ne $pwshCommand.PSObject.Properties['Path'] -and -not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Path)) {
+            $pwshPath = [string]$pwshCommand.Path
+        }
+
+        if ([string]::IsNullOrWhiteSpace($pwshPath)) {
+            continue
+        }
+
+        $pwshProbe = Test-PowerShellExecutableCandidate -ExecutablePath $pwshPath
+        if (-not [bool]$pwshProbe.Usable) {
+            Write-Verbose (
+                "PowerShell executable resolver diagnostics: rejectedExecutable='{0}'; source='pwsh'; reason='{1}'." -f
+                $pwshPath,
+                [string]$pwshProbe.Diagnostic
+            )
+            continue
+        }
+
         Write-Verbose (
             "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='pwsh'." -f
-            $pwshCommand.Source
+            $pwshPath
         )
-        return [string]$pwshCommand.Source
+        return $pwshPath
     }
 
     if (Test-IsWindowsPlatform) {
-        $windowsPowerShellCommand = Get-Command -Name 'powershell.exe' -ErrorAction SilentlyContinue
-        if ($null -ne $windowsPowerShellCommand -and -not [string]::IsNullOrWhiteSpace([string]$windowsPowerShellCommand.Source)) {
+        $windowsPowerShellCommands = @(Get-Command -Name 'powershell.exe' -All -ErrorAction SilentlyContinue)
+        foreach ($windowsPowerShellCommand in $windowsPowerShellCommands) {
+            if ($null -eq $windowsPowerShellCommand) {
+                continue
+            }
+
+            $windowsPowerShellPath = ""
+            if ($null -ne $windowsPowerShellCommand.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$windowsPowerShellCommand.Source)) {
+                $windowsPowerShellPath = [string]$windowsPowerShellCommand.Source
+            }
+            elseif ($null -ne $windowsPowerShellCommand.PSObject.Properties['Path'] -and -not [string]::IsNullOrWhiteSpace([string]$windowsPowerShellCommand.Path)) {
+                $windowsPowerShellPath = [string]$windowsPowerShellCommand.Path
+            }
+
+            if ([string]::IsNullOrWhiteSpace($windowsPowerShellPath)) {
+                continue
+            }
+
+            $windowsPowerShellProbe = Test-PowerShellExecutableCandidate -ExecutablePath $windowsPowerShellPath
+            if (-not [bool]$windowsPowerShellProbe.Usable) {
+                Write-Verbose (
+                    "PowerShell executable resolver diagnostics: rejectedExecutable='{0}'; source='powershell.exe-fallback'; reason='{1}'." -f
+                    $windowsPowerShellPath,
+                    [string]$windowsPowerShellProbe.Diagnostic
+                )
+                continue
+            }
+
             Write-Verbose (
                 "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='powershell.exe-fallback'." -f
-                $windowsPowerShellCommand.Source
+                $windowsPowerShellPath
             )
-            return [string]$windowsPowerShellCommand.Source
+            return $windowsPowerShellPath
         }
     }
 
