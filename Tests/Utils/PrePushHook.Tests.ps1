@@ -1704,7 +1704,7 @@ Describe "pre-push changed-file hook behavior" {
             }
             RemovePreCommit       = $true
             ExpectedExitCode      = 0
-            ExpectedStderrPattern = 'pre-commit CLI bootstrap failed in recovery wrapper; falling back to legacy PowerShell checks|pre-commit is not installed; falling back to legacy PowerShell checks'
+            ExpectedStderrPattern = 'W_PREPUSH_RECOVERY_DEGRADED: the pinned pre-commit CLI could not be prepared.*falling back to legacy PowerShell checks|pre-commit is not installed; falling back to legacy PowerShell checks'
             ExpectedLogPatterns   = @(
                 'pwsh[\s\S]*Scripts/Utils/Run-PreCommitValidation\.ps1[\s\S]*-IncludePreCommitOwnedChecks[\s\S]*-TargetFileListPath',
                 'pwsh-file\t\.githooks/pre-push'

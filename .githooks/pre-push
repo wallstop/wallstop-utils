@@ -326,14 +326,18 @@ validate_prepush_shell_blob() {
   return 1
 }
 
+# Ensures the repo-managed actionlint asset is bootstrapped. Returns 0 only when the asset
+# resolves to a non-empty path. The resolved path is kept local so callers do not depend on
+# a dynamic-scope side effect; callers re-resolve explicitly (see run_fast_prepush_gate).
 ensure_prepush_fast_actionlint_tools() {
   if ! load_fast_tool_resolver; then
     return 1
   fi
 
-  actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+  local resolved_actionlint_path
+  resolved_actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
 
-  if [[ -n "$actionlint_path" ]]; then
+  if [[ -n "$resolved_actionlint_path" ]]; then
     return 0
   fi
 
@@ -351,8 +355,8 @@ ensure_prepush_fast_actionlint_tools() {
       return "$ensure_exit"
     fi
 
-    actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
-    if [[ -n "$actionlint_path" ]]; then
+    resolved_actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+    if [[ -n "$resolved_actionlint_path" ]]; then
       return 0
     fi
   fi
@@ -367,7 +371,6 @@ run_fast_prepush_gate() {
   local local_oid
   local extracted_file
   local index
-  local actionlint_path
   local run_workflow_lint=0
   local workflow_targets=()
 
@@ -407,6 +410,16 @@ run_fast_prepush_gate() {
     set -e
     if [[ $ensure_actionlint_exit -ne 0 ]]; then
       return "$ensure_actionlint_exit"
+    fi
+
+    # Resolve the executable explicitly (ensure_* loaded the resolver) instead of relying on
+    # a dynamic-scope side effect, then refuse to invoke an empty path so a resolver
+    # regression can never exec an empty string under run_with_timeout.
+    local actionlint_path
+    actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+    if [[ -z "$actionlint_path" ]]; then
+      emit_diagnostic "E_PREPUSH_FAST_ACTIONLINT_PATH_EMPTY: actionlint resolved to an empty path after bootstrap reported success; refusing to invoke an empty executable. Run validation preflight."
+      return 1
     fi
 
     local remaining_seconds
@@ -811,7 +824,7 @@ if command -v pwsh > /dev/null 2>&1; then
     fi
 
     if [[ $recovery_exit -eq 125 ]]; then
-      emit_diagnostic "pre-commit CLI bootstrap failed in recovery wrapper; falling back to legacy PowerShell checks."
+      emit_diagnostic "W_PREPUSH_RECOVERY_DEGRADED: the pinned pre-commit CLI could not be prepared (missing CLI, pinned-version mismatch, or resolution failure - see the E_VALIDATION_PRECOMMIT_* diagnostic above); falling back to legacy PowerShell checks. CI still runs the pinned pre-commit CLI."
       emit_diagnostic "Recommended bootstrap:"
       print_precommit_bootstrap_guidance
       emit_diagnostic "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"

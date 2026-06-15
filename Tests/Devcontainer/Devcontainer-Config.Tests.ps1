@@ -58,6 +58,26 @@ Describe "devcontainer.json image-first contract" {
         $normalizedMounts -join "`n" | Should -Match 'target=/home/vscode/\.npm,type=volume'
     }
 
+    It "declares each VS Code extension at most once (case-insensitive)" {
+        $customizationsProperty = $script:devcontainer.PSObject.Properties["customizations"]
+        $null -eq $customizationsProperty | Should -BeFalse
+
+        $extensions = @($customizationsProperty.Value.vscode.extensions)
+        $extensions.Count | Should -BeGreaterThan 0
+
+        # VS Code extension IDs are case-insensitive, so a casing-only duplicate is redundant
+        # and adds install work/noise. Group case-insensitively; every group must be a singleton.
+        $duplicateGroups = @(
+            $extensions |
+                Group-Object -Property { ([string]$_).ToLowerInvariant() } |
+                Where-Object { $_.Count -gt 1 }
+        )
+        $duplicateGroups.Count | Should -Be 0 -Because (
+            "extensions must be unique case-insensitively; duplicates: " +
+            (($duplicateGroups | ForEach-Object { $_.Group -join ' / ' }) -join '; ')
+        )
+    }
+
     It "enables Codex bootstrap by default so codex is available in devcontainers" {
         $containerEnvProperty = $script:devcontainer.PSObject.Properties["containerEnv"]
         $null -eq $containerEnvProperty | Should -BeFalse

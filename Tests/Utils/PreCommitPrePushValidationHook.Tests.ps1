@@ -583,7 +583,7 @@ esac
             $outputText = $output -join "`n"
             $pwshLog = if (Test-Path -LiteralPath $pwshLogPath) { [System.IO.File]::ReadAllText($pwshLogPath) } else { "" }
             $LASTEXITCODE | Should -Be 0 -Because $outputText
-            $outputText | Should -Match 'pre-commit CLI bootstrap failed in recovery wrapper; falling back to legacy PowerShell checks'
+            $outputText | Should -Match 'W_PRECOMMIT_RECOVERY_DEGRADED: the pinned pre-commit CLI could not be prepared.*falling back to legacy PowerShell checks'
             $pwshLog | Should -Match 'Invoke-PreCommitWithRecovery\.ps1'
             $pwshLog | Should -Match 'Run-PreCommitValidation\.ps1'
         }
@@ -701,6 +701,10 @@ exit 0
             $LASTEXITCODE | Should -Be 0 -Because $outputText
             $outputText | Should -Match 'W_PRECOMMIT_STAGED_DISCOVERY_FAILED'
             $pwshLog | Should -Match 'Invoke-PreCommitWithRecovery\.ps1'
+            # force_discovery bypass: when staged discovery fails (force-recovery), safe
+            # auto-repair must still run so it can self-discover and repair staged
+            # Windows-language drift, instead of being skipped on the empty fast-file list.
+            $pwshLog | Should -Match 'Invoke-PreCommitAutoRepair\.ps1'
         }
         finally {
             if ($previousTimeoutSet) {

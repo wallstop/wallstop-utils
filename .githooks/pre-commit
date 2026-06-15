@@ -402,14 +402,18 @@ validate_precommit_shell_blob() {
   return 1
 }
 
+# Ensures the repo-managed actionlint asset is bootstrapped. Returns 0 only when the asset
+# resolves to a non-empty path. The resolved path is kept local so callers do not depend on
+# a dynamic-scope side effect; callers re-resolve explicitly (see run_fast_precommit_gate).
 ensure_precommit_fast_actionlint_tools() {
   if ! load_fast_tool_resolver; then
     return 1
   fi
 
-  actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+  local resolved_actionlint_path
+  resolved_actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
 
-  if [[ -n "$actionlint_path" ]]; then
+  if [[ -n "$resolved_actionlint_path" ]]; then
     return 0
   fi
 
@@ -427,8 +431,8 @@ ensure_precommit_fast_actionlint_tools() {
       return "$ensure_exit"
     fi
 
-    actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
-    if [[ -n "$actionlint_path" ]]; then
+    resolved_actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+    if [[ -n "$resolved_actionlint_path" ]]; then
       return 0
     fi
   fi
@@ -442,7 +446,6 @@ run_fast_precommit_gate() {
   local phase_start_seconds=$SECONDS
   local file
   local extracted_file
-  local actionlint_path
   local run_workflow_lint=0
   local workflow_targets=()
 
@@ -480,6 +483,16 @@ run_fast_precommit_gate() {
       return "$ensure_actionlint_exit"
     fi
 
+    # Resolve the executable explicitly (ensure_* loaded the resolver) instead of relying on
+    # a dynamic-scope side effect, then refuse to invoke an empty path so a resolver
+    # regression can never exec an empty string under run_with_timeout.
+    local actionlint_path
+    actionlint_path="$(wallstop_resolve_managed_fast_tool "$repo_root" ".tools/native-quality" "actionlint" || true)"
+    if [[ -z "$actionlint_path" ]]; then
+      emit_diagnostic "E_PRECOMMIT_FAST_ACTIONLINT_PATH_EMPTY: actionlint resolved to an empty path after bootstrap reported success; refusing to invoke an empty executable. Run validation preflight."
+      return 1
+    fi
+
     local remaining_seconds
     if ! remaining_seconds="$(remaining_timeout_seconds "pre-commit fast actionlint")"; then
       return 124
@@ -494,9 +507,14 @@ run_fast_precommit_gate() {
 
 run_safe_autorepair() {
   local staged_files="$1"
+  local force_discovery="${2:-0}"
 
   if command -v pwsh > /dev/null 2>&1; then
-    if ! has_staged_windows_language_targets "$staged_files"; then
+    # When staged fast-discovery failed (force_discovery=1) the staged_files list is empty
+    # and unreliable, so skipping here would silently bypass repair of staged AHK/batch
+    # drift. In that case let Invoke-PreCommitAutoRepair.ps1 run its own safe staged-target
+    # discovery instead; otherwise only spawn pwsh when a Windows-language target is staged.
+    if [[ "$force_discovery" -ne 1 ]] && ! has_staged_windows_language_targets "$staged_files"; then
       return 0
     fi
 
@@ -542,7 +560,7 @@ if [[ "$precommit_force_recovery_suite" -eq 0 ]]; then
 fi
 
 if command -v pwsh > /dev/null 2>&1; then
-  if run_safe_autorepair "$staged_precommit_fast_files"; then
+  if run_safe_autorepair "$staged_precommit_fast_files" "$precommit_force_recovery_suite"; then
     :
   else
     safe_autorepair_exit=$?
@@ -584,7 +602,7 @@ if command -v pwsh > /dev/null 2>&1; then
     fi
 
     if [[ $recovery_exit -eq 125 ]]; then
-      emit_diagnostic "pre-commit CLI bootstrap failed in recovery wrapper; falling back to legacy PowerShell checks."
+      emit_diagnostic "W_PRECOMMIT_RECOVERY_DEGRADED: the pinned pre-commit CLI could not be prepared (missing CLI, pinned-version mismatch, or resolution failure - see the E_VALIDATION_PRECOMMIT_* diagnostic above); falling back to legacy PowerShell checks. CI still runs the pinned pre-commit CLI."
       emit_diagnostic "Recommended bootstrap:"
       print_precommit_bootstrap_guidance
       emit_diagnostic "      # persist PATH in ~/.bashrc or ~/.zshrc for future shells"

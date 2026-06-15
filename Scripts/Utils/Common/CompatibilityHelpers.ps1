@@ -89,6 +89,59 @@ function Test-IsLinuxPlatform {
     return (Get-PortableAutomaticBool -Name 'IsLinux')
 }
 
+function Get-PowerShellProbeOutcome {
+    # Pure classifier for Test-PowerShellExecutableCandidate, separated so the decision
+    # priority is deterministically unit-testable without spawning a process.
+    #
+    # The sentinel file the probe child writes on success is the AUTHORITATIVE signal: a
+    # usable PowerShell can write it and then exit (or shut down slowly) between our poll
+    # iterations, so "sentinel exists" must win even after the process has already exited.
+    # Only when the sentinel is confirmed absent do process state and exit code decide the
+    # failure mode (still-running => timeout; exited non-zero => probe-exit; exited zero
+    # but no sentinel => probe-no-sentinel).
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$SentinelExists,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$ProcessExited,
+
+        [Parameter(Mandatory = $false)]
+        [int]$ExitCode = 0,
+
+        [Parameter(Mandatory = $false)]
+        [string]$StderrPreview = "<empty>"
+    )
+
+    if ($SentinelExists) {
+        return [pscustomobject]@{
+            Usable     = $true
+            Diagnostic = "ok"
+        }
+    }
+
+    if (-not $ProcessExited) {
+        return [pscustomobject]@{
+            Usable     = $false
+            Diagnostic = "probe-timeout"
+        }
+    }
+
+    if ($ExitCode -ne 0) {
+        return [pscustomobject]@{
+            Usable     = $false
+            Diagnostic = ("probe-exit-{0}:{1}" -f $ExitCode, $StderrPreview)
+        }
+    }
+
+    return [pscustomobject]@{
+        Usable     = $false
+        Diagnostic = "probe-no-sentinel"
+    }
+}
+
 function Test-PowerShellExecutableCandidate {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -134,29 +187,41 @@ function Test-PowerShellExecutableCandidate {
             }
         }
 
+        # Drain both pipes asynchronously the instant the child starts so it can never block
+        # on a full stdout/stderr buffer while we wait for the sentinel. We only need the
+        # stderr text later (non-zero-exit path); stdout is drained purely to avoid deadlock,
+        # but both tasks are observed once the process has exited (below).
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        # Poll until the success sentinel appears OR the child exits. The sentinel - not
+        # process exit - is the success signal, because a usable PowerShell may shut down
+        # slowly after writing it.
         $deadlineUtc = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
         while ([datetime]::UtcNow -lt $deadlineUtc) {
-            if (Test-Path -LiteralPath $sentinelPath -PathType Leaf) {
-                if (-not $process.WaitForExit(250)) {
-                    try {
-                        Stop-ProcessTreePortably -Process $process
-                    }
-                    catch {
-                        Write-Verbose "PowerShell executable probe cleanup failed for '$ExecutablePath': $($_.Exception.Message)"
-                    }
-                }
-
-                return [pscustomobject]@{
-                    Usable     = $true
-                    Diagnostic = "ok"
-                }
-            }
-
-            if ($process.HasExited) {
+            if ((Test-Path -LiteralPath $sentinelPath -PathType Leaf) -or $process.HasExited) {
                 break
             }
 
             Start-Sleep -Milliseconds 50
+        }
+
+        # Re-check the sentinel authoritatively: the child can write it and exit within a
+        # single poll window, so "exited without the sentinel seen during polling" is not a
+        # reliable failure - only a sentinel confirmed absent after exit is. This re-check
+        # is what closes the race that intermittently rejected a perfectly usable pwsh.
+        $sentinelExists = Test-Path -LiteralPath $sentinelPath -PathType Leaf
+        if ($sentinelExists) {
+            if (-not $process.HasExited -and -not $process.WaitForExit(250)) {
+                try {
+                    Stop-ProcessTreePortably -Process $process
+                }
+                catch {
+                    Write-Verbose "PowerShell executable probe cleanup failed for '$ExecutablePath': $($_.Exception.Message)"
+                }
+            }
+
+            return Get-PowerShellProbeOutcome -SentinelExists $true -ProcessExited $true
         }
 
         if (-not $process.HasExited) {
@@ -167,29 +232,24 @@ function Test-PowerShellExecutableCandidate {
                 Write-Verbose "PowerShell executable probe cleanup failed for '$ExecutablePath': $($_.Exception.Message)"
             }
 
-            return [pscustomobject]@{
-                Usable     = $false
-                Diagnostic = "probe-timeout"
-            }
+            return Get-PowerShellProbeOutcome -SentinelExists $false -ProcessExited $false
         }
 
-        if ([int]$process.ExitCode -ne 0) {
-            $stderr = [string]$process.StandardError.ReadToEnd()
+        $exitCode = [int]$process.ExitCode
+        # The process has exited here, so both drained streams are at EOF and their tasks are
+        # complete: observe stdout (we discard its text but must not leave the task unobserved)
+        # and read stderr for the failure preview.
+        [void]$stdoutTask.GetAwaiter().GetResult()
+        $stderrPreview = "<empty>"
+        if ($exitCode -ne 0) {
+            $stderr = [string]$stderrTask.GetAwaiter().GetResult()
             $stderrPreview = (($stderr -replace "\s+", " ").Trim())
             if ([string]::IsNullOrWhiteSpace($stderrPreview)) {
                 $stderrPreview = "<empty>"
             }
-
-            return [pscustomobject]@{
-                Usable     = $false
-                Diagnostic = ("probe-exit-{0}:{1}" -f [int]$process.ExitCode, $stderrPreview)
-            }
         }
 
-        return [pscustomobject]@{
-            Usable     = $false
-            Diagnostic = "probe-no-sentinel"
-        }
+        return Get-PowerShellProbeOutcome -SentinelExists $false -ProcessExited $true -ExitCode $exitCode -StderrPreview $stderrPreview
     }
     finally {
         Remove-Item -LiteralPath $sentinelPath -Force -ErrorAction SilentlyContinue
