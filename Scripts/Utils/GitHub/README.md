@@ -70,10 +70,16 @@ pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https:
 
 ## Output Contract (Text)
 
+Comment blocks are separated by a single `---` delimiter: one leading, one between each
+block, and one trailing (no doubled `---` between blocks). When a comment contains a
+suggested change, it is rendered verbatim under a `Suggested change:` label.
+
 ```text
 ---
 (path/to/file.ext) lineStart-lineEnd
 Comment message
+Suggested change:
+<verbatim suggested code, when present>
 Latest reply summary: <text or (none)>
 ---
 ```
@@ -85,6 +91,13 @@ Latest reply summary: <text or (none)>
   anonymous REST fallback records use `unknown`.
 - Default rendering strips bot metadata and visual chrome from comment text, including HTML comments,
   image embeds, HTML tags, Cursor/Bugbot action buttons, Bugbot footers, and link URLs.
+- Suggested-change blocks (GitHub/Copilot/Cursor `suggestion` code fences) are preserved verbatim and
+  rendered under a `Suggested change:` label with original indentation and line breaks intact. They
+  are extracted out of the single-line prose. `-KeepMarkup` keeps the raw block inline instead.
+- Rendered output and clipboard copies are UTF-8 and byte-for-byte verbatim. `-Truncate` never splits
+  a multi-byte character or a UTF-16 surrogate pair (for example an emoji) at the truncation boundary.
+- UTF-8 terminal rendering is enabled only when the console is not already UTF-8, so a normal run adds
+  no console code-page switch (which is slow on Windows) and no per-invocation terminal latency.
 - `-KeepMarkup` preserves comment markup for debugging or archival workflows. Whitespace is still
   normalized to single-line output, and embedded bot locations are still parsed for range rendering.
 - `-Truncate` restores legacy compact output limits:
@@ -95,16 +108,26 @@ Latest reply summary: <text or (none)>
 - `-OutputPath` writes rendered output to a UTF-8 file (creating parent directories when needed) and still writes the same output to stdout.
 - Clipboard copy failures are non-fatal and emit a warning so normal output remains available.
 
-Clipboard command fallback order:
+Clipboard command fallback order (first reachable mechanism wins):
 
-1. `Set-Clipboard -AsOSC52` (when supported and terminal context is compatible)
-2. `Set-Clipboard`
-3. `pbcopy`
-4. `xclip`
-5. `xsel`
-6. `wl-copy`
+1. `Set-Clipboard` (Windows GUI clipboard — preferred on Windows because it is unbounded and Unicode-correct)
+2. OSC52 terminal escape (when the terminal context is compatible: VS Code, SSH, Windows Terminal, and stdout is a live terminal). Emits an explicit, verbatim `ESC ] 52 ; c ; <utf-8 base64> BEL` sequence
+3. `Set-Clipboard` (non-Windows provider, when present)
+4. `pbcopy`
+5. `xclip`
+6. `xsel`
+7. `wl-copy`
 
-If no supported clipboard command exists, the script warns and continues.
+If no supported clipboard mechanism exists, the script warns and continues.
+
+OSC52 is automatically disabled when stdout is redirected (for example `... -Copy > out.txt` or
+`... -Copy | cat`), so terminal escape bytes never leak into a captured file or pipe; the rendered
+output stays clean and verbatim.
+
+OSC52 size note: terminals cap the OSC52 payload size and may silently truncate large clipboard
+content (a common cause of corrupted trailing characters). When the rendered output exceeds the safe
+budget (default `100000` bytes, overridable via `WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES`), the script
+warns (`W_CLIPBOARD_OSC52_TRUNCATION_RISK`) and recommends `-OutputPath` for a fully verbatim capture.
 
 ## PowerShell Completion
 
@@ -177,6 +200,17 @@ pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 `
 - Transient failures use exponential backoff with jitter.
 - With `-WaitOnRateLimit`, the script waits until `X-RateLimit-Reset` when valid.
 - Invalid or expired rate-limit reset headers fail fast with an `E_RATE_LIMIT` error.
+
+## Performance Notes
+
+- The script itself is fast (typically ~1-2 seconds: one authenticated GraphQL call plus rendering).
+  It does not perform an unconditional console code-page switch, so `-Copy` adds no measurable
+  per-invocation terminal latency.
+- If a run feels like it "hangs" for several seconds before producing output, that delay is almost
+  always PowerShell process **cold start**, not this script. Spawning a fresh `pwsh` per invocation
+  pays the engine startup cost every time (it can be multiple seconds in containers or on first run).
+  To avoid it, run inside an already-open `pwsh` session (dot-source once, then call the function) or
+  keep a persistent shell rather than launching `pwsh ./...ps1` repeatedly.
 
 ## Line Range Edge Cases
 

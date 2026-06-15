@@ -41,18 +41,32 @@ Preserve this utility's displayed range contract for review-thread locations:
 
 Rendered comments strip markup by default. Keep coverage that removes HTML comments, markdown images, link URLs, bare HTML tags, Cursor/Bugbot action-button blocks, Bugbot footers, and Additional Locations details while preserving the actual finding text. `-KeepMarkup` is the opt-out for raw archival/debug comment text; embedded-location parsing still runs for range rendering.
 
+## Verbatim Output And Suggested Changes
+
+Rendered output is a verbatim, copy-safe artifact. Keep these contracts with behavioral plus policy coverage:
+
+- GitHub/Copilot/Cursor suggested-change fences (` ```suggestion `) are extracted verbatim into a `suggestions` record field and rendered under a `Suggested change:` label with original indentation/line breaks intact. Empty suggestion blocks denote deletions.
+- A single shared fence regex (`Get-SuggestionFenceRegex`) is the source of truth used by both `Get-CommentSuggestionBlocks` (extraction) and `Remove-MarkupFromCommentText` (prose stripping) so the two never drift; suggestion code must not be whitespace-collapsed into prose.
+- `-KeepMarkup` keeps the raw block inline and skips suggestion extraction.
+- The text renderer (`Format-UnresolvedThreadsAsText`) collapses block delimiters to a single `---` (one leading, one between blocks, one trailing); never re-introduce the doubled `---` seam.
+- `-Truncate` must not split a UTF-16 surrogate pair at the boundary (`[System.Char]::IsHighSurrogate` back-off) so emoji and astral characters never become U+FFFD.
+
 ## Clipboard Fallback And Strict Mode
 
-Keep clipboard behavior deterministic and non-breaking:
+Keep clipboard behavior deterministic, non-breaking, and byte-for-byte verbatim:
 
 - `-Copy` is best-effort by default and must never suppress stdout output.
-- Copy attempts use ordered fallback strategies, including OSC52-capable PowerShell path when available.
-- Native clipboard tools (pbcopy, xclip, xsel, wl-copy) must check `$LASTEXITCODE` after invocation; non-zero means the attempt failed and the next strategy should be tried.
-- `-CopyStrict` is opt-in and must fail fast if used without `-Copy`.
-- When `-CopyStrict` is present and copy fails, throw `E_CLIPBOARD_COPY_FAILED`.
+- Copy attempts use ordered fallback strategies. Priority is Windows-first: on Windows the unbounded GUI `Set-Clipboard` precedes the OSC52 terminal bridge; elsewhere OSC52 (when the terminal context supports it) precedes a non-Windows `Set-Clipboard` provider; native CLI tools follow.
+- OSC52 must be emitted as an explicit-selector, UTF-8 base64 escape via `ConvertTo-Osc52Sequence` (`ESC ] 52 ; c ; <base64> BEL`) written through the `Write-ConsoleHostSequence` seam. Never use the ambiguous empty-selector `Set-Clipboard -AsOSC52` (some terminals, including VS Code, do not map the empty selector to the system clipboard).
+- OSC52 must be disabled when stdout is redirected (`Test-IsConsoleOutputRedirected` over `[System.Console]::IsOutputRedirected`); otherwise the escape bytes leak into a captured file/pipe (for example `-Copy > out.txt`) and corrupt rendered output.
+- OSC52 payloads above the byte budget (`Get-Osc52MaxClipboardByteBudget`, default `100000`, override `WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES`) emit `W_CLIPBOARD_OSC52_TRUNCATION_RISK` and recommend `-OutputPath`, because terminals silently truncate oversize OSC52 and corrupt trailing characters.
+- Before piping to native clipboard tools (pbcopy/xclip/xsel/wl-copy), `Copy-ToClipboard` sets a function-local UTF-8 (no-BOM) `$OutputEncoding`; the pipe otherwise uses the ambient encoding (US-ASCII on Windows PowerShell 5.1), turning non-ASCII into `?`.
+- `Invoke-Main` ensures UTF-8 terminal rendering via `Initialize-Utf8ConsoleOutputEncoding`, which reads the current `[System.Console]::OutputEncoding` (cheap, side-effect-free) and only sets it when it is not already UTF-8 (code page 65001). The unconditional setter must NOT be reintroduced: on Windows the setter triggers `SetConsoleOutputCP`, a slow/flickery code-page switch that adds per-invocation terminal latency. Both the read and the write are best-effort (guarded), since they throw when no console is attached.
+- Native clipboard tools must check `$LASTEXITCODE` after invocation; non-zero means the attempt failed and the next strategy should be tried.
+- `-CopyStrict` is opt-in and must fail fast if used without `-Copy`. When `-CopyStrict` is present and copy fails, throw `E_CLIPBOARD_COPY_FAILED`.
 - Warning/error text must continue redacting sensitive tokens.
-- Unit tests must assert OSC52-first failover behavior: when `Set-Clipboard -AsOSC52` fails, fallback must continue to plain `Set-Clipboard` and still succeed when possible.
-- Safety conventions should enforce both OSC52 gating (`$supportsOsc52` + `Test-ShouldUseClipboardOsc52`) and OSC52-before-Set-Clipboard priority ordering in `Get-ClipboardCommandPriority`.
+- Unit tests must assert OSC52-first failover: when the OSC52 strategy fails, fallback continues to `Set-Clipboard` and still succeeds when possible.
+- Safety conventions enforce OSC52 terminal-context gating (`Test-ShouldUseClipboardOsc52`), Windows-first vs OSC52 priority ordering in `Get-ClipboardCommandPriority`, explicit-selector UTF-8 OSC52 emission, UTF-8 native-pipe encoding, and UTF-8 console encoding in `Invoke-Main`.
 
 ## Output File Contract
 
@@ -81,11 +95,12 @@ For PowerShell terminal usage, keep value discovery aids in the script parameter
 5. Assert GraphQL variable-map/query alignment in-script before request dispatch.
 6. Apply source-aware auth recovery: enforce `GH_TOKEN` before `GITHUB_TOKEN`, retry stored credentials before public REST fallback, track rejected token values after recoverable auth failures, and bypass env/rejected values during prompted login fallback.
 7. Keep non-global IP blocks and host allowlist checks active.
-8. Preserve copy fallback order and strict mode behavior.
+8. Preserve copy fallback order and strict mode behavior, including Windows-first/OSC52 priority and explicit-selector UTF-8 OSC52 emission.
 9. Preserve bot comment cleanup and embedded-location behavior with both behavioral and policy tests.
-10. Preserve output-file write semantics and UTF-8 encoding.
-11. Keep PowerShell completion metadata aligned with supported parameter values.
-12. Run targeted lint, GitHub behavior, and policy Pester checks before relying on hook execution.
+10. Preserve verbatim output: UTF-8 clipboard/native-pipe/console encoding, surrogate-safe truncation, single collapsed `---` delimiter, and verbatim suggested-change rendering.
+11. Preserve output-file write semantics and UTF-8 encoding.
+12. Keep PowerShell completion metadata aligned with supported parameter values.
+13. Run targeted lint, GitHub behavior, and policy Pester checks before relying on hook execution.
 
 ## References
 

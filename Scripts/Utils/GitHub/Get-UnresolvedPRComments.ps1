@@ -1073,6 +1073,58 @@ function Remove-HtmlBlocksContainingText {
     return $builder.ToString()
 }
 
+function Get-SuggestionFenceRegex {
+    # Single source of truth for matching GitHub "suggested change" fenced blocks so the
+    # extractor (Get-CommentSuggestionBlocks) and the prose stripper (Remove-MarkupFromCommentText)
+    # never drift. Matches an opening fence of three or more backticks, the case-insensitive
+    # "suggestion" info string (optionally with trailing attributes), the verbatim body, then a
+    # closing fence of the same length. Operates on LF-normalized text; the named backreference
+    # \k<fence> guarantees the closing fence length matches the opening fence.
+    [OutputType([regex])]
+    [CmdletBinding()]
+    param()
+
+    # The named backreference \k<fence> guarantees the closing fence length matches the opening
+    # fence. The optional (?:\n)? before the closing-fence anchor lets the lazy (?<code>...)
+    # group stop one newline early so a single-line empty block (open fence directly followed by
+    # close fence) still matches with an empty code capture.
+    $pattern = '(?m)^[ \t]*(?<fence>`{3,})[ \t]*suggestion\b[^\n]*\n(?<code>[\s\S]*?)(?:\n)?^[ \t]*\k<fence>[ \t]*$'
+    return [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+}
+
+function Get-CommentSuggestionBlocks {
+    # Extracts GitHub "```suggestion" blocks (Copilot, Cursor, and human reviewers) verbatim so
+    # suggested implementations can be rendered exactly instead of being whitespace-collapsed into
+    # unusable single-line text. Returns an array of objects with `kind` and verbatim `code`.
+    [OutputType([object[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return @() # array-unwrap-safe: callers always wrap with @()
+    }
+
+    $normalized = $Text -replace "`r`n", "`n" -replace "`r", "`n"
+    $regex = Get-SuggestionFenceRegex
+    $suggestions = New-Object System.Collections.Generic.List[object]
+    foreach ($match in $regex.Matches($normalized)) {
+        $code = $match.Groups["code"].Value
+        # Drop the trailing newline artifact that precedes the closing fence while preserving
+        # interior blank lines and indentation exactly.
+        $code = $code -replace "`n+$", ""
+        $suggestions.Add([pscustomobject]@{
+                kind = "suggestion"
+                code = $code
+            }) | Out-Null
+    }
+
+    return @($suggestions.ToArray())
+}
+
 function Remove-MarkupFromCommentText {
     [OutputType([string])]
     [CmdletBinding()]
@@ -1087,7 +1139,13 @@ function Remove-MarkupFromCommentText {
     }
 
     $ignoreCase = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    $cleaned = $Text
+    # Normalize line endings so multiline-anchored cleanup behaves identically for CRLF/LF
+    # source. Downstream single-line normalization collapses remaining whitespace, so this is
+    # safe for prose output.
+    $cleaned = $Text -replace "`r`n", "`n" -replace "`r", "`n"
+    # "```suggestion" blocks are rendered separately and verbatim, so strip them from prose to
+    # avoid duplicated or whitespace-mangled inline copies.
+    $cleaned = (Get-SuggestionFenceRegex).Replace($cleaned, ' ')
     $cleaned = [regex]::Replace($cleaned, '<details\b[^>]*>\s*<summary\b[^>]*>\s*Additional Locations[\s\S]*?</details>', ' ', $ignoreCase)
     $cleaned = Remove-HtmlBlocksContainingText -Text $cleaned -ElementName "div" -MarkerPattern 'cursor\.com/(?:open|agents)|fix-in-(?:cursor|web)'
     $cleaned = Remove-HtmlBlocksContainingText -Text $cleaned -ElementName "sup" -MarkerPattern 'Reviewed by\s+\[?Cursor Bugbot|cursor\.com/bugbot'
@@ -1136,7 +1194,17 @@ function Normalize-CommentText {
         return $singleLine
     }
 
-    return ($singleLine.Substring(0, $MaxLength) + " [...]")
+    # Never split a UTF-16 surrogate pair (for example an emoji) at the truncation boundary:
+    # a lone surrogate round-trips through UTF-8 as the U+FFFD replacement character and
+    # corrupts copied/rendered output. Back off one unit when the boundary lands on a high
+    # surrogate so the pair is dropped whole. The explicit (string, int) overload avoids any
+    # char/string overload ambiguity from indexer extraction.
+    $cutLength = $MaxLength
+    if ($cutLength -gt 0 -and [System.Char]::IsHighSurrogate($singleLine, $cutLength - 1)) {
+        $cutLength--
+    }
+
+    return ($singleLine.Substring(0, $cutLength) + " [...]")
 }
 
 function Resolve-ReviewThreadGitHubAnchor {
@@ -1345,6 +1413,89 @@ function Resolve-ReviewThreadLineRange {
     }
 }
 
+function ConvertTo-Osc52Sequence {
+    # Builds the OSC52 terminal escape that copies $Text to the system clipboard. The payload is
+    # the UTF-8 bytes of $Text, base64-encoded, wrapped as ESC ] 52 ; c ; <base64> BEL. The
+    # explicit "c" clipboard selector is honored by every compliant terminal; an empty selector
+    # (as emitted by Set-Clipboard -AsOSC52) is ambiguous and not reliably mapped to the system
+    # clipboard by some terminals (for example VS Code). The whole sequence is pure ASCII, so it
+    # transmits byte-for-byte regardless of console/output encoding.
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $base64 = [System.Convert]::ToBase64String($bytes)
+    $esc = [char]27
+    $bel = [char]7
+    return "$esc]52;c;$base64$bel"
+}
+
+function Write-ConsoleHostSequence {
+    # Thin, mockable seam that writes a raw terminal control sequence directly to the console
+    # host so OSC52 reaches the terminal emulator. Isolated so clipboard tests can assert the
+    # emitted sequence without writing escape bytes to the test runner's console.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Sequence
+    )
+
+    [System.Console]::Out.Write($Sequence)
+    [System.Console]::Out.Flush()
+}
+
+function Get-Osc52MaxClipboardByteBudget {
+    # Resolves the advisory OSC52 payload-size budget. Terminals cap OSC52 length and silently
+    # truncate larger payloads, which corrupts trailing (often multibyte) characters. The budget
+    # is overridable via WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES for terminals with different limits.
+    [OutputType([int])]
+    [CmdletBinding()]
+    param()
+
+    $default = 100000
+    $raw = $env:WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES
+    if (-not [string]::IsNullOrWhiteSpace($raw)) {
+        $parsed = 0
+        if ([int]::TryParse($raw.Trim(), [ref]$parsed) -and $parsed -gt 0) {
+            return $parsed
+        }
+    }
+
+    return $default
+}
+
+function Write-Osc52Clipboard {
+    # Copies $Text to the system clipboard via an OSC52 terminal escape (the only clipboard
+    # bridge available over SSH, inside containers, and in VS Code's integrated terminal). The
+    # emitted sequence is UTF-8-correct and verbatim. Because terminals cap OSC52 payload size,
+    # oversize content can be silently truncated by the terminal (a common cause of corrupted
+    # trailing characters), so a size guard warns and recommends -OutputPath rather than failing.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text,
+
+        [Parameter(Mandatory = $false)]
+        [int]$MaxClipboardBytes = -1
+    )
+
+    $budget = if ($MaxClipboardBytes -gt 0) { $MaxClipboardBytes } else { Get-Osc52MaxClipboardByteBudget }
+    $byteCount = [System.Text.Encoding]::UTF8.GetByteCount($Text)
+    if ($byteCount -gt $budget) {
+        Write-Warning "W_CLIPBOARD_OSC52_TRUNCATION_RISK: Clipboard payload is $byteCount bytes, exceeding the OSC52 safe budget of $budget bytes; the terminal may truncate it and corrupt the copied text. Use -OutputPath to capture the full output verbatim, or set WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES to adjust the threshold."
+    }
+
+    $sequence = ConvertTo-Osc52Sequence -Text $Text
+    Write-ConsoleHostSequence -Sequence $sequence
+}
+
 function Get-ClipboardCommand {
     [OutputType([string])]
     [CmdletBinding()]
@@ -1358,10 +1509,33 @@ function Get-ClipboardCommand {
     return $commands[0]
 }
 
+function Test-IsConsoleOutputRedirected {
+    # Mockable seam over [System.Console]::IsOutputRedirected. Isolated so the OSC52 gate is
+    # unit-testable and so the property probe can never throw on hosts without a console.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param()
+
+    try {
+        return [System.Console]::IsOutputRedirected
+    }
+    catch {
+        return $false
+    }
+}
+
 function Test-ShouldUseClipboardOsc52 {
     [OutputType([bool])]
     [CmdletBinding()]
     param()
+
+    # OSC52 is a terminal control sequence written to stdout. If stdout is redirected to a file
+    # or pipe, emitting it would inject raw escape bytes into that output (corrupting, for
+    # example, `... -Copy > out.txt` or `... -Copy | cat`) and it would never reach a terminal
+    # anyway. Disable OSC52 whenever stdout is not a live terminal.
+    if (Test-IsConsoleOutputRedirected) {
+        return $false
+    }
 
     return ($env:TERM_PROGRAM -eq "vscode") -or
     (-not [string]::IsNullOrWhiteSpace($env:WT_SESSION)) -or
@@ -1375,17 +1549,24 @@ function Get-ClipboardCommandPriority {
     param()
 
     $commands = New-Object System.Collections.Generic.List[string]
-    $setClipboardCommand = Get-Command Set-Clipboard -ErrorAction SilentlyContinue
-    if ($null -ne $setClipboardCommand) {
-        $supportsOsc52 = $false
-        if ($setClipboardCommand.PSObject.Properties.Name -contains "Parameters" -and $null -ne $setClipboardCommand.Parameters) {
-            $supportsOsc52 = ($setClipboardCommand.Parameters.Keys -contains "AsOSC52")
-        }
+    $onWindows = Test-IsWindowsPlatform
+    $hasSetClipboard = $null -ne (Get-Command Set-Clipboard -ErrorAction SilentlyContinue)
 
-        if ($supportsOsc52 -and (Test-ShouldUseClipboardOsc52)) {
-            $commands.Add("Set-Clipboard-AsOSC52") | Out-Null
-        }
+    # The Windows GUI clipboard is unbounded and Unicode-correct, so it is always preferred over
+    # OSC52 on Windows (OSC52 has a terminal payload cap that can truncate large content).
+    if ($onWindows -and $hasSetClipboard) {
+        $commands.Add("Set-Clipboard") | Out-Null
+    }
 
+    # OSC52 bridges remote/terminal contexts (VS Code, SSH, Windows Terminal) where no local GUI
+    # clipboard is reachable. It emits an explicit, UTF-8-correct sequence (Write-Osc52Clipboard).
+    if (Test-ShouldUseClipboardOsc52) {
+        $commands.Add("Osc52") | Out-Null
+    }
+
+    # Non-Windows Set-Clipboard provider (where present) ranks after OSC52 because it is not a
+    # reliable system clipboard on every non-Windows host.
+    if ((-not $onWindows) -and $hasSetClipboard) {
         $commands.Add("Set-Clipboard") | Out-Null
     }
 
@@ -1412,30 +1593,17 @@ function Get-ClipboardCommandPriority {
 }
 
 function Set-ClipboardValue {
-    # Thin, mockable seam over Set-Clipboard. Tests mock THIS command — whose parameter set is
-    # identical across every PowerShell edition — instead of Set-Clipboard directly. Pester
-    # builds a mock's parameter metadata from the real command, and Set-Clipboard's -AsOSC52
-    # switch exists only on PowerShell 7.4+, so mocking Set-Clipboard with -AsOSC52 fails
-    # parameter binding under Windows PowerShell 5.1 ("A parameter cannot be found that matches
-    # parameter name 'AsOSC52'"). The -AsOSC52 branch here is reached only after a runtime
-    # capability check (Get-ClipboardCommandPriority) confirms the parameter exists.
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '', Justification = 'Set-Clipboard -AsOSC52 is invoked only after Get-ClipboardCommandPriority confirms the parameter exists via a runtime Parameters.Keys check; Windows PowerShell 5.1 never selects the OSC52 strategy and falls back to plain Set-Clipboard / pbcopy / xclip / xsel / wl-copy.')]
+    # Thin, mockable seam over Set-Clipboard for the Windows/native GUI clipboard strategy. OSC52
+    # no longer routes through Set-Clipboard (see Write-Osc52Clipboard), so this seam is
+    # edition-stable and needs no -AsOSC52 capability handling.
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
-        [string]$Value,
-
-        [Parameter(Mandatory = $false)]
-        [switch]$AsOSC52
+        [string]$Value
     )
 
-    if ($AsOSC52) {
-        Set-Clipboard -Value $Value -AsOSC52
-    }
-    else {
-        Set-Clipboard -Value $Value
-    }
+    Set-Clipboard -Value $Value
 }
 
 function Copy-ToClipboard {
@@ -1457,13 +1625,20 @@ function Copy-ToClipboard {
     }
 
     $valueToCopy = if ($null -eq $Text) { "" } else { $Text }
+    # Native clipboard tools (pbcopy/xclip/xsel/wl-copy) receive their input through a pipe whose
+    # bytes are encoded with $OutputEncoding. That defaults to US-ASCII on Windows PowerShell 5.1
+    # (and may be non-UTF-8 elsewhere), which silently corrupts non-ASCII characters. Force a
+    # UTF-8 (no BOM) $OutputEncoding so piped clipboard content stays byte-for-byte verbatim. The
+    # assignment is function-scoped: it shadows the caller's $OutputEncoding only within this
+    # function and is discarded automatically when the function returns.
+    $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
     $attemptErrors = New-Object System.Collections.Generic.List[string]
 
     foreach ($clipboardCommand in $clipboardCommands) {
         try {
             switch ($clipboardCommand) {
-                "Set-Clipboard-AsOSC52" {
-                    Set-ClipboardValue -Value $valueToCopy -AsOSC52
+                "Osc52" {
+                    Write-Osc52Clipboard -Text $valueToCopy
                     return $true
                 }
                 "Set-Clipboard" {
@@ -2529,6 +2704,15 @@ function Convert-ReviewThreadToOutputRecord {
         Normalize-CommentText -Text $topBody -DisableTruncation -KeepMarkup:$KeepMarkup
     }
 
+    # Suggested-change blocks are preserved verbatim and rendered separately from prose.
+    # KeepMarkup keeps the raw body intact, so suggestion extraction is skipped there.
+    $suggestions = if ($KeepMarkup.IsPresent) {
+        @()
+    }
+    else {
+        @(Get-CommentSuggestionBlocks -Text $topBody)
+    }
+
     $latestReplySummary = if ($null -eq $latestReply) {
         $null
     }
@@ -2550,6 +2734,7 @@ function Convert-ReviewThreadToOutputRecord {
         githubLineStart    = $githubAnchor.Start
         githubLineEnd      = $githubAnchor.End
         embeddedLocations  = @($embeddedLocations)
+        suggestions        = @($suggestions)
         topLevelComment    = $topLevelComment
         latestReplySummary = $latestReplySummary
         resolutionState    = [string]$resolutionState
@@ -2663,6 +2848,45 @@ function Convert-RestReviewCommentsToThreadLikeObjects {
     return $threads.ToArray()
 }
 
+function Add-SuggestionRenderLines {
+    # Appends verbatim "Suggested change" blocks to the rendered text output. Suggestion
+    # code is preserved exactly (multi-line, no whitespace collapsing) so suggested
+    # implementations from Copilot/Cursor/GitHub remain copy-paste accurate.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.Generic.List[string]]$Lines,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Suggestions
+    )
+
+    if ($null -eq $Suggestions) {
+        return
+    }
+
+    foreach ($suggestion in @($Suggestions)) {
+        if ($null -eq $suggestion) {
+            continue
+        }
+
+        $code = Get-ObjectPropertyValue -InputObject $suggestion -Name "code"
+        $codeText = if ($null -eq $code) { "" } else { [string]$code }
+
+        if ([string]::IsNullOrEmpty($codeText)) {
+            # An empty GitHub suggestion block means "delete the targeted lines".
+            $Lines.Add("Suggested change (remove the lines):") | Out-Null
+            continue
+        }
+
+        $Lines.Add("Suggested change:") | Out-Null
+        foreach ($codeLine in ($codeText -split "`n")) {
+            $Lines.Add($codeLine) | Out-Null
+        }
+    }
+}
+
 function Format-UnresolvedThreadsAsText {
     [CmdletBinding()]
     param(
@@ -2677,9 +2901,16 @@ function Format-UnresolvedThreadsAsText {
         $lineStartText = if ($null -eq $record.lineStart) { "?" } else { [string]$record.lineStart }
         $lineEndText = if ($null -eq $record.lineEnd) { "?" } else { [string]$record.lineEnd }
 
-        $lines.Add("---")
+        # Emit a single leading delimiter for the first block; every block then ends
+        # with one delimiter. This yields exactly one "---" between adjacent blocks
+        # instead of the legacy doubled "---\n---" seam.
+        if ($lines.Count -eq 0) {
+            $lines.Add("---")
+        }
+
         $lines.Add(("({0}) {1}-{2}" -f $record.path, $lineStartText, $lineEndText))
         $lines.Add($record.topLevelComment)
+        Add-SuggestionRenderLines -Lines $lines -Suggestions (Get-ObjectPropertyValue -InputObject $record -Name "suggestions")
         if ($null -eq $record.latestReplySummary) {
             $lines.Add("Latest reply summary: (none)")
         }
@@ -3263,9 +3494,68 @@ function Test-GitHubFallbackFailureMayRequireAuth {
     $Message -like "E_NOT_FOUND*"
 }
 
+function Get-ConsoleOutputEncoding {
+    # Mockable seam over the [System.Console]::OutputEncoding getter. Reading the current console
+    # encoding is cheap and side-effect-free (unlike the setter), so it is safe to probe first.
+    [OutputType([System.Text.Encoding])]
+    [CmdletBinding()]
+    param()
+
+    return [System.Console]::OutputEncoding
+}
+
+function Set-ConsoleOutputEncoding {
+    # Mockable seam over the [System.Console]::OutputEncoding setter. On Windows this triggers
+    # SetConsoleOutputCP (a console code-page switch) which is comparatively slow and can flicker,
+    # so callers must only invoke it when the encoding actually needs to change.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Text.Encoding]$Encoding
+    )
+
+    [System.Console]::OutputEncoding = $Encoding
+}
+
+function Initialize-Utf8ConsoleOutputEncoding {
+    # Ensures terminal-rendered output is UTF-8 so on-screen comment text stays verbatim,
+    # WITHOUT paying the per-invocation cost of an unconditional console code-page switch.
+    #
+    # Setting [System.Console]::OutputEncoding triggers SetConsoleOutputCP on Windows, which is a
+    # comparatively slow, sometimes visibly flickery operation and was observed to add noticeable
+    # latency to every run. Modern terminals (Windows Terminal, VS Code, macOS, Linux) are already
+    # UTF-8, so we read the current encoding first (cheap, side-effect-free) and only change it
+    # when it is not already UTF-8 (code page 65001). Both the probe and the set are best-effort:
+    # they throw when no console is attached (for example when all standard streams are redirected).
+    try {
+        $current = Get-ConsoleOutputEncoding
+        if ($null -ne $current -and $current.CodePage -eq 65001) {
+            return
+        }
+    }
+    catch {
+        Write-Verbose "W_CONSOLE_ENCODING_UNAVAILABLE: Unable to read console output encoding: $($_.Exception.Message)"
+        return
+    }
+
+    try {
+        Set-ConsoleOutputEncoding -Encoding (New-Object System.Text.UTF8Encoding($false))
+    }
+    catch {
+        Write-Verbose "W_CONSOLE_ENCODING_UNAVAILABLE: Unable to set console output encoding to UTF-8: $($_.Exception.Message)"
+    }
+}
+
 function Invoke-Main {
     [CmdletBinding()]
     param()
+
+    # Render terminal output as UTF-8 so copied (terminal-screen selection) comment text stays
+    # verbatim, independent of the host's default code page. This is intentionally a no-op when
+    # the console is already UTF-8 so it never adds per-invocation terminal latency. ($OutputEncoding,
+    # which governs only native-program pipes, is set locally in Copy-ToClipboard where the native
+    # clipboard pipes actually run.)
+    Initialize-Utf8ConsoleOutputEncoding
 
     $overallDeadlineUtc = [datetime]::UtcNow.AddSeconds($OverallTimeoutSeconds)
     if ($CopyStrict.IsPresent -and -not $Copy.IsPresent) {

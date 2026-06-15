@@ -37,6 +37,6 @@ This file is generated. Do not edit generated sections manually.
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
-| [GitHub PR Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, cursor bugbot, bot markup, embedded locations, host allowlist, retries, auth recovery, public rest fallback, git credential, GH_TOKEN, GITHUB_TOKEN, clipboard fallback, output file, powershell completion | Preserve GitHub utility safety and UX contracts |
+| [GitHub PR Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, cursor bugbot, bot markup, embedded locations, host allowlist, retries, auth recovery, public rest fallback, git credential, GH_TOKEN, GITHUB_TOKEN, clipboard fallback, osc52, output encoding, utf-8 verbatim, suggested change, suggestion block, delimiter, surrogate pair, output file, powershell completion | Preserve GitHub utility safety and UX contracts |
 
 <!-- END GENERATED SKILLS INDEX -->

@@ -594,7 +594,7 @@ Describe "Scope safety conventions" {
         }
     }
 
-    It "keeps OSC52-first ordering in clipboard command priority" {
+    It "keeps a Windows-first, OSC52-bridging clipboard command priority" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
 
@@ -602,13 +602,96 @@ Describe "Scope safety conventions" {
         $functionMatch.Success | Should -BeTrue -Because "Get-ClipboardCommandPriority should exist so clipboard ordering contracts can be validated"
         $functionBody = $functionMatch.Groups["body"].Value
 
-        $functionBody | Should -Match 'if\s*\(\$supportsOsc52\s*-and\s*\(Test-ShouldUseClipboardOsc52\)\)' -Because "OSC52 strategy must remain explicitly gated by capability and terminal-context checks"
+        # OSC52 must stay gated by terminal context, and the legacy Set-Clipboard -AsOSC52 strategy
+        # must be gone (replaced by the explicit, UTF-8-correct Write-Osc52Clipboard emitter).
+        $functionBody | Should -Match 'if\s*\(Test-ShouldUseClipboardOsc52\)' -Because "OSC52 strategy must remain explicitly gated by terminal-context checks"
+        $functionBody | Should -Match 'Test-IsWindowsPlatform' -Because "Windows must prefer the unbounded GUI clipboard over size-capped OSC52"
+        $content | Should -Not -Match 'Set-Clipboard-AsOSC52' -Because "the ambiguous empty-selector OSC52 path is replaced by ConvertTo-Osc52Sequence"
 
-        $osc52AddIndex = $functionBody.IndexOf('$commands.Add("Set-Clipboard-AsOSC52")', [System.StringComparison]::Ordinal)
-        $setClipboardAddIndex = $functionBody.IndexOf('$commands.Add("Set-Clipboard")', [System.StringComparison]::Ordinal)
-        $osc52AddIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include Set-Clipboard-AsOSC52"
-        $setClipboardAddIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include Set-Clipboard"
-        $osc52AddIndex | Should -BeLessThan $setClipboardAddIndex -Because "clipboard strategy order is a behavior contract: OSC52 attempt must run before plain Set-Clipboard"
+        $osc52AddIndex = $functionBody.IndexOf('$commands.Add("Osc52")', [System.StringComparison]::Ordinal)
+        $windowsSetClipboardIndex = $functionBody.IndexOf('$commands.Add("Set-Clipboard")', [System.StringComparison]::Ordinal)
+        $lastSetClipboardIndex = $functionBody.LastIndexOf('$commands.Add("Set-Clipboard")', [System.StringComparison]::Ordinal)
+        $osc52AddIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include the Osc52 strategy"
+        $windowsSetClipboardIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include Set-Clipboard"
+        $windowsSetClipboardIndex | Should -BeLessThan $osc52AddIndex -Because "Windows GUI clipboard is preferred before OSC52"
+        $osc52AddIndex | Should -BeLessThan $lastSetClipboardIndex -Because "OSC52 bridges before the non-Windows Set-Clipboard provider"
+    }
+
+    It "emits a UTF-8, explicit-selector OSC52 sequence for verbatim clipboard copy" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+ConvertTo-Osc52Sequence'
+        # Explicit "c" clipboard selector (not an ambiguous empty selector) over UTF-8 base64.
+        $content | Should -Match 'function\s+ConvertTo-Osc52Sequence[\s\S]*\[System\.Text\.Encoding\]::UTF8\.GetBytes'
+        $content | Should -Match 'function\s+ConvertTo-Osc52Sequence[\s\S]*\$esc\]52;c;\$base64\$bel'
+        # Oversize OSC52 payloads warn instead of silently corrupting copied output.
+        $content | Should -Match 'function\s+Write-Osc52Clipboard[\s\S]*W_CLIPBOARD_OSC52_TRUNCATION_RISK'
+        $content | Should -Match 'function\s+Copy-ToClipboard[\s\S]*"Osc52"\s*\{[\s\S]*?Write-Osc52Clipboard\s+-Text\s+\$valueToCopy'
+        # OSC52 must never be emitted to a redirected stdout (it would inject escape bytes into a
+        # captured file/pipe). The terminal-context gate disables it when output is redirected.
+        $content | Should -Match 'function\s+Test-IsConsoleOutputRedirected[\s\S]*\[System\.Console\]::IsOutputRedirected'
+        $content | Should -Match 'function\s+Test-ShouldUseClipboardOsc52[\s\S]*if\s*\(Test-IsConsoleOutputRedirected\)\s*\{\s*\r?\n?\s*return\s+\$false'
+    }
+
+    It "forces UTF-8 OutputEncoding before piping to native clipboard tools" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+Copy-ToClipboard[\s\S]*\$OutputEncoding\s*=\s*New-Object\s+System\.Text\.UTF8Encoding\(\$false\)[\s\S]*\$valueToCopy\s*\|\s*&\s*pbcopy'
+    }
+
+    It "sets UTF-8 console output encoding in Invoke-Main without an unconditional code-page switch" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        # Invoke-Main must route console encoding through the guarded initializer (not an inline
+        # unconditional setter), so the slow Windows SetConsoleOutputCP code-page switch is skipped
+        # when the console is already UTF-8 and never adds per-invocation terminal latency.
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*Initialize-Utf8ConsoleOutputEncoding'
+        $content | Should -Not -Match 'function\s+Invoke-Main[\s\S]*\[System\.Console\]::OutputEncoding\s*='
+        $content | Should -Match 'function\s+Initialize-Utf8ConsoleOutputEncoding[\s\S]*Get-ConsoleOutputEncoding[\s\S]*CodePage\s*-eq\s*65001[\s\S]*return'
+        $content | Should -Match 'function\s+Initialize-Utf8ConsoleOutputEncoding[\s\S]*Set-ConsoleOutputEncoding\s+-Encoding\s+\(New-Object\s+System\.Text\.UTF8Encoding\(\$false\)\)'
+        $content | Should -Match 'function\s+Set-ConsoleOutputEncoding[\s\S]*\[System\.Console\]::OutputEncoding\s*=\s*\$Encoding'
+    }
+
+    It "preserves suggested-change blocks verbatim and strips them from prose" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+Get-SuggestionFenceRegex'
+        $content | Should -Match 'function\s+Get-CommentSuggestionBlocks'
+        # The prose stripper reuses the shared fence regex so extraction and removal never drift.
+        $content | Should -Match 'function\s+Remove-MarkupFromCommentText[\s\S]*Get-SuggestionFenceRegex'
+        # The record carries verbatim suggestions, and the text renderer labels them.
+        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*suggestions\s*=\s*@\(\$suggestions\)'
+        $content | Should -Match 'function\s+Add-SuggestionRenderLines[\s\S]*Suggested change'
+
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+        $testsContent | Should -Match 'Describe\s+"Comment suggestion blocks"'
+        $testsContent | Should -Match 'captures suggestions on a record and strips them from the prose'
+    }
+
+    It "truncates comment text without splitting UTF-16 surrogate pairs" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+Normalize-CommentText[\s\S]*\[System\.Char\]::IsHighSurrogate'
+    }
+
+    It "renders a single collapsed text delimiter between comment blocks" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $functionMatch = [regex]::Match($content, 'function\s+Format-UnresolvedThreadsAsText\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $functionMatch.Success | Should -BeTrue -Because "Format-UnresolvedThreadsAsText must exist so the delimiter contract can be validated"
+        $functionBody = $functionMatch.Groups["body"].Value
+
+        # The leading delimiter is guarded so only one "---" separates adjacent blocks instead of
+        # the legacy doubled "---\n---" seam.
+        $functionBody | Should -Match 'if\s*\(\$lines\.Count\s*-eq\s*0\)\s*\{\s*\r?\n?\s*\$lines\.Add\("---"\)'
+        ([regex]::Matches($functionBody, '\$lines\.Add\("---"\)')).Count | Should -Be 2 -Because "exactly one guarded leading delimiter and one per-block trailing delimiter"
     }
 
     It "uses PSBoundParameters for OutputPath gating in Invoke-Main" {

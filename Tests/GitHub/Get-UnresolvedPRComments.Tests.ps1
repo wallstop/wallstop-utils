@@ -228,25 +228,25 @@ query Demo(
 
     It "validates GraphQL variable payload casing and strictness (<Name>)" -ForEach @(
         @{
-            Name                    = "accepts exact-case GraphQL variable payload keys"
-            Variables               = @{ owner = "org"; repo = "repo"; prNumber = 10 }
-            RejectUnexpected        = $false
-            ShouldThrow             = $false
-            ExpectedThrowPattern    = ""
+            Name                 = "accepts exact-case GraphQL variable payload keys"
+            Variables            = @{ owner = "org"; repo = "repo"; prNumber = 10 }
+            RejectUnexpected     = $false
+            ShouldThrow          = $false
+            ExpectedThrowPattern = ""
         },
         @{
-            Name                    = "rejects payload keys that differ by casing"
-            Variables               = @{ Owner = "org"; Repo = "repo"; prNumber = 10 }
-            RejectUnexpected        = $false
-            ShouldThrow             = $true
-            ExpectedThrowPattern    = "*E_CONFIG_ERROR*case mismatch*owner*Owner*repo*Repo*"
+            Name                 = "rejects payload keys that differ by casing"
+            Variables            = @{ Owner = "org"; Repo = "repo"; prNumber = 10 }
+            RejectUnexpected     = $false
+            ShouldThrow          = $true
+            ExpectedThrowPattern = "*E_CONFIG_ERROR*case mismatch*owner*Owner*repo*Repo*"
         },
         @{
-            Name                    = "rejects unexpected variables when strict mode is requested"
-            Variables               = @{ owner = "org"; repo = "repo"; prNumber = 10; extra = "unexpected" }
-            RejectUnexpected        = $true
-            ShouldThrow             = $true
-            ExpectedThrowPattern    = "*E_CONFIG_ERROR*unexpected variables*extra*"
+            Name                 = "rejects unexpected variables when strict mode is requested"
+            Variables            = @{ owner = "org"; repo = "repo"; prNumber = 10; extra = "unexpected" }
+            RejectUnexpected     = $true
+            ShouldThrow          = $true
+            ExpectedThrowPattern = "*E_CONFIG_ERROR*unexpected variables*extra*"
         }
     ) {
         if ($ShouldThrow) {
@@ -355,10 +355,10 @@ Describe "Get-HeaderValues" {
     # TryGetValues branch), plain hashtables, and case-insensitive generic dictionaries (both
     # via the ContainsKey branch). Adding a backing here adds a row, not a copy of the body.
     It "reads <Case>" -ForEach @(
-        @{ Case = "multiple values from real HttpHeaders via TryGetValues"; Backing = "HttpHeaders";       Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
-        @{ Case = "real HttpHeaders regardless of key casing";              Backing = "HttpHeaders";       Entries = @{ "X-OAuth-Scopes" = @("repo") };             LookupKey = "x-oauth-scopes"; Expected = @("repo") }
-        @{ Case = "array-valued hashtable entries";                         Backing = "Hashtable";         Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
-        @{ Case = "case-insensitive generic dictionary entries";            Backing = "GenericDictionary"; Entries = @{ "X-OAuth-Scopes" = "repo" };                LookupKey = "x-oauth-scopes"; Expected = @("repo") }
+        @{ Case = "multiple values from real HttpHeaders via TryGetValues"; Backing = "HttpHeaders"; Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
+        @{ Case = "real HttpHeaders regardless of key casing"; Backing = "HttpHeaders"; Entries = @{ "X-OAuth-Scopes" = @("repo") }; LookupKey = "x-oauth-scopes"; Expected = @("repo") }
+        @{ Case = "array-valued hashtable entries"; Backing = "Hashtable"; Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
+        @{ Case = "case-insensitive generic dictionary entries"; Backing = "GenericDictionary"; Entries = @{ "X-OAuth-Scopes" = "repo" }; LookupKey = "x-oauth-scopes"; Expected = @("repo") }
     ) {
         param($Backing, $Entries, $LookupKey, $Expected)
 
@@ -518,8 +518,52 @@ Describe "Redact-SensitiveText" {
     }
 }
 
+Describe "Test-ShouldUseClipboardOsc52" {
+    BeforeAll {
+        $script:originalTermProgram = $env:TERM_PROGRAM
+        $script:originalWtSession = $env:WT_SESSION
+        $script:originalSshClient = $env:SSH_CLIENT
+        $script:originalSshTty = $env:SSH_TTY
+    }
+
+    BeforeEach {
+        $env:TERM_PROGRAM = $null
+        $env:WT_SESSION = $null
+        $env:SSH_CLIENT = $null
+        $env:SSH_TTY = $null
+    }
+
+    AfterAll {
+        $env:TERM_PROGRAM = $script:originalTermProgram
+        $env:WT_SESSION = $script:originalWtSession
+        $env:SSH_CLIENT = $script:originalSshClient
+        $env:SSH_TTY = $script:originalSshTty
+    }
+
+    It "never uses OSC52 when stdout is redirected, even in a supported terminal" {
+        $env:TERM_PROGRAM = "vscode"
+        Mock Test-IsConsoleOutputRedirected { $true }
+
+        Test-ShouldUseClipboardOsc52 | Should -BeFalse
+    }
+
+    It "uses OSC52 in a supported terminal when stdout is not redirected" {
+        $env:TERM_PROGRAM = "vscode"
+        Mock Test-IsConsoleOutputRedirected { $false }
+
+        Test-ShouldUseClipboardOsc52 | Should -BeTrue
+    }
+
+    It "does not use OSC52 outside a supported terminal even when not redirected" {
+        Mock Test-IsConsoleOutputRedirected { $false }
+
+        Test-ShouldUseClipboardOsc52 | Should -BeFalse
+    }
+}
+
 Describe "Get-ClipboardCommand" {
     It "prefers Set-Clipboard when available" {
+        Mock Test-ShouldUseClipboardOsc52 { $false }
         Mock Get-Command {
             [pscustomobject]@{ Name = "Set-Clipboard" }
         } -ParameterFilter { $Name -eq "Set-Clipboard" }
@@ -529,6 +573,7 @@ Describe "Get-ClipboardCommand" {
     }
 
     It "falls back to xclip when Set-Clipboard and pbcopy are unavailable" {
+        Mock Test-ShouldUseClipboardOsc52 { $false }
         Mock Get-Command { $null } -ParameterFilter { $Name -eq "Set-Clipboard" }
         Mock Get-Command { $null } -ParameterFilter { $Name -eq "pbcopy" }
         Mock Get-Command { [pscustomobject]@{ Name = "xclip" } } -ParameterFilter { $Name -eq "xclip" }
@@ -539,19 +584,37 @@ Describe "Get-ClipboardCommand" {
 }
 
 Describe "Get-ClipboardCommandPriority" {
-    It "adds OSC52 strategy before Set-Clipboard when terminal supports it" {
-        Mock Get-Command {
-            [pscustomobject]@{
-                Name       = "Set-Clipboard"
-                Parameters = @{ AsOSC52 = $true }
-            }
-        } -ParameterFilter { $Name -eq "Set-Clipboard" }
-        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
+    It "adds Osc52 before Set-Clipboard on non-Windows when the terminal supports it" {
+        Mock Test-IsWindowsPlatform { $false }
         Mock Test-ShouldUseClipboardOsc52 { $true }
+        Mock Get-Command { [pscustomobject]@{ Name = "Set-Clipboard" } } -ParameterFilter { $Name -eq "Set-Clipboard" }
+        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
 
         $commands = @(Get-ClipboardCommandPriority)
-        $commands[0] | Should -Be "Set-Clipboard-AsOSC52"
+        $commands[0] | Should -Be "Osc52"
         $commands[1] | Should -Be "Set-Clipboard"
+    }
+
+    It "prefers the Windows GUI clipboard before Osc52" {
+        Mock Test-IsWindowsPlatform { $true }
+        Mock Test-ShouldUseClipboardOsc52 { $true }
+        Mock Get-Command { [pscustomobject]@{ Name = "Set-Clipboard" } } -ParameterFilter { $Name -eq "Set-Clipboard" }
+        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
+
+        $commands = @(Get-ClipboardCommandPriority)
+        $commands[0] | Should -Be "Set-Clipboard"
+        $commands[1] | Should -Be "Osc52"
+    }
+
+    It "omits Osc52 when the terminal context does not support it" {
+        Mock Test-IsWindowsPlatform { $false }
+        Mock Test-ShouldUseClipboardOsc52 { $false }
+        Mock Get-Command { [pscustomobject]@{ Name = "Set-Clipboard" } } -ParameterFilter { $Name -eq "Set-Clipboard" }
+        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
+
+        $commands = @(Get-ClipboardCommandPriority)
+        $commands | Should -Not -Contain "Osc52"
+        $commands | Should -Contain "Set-Clipboard"
     }
 }
 
@@ -598,40 +661,60 @@ Describe "Copy-ToClipboard" {
         $script:lastWarningMessage | Should -Not -Match [regex]::Escape($secret)
     }
 
-    It "falls back to Set-Clipboard when OSC52 attempt fails" {
+    It "falls back to Set-Clipboard when the Osc52 strategy fails" {
         $script:clipboardAttemptOrder = @()
-        Mock Get-ClipboardCommandPriority { @("Set-Clipboard-AsOSC52", "Set-Clipboard") }
+        Mock Get-ClipboardCommandPriority { @("Osc52", "Set-Clipboard") }
+        Mock Write-Osc52Clipboard {
+            $script:clipboardAttemptOrder += "Osc52"
+            throw "osc52 failed"
+        }
         Mock Set-ClipboardValue {
-            param(
-                [string]$Value,
-                [switch]$AsOSC52
-            )
-
-            if ($AsOSC52.IsPresent) {
-                $script:clipboardAttemptOrder += "Set-Clipboard-AsOSC52"
-                throw "Set-Clipboard -AsOSC52 failed"
-            }
-
             $script:clipboardAttemptOrder += "Set-Clipboard"
         }
 
         $copied = Copy-ToClipboard -Text "copy me"
 
         $copied | Should -BeTrue
-        (($script:clipboardAttemptOrder) -join ",") | Should -Be "Set-Clipboard-AsOSC52,Set-Clipboard" -Because "clipboard fallback should preserve OSC52-first attempt order and then recover with plain Set-Clipboard"
-        Assert-MockCalled Set-ClipboardValue -Times 2 -Scope It
-        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent }
-        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { -not $AsOSC52.IsPresent }
+        (($script:clipboardAttemptOrder) -join ",") | Should -Be "Osc52,Set-Clipboard" -Because "clipboard fallback should preserve OSC52-first attempt order and then recover with the native clipboard"
+        Assert-MockCalled Write-Osc52Clipboard -Times 1 -Scope It
+        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It
     }
 
-    It "uses Set-Clipboard -AsOSC52 when OSC52 strategy is selected" {
-        Mock Get-ClipboardCommandPriority { @("Set-Clipboard-AsOSC52") }
-        Mock Set-ClipboardValue { }
+    It "invokes Write-Osc52Clipboard when the Osc52 strategy is selected" {
+        Mock Get-ClipboardCommandPriority { @("Osc52") }
+        Mock Write-Osc52Clipboard { }
 
         $copied = Copy-ToClipboard -Text "copy me"
 
         $copied | Should -BeTrue
-        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent -and $Value -eq "copy me" }
+        Assert-MockCalled Write-Osc52Clipboard -Times 1 -Scope It -ParameterFilter { $Text -eq "copy me" }
+    }
+
+    It "uses UTF-8 OutputEncoding while piping to native clipboard tools" {
+        $script:seenEncoding = $null
+        Mock Get-ClipboardCommandPriority { @("pbcopy") }
+        try {
+            function pbcopy {
+                param(
+                    [Parameter(ValueFromPipeline = $true)]
+                    [AllowNull()]
+                    [string]$InputObject
+                )
+
+                process {
+                    $script:seenEncoding = $OutputEncoding.WebName
+                    $global:LASTEXITCODE = 0
+                }
+            }
+
+            $copied = Copy-ToClipboard -Text "copy me"
+
+            $copied | Should -BeTrue
+            $script:seenEncoding | Should -Be "utf-8" -Because "native clipboard pipes must transmit UTF-8 bytes regardless of the ambient OutputEncoding (ASCII on Windows PowerShell 5.1)"
+        }
+        finally {
+            Remove-Item -Path Function:pbcopy -ErrorAction SilentlyContinue
+        }
     }
 
     It "falls back across native clipboard tools in priority order" {
@@ -694,32 +777,122 @@ Describe "Copy-ToClipboard" {
 }
 
 Describe "Set-ClipboardValue" {
-    # The seam exists so Copy-ToClipboard's clipboard tests can mock a command with an
-    # edition-stable parameter set; these tests assert the seam itself routes to Set-Clipboard
-    # correctly (the branch selection that Copy-ToClipboard's mocks otherwise stub out).
-    It "calls Set-Clipboard without -AsOSC52 by default" {
+    It "routes the value to Set-Clipboard" {
         Mock Set-Clipboard { }
 
         Set-ClipboardValue -Value "plain copy"
 
-        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { -not $AsOSC52.IsPresent -and $Value -eq "plain copy" }
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $Value -eq "plain copy" }
+    }
+}
+
+Describe "ConvertTo-Osc52Sequence" {
+    It "wraps UTF-8 base64 with the explicit clipboard selector" {
+        $esc = [char]27
+        $bel = [char]7
+        $expected = "$esc]52;c;" + [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("hello")) + $bel
+
+        ConvertTo-Osc52Sequence -Text "hello" | Should -BeExactly $expected
     }
 
-    It "routes -AsOSC52 through to Set-Clipboard when the parameter exists on this edition" {
-        $setClipboard = Get-Command Set-Clipboard -ErrorAction SilentlyContinue
-        if ($null -eq $setClipboard -or -not $setClipboard.Parameters.ContainsKey('AsOSC52')) {
-            # On Windows PowerShell 5.1 Set-Clipboard has no -AsOSC52, and production never
-            # selects the OSC52 strategy there (Get-ClipboardCommandPriority gates on the same
-            # capability check), so the branch is unreachable and not worth a brittle shim.
-            Set-ItResult -Skipped -Because "Set-Clipboard -AsOSC52 is unavailable on this edition (Windows PowerShell 5.1)."
-            return
+    It "encodes multibyte characters as UTF-8 before base64 (verbatim round-trip)" {
+        $text = [string]([char]0x2014) + "X" + [string]([char]0x2018) + "Y"
+        $esc = [char]27
+        $bel = [char]7
+        $prefix = "$esc]52;c;"
+
+        $seq = ConvertTo-Osc52Sequence -Text $text
+        $seq.StartsWith($prefix) | Should -BeTrue
+        $seq.EndsWith($bel) | Should -BeTrue
+
+        $base64 = $seq.Substring($prefix.Length, $seq.Length - $prefix.Length - 1)
+        $decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($base64))
+        $decoded | Should -BeExactly $text
+    }
+
+    It "produces a pure-ASCII transmittable sequence even for astral characters" {
+        $seq = ConvertTo-Osc52Sequence -Text ([char]::ConvertFromUtf32(0x1F600))
+        foreach ($ch in $seq.ToCharArray()) {
+            ([int]$ch) | Should -BeLessThan 128
+        }
+    }
+}
+
+Describe "Write-Osc52Clipboard" {
+    It "writes the OSC52 sequence through the console seam" {
+        $script:capturedSequence = $null
+        Mock Write-ConsoleHostSequence {
+            param($Sequence)
+            $script:capturedSequence = $Sequence
         }
 
-        Mock Set-Clipboard { }
+        Write-Osc52Clipboard -Text "verbatim"
 
-        Set-ClipboardValue -Value "osc52 copy" -AsOSC52
+        $script:capturedSequence | Should -BeExactly (ConvertTo-Osc52Sequence -Text "verbatim")
+        Assert-MockCalled Write-ConsoleHostSequence -Times 1 -Scope It
+    }
 
-        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent -and $Value -eq "osc52 copy" }
+    It "warns about terminal truncation when the payload exceeds the OSC52 budget" {
+        $script:lastWarning = $null
+        Mock Write-ConsoleHostSequence { }
+        Mock Write-Warning { param($Message) $script:lastWarning = $Message }
+
+        Write-Osc52Clipboard -Text ("a" * 5000) -MaxClipboardBytes 1000
+
+        $script:lastWarning | Should -Match "W_CLIPBOARD_OSC52_TRUNCATION_RISK"
+        # The copy is still attempted as best effort after warning.
+        Assert-MockCalled Write-ConsoleHostSequence -Times 1 -Scope It
+    }
+
+    It "does not warn when the payload is within the OSC52 budget" {
+        $script:lastWarning = $null
+        Mock Write-ConsoleHostSequence { }
+        Mock Write-Warning { param($Message) $script:lastWarning = $Message }
+
+        Write-Osc52Clipboard -Text "small" -MaxClipboardBytes 1000
+
+        $script:lastWarning | Should -BeNullOrEmpty
+    }
+}
+
+Describe "Initialize-Utf8ConsoleOutputEncoding" {
+    It "skips the console code-page change when the console is already UTF-8" {
+        Mock Get-ConsoleOutputEncoding { New-Object System.Text.UTF8Encoding($false) }
+        Mock Set-ConsoleOutputEncoding { }
+
+        Initialize-Utf8ConsoleOutputEncoding
+
+        # Setting [System.Console]::OutputEncoding triggers SetConsoleOutputCP on Windows, a slow
+        # and sometimes flickery code-page switch. It must be skipped when already UTF-8 (the
+        # common case) so it never adds per-invocation terminal latency.
+        Assert-MockCalled Set-ConsoleOutputEncoding -Times 0 -Scope It
+    }
+
+    It "sets UTF-8 only when the console is not already UTF-8" {
+        $script:assignedEncoding = $null
+        Mock Get-ConsoleOutputEncoding { [System.Text.Encoding]::ASCII }
+        Mock Set-ConsoleOutputEncoding { param($Encoding) $script:assignedEncoding = $Encoding }
+
+        Initialize-Utf8ConsoleOutputEncoding
+
+        Assert-MockCalled Set-ConsoleOutputEncoding -Times 1 -Scope It
+        $script:assignedEncoding | Should -Not -BeNullOrEmpty
+        $script:assignedEncoding.CodePage | Should -Be 65001
+    }
+
+    It "is resilient when reading the console encoding throws" {
+        Mock Get-ConsoleOutputEncoding { throw "no console attached" }
+        Mock Set-ConsoleOutputEncoding { }
+
+        { Initialize-Utf8ConsoleOutputEncoding } | Should -Not -Throw
+        Assert-MockCalled Set-ConsoleOutputEncoding -Times 0 -Scope It
+    }
+
+    It "is resilient when setting the console encoding throws" {
+        Mock Get-ConsoleOutputEncoding { [System.Text.Encoding]::ASCII }
+        Mock Set-ConsoleOutputEncoding { throw "cannot set encoding on redirected stream" }
+
+        { Initialize-Utf8ConsoleOutputEncoding } | Should -Not -Throw
     }
 }
 
@@ -806,6 +979,29 @@ Describe "Normalize-CommentText" {
 
         $normalized | Should -BeExactly $input
     }
+
+    It "does not split a surrogate pair when truncating at the boundary" {
+        $emoji = [char]::ConvertFromUtf32(0x1F600)
+        $text = ("A" * 9) + $emoji
+        $result = Normalize-CommentText -Text $text -MaxLength 10
+
+        $truncatedPortion = $result -replace " \[\.\.\.\]$", ""
+        $truncatedPortion | Should -BeExactly ("A" * 9)
+        [System.Char]::IsHighSurrogate($truncatedPortion[$truncatedPortion.Length - 1]) | Should -BeFalse
+
+        # A lone surrogate would round-trip through UTF-8 as U+FFFD; verbatim output must not.
+        $roundTripped = [System.Text.Encoding]::UTF8.GetString([System.Text.Encoding]::UTF8.GetBytes($result))
+        $roundTripped | Should -BeExactly $result
+    }
+
+    It "keeps a whole surrogate pair that fits exactly at the boundary" {
+        $emoji = [char]::ConvertFromUtf32(0x1F600)
+        $text = ("A" * 8) + $emoji + "BBBBB"
+        $result = Normalize-CommentText -Text $text -MaxLength 10
+
+        $truncatedPortion = $result -replace " \[\.\.\.\]$", ""
+        $truncatedPortion | Should -BeExactly (("A" * 8) + $emoji)
+    }
 }
 
 Describe "Get-EmbeddedCommentLocations" {
@@ -845,6 +1041,186 @@ Describe "Get-EmbeddedCommentLocations" {
         $locations.Count | Should -Be 1
         $locations[0].lineStart | Should -Be 96
         $locations[0].lineEnd | Should -Be 96
+    }
+}
+
+Describe "Comment suggestion blocks" {
+    It "extracts a single suggestion block verbatim" {
+        $body = @'
+Please rename this for clarity.
+
+```suggestion
+$resolvedHostName = $candidateHost.Trim()
+```
+'@
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+
+        $suggestions.Count | Should -Be 1
+        $suggestions[0].kind | Should -Be "suggestion"
+        $suggestions[0].code | Should -BeExactly '$resolvedHostName = $candidateHost.Trim()'
+    }
+
+    It "preserves multi-line suggestion code with exact indentation" {
+        $body = @'
+Use a guard clause.
+
+```suggestion
+if ($null -eq $value) {
+    return
+}
+```
+
+Thanks!
+'@
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+        $expectedCode = "if (`$null -eq `$value) {`n    return`n}"
+
+        $suggestions.Count | Should -Be 1
+        $suggestions[0].code | Should -BeExactly $expectedCode
+    }
+
+    It "extracts multiple suggestion blocks in document order" {
+        $body = @'
+First:
+```suggestion
+alpha
+```
+Second:
+```suggestion
+beta
+```
+'@
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+
+        $suggestions.Count | Should -Be 2
+        $suggestions[0].code | Should -BeExactly "alpha"
+        $suggestions[1].code | Should -BeExactly "beta"
+    }
+
+    It "represents an empty suggestion block as an empty deletion" {
+        $body = @'
+Delete this line.
+
+```suggestion
+```
+'@
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+
+        $suggestions.Count | Should -Be 1
+        $suggestions[0].code | Should -BeExactly ""
+    }
+
+    It "ignores non-suggestion fenced code blocks" {
+        $body = @'
+Example only:
+```powershell
+Get-Thing
+```
+'@
+        @(Get-CommentSuggestionBlocks -Text $body).Count | Should -Be 0
+    }
+
+    It "returns an empty array when no suggestions are present" {
+        @(Get-CommentSuggestionBlocks -Text "Just prose, no code.").Count | Should -Be 0
+        @(Get-CommentSuggestionBlocks -Text $null).Count | Should -Be 0
+        @(Get-CommentSuggestionBlocks -Text "   ").Count | Should -Be 0
+    }
+
+    It "tolerates CRLF line endings in suggestion blocks" {
+        $fence = [string]([char]96) * 3
+        $body = "Fix this.`r`n`r`n${fence}suggestion`r`nGet-Fixed`r`n${fence}"
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+
+        $suggestions.Count | Should -Be 1
+        $suggestions[0].code | Should -BeExactly "Get-Fixed"
+    }
+
+    It "captures suggestions on a record and strips them from the prose" {
+        $body = @'
+Consider renaming for clarity.
+
+```suggestion
+$normalizedHost = $candidate.Trim()
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_SUGGESTION"
+            isResolved = $false
+            path       = "src/host.ps1"
+            startLine  = 10
+            line       = 10
+            comments   = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        @($record.suggestions).Count | Should -Be 1
+        $record.suggestions[0].kind | Should -Be "suggestion"
+        $record.suggestions[0].code | Should -BeExactly '$normalizedHost = $candidate.Trim()'
+        $record.topLevelComment | Should -Be "Consider renaming for clarity."
+        $record.topLevelComment | Should -Not -Match 'suggestion'
+        $record.topLevelComment | Should -Not -Match 'normalizedHost'
+    }
+
+    It "renders captured suggestions verbatim before the latest-reply line" {
+        $body = @'
+Use a guard clause.
+
+```suggestion
+if ($null -eq $value) {
+    return
+}
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_SUGGESTION_TEXT"
+            isResolved = $false
+            path       = "src/guard.ps1"
+            startLine  = 3
+            line       = 3
+            comments   = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+        $normalized = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+        $normalized | Should -Match "Suggested change:"
+        $normalized | Should -Match ([regex]::Escape('if ($null -eq $value) {'))
+        $normalized | Should -Match ([regex]::Escape('    return'))
+
+        $suggestionIndex = $normalized.IndexOf("Suggested change:")
+        $replyIndex = $normalized.IndexOf("Latest reply summary:")
+        $suggestionIndex | Should -BeGreaterThan -1
+        $suggestionIndex | Should -BeLessThan $replyIndex
+    }
+
+    It "does not extract suggestions under KeepMarkup" {
+        $body = @'
+Keep raw markup.
+
+```suggestion
+raw code
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_SUGGESTION_KEEPMARKUP"
+            isResolved = $false
+            path       = "src/raw.ps1"
+            startLine  = 1
+            line       = 1
+            comments   = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com" -KeepMarkup
+
+        @($record.suggestions).Count | Should -Be 0
+        $record.topLevelComment | Should -Match 'suggestion'
     }
 }
 
@@ -889,6 +1265,7 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         ($propertyNames -ccontains "githubLineStart") | Should -BeTrue
         ($propertyNames -ccontains "githubLineEnd") | Should -BeTrue
         ($propertyNames -ccontains "embeddedLocations") | Should -BeTrue
+        ($propertyNames -ccontains "suggestions") | Should -BeTrue
         ($propertyNames -ccontains "resolutionState") | Should -BeTrue
         ($propertyNames -ccontains "authSource") | Should -BeFalse
         ($propertyNames -ccontains "owner") | Should -BeTrue
@@ -1219,7 +1596,6 @@ Describe "Format-UnresolvedThreadsAsText" {
 Comment A
 Latest reply summary: (none)
 ---
----
 (src/b.ts) 12-20
 Comment B
 Latest reply summary: Reply B
@@ -1230,6 +1606,68 @@ Latest reply summary: Reply B
         $expectedNormalized = $expected.TrimEnd("`r", "`n") -replace "`r`n", "`n"
 
         $actualNormalized | Should -BeExactly $expectedNormalized
+    }
+
+    It "never emits two adjacent delimiter lines between blocks" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/a.ts"
+                lineStart          = 1
+                lineEnd            = 1
+                topLevelComment    = "A"
+                latestReplySummary = $null
+            },
+            [pscustomobject]@{
+                path               = "src/b.ts"
+                lineStart          = 2
+                lineEnd            = 2
+                topLevelComment    = "B"
+                latestReplySummary = $null
+            },
+            [pscustomobject]@{
+                path               = "src/c.ts"
+                lineStart          = 3
+                lineEnd            = 3
+                topLevelComment    = "C"
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $lines = @(($text -replace "`r`n", "`n") -split "`n")
+
+        # A single delimiter must separate blocks (and bookend the output); two
+        # consecutive "---" lines (the legacy double delimiter) must never appear.
+        for ($i = 0; $i -lt ($lines.Count - 1); $i++) {
+            if ($lines[$i] -eq "---") {
+                $lines[$i + 1] | Should -Not -Be "---" -Because "adjacent '---' lines are the collapsed-delimiter regression"
+            }
+        }
+
+        @($lines | Where-Object { $_ -eq "---" }).Count | Should -Be 4 -Because "three blocks use one leading, two separating, and one trailing delimiter"
+    }
+
+    It "renders a single bookended block for one record" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/only.ts"
+                lineStart          = 5
+                lineEnd            = 7
+                topLevelComment    = "Solo comment"
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $expected = @"
+---
+(src/only.ts) 5-7
+Solo comment
+Latest reply summary: (none)
+---
+"@
+
+        ($text -replace "`r`n", "`n") | Should -BeExactly (($expected.TrimEnd("`r", "`n")) -replace "`r`n", "`n")
     }
 }
 
