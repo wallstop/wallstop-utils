@@ -962,6 +962,133 @@ function Get-ClipboardCommandPriority { @('wl-copy') }
     }
 }
 
+Describe "FastExit process termination (end-to-end)" {
+    BeforeAll {
+        $script:feIsUnix = -not (Test-IsWindowsPlatform)
+        $script:feScript = Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+    }
+
+    BeforeEach {
+        $script:feDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("fastexit-" + [Guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($script:feDir)
+    }
+
+    AfterEach {
+        if (Test-Path -LiteralPath $script:feDir) {
+            Remove-Item -LiteralPath $script:feDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "skips the slow managed teardown while preserving exit code and full output" {
+        if (-not $script:feIsUnix) { Set-ItResult -Skipped -Because "the libc fast-exit path is Unix-only; Windows uses [Environment]::Exit."; return }
+
+        $pwshExe = $null
+        try {
+            $candidate = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) { $pwshExe = $candidate }
+        }
+        catch { $pwshExe = $null }
+        if ($null -eq $pwshExe) {
+            $homeCandidate = Join-Path -Path $PSHOME -ChildPath "pwsh"
+            if (Test-Path -LiteralPath $homeCandidate) { $pwshExe = $homeCandidate }
+        }
+        if ($null -eq $pwshExe) { Set-ItResult -Skipped -Because "could not resolve a launchable pwsh host."; return }
+
+        # Inner script: dot-source the real script, then drive the fast-exit path the way the run
+        # guard does (large output, marker as the last managed write, then Invoke-FastProcessExit).
+        $marker = Join-Path -Path $script:feDir -ChildPath "marker.txt"
+        $inner = @"
+. '$($script:feScript)' -NoRun
+1..2000 | ForEach-Object { Write-Output "line-`$_" }
+[System.IO.File]::WriteAllText('$marker', [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString())
+Invoke-FastProcessExit -ExitCode 7
+"@
+        $innerFile = Join-Path -Path $script:feDir -ChildPath "inner.ps1"
+        [System.IO.File]::WriteAllText($innerFile, $inner, [System.Text.UTF8Encoding]::new($false))
+
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = [string]$pwshExe
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-NoProfile", "-NoLogo", "-File", $innerFile)
+
+        $proc = [System.Diagnostics.Process]::Start($startInfo)
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        [void]$proc.StandardError.ReadToEndAsync()
+        $exited = $proc.WaitForExit(60000)
+        [void]$stdoutTask.Wait(5000)
+
+        try {
+            $exited | Should -BeTrue -Because "the fast-exit must terminate the process promptly"
+            $proc.ExitCode | Should -Be 7 -Because "the requested exit code must be preserved by the fast exit"
+            $stdout = [string]$stdoutTask.Result
+            ($stdout -split "`n" | Where-Object { $_ -match '^line-\d+' }).Count | Should -Be 2000 -Because "all buffered output must be flushed before the fast exit (no truncation)"
+            $stdout | Should -Not -Match "Killed" -Because "a clean libc _exit must not raise a SIGKILL 'Killed' message"
+        }
+        finally {
+            if (-not $proc.HasExited) { try { $proc.Kill() } catch { } }
+            $proc.Dispose()
+        }
+    }
+
+    It "does not truncate a large payload before the fast exit" {
+        if (-not $script:feIsUnix) { Set-ItResult -Skipped -Because "the libc fast-exit path is Unix-only; Windows uses [Environment]::Exit."; return }
+
+        $pwshExe = $null
+        try {
+            $candidate = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) { $pwshExe = $candidate }
+        }
+        catch { $pwshExe = $null }
+        if ($null -eq $pwshExe) {
+            $homeCandidate = Join-Path -Path $PSHOME -ChildPath "pwsh"
+            if (Test-Path -LiteralPath $homeCandidate) { $pwshExe = $homeCandidate }
+        }
+        if ($null -eq $pwshExe) { Set-ItResult -Skipped -Because "could not resolve a launchable pwsh host."; return }
+
+        # A ~2.5 MB payload (25000 lines) far exceeds any OS pipe / console buffer, so this proves
+        # the run-guard flush commits all rendered output before the immediate termination. This is
+        # the permanent regression guard against fast-exit truncating large output.
+        $lineCount = 25000
+        $inner = @"
+. '$($script:feScript)' -NoRun
+`$sb = [System.Text.StringBuilder]::new()
+for (`$i = 1; `$i -le $lineCount; `$i++) { [void]`$sb.AppendLine(('{0:D6}:' -f `$i) + ('x' * 80)) }
+Write-Output `$sb.ToString().TrimEnd("``n", "``r")
+Invoke-FastProcessExit -ExitCode 0
+"@
+        $innerFile = Join-Path -Path $script:feDir -ChildPath "big.ps1"
+        [System.IO.File]::WriteAllText($innerFile, $inner, [System.Text.UTF8Encoding]::new($false))
+
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = [string]$pwshExe
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-NoProfile", "-NoLogo", "-File", $innerFile)
+
+        $proc = [System.Diagnostics.Process]::Start($startInfo)
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        [void]$proc.StandardError.ReadToEndAsync()
+        $exited = $proc.WaitForExit(60000)
+        [void]$stdoutTask.Wait(10000)
+
+        try {
+            $exited | Should -BeTrue
+            $proc.ExitCode | Should -Be 0
+            $stdout = [string]$stdoutTask.Result
+            $matched = [regex]::Matches($stdout, '(?m)^\d{6}:')
+            $matched.Count | Should -Be $lineCount -Because "every rendered line must survive the fast exit even for a multi-megabyte payload"
+            $stdout | Should -Match ("(?m)^{0:D6}:" -f $lineCount) -Because "the final line must be present (no tail truncation)"
+        }
+        finally {
+            if (-not $proc.HasExited) { try { $proc.Kill() } catch { } }
+            $proc.Dispose()
+        }
+    }
+}
+
 Describe "Set-ClipboardValue" {
     It "routes the value to Set-Clipboard" {
         Mock Set-Clipboard { }
@@ -1079,6 +1206,48 @@ Describe "Initialize-Utf8ConsoleOutputEncoding" {
         Mock Set-ConsoleOutputEncoding { throw "cannot set encoding on redirected stream" }
 
         { Initialize-Utf8ConsoleOutputEncoding } | Should -Not -Throw
+    }
+}
+
+Describe "Invoke-FastProcessExit" {
+    It "flushes output then terminates with the requested exit code" {
+        $script:fastExitCode = $null
+        Mock Stop-CurrentProcessImmediately { param($ExitCode) $script:fastExitCode = $ExitCode }
+
+        Invoke-FastProcessExit -ExitCode 0
+
+        Assert-MockCalled Stop-CurrentProcessImmediately -Times 1 -Scope It -ParameterFilter { $ExitCode -eq 0 }
+        $script:fastExitCode | Should -Be 0
+    }
+
+    It "passes a non-zero exit code through to the terminator" {
+        $script:fastExitCode = $null
+        Mock Stop-CurrentProcessImmediately { param($ExitCode) $script:fastExitCode = $ExitCode }
+
+        Invoke-FastProcessExit -ExitCode 1
+
+        Assert-MockCalled Stop-CurrentProcessImmediately -Times 1 -Scope It -ParameterFilter { $ExitCode -eq 1 }
+        $script:fastExitCode | Should -Be 1
+    }
+
+    It "still terminates even if flushing the console throws" {
+        $script:fastExitCode = $null
+        Mock Stop-CurrentProcessImmediately { param($ExitCode) $script:fastExitCode = $ExitCode }
+        Mock Invoke-ConsoleFlush { throw "no console" }
+
+        { Invoke-FastProcessExit -ExitCode 0 } | Should -Not -Throw
+        Assert-MockCalled Stop-CurrentProcessImmediately -Times 1 -Scope It
+        $script:fastExitCode | Should -Be 0
+    }
+
+    It "flushes the console before terminating" {
+        $script:order = @()
+        Mock Invoke-ConsoleFlush { $script:order += "flush" }
+        Mock Stop-CurrentProcessImmediately { param($ExitCode) $script:order += "exit" }
+
+        Invoke-FastProcessExit -ExitCode 0
+
+        ($script:order -join ",") | Should -Be "flush,exit" -Because "buffered output must be committed before the process is terminated"
     }
 }
 

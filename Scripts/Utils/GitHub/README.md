@@ -239,6 +239,21 @@ pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 `
   Running the `.ps1` from a live `pwsh` prompt executes it in-process (a child scope), so it pays the
   engine startup/teardown only once for the whole session rather than on every invocation.
 
+- If you must launch a fresh `pwsh` per call (for example from a bash prompt), the script **skips the
+  teardown wait by default**. After output is fully rendered and flushed, the process is terminated
+  immediately, skipping the slow .NET/PowerShell managed shutdown (finalizers + the HTTP connection
+  pool). Measured effect in this dev container: ~20s drops to ~5s for the same run, with identical
+  output and a preserved exit code. On Linux/macOS it uses libc `_exit` (a clean exit, not a SIGKILL);
+  on Windows it falls back to `[System.Environment]::Exit`. Output, clipboard, and `-OutputPath`
+  writes all complete before termination, so the result is the same as a standard exit.
+
+  Pass **`-NoFastExit`** to restore the standard managed teardown (for example if a wrapping tool
+  depends on normal process shutdown):
+
+  ```powershell
+  pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -Copy -NoFastExit "https://github.com/owner/repo/pull/123"
+  ```
+
 ## Line Range Edge Cases
 
 - Cursor/Bugbot comments that include embedded `LOCATIONS` metadata use the first matching embedded

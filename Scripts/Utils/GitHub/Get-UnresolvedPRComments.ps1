@@ -1,5 +1,6 @@
 #!/usr/bin/env pwsh
-<#!
+
+<#
 .SYNOPSIS
 Fetch unresolved GitHub PR review threads and render plain text or JSON output.
 
@@ -72,6 +73,16 @@ Clipboard copy failures are non-fatal and emit a warning.
 .PARAMETER CopyStrict
 Only valid together with -Copy. If set, clipboard copy failure becomes a terminating
 error after output is rendered.
+
+.PARAMETER NoFastExit
+Optional opt-out. By default, after output is rendered and flushed, the process terminates
+immediately, skipping the slow .NET/PowerShell managed teardown (finalizers and HTTP
+connection-pool shutdown) that dominates wall time on slow container filesystems. On Unix
+this uses libc _exit (a clean exit that preserves the exit code and emits no "Killed"
+message); on Windows, or if the native call is unavailable, it falls back to
+[System.Environment]::Exit. Set -NoFastExit to restore the standard managed teardown (for
+example if a wrapping tool depends on normal process shutdown). Output, clipboard, and
+-OutputPath writes all complete before termination either way, so the result is identical.
 #>
 [CmdletBinding()]
 param(
@@ -121,6 +132,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [switch]$CopyStrict,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$NoFastExit,
 
     [Parameter(Mandatory = $false)]
     [ValidateRange(1, 100)]
@@ -3691,6 +3705,78 @@ function Initialize-Utf8ConsoleOutputEncoding {
     }
 }
 
+function Invoke-ConsoleFlush {
+    # Mockable seam that commits all buffered console output to the OS before a fast process exit.
+    # Isolated so Invoke-FastProcessExit can be unit-tested without actually flushing/terminating.
+    [CmdletBinding()]
+    param()
+
+    [System.Console]::Out.Flush()
+    [System.Console]::Error.Flush()
+}
+
+function Stop-CurrentProcessImmediately {
+    # Terminates the current process with $ExitCode, skipping the slow .NET/PowerShell managed
+    # shutdown (finalizers, HTTP connection-pool teardown) that dominates wall time on slow
+    # container filesystems. On Unix this calls libc `_exit`, which terminates immediately without
+    # running finalizers and without raising a SIGKILL "Killed" message (it is a normal exit, so the
+    # requested exit code is preserved). On Windows (and if the native call is unavailable) it falls
+    # back to [System.Environment]::Exit. Callers MUST flush output first (see Invoke-FastProcessExit)
+    # because this bypasses the managed flush. This is a mockable seam: tests stub it so they never
+    # actually terminate the test runner.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ExitCode
+    )
+
+    if (-not (Test-IsWindowsPlatform)) {
+        try {
+            if ($null -eq ('WallstopNativeExit.Libc' -as [type])) {
+                Add-Type -Namespace WallstopNativeExit -Name Libc -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("libc", EntryPoint = "_exit")]
+public static extern void _exit(int code);
+'@
+            }
+
+            [WallstopNativeExit.Libc]::_exit($ExitCode)
+        }
+        catch {
+            # The native fast exit is unavailable on this host (for example a libc/_exit resolution
+            # failure). Surface it so the degradation to the slower managed exit is visible rather
+            # than silent, then fall through to the portable terminator below.
+            Write-Warning "W_FAST_EXIT_NATIVE_UNAVAILABLE: Fast native exit (libc _exit) is unavailable on this host; using the slower managed exit instead. $($_.Exception.Message)"
+        }
+    }
+
+    # Windows path and Unix fallback: the documented cross-platform terminator. Slower than libc
+    # _exit on a loaded Linux container, but always correct.
+    [System.Environment]::Exit($ExitCode)
+}
+
+function Invoke-FastProcessExit {
+    # Flushes buffered output and then terminates the process immediately, skipping the slow managed
+    # teardown. This is the default behavior; the script's -NoFastExit switch opts out. The output
+    # and any -OutputPath file writes are already committed before this runs (rendering completes
+    # synchronously and the flush below commits console buffers), so the only thing skipped is
+    # dead-weight runtime shutdown.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [int]$ExitCode = 0
+    )
+
+    try {
+        Invoke-ConsoleFlush
+    }
+    catch {
+        # A missing/redirected console must not prevent termination; bytes already written to a
+        # redirected stream are committed by the OS regardless.
+    }
+
+    Stop-CurrentProcessImmediately -ExitCode $ExitCode
+}
+
 function Invoke-Main {
     [CmdletBinding()]
     param()
@@ -3901,6 +3987,13 @@ function Invoke-Main {
 if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
     try {
         Invoke-Main
+        # By default the process terminates immediately after a successful run, skipping the slow
+        # .NET/PowerShell managed teardown (finalizers + HTTP connection-pool shutdown) that
+        # dominates wall time on slow container filesystems. Output is already rendered and flushed
+        # before this point. -NoFastExit opts out and restores the standard managed teardown.
+        if (-not $NoFastExit.IsPresent) {
+            Invoke-FastProcessExit -ExitCode 0
+        }
     }
     catch {
         if ($null -ne $_) {
@@ -3908,6 +4001,9 @@ if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
         }
         else {
             Microsoft.PowerShell.Utility\Write-Error "E_UNEXPECTED: Script failed with an unknown error."
+        }
+        if (-not $NoFastExit.IsPresent) {
+            Invoke-FastProcessExit -ExitCode 1
         }
         exit 1
     }

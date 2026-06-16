@@ -66,6 +66,7 @@ Keep clipboard behavior deterministic, non-breaking, and byte-for-byte verbatim:
 - Warning/error text must continue redacting sensitive tokens.
 - Unit tests must assert OSC52-first failover: when the OSC52 strategy fails, fallback continues to `Set-Clipboard` and still succeeds when possible.
 - Safety conventions enforce OSC52 terminal-context gating (`Test-ShouldUseClipboardOsc52`), Windows-first vs OSC52 priority ordering in `Get-ClipboardCommandPriority`, explicit-selector UTF-8 OSC52 emission, detached/bounded native-tool execution (`Invoke-NativeClipboardTool`), and UTF-8 console encoding in `Invoke-Main`.
+- By default the script skips the slow .NET/PowerShell managed teardown (finalizers + HTTP connection pool) that dominates wall time when a fresh `pwsh` is spawned per call on slow container filesystems; `-NoFastExit` opts out and restores the standard managed teardown. After rendering, `Invoke-FastProcessExit` flushes the console (`Invoke-ConsoleFlush`) then calls `Stop-CurrentProcessImmediately`, which on non-Windows P/Invokes libc `_exit` (a clean exit preserving the exit code, runtime-gated by `Test-IsWindowsPlatform` and idempotent `Add-Type`) and on Windows / fallback uses `[System.Environment]::Exit`. The flush-before-terminate order and the run-guard wiring (default-on success exit 0, failure exit 1, unless `-NoFastExit`, inside the existing dot-source guard so dot-sourced tests never terminate the host) are policy-tested. The primary remedy remains running the script inside a warm `pwsh` session.
 
 ## Output File Contract
 

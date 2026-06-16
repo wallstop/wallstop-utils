@@ -688,6 +688,58 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Set-ConsoleOutputEncoding[\s\S]*\[System\.Console\]::OutputEncoding\s*=\s*\$Encoding'
     }
 
+    It "keeps the default-on fast termination safe, gated, flushed, and opt-out" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        # Fast termination is on by default with an explicit opt-out switch, so callers that depend
+        # on standard managed teardown can restore it without changing the fast default for everyone.
+        $content | Should -Match '\[switch\]\$NoFastExit'
+
+        # The opt-out switch must be documented in the script help, matching the parity of the other
+        # user-facing switches (Copy/Truncate/KeepMarkup) so -NoFastExit is discoverable via Get-Help.
+        $content | Should -Match '\.PARAMETER\s+NoFastExit'
+
+        # The comment-based help block must use the standard opener AND be separated from the
+        # shebang by a blank line; otherwise PowerShell does not recognize it as comment-based help
+        # and Get-Help silently suppresses ALL parameter documentation for the script.
+        $content | Should -Match '(?m)^<#\s*$'
+        $content | Should -Not -Match '(?m)^<#!'
+        $content | Should -Match '(?m)\A#![^\r\n]*\r?\n\r?\n<#'
+
+        # Get-Help must surface -NoFastExit (with its real description) for genuine discoverability,
+        # not merely have the source comment present. The -Full form is used because it reliably
+        # exposes the parsed per-parameter help across PowerShell versions.
+        $fullHelp = Get-Help -Name $fullPath -Full
+        $noFastExitHelp = @($fullHelp.parameters.parameter | Where-Object { $_.name -eq 'NoFastExit' })
+        $noFastExitHelp.Count | Should -BeGreaterThan 0 -Because "Get-Help must surface the -NoFastExit parameter for discoverability"
+        ([string]($noFastExitHelp[0].description.Text -join " ")) | Should -Match 'opt-out' -Because "the -NoFastExit help text must describe the opt-out behavior"
+
+        # Output must be flushed before the immediate termination (which bypasses managed flush).
+        $flushMatch = [regex]::Match($content, 'function\s+Invoke-FastProcessExit\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $flushMatch.Success | Should -BeTrue -Because "Invoke-FastProcessExit must exist so the flush-before-terminate contract can be validated"
+        $flushBody = $flushMatch.Groups["body"].Value
+        $flushIndex = $flushBody.IndexOf('Invoke-ConsoleFlush', [System.StringComparison]::Ordinal)
+        $terminateIndex = $flushBody.IndexOf('Stop-CurrentProcessImmediately', [System.StringComparison]::Ordinal)
+        $flushIndex | Should -BeGreaterThan -1 -Because "Invoke-FastProcessExit must flush the console"
+        $terminateIndex | Should -BeGreaterThan -1 -Because "Invoke-FastProcessExit must terminate the process"
+        $flushIndex | Should -BeLessThan $terminateIndex -Because "buffered output must be flushed before the process is terminated"
+
+        # The native libc _exit is the fast path, but it MUST be runtime-gated to non-Windows and
+        # fall back to the portable managed terminator; the Windows path never P/Invokes libc.
+        $stopMatch = [regex]::Match($content, 'function\s+Stop-CurrentProcessImmediately\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $stopMatch.Success | Should -BeTrue -Because "Stop-CurrentProcessImmediately must exist so the gating contract can be validated"
+        $stopBody = $stopMatch.Groups["body"].Value
+        $stopBody | Should -Match 'if\s*\(-not\s*\(Test-IsWindowsPlatform\)\)' -Because "the libc _exit path must be gated to non-Windows at runtime"
+        $stopBody | Should -Match '_exit' -Because "the Unix fast path uses libc _exit"
+        $stopBody | Should -Match '\[System\.Environment\]::Exit\(\$ExitCode\)' -Because "Windows and the fallback must use the portable managed terminator"
+
+        # The run guard fast-exits by default on both success and failure paths (unless -NoFastExit),
+        # inside the existing dot-source guard so dot-sourced tests never terminate the host.
+        $content | Should -Match 'Invoke-Main\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
+        $content | Should -Match 'if\s*\(-not\s*\$NoFastExit\.IsPresent\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+1'
+    }
+
     It "preserves suggested-change blocks verbatim and strips them from prose" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
