@@ -210,14 +210,34 @@ pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 `
 
 ## Performance Notes
 
-- The script itself is fast (typically ~1-2 seconds: one authenticated GraphQL call plus rendering).
-  It does not perform an unconditional console code-page switch, so `-Copy` adds no measurable
-  per-invocation terminal latency.
-- If a run feels like it "hangs" for several seconds before producing output, that delay is almost
-  always PowerShell process **cold start**, not this script. Spawning a fresh `pwsh` per invocation
-  pays the engine startup cost every time (it can be multiple seconds in containers or on first run).
-  To avoid it, run inside an already-open `pwsh` session (dot-source once, then call the function) or
-  keep a persistent shell rather than launching `pwsh ./...ps1` repeatedly.
+- The script's own work is fast: typically ~1.5-2.5 seconds (git/`gh` token lookup, one repo-access
+  validation call, one authenticated GraphQL call, rendering, and copy). `-Copy` itself adds no
+  measurable time: the OSC52 clipboard write is sub-millisecond, and the clipboard-tool probe is
+  negligible. This is verified by running the script repeatedly inside one PowerShell session.
+- Almost all of the wall-clock time of `pwsh ./Get-UnresolvedPRComments.ps1 ...` is the **PowerShell
+  process lifecycle**, not this script:
+  - **Startup (before output):** the .NET runtime + PowerShell engine cold start (assembly load +
+    JIT). In a dev container on a slow overlay filesystem this is several seconds.
+  - **Teardown (after output — the "renders, then hangs" part):** .NET/PowerShell managed shutdown.
+    It runs after the comments have already printed, which is why it feels like a post-output hang.
+    Making network calls (the HTTPS/TLS connection pool) and a slow container filesystem both inflate
+    this shutdown. It happens with or without `-Copy`.
+- Because the cost is the per-process spawn/teardown, the effective fix is to **not spawn a fresh
+  `pwsh` per call.** Run the script from inside an already-open PowerShell session instead of from a
+  non-PowerShell shell:
+
+  ```powershell
+  # From a bash/zsh prompt this pays full pwsh startup + teardown every time (slow):
+  #   pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -Copy <url>
+
+  # Instead, start pwsh once, then run the script in-process (measured ~8x faster):
+  pwsh
+  ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -Copy "https://github.com/owner/repo/pull/123"
+  ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -Copy "https://github.com/owner/repo/pull/456"
+  ```
+
+  Running the `.ps1` from a live `pwsh` prompt executes it in-process (a child scope), so it pays the
+  engine startup/teardown only once for the whole session rather than on every invocation.
 
 ## Line Range Edge Cases
 
