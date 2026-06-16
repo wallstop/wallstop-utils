@@ -129,6 +129,13 @@ content (a common cause of corrupted trailing characters). When the rendered out
 budget (default `100000` bytes, overridable via `WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES`), the script
 warns (`W_CLIPBOARD_OSC52_TRUNCATION_RISK`) and recommends `-OutputPath` for a fully verbatim capture.
 
+Native clipboard tools (`pbcopy`/`xclip`/`xsel`/`wl-copy`) are run with fully redirected standard
+streams and a kill-on-timeout bound. This prevents the classic "clipboard hangs the terminal" delay:
+tools such as `xclip`/`xsel`/`wl-copy` fork a long-lived selection-server child, and if that child
+inherited the terminal it would keep it open for seconds after the output already printed. Because the
+child's stdio is detached, the command returns immediately and the terminal is never held. The stdin
+write is also bounded, and on timeout the whole tool process tree is terminated so nothing lingers.
+
 ## PowerShell Completion
 
 In PowerShell terminals, parameter value completion includes:

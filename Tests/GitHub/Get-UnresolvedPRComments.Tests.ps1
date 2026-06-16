@@ -690,88 +690,274 @@ Describe "Copy-ToClipboard" {
         Assert-MockCalled Write-Osc52Clipboard -Times 1 -Scope It -ParameterFilter { $Text -eq "copy me" }
     }
 
-    It "uses UTF-8 OutputEncoding while piping to native clipboard tools" {
-        $script:seenEncoding = $null
+    It "routes native clipboard tools through the detached Invoke-NativeClipboardTool seam" {
+        $script:nativeToolCalled = $null
         Mock Get-ClipboardCommandPriority { @("pbcopy") }
-        try {
-            function pbcopy {
-                param(
-                    [Parameter(ValueFromPipeline = $true)]
-                    [AllowNull()]
-                    [string]$InputObject
-                )
-
-                process {
-                    $script:seenEncoding = $OutputEncoding.WebName
-                    $global:LASTEXITCODE = 0
-                }
-            }
-
-            $copied = Copy-ToClipboard -Text "copy me"
-
-            $copied | Should -BeTrue
-            $script:seenEncoding | Should -Be "utf-8" -Because "native clipboard pipes must transmit UTF-8 bytes regardless of the ambient OutputEncoding (ASCII on Windows PowerShell 5.1)"
+        Mock Invoke-NativeClipboardTool {
+            param($Tool, $Arguments, $Text, $TimeoutSeconds)
+            $script:nativeToolCalled = $Tool
+            return $true
         }
-        finally {
-            Remove-Item -Path Function:pbcopy -ErrorAction SilentlyContinue
-        }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeTrue
+        $script:nativeToolCalled | Should -Be "pbcopy"
+        Assert-MockCalled Invoke-NativeClipboardTool -Times 1 -Scope It -ParameterFilter { $Tool -eq "pbcopy" -and $Text -eq "copy me" }
     }
 
     It "falls back across native clipboard tools in priority order" {
         $script:nativeClipboardAttemptOrder = @()
         Mock Get-ClipboardCommandPriority { @("pbcopy", "xclip", "xsel") }
+        Mock Invoke-NativeClipboardTool {
+            param($Tool, $Arguments, $Text, $TimeoutSeconds)
+            $script:nativeClipboardAttemptOrder += $Tool
+            # pbcopy and xclip fail; xsel succeeds.
+            return ($Tool -eq "xsel")
+        }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeTrue
+        (($script:nativeClipboardAttemptOrder) -join ",") | Should -Be "pbcopy,xclip,xsel" -Because "native fallback should continue through failed tools and stop after the first success"
+    }
+}
+
+Describe "Invoke-NativeClipboardTool" {
+    BeforeAll {
+        $script:isUnixClipboardHost = -not (Test-IsWindowsPlatform)
+
+        function New-FakeClipboardTool {
+            param(
+                [Parameter(Mandatory = $true)] [string]$Name,
+                [Parameter(Mandatory = $true)] [string]$BashBody
+            )
+            $path = Join-Path -Path $script:clipToolDir -ChildPath $Name
+            $content = "#!/usr/bin/env bash`n" + $BashBody + "`n"
+            [System.IO.File]::WriteAllText($path, ($content -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+            & chmod +x $path
+            return $path
+        }
+    }
+
+    BeforeEach {
+        $script:clipToolDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("cliptool-" + [Guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($script:clipToolDir)
+    }
+
+    AfterEach {
+        if (Test-Path -LiteralPath $script:clipToolDir) {
+            Remove-Item -LiteralPath $script:clipToolDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns false when the tool is not found" {
+        (Invoke-NativeClipboardTool -Tool "definitely-not-a-real-clipboard-tool-xyz" -Text "x") | Should -BeFalse
+    }
+
+    It "delivers the payload as UTF-8 bytes via stdin and returns true on success" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path; Windows uses Set-Clipboard."; return }
+
+        $captured = Join-Path -Path $script:clipToolDir -ChildPath "captured.bin"
+        $tool = New-FakeClipboardTool -Name "faketool" -BashBody "cat > '$captured'`nexit 0"
+
+        $payload = "ascii and " + ([char]0x00E9) + " and " + [char]::ConvertFromUtf32(0x1F680)
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text $payload
+
+        $result | Should -BeTrue
+        $bytes = [System.IO.File]::ReadAllBytes($captured)
+        $expected = [System.Text.Encoding]::UTF8.GetBytes($payload)
+        ($bytes -join ",") | Should -Be ($expected -join ",") -Because "the payload must reach the tool as verbatim UTF-8 bytes regardless of console code page"
+    }
+
+    It "returns false when the tool exits non-zero" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+
+        $tool = New-FakeClipboardTool -Name "failtool" -BashBody "cat > /dev/null`nexit 3"
+        (Invoke-NativeClipboardTool -Tool $tool -Text "x") | Should -BeFalse
+    }
+
+    It "returns false promptly when the tool exceeds the timeout (never hangs the script)" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+
+        $tool = New-FakeClipboardTool -Name "slowtool" -BashBody "cat > /dev/null`nsleep 30`nexit 0"
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text "x" -TimeoutSeconds 2
+        $sw.Stop()
+
+        $result | Should -BeFalse
+        $sw.Elapsed.TotalSeconds | Should -BeLessThan 12 -Because "a blocking clipboard tool must be killed at the timeout, not awaited for its full duration"
+    }
+
+    It "returns promptly for a daemonizing tool that forks a child holding stdout (no terminal hold)" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+
+        # Mimics xclip/xsel/wl-copy: consume stdin, fork a long-lived child, exit immediately.
+        # Because the tool's stdio is redirected (not inherited), the forked child cannot hold the
+        # caller's terminal open, and the direct child exits at once, so the call returns promptly.
+        $tool = New-FakeClipboardTool -Name "daemontool" -BashBody "cat > /dev/null`n( sleep 30 ) &`nexit 0"
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text "x" -TimeoutSeconds 10
+        $sw.Stop()
+
+        $result | Should -BeTrue
+        $sw.Elapsed.TotalSeconds | Should -BeLessThan 10 -Because "a daemonizing tool's forked child must not delay the call (its stdio is redirected, so it cannot hold the terminal)"
+    }
+
+    It "does not hang on the stdin write when the tool never reads stdin" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+
+        # A tool that closes stdin and blocks without ever draining it. A large payload written
+        # synchronously to stdin could fill the pipe buffer and block forever; the write must be
+        # bounded so the timeout still governs total runtime.
+        $tool = New-FakeClipboardTool -Name "noreadtool" -BashBody "exec 0<&-`nsleep 30`nexit 0"
+        $bigPayload = "a" * 5000000
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text $bigPayload -TimeoutSeconds 2
+        $sw.Stop()
+
+        $result | Should -BeFalse
+        $sw.Elapsed.TotalSeconds | Should -BeLessThan 15 -Because "a blocked stdin write must not exceed the bounded timeout budget"
+    }
+
+    It "kills the whole tool process tree on timeout so a forked child cannot linger" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+        if ((Test-IsDesktopEdition)) { Set-ItResult -Skipped -Because "Process.Kill(true) tree-kill is only available on PowerShell 7+ (Core)."; return }
+
+        $marker = Join-Path -Path $script:clipToolDir -ChildPath "grandchild.txt"
+        # Direct child forks a grandchild that would write a marker after 8s, then the direct child
+        # blocks so the call hits the timeout. Tree-kill must terminate the grandchild before it
+        # writes the marker.
+        $tool = New-FakeClipboardTool -Name "treetool" -BashBody "cat > /dev/null`n( sleep 8; echo x > '$marker' ) &`nsleep 30"
+
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text "x" -TimeoutSeconds 2
+        $result | Should -BeFalse
+        Start-Sleep -Seconds 10
+
+        (Test-Path -LiteralPath $marker) | Should -BeFalse -Because "tree-kill must terminate the forked grandchild before it can act"
+    }
+}
+
+Describe "Wait-TaskObserved" {
+    It "returns true for a task that completes within the timeout" {
+        $task = [System.Threading.Tasks.Task]::Delay(10)
+        (Wait-TaskObserved -Task $task -TimeoutMilliseconds 2000) | Should -BeTrue
+    }
+
+    It "returns false for a task that does not complete within the timeout" {
+        $task = [System.Threading.Tasks.Task]::Delay(5000)
+        (Wait-TaskObserved -Task $task -TimeoutMilliseconds 50) | Should -BeFalse
+    }
+
+    It "returns false for a null task" {
+        (Wait-TaskObserved -Task $null -TimeoutMilliseconds 50) | Should -BeFalse
+    }
+
+    It "observes a faulted task without throwing and marks its exception handled" {
+        $faulting = [System.Threading.Tasks.Task]::Run([System.Action] { throw [System.IO.IOException]::new("broken pipe") })
+        try { $faulting.Wait(2000) } catch { }
+
+        { Wait-TaskObserved -Task $faulting -TimeoutMilliseconds 200 } | Should -Not -Throw
+        # Touching .Exception marks it observed; the task must be in the faulted terminal state.
+        $faulting.IsFaulted | Should -BeTrue
+        $null = $faulting.Exception
+    }
+}
+
+Describe "Clipboard copy process-teardown" {
+    # End-to-end guard for the user-reported "output renders, then the terminal hangs for 10s+" bug.
+    # A native clipboard tool that forks a long-lived selection-server child must not delay the host
+    # PROCESS EXIT, because the detached child stdio cannot hold the parent's streams open. Unit
+    # tests of Invoke-NativeClipboardTool only observe the call duration; this test observes the
+    # whole process lifetime (spawn -> output -> exit) via the stdout pipe closing.
+    BeforeAll {
+        $script:teardownIsUnix = -not (Test-IsWindowsPlatform)
+        $script:scriptUnderTest = Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+    }
+
+    BeforeEach {
+        $script:teardownToolDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("clipteardown-" + [Guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($script:teardownToolDir)
+    }
+
+    AfterEach {
+        if (Test-Path -LiteralPath $script:teardownToolDir) {
+            Remove-Item -LiteralPath $script:teardownToolDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "exits promptly even when the clipboard tool forks a child that lingers" {
+        if (-not $script:teardownIsUnix) { Set-ItResult -Skipped -Because "native clipboard CLI tools and this PTY-free teardown probe are a Unix-only path."; return }
+
+        # Resolve the running PowerShell host executable. Get-Command can resolve an apphost shim
+        # under .store that is not directly launchable, so prefer the current process main module
+        # (the actual pwsh binary) and fall back to $PSHOME/pwsh.
+        $pwshExe = $null
         try {
-            function pbcopy {
-                param(
-                    [Parameter(ValueFromPipeline = $true)]
-                    [AllowNull()]
-                    [string]$InputObject
-                )
-
-                process {
-                    $script:nativeClipboardAttemptOrder += "pbcopy"
-                    $global:LASTEXITCODE = 17
-                }
+            $candidate = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) {
+                $pwshExe = $candidate
             }
+        }
+        catch {
+            $pwshExe = $null
+        }
+        if ($null -eq $pwshExe) {
+            $homeCandidate = Join-Path -Path $PSHOME -ChildPath "pwsh"
+            if (Test-Path -LiteralPath $homeCandidate) { $pwshExe = $homeCandidate }
+        }
+        if ($null -eq $pwshExe) { Set-ItResult -Skipped -Because "could not resolve a launchable pwsh host for the teardown probe."; return }
 
-            function xclip {
-                param(
-                    [string]$selection,
-                    [Parameter(ValueFromPipeline = $true)]
-                    [AllowNull()]
-                    [string]$InputObject
-                )
+        # Daemonizing fake wl-copy: consume stdin, fork a child that sleeps 30s, exit immediately.
+        $fakeTool = Join-Path -Path $script:teardownToolDir -ChildPath "wl-copy"
+        $bash = "#!/usr/bin/env bash`ncat > /dev/null`n( sleep 30 ) &`nexit 0`n"
+        [System.IO.File]::WriteAllText($fakeTool, ($bash -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+        & chmod +x $fakeTool
 
-                process {
-                    $script:nativeClipboardAttemptOrder += "xclip"
-                    $global:LASTEXITCODE = 42
-                }
-            }
+        # Inner script: force the native daemonizing tool path, copy, then signal completion. If the
+        # forked child held our stdout, the parent's stdout pipe would stay open well past this point.
+        $doneFile = Join-Path -Path $script:teardownToolDir -ChildPath "done.txt"
+        $innerScript = @"
+. '$($script:scriptUnderTest)' -NoRun
+function Get-ClipboardCommandPriority { @('wl-copy') }
+[void](Copy-ToClipboard -Text 'render-then-exit')
+[System.IO.File]::WriteAllText('$doneFile', [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString())
+"@
+        $innerFile = Join-Path -Path $script:teardownToolDir -ChildPath "inner.ps1"
+        [System.IO.File]::WriteAllText($innerFile, $innerScript, [System.Text.UTF8Encoding]::new($false))
 
-            function xsel {
-                param(
-                    [string]$clipboard,
-                    [string]$input,
-                    [Parameter(ValueFromPipeline = $true)]
-                    [AllowNull()]
-                    [string]$InputObject
-                )
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = [string]$pwshExe
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $probePath = $script:teardownToolDir + [System.IO.Path]::PathSeparator + $env:PATH
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value $probePath
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-NoProfile", "-NoLogo", "-File", $innerFile)
 
-                process {
-                    $script:nativeClipboardAttemptOrder += "xsel"
-                    $global:LASTEXITCODE = 0
-                }
-            }
+        $proc = [System.Diagnostics.Process]::Start($startInfo)
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
 
-            $copied = Copy-ToClipboard -Text "copy me"
+        # The stdout ReadToEnd completing is the real signal: it returns only once EVERY writer of
+        # the pipe (the pwsh child AND any process holding an inherited copy of its stdout) has
+        # closed. With the detached-stdio fix the forked clipboard child does not inherit it, so this
+        # completes shortly after pwsh exits rather than 30s later.
+        $exited = $proc.WaitForExit(60000)
+        $drained = $stdoutTask.Wait(20000)
+        [void]$stderrTask.Wait(2000)
 
-            $copied | Should -BeTrue
-            (($script:nativeClipboardAttemptOrder) -join ",") | Should -Be "pbcopy,xclip,xsel" -Because "native fallback should continue through failed tools and stop after the first success"
+        try {
+            $exited | Should -BeTrue -Because "the pwsh child must exit within the timeout"
+            (Test-Path -LiteralPath $doneFile) | Should -BeTrue -Because "the copy must have completed"
+            $drained | Should -BeTrue -Because "the parent stdout pipe must reach EOF promptly; a forked clipboard child must not keep it open"
         }
         finally {
-            Remove-Item -Path Function:pbcopy -ErrorAction SilentlyContinue
-            Remove-Item -Path Function:xclip -ErrorAction SilentlyContinue
-            Remove-Item -Path Function:xsel -ErrorAction SilentlyContinue
+            if (-not $proc.HasExited) { try { $proc.Kill($true) } catch { } }
+            $proc.Dispose()
         }
     }
 }

@@ -1606,6 +1606,162 @@ function Set-ClipboardValue {
     Set-Clipboard -Value $Value
 }
 
+function Wait-TaskObserved {
+    # Waits up to a timeout for a Task and ALWAYS observes any fault, so a task that faults (for
+    # example a pending WriteAsync/ReadToEndAsync broken by killing the child process) can never
+    # surface later as an unobserved task exception. Returns $true if the task completed within the
+    # timeout. Best-effort: never throws.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [System.Threading.Tasks.Task]$Task,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 60000)]
+        [int]$TimeoutMilliseconds = 200
+    )
+
+    if ($null -eq $Task) {
+        return $false
+    }
+
+    $completed = $false
+    try {
+        $completed = $Task.Wait($TimeoutMilliseconds)
+    }
+    catch {
+        # A faulted task throws an AggregateException from Wait; observing it here marks the task
+        # exception as handled so the finalizer never re-raises it.
+        $completed = $Task.IsCompleted
+    }
+
+    # Touch the Exception property so a fault that completed between the Wait and here is observed.
+    if ($Task.IsFaulted) {
+        $null = $Task.Exception
+    }
+
+    return $completed
+}
+
+function Invoke-NativeClipboardTool {
+    # Runs a native clipboard CLI (pbcopy/xclip/xsel/wl-copy) with FULLY redirected standard
+    # streams so the tool never inherits the caller's terminal file descriptors. This is the fix
+    # for the classic "clipboard hangs the terminal" bug: tools like xclip/xsel/wl-copy fork a
+    # long-lived background child to serve the X/Wayland selection, and if that child inherits the
+    # terminal's stdout/stderr it keeps them open after the script's own output has printed, so the
+    # shell appears to hang for several seconds. Redirecting the child's stdio to pipes we own means
+    # neither the tool nor its forked children can hold the terminal open. The whole call is also
+    # bounded by a timeout (kill on overrun) so a misbehaving tool can never block the script.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Tool,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$Arguments = @(),
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 60)]
+        [int]$TimeoutSeconds = 5
+    )
+
+    $command = Get-Command -Name $Tool -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $command -or [string]::IsNullOrWhiteSpace([string]$command.Source)) {
+        return $false
+    }
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = [string]$command.Source
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList $Arguments
+
+    $process = $null
+    try {
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+
+        # Drain stdout/stderr asynchronously so a tool that emits output cannot deadlock on a full
+        # pipe buffer while we are writing its stdin. We never block process teardown on these:
+        # abandoning them on the timeout path is safe (verified — .NET does not wait on pending
+        # async pipe reads at exit).
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        $timeoutMilliseconds = $TimeoutSeconds * 1000
+
+        # Write the payload as raw UTF-8 (no BOM) bytes through the base stream. This guarantees
+        # byte-for-byte verbatim delivery independent of $OutputEncoding / the console code page,
+        # and is portable across Windows PowerShell 5.1 and PowerShell 7 (StandardInputEncoding is
+        # 7+-only, so we avoid it). The write is bounded: a tool that never drains stdin could fill
+        # the pipe buffer and block a synchronous Write indefinitely, so we run it on a task and cap
+        # it with the same timeout budget. On overrun we fall through to the WaitForExit timeout,
+        # which kills the process and severs the stream.
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        $baseStream = $process.StandardInput.BaseStream
+        $writeTask = $baseStream.WriteAsync($bytes, 0, $bytes.Length)
+        $writeCompleted = $false
+        try {
+            $writeCompleted = $writeTask.Wait($timeoutMilliseconds)
+        }
+        catch {
+            # WriteAsync faulted (for example the tool exited and broke the pipe). Treated as a
+            # failed write; WaitForExit/ExitCode below still governs the overall outcome.
+        }
+
+        if ($writeCompleted) {
+            try {
+                $baseStream.Flush()
+                $process.StandardInput.Close()
+            }
+            catch {
+                # The tool may have exited and closed its stdin already; treat as best effort and
+                # let WaitForExit/ExitCode decide success.
+            }
+        }
+
+        if (-not $process.WaitForExit($timeoutMilliseconds)) {
+            # Terminate the whole tool process tree (the forked selection-server child included) via
+            # the portable, reflection-guarded helper so nothing lingers after the timeout.
+            try {
+                Stop-ProcessTreePortably -Process $process
+            }
+            catch {
+                # Best-effort termination; a killed tool is still treated as a failed attempt.
+            }
+            # Observe the write task so a pending WriteAsync faulted by the kill (broken pipe) does
+            # not surface later as an unobserved task exception.
+            [void](Wait-TaskObserved -Task $writeTask -TimeoutMilliseconds 200)
+            return $false
+        }
+
+        # Observe the (already completed or faulted) write task before returning on the normal path.
+        [void](Wait-TaskObserved -Task $writeTask -TimeoutMilliseconds 200)
+
+        if ($null -ne $stdoutTask) { [void](Wait-TaskObserved -Task $stdoutTask -TimeoutMilliseconds 1000) }
+        if ($null -ne $stderrTask) { [void](Wait-TaskObserved -Task $stderrTask -TimeoutMilliseconds 1000) }
+
+        return ($process.ExitCode -eq 0)
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+    }
+}
+
 function Copy-ToClipboard {
     [OutputType([bool])]
     [CmdletBinding()]
@@ -1625,13 +1781,6 @@ function Copy-ToClipboard {
     }
 
     $valueToCopy = if ($null -eq $Text) { "" } else { $Text }
-    # Native clipboard tools (pbcopy/xclip/xsel/wl-copy) receive their input through a pipe whose
-    # bytes are encoded with $OutputEncoding. That defaults to US-ASCII on Windows PowerShell 5.1
-    # (and may be non-UTF-8 elsewhere), which silently corrupts non-ASCII characters. Force a
-    # UTF-8 (no BOM) $OutputEncoding so piped clipboard content stays byte-for-byte verbatim. The
-    # assignment is function-scoped: it shadows the caller's $OutputEncoding only within this
-    # function and is discarded automatically when the function returns.
-    $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
     $attemptErrors = New-Object System.Collections.Generic.List[string]
 
     foreach ($clipboardCommand in $clipboardCommands) {
@@ -1646,36 +1795,32 @@ function Copy-ToClipboard {
                     return $true
                 }
                 "pbcopy" {
-                    $valueToCopy | & pbcopy
-                    if ($LASTEXITCODE -ne 0) {
-                        $attemptErrors.Add("[pbcopy] exited with code $LASTEXITCODE") | Out-Null
-                        continue
+                    if (Invoke-NativeClipboardTool -Tool "pbcopy" -Text $valueToCopy) {
+                        return $true
                     }
-                    return $true
+                    $attemptErrors.Add("[pbcopy] copy attempt failed") | Out-Null
+                    continue
                 }
                 "xclip" {
-                    $valueToCopy | & xclip -selection clipboard
-                    if ($LASTEXITCODE -ne 0) {
-                        $attemptErrors.Add("[xclip] exited with code $LASTEXITCODE") | Out-Null
-                        continue
+                    if (Invoke-NativeClipboardTool -Tool "xclip" -Arguments @("-selection", "clipboard") -Text $valueToCopy) {
+                        return $true
                     }
-                    return $true
+                    $attemptErrors.Add("[xclip] copy attempt failed") | Out-Null
+                    continue
                 }
                 "xsel" {
-                    $valueToCopy | & xsel --clipboard --input
-                    if ($LASTEXITCODE -ne 0) {
-                        $attemptErrors.Add("[xsel] exited with code $LASTEXITCODE") | Out-Null
-                        continue
+                    if (Invoke-NativeClipboardTool -Tool "xsel" -Arguments @("--clipboard", "--input") -Text $valueToCopy) {
+                        return $true
                     }
-                    return $true
+                    $attemptErrors.Add("[xsel] copy attempt failed") | Out-Null
+                    continue
                 }
                 "wl-copy" {
-                    $valueToCopy | & wl-copy
-                    if ($LASTEXITCODE -ne 0) {
-                        $attemptErrors.Add("[wl-copy] exited with code $LASTEXITCODE") | Out-Null
-                        continue
+                    if (Invoke-NativeClipboardTool -Tool "wl-copy" -Text $valueToCopy) {
+                        return $true
                     }
-                    return $true
+                    $attemptErrors.Add("[wl-copy] copy attempt failed") | Out-Null
+                    continue
                 }
                 default {
                     $attemptErrors.Add("[$clipboardCommand] unsupported command") | Out-Null

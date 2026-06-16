@@ -582,16 +582,45 @@ Describe "Scope safety conventions" {
         $content | Should -Match '\[System\.IO\.File\]::WriteAllText\(\$resolvedPath,\s*\$content,\s*\[System\.Text\.UTF8Encoding\]::new\(\$false\)\)'
     }
 
-    It "checks LASTEXITCODE after native clipboard commands in Copy-ToClipboard" {
+    It "runs native clipboard tools detached and bounded so they cannot hang the terminal" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
 
+        # Native clipboard tools (xclip/xsel/wl-copy/pbcopy) fork long-lived selection-server
+        # children; if those inherit the terminal's stdout/stderr they hold it open after the
+        # script's output prints, which is the classic "clipboard hangs the terminal" delay.
+        # Copy-ToClipboard must route every native tool through Invoke-NativeClipboardTool, which
+        # fully redirects the child's standard streams (so neither the tool nor its forked children
+        # inherit the terminal) and bounds execution with a kill-on-timeout.
+        $content | Should -Match 'function\s+Invoke-NativeClipboardTool'
+        $content | Should -Not -Match 'function\s+Copy-ToClipboard[\s\S]*\|\s*&\s*pbcopy'
         foreach ($tool in @("pbcopy", "xclip", "xsel", "wl-copy")) {
             $escapedTool = [regex]::Escape($tool)
             $content | Should -Match (
-                "function\s+Copy-ToClipboard[\s\S]*""$escapedTool""\s*\{[\s\S]*?LASTEXITCODE\s+-ne\s+0[\s\S]*?continue[\s\S]*?return\s+\`$true"
-            ) -Because "Copy-ToClipboard must check LASTEXITCODE after '$tool' to detect silent native command failures"
+                "function\s+Copy-ToClipboard[\s\S]*Invoke-NativeClipboardTool\s+-Tool\s+`"$escapedTool`""
+            ) -Because "Copy-ToClipboard must invoke '$tool' through the detached Invoke-NativeClipboardTool seam"
         }
+
+        $invokeMatch = [regex]::Match($content, 'function\s+Invoke-NativeClipboardTool\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $invokeMatch.Success | Should -BeTrue -Because "Invoke-NativeClipboardTool must exist so its detachment/bounding contract can be validated"
+        $invokeBody = $invokeMatch.Groups["body"].Value
+        $invokeBody | Should -Match '\$startInfo\s*\.\s*UseShellExecute\s*=\s*\$false'
+        $invokeBody | Should -Match '\$startInfo\s*\.\s*RedirectStandardInput\s*=\s*\$true'
+        $invokeBody | Should -Match '\$startInfo\s*\.\s*RedirectStandardOutput\s*=\s*\$true'
+        $invokeBody | Should -Match '\$startInfo\s*\.\s*RedirectStandardError\s*=\s*\$true'
+        $invokeBody | Should -Match 'WaitForExit\(\$timeoutMilliseconds\)'
+        # On timeout the whole tool process tree is terminated (forked selection-server children
+        # included) via the sanctioned portable helper so nothing can linger holding resources.
+        $invokeBody | Should -Match 'Stop-ProcessTreePortably\s+-Process\s+\$process'
+        # Payload delivered as raw UTF-8 bytes (verbatim, code-page independent, 5.1-safe) and the
+        # stdin write is bounded so a tool that never drains stdin cannot block the call.
+        $invokeBody | Should -Match '\[System\.Text\.Encoding\]::UTF8\.GetBytes\(\$Text\)'
+        $invokeBody | Should -Match '\$baseStream\s*\.\s*WriteAsync\(\$bytes,\s*0,\s*\$bytes\.Length\)'
+        $invokeBody | Should -Match '\$writeTask\s*\.\s*Wait\(\$timeoutMilliseconds\)'
+        # The pending write/read tasks must be observed so a fault from killing the tool (broken
+        # pipe) never surfaces later as an unobserved task exception.
+        $invokeBody | Should -Match 'Wait-TaskObserved\s+-Task\s+\$writeTask'
+        $content | Should -Match 'function\s+Wait-TaskObserved[\s\S]*\$Task\.Exception'
     }
 
     It "keeps a Windows-first, OSC52-bridging clipboard command priority" {
@@ -634,11 +663,15 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Test-ShouldUseClipboardOsc52[\s\S]*if\s*\(Test-IsConsoleOutputRedirected\)\s*\{\s*\r?\n?\s*return\s+\$false'
     }
 
-    It "forces UTF-8 OutputEncoding before piping to native clipboard tools" {
+    It "delivers UTF-8 clipboard payloads without inheriting the terminal" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
 
-        $content | Should -Match 'function\s+Copy-ToClipboard[\s\S]*\$OutputEncoding\s*=\s*New-Object\s+System\.Text\.UTF8Encoding\(\$false\)[\s\S]*\$valueToCopy\s*\|\s*&\s*pbcopy'
+        # The legacy `$valueToCopy | & pbcopy` pipe both relied on $OutputEncoding (US-ASCII on
+        # Windows PowerShell 5.1, which corrupts non-ASCII) and let the tool inherit the terminal.
+        # The detached seam delivers raw UTF-8 bytes via the child's stdin base stream instead.
+        $content | Should -Not -Match 'function\s+Copy-ToClipboard[\s\S]*\$OutputEncoding\s*=\s*New-Object\s+System\.Text\.UTF8Encoding'
+        $content | Should -Match 'function\s+Invoke-NativeClipboardTool[\s\S]*\[System\.Text\.Encoding\]::UTF8\.GetBytes\(\$Text\)[\s\S]*BaseStream\.Write'
     }
 
     It "sets UTF-8 console output encoding in Invoke-Main without an unconditional code-page switch" {
