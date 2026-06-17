@@ -582,19 +582,48 @@ Describe "Scope safety conventions" {
         $content | Should -Match '\[System\.IO\.File\]::WriteAllText\(\$resolvedPath,\s*\$content,\s*\[System\.Text\.UTF8Encoding\]::new\(\$false\)\)'
     }
 
-    It "checks LASTEXITCODE after native clipboard commands in Copy-ToClipboard" {
+    It "runs native clipboard tools detached and bounded so they cannot hang the terminal" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
 
+        # Native clipboard tools (xclip/xsel/wl-copy/pbcopy) fork long-lived selection-server
+        # children; if those inherit the terminal's stdout/stderr they hold it open after the
+        # script's output prints, which is the classic "clipboard hangs the terminal" delay.
+        # Copy-ToClipboard must route every native tool through Invoke-NativeClipboardTool, which
+        # fully redirects the child's standard streams (so neither the tool nor its forked children
+        # inherit the terminal) and bounds execution with a kill-on-timeout.
+        $content | Should -Match 'function\s+Invoke-NativeClipboardTool'
+        $content | Should -Not -Match 'function\s+Copy-ToClipboard[\s\S]*\|\s*&\s*pbcopy'
         foreach ($tool in @("pbcopy", "xclip", "xsel", "wl-copy")) {
             $escapedTool = [regex]::Escape($tool)
             $content | Should -Match (
-                "function\s+Copy-ToClipboard[\s\S]*""$escapedTool""\s*\{[\s\S]*?LASTEXITCODE\s+-ne\s+0[\s\S]*?continue[\s\S]*?return\s+\`$true"
-            ) -Because "Copy-ToClipboard must check LASTEXITCODE after '$tool' to detect silent native command failures"
+                "function\s+Copy-ToClipboard[\s\S]*Invoke-NativeClipboardTool\s+-Tool\s+`"$escapedTool`""
+            ) -Because "Copy-ToClipboard must invoke '$tool' through the detached Invoke-NativeClipboardTool seam"
         }
+
+        $invokeMatch = [regex]::Match($content, 'function\s+Invoke-NativeClipboardTool\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $invokeMatch.Success | Should -BeTrue -Because "Invoke-NativeClipboardTool must exist so its detachment/bounding contract can be validated"
+        $invokeBody = $invokeMatch.Groups["body"].Value
+        $invokeBody | Should -Match '\$startInfo\s*\.\s*UseShellExecute\s*=\s*\$false'
+        $invokeBody | Should -Match '\$startInfo\s*\.\s*RedirectStandardInput\s*=\s*\$true'
+        $invokeBody | Should -Match '\$startInfo\s*\.\s*RedirectStandardOutput\s*=\s*\$true'
+        $invokeBody | Should -Match '\$startInfo\s*\.\s*RedirectStandardError\s*=\s*\$true'
+        $invokeBody | Should -Match 'WaitForExit\(\$timeoutMilliseconds\)'
+        # On timeout the whole tool process tree is terminated (forked selection-server children
+        # included) via the sanctioned portable helper so nothing can linger holding resources.
+        $invokeBody | Should -Match 'Stop-ProcessTreePortably\s+-Process\s+\$process'
+        # Payload delivered as raw UTF-8 bytes (verbatim, code-page independent, 5.1-safe) and the
+        # stdin write is bounded so a tool that never drains stdin cannot block the call.
+        $invokeBody | Should -Match '\[System\.Text\.Encoding\]::UTF8\.GetBytes\(\$Text\)'
+        $invokeBody | Should -Match '\$baseStream\s*\.\s*WriteAsync\(\$bytes,\s*0,\s*\$bytes\.Length\)'
+        $invokeBody | Should -Match '\$writeTask\s*\.\s*Wait\(\$timeoutMilliseconds\)'
+        # The pending write/read tasks must be observed so a fault from killing the tool (broken
+        # pipe) never surfaces later as an unobserved task exception.
+        $invokeBody | Should -Match 'Wait-TaskObserved\s+-Task\s+\$writeTask'
+        $content | Should -Match 'function\s+Wait-TaskObserved[\s\S]*\$Task\.Exception'
     }
 
-    It "keeps OSC52-first ordering in clipboard command priority" {
+    It "keeps a Windows-first, OSC52-bridging clipboard command priority" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
 
@@ -602,13 +631,211 @@ Describe "Scope safety conventions" {
         $functionMatch.Success | Should -BeTrue -Because "Get-ClipboardCommandPriority should exist so clipboard ordering contracts can be validated"
         $functionBody = $functionMatch.Groups["body"].Value
 
-        $functionBody | Should -Match 'if\s*\(\$supportsOsc52\s*-and\s*\(Test-ShouldUseClipboardOsc52\)\)' -Because "OSC52 strategy must remain explicitly gated by capability and terminal-context checks"
+        # OSC52 must stay gated by terminal context, and the legacy Set-Clipboard -AsOSC52 strategy
+        # must be gone (replaced by the explicit, UTF-8-correct Write-Osc52Clipboard emitter).
+        $functionBody | Should -Match 'if\s*\(Test-ShouldUseClipboardOsc52\)' -Because "OSC52 strategy must remain explicitly gated by terminal-context checks"
+        $functionBody | Should -Match 'Test-IsWindowsPlatform' -Because "Windows must prefer the unbounded GUI clipboard over size-capped OSC52"
+        $content | Should -Not -Match 'Set-Clipboard-AsOSC52' -Because "the ambiguous empty-selector OSC52 path is replaced by ConvertTo-Osc52Sequence"
 
-        $osc52AddIndex = $functionBody.IndexOf('$commands.Add("Set-Clipboard-AsOSC52")', [System.StringComparison]::Ordinal)
-        $setClipboardAddIndex = $functionBody.IndexOf('$commands.Add("Set-Clipboard")', [System.StringComparison]::Ordinal)
-        $osc52AddIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include Set-Clipboard-AsOSC52"
-        $setClipboardAddIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include Set-Clipboard"
-        $osc52AddIndex | Should -BeLessThan $setClipboardAddIndex -Because "clipboard strategy order is a behavior contract: OSC52 attempt must run before plain Set-Clipboard"
+        $osc52AddIndex = $functionBody.IndexOf('$commands.Add("Osc52")', [System.StringComparison]::Ordinal)
+        $windowsSetClipboardIndex = $functionBody.IndexOf('$commands.Add("Set-Clipboard")', [System.StringComparison]::Ordinal)
+        $lastSetClipboardIndex = $functionBody.LastIndexOf('$commands.Add("Set-Clipboard")', [System.StringComparison]::Ordinal)
+        $osc52AddIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include the Osc52 strategy"
+        $windowsSetClipboardIndex | Should -BeGreaterThan -1 -Because "Get-ClipboardCommandPriority must include Set-Clipboard"
+        $windowsSetClipboardIndex | Should -BeLessThan $osc52AddIndex -Because "Windows GUI clipboard is preferred before OSC52"
+        $osc52AddIndex | Should -BeLessThan $lastSetClipboardIndex -Because "OSC52 bridges before the non-Windows Set-Clipboard provider"
+    }
+
+    It "emits a UTF-8, explicit-selector OSC52 sequence for verbatim clipboard copy" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+ConvertTo-Osc52Sequence'
+        # Explicit "c" clipboard selector (not an ambiguous empty selector) over UTF-8 base64.
+        $content | Should -Match 'function\s+ConvertTo-Osc52Sequence[\s\S]*\[System\.Text\.Encoding\]::UTF8\.GetBytes'
+        $content | Should -Match 'function\s+ConvertTo-Osc52Sequence[\s\S]*\$esc\]52;c;\$base64\$bel'
+        # Oversize OSC52 payloads warn instead of silently corrupting copied output.
+        $content | Should -Match 'function\s+Write-Osc52Clipboard[\s\S]*W_CLIPBOARD_OSC52_TRUNCATION_RISK'
+        $content | Should -Match 'function\s+Copy-ToClipboard[\s\S]*"Osc52"\s*\{[\s\S]*?Write-Osc52Clipboard\s+-Text\s+\$valueToCopy'
+        # OSC52 must never be emitted to a redirected stdout (it would inject escape bytes into a
+        # captured file/pipe). The terminal-context gate disables it when output is redirected.
+        $content | Should -Match 'function\s+Test-IsConsoleOutputRedirected[\s\S]*\[System\.Console\]::IsOutputRedirected'
+        $content | Should -Match 'function\s+Test-ShouldUseClipboardOsc52[\s\S]*if\s*\(Test-IsConsoleOutputRedirected\)\s*\{\s*\r?\n?\s*return\s+\$false'
+    }
+
+    It "delivers UTF-8 clipboard payloads without inheriting the terminal" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        # The legacy `$valueToCopy | & pbcopy` pipe both relied on $OutputEncoding (US-ASCII on
+        # Windows PowerShell 5.1, which corrupts non-ASCII) and let the tool inherit the terminal.
+        # The detached seam delivers raw UTF-8 bytes via the child's stdin base stream instead.
+        $content | Should -Not -Match 'function\s+Copy-ToClipboard[\s\S]*\$OutputEncoding\s*=\s*New-Object\s+System\.Text\.UTF8Encoding'
+        $content | Should -Match 'function\s+Invoke-NativeClipboardTool[\s\S]*\[System\.Text\.Encoding\]::UTF8\.GetBytes\(\$Text\)[\s\S]*BaseStream\.Write'
+    }
+
+    It "sets UTF-8 console output encoding in Invoke-Main without an unconditional code-page switch" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        # Invoke-Main must route console encoding through the guarded initializer (not an inline
+        # unconditional setter), so the slow Windows SetConsoleOutputCP code-page switch is skipped
+        # when the console is already UTF-8 and never adds per-invocation terminal latency.
+        $content | Should -Match 'function\s+Invoke-Main[\s\S]*Initialize-Utf8ConsoleOutputEncoding'
+        $content | Should -Not -Match 'function\s+Invoke-Main[\s\S]*\[System\.Console\]::OutputEncoding\s*='
+        $content | Should -Match 'function\s+Initialize-Utf8ConsoleOutputEncoding[\s\S]*Get-ConsoleOutputEncoding[\s\S]*CodePage\s*-eq\s*65001[\s\S]*return'
+        $content | Should -Match 'function\s+Initialize-Utf8ConsoleOutputEncoding[\s\S]*Set-ConsoleOutputEncoding\s+-Encoding\s+\(New-Object\s+System\.Text\.UTF8Encoding\(\$false\)\)'
+        $content | Should -Match 'function\s+Set-ConsoleOutputEncoding[\s\S]*\[System\.Console\]::OutputEncoding\s*=\s*\$Encoding'
+    }
+
+    It "keeps the default-on fast termination safe, gated, flushed, and opt-out" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        # Fast termination is on by default with an explicit opt-out switch, so callers that depend
+        # on standard managed teardown can restore it without changing the fast default for everyone.
+        $content | Should -Match '\[switch\]\$NoFastExit'
+
+        # The opt-out switch must be documented in the script help, matching the parity of the other
+        # user-facing switches (Copy/Truncate/KeepMarkup) so -NoFastExit is discoverable via Get-Help.
+        $content | Should -Match '\.PARAMETER\s+NoFastExit'
+
+        # The comment-based help block must use the standard opener AND be separated from the
+        # shebang by a blank line; otherwise PowerShell does not recognize it as comment-based help
+        # and Get-Help silently suppresses ALL parameter documentation for the script.
+        $content | Should -Match '(?m)^<#\s*$'
+        $content | Should -Not -Match '(?m)^<#!'
+        $content | Should -Match '(?m)\A#![^\r\n]*\r?\n\r?\n<#'
+
+        # Get-Help must surface -NoFastExit (with its real description) for genuine discoverability,
+        # not merely have the source comment present. The -Full form is used because it reliably
+        # exposes the parsed per-parameter help across PowerShell versions.
+        $fullHelp = Get-Help -Name $fullPath -Full
+        $noFastExitHelp = @($fullHelp.parameters.parameter | Where-Object { $_.name -eq 'NoFastExit' })
+        $noFastExitHelp.Count | Should -BeGreaterThan 0 -Because "Get-Help must surface the -NoFastExit parameter for discoverability"
+        ([string]($noFastExitHelp[0].description.Text -join " ")) | Should -Match 'opt-out' -Because "the -NoFastExit help text must describe the opt-out behavior"
+
+        # Output must be flushed before the immediate termination (which bypasses managed flush).
+        $flushMatch = [regex]::Match($content, 'function\s+Invoke-FastProcessExit\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $flushMatch.Success | Should -BeTrue -Because "Invoke-FastProcessExit must exist so the flush-before-terminate contract can be validated"
+        $flushBody = $flushMatch.Groups["body"].Value
+        $flushIndex = $flushBody.IndexOf('Invoke-ConsoleFlush', [System.StringComparison]::Ordinal)
+        $terminateIndex = $flushBody.IndexOf('Stop-CurrentProcessImmediately', [System.StringComparison]::Ordinal)
+        $flushIndex | Should -BeGreaterThan -1 -Because "Invoke-FastProcessExit must flush the console"
+        $terminateIndex | Should -BeGreaterThan -1 -Because "Invoke-FastProcessExit must terminate the process"
+        $flushIndex | Should -BeLessThan $terminateIndex -Because "buffered output must be flushed before the process is terminated"
+
+        # The native libc _exit is the fast path, but it MUST be runtime-gated to non-Windows and
+        # fall back to the portable managed terminator; the Windows path never P/Invokes libc.
+        $stopMatch = [regex]::Match($content, 'function\s+Stop-CurrentProcessImmediately\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $stopMatch.Success | Should -BeTrue -Because "Stop-CurrentProcessImmediately must exist so the gating contract can be validated"
+        $stopBody = $stopMatch.Groups["body"].Value
+        $stopBody | Should -Match 'if\s*\(-not\s*\(Test-IsWindowsPlatform\)\)' -Because "the libc _exit path must be gated to non-Windows at runtime"
+        $stopBody | Should -Match '_exit' -Because "the Unix fast path uses libc _exit"
+        $stopBody | Should -Match '\[System\.Environment\]::Exit\(\$ExitCode\)' -Because "Windows and the fallback must use the portable managed terminator"
+
+        # The run guard fast-exits by default on both success and failure paths (unless -NoFastExit),
+        # inside the existing dot-source guard so dot-sourced tests never terminate the host.
+        $content | Should -Match 'Invoke-Main\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
+        $content | Should -Match 'if\s*\(-not\s*\$NoFastExit\.IsPresent\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+1'
+    }
+
+    It "preserves suggested-change blocks verbatim and strips them from prose" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+Get-SuggestionFenceRegex'
+        $content | Should -Match 'function\s+Get-CommentSuggestionBlocks'
+        # The prose stripper reuses the shared fence regex so extraction and removal never drift.
+        $content | Should -Match 'function\s+Remove-MarkupFromCommentText[\s\S]*Get-SuggestionFenceRegex'
+        # The record carries verbatim suggestions, and the text renderer labels them.
+        $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*suggestions\s*=\s*@\(\$suggestions\)'
+        $content | Should -Match 'function\s+Add-SuggestionRenderLines[\s\S]*Suggested change'
+
+        # Suggestion extraction must scan EVERY comment in the thread (top comment and replies),
+        # because reviewers/bots frequently attach the suggested change on a follow-up reply. A
+        # regression to a top-comment-only scan would silently drop reply suggestions.
+        $convertMatch = [regex]::Match($content, 'function\s+Convert-ReviewThreadToOutputRecord\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $convertMatch.Success | Should -BeTrue -Because "Convert-ReviewThreadToOutputRecord must exist so the all-comments suggestion scan can be validated"
+        $convertBody = $convertMatch.Groups["body"].Value
+        $convertBody | Should -Match 'foreach\s*\(\$commentNode\s+in\s+\$comments\)' -Because "suggestion extraction must iterate every comment node, not only the top comment"
+
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+        $testsContent | Should -Match 'Describe\s+"Comment suggestion blocks"'
+        $testsContent | Should -Match 'captures suggestions on a record and strips them from the prose'
+        $testsContent | Should -Match 'captures a suggestion that appears in a reply'
+    }
+
+    It "reuses one pooled web session across all GitHub requests" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        # A single per-run web session is declared at script scope (StrictMode-safe $null default)
+        # and built via a mockable seam so every GitHub API call reuses one pooled TCP/TLS
+        # connection instead of opening a fresh connection per request.
+        $content | Should -Match '\$script:GitHubWebSession\s*=\s*\$null'
+        $content | Should -Match 'function\s+New-GitHubWebSession'
+        $content | Should -Match '\[Microsoft\.PowerShell\.Commands\.WebRequestSession\]::new\(\)'
+        $content | Should -Match '\$script:GitHubWebSession\s*=\s*New-GitHubWebSession'
+
+        # The session is attached only when non-null so dot-sourced unit tests (which never set it)
+        # keep their existing behavior, and it is threaded into both transports.
+        $content | Should -Match 'if\s*\(\$null\s*-ne\s*\$script:GitHubWebSession\)\s*\{\s*\r?\n?\s*\$sessionArgs\["WebSession"\]\s*=\s*\$script:GitHubWebSession'
+        $content | Should -Match 'Invoke-RestMethod\s+-Method\s+GET[^\r\n]*@sessionArgs'
+        $content | Should -Match 'Invoke-RestMethod\s+-Method\s+POST[^\r\n]*@sessionArgs'
+        $content | Should -Match 'Invoke-WebRequest\s+-Method\s+GET[^\r\n]*-UseBasicParsing\s+@sessionArgs'
+
+        # -UseBasicParsing must remain an explicit literal (not hidden in a splat) so the
+        # cross-version compatibility gate can still verify Windows PowerShell 5.1 safety.
+        $content | Should -Not -Match 'UseBasicParsing\s*=\s*\$true'
+    }
+
+    It "suppresses the web-cmdlet progress UI so it cannot corrupt the terminal" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        # The PowerShell web cmdlets render a progress bar that, on a real terminal, hides the cursor
+        # and emits DSR cursor-position queries (ESC[6n); the terminal's replies queue into stdin and
+        # corrupt the parent shell's input after the (fast) process exit. Both functions that call a
+        # web cmdlet must run with the progress UI suppressed. Use the portable $ProgressPreference
+        # assignment (NOT -ProgressAction, which is PowerShell 7.4+ only).
+        $retryMatch = [regex]::Match($content, 'function\s+Invoke-GitHubRequestWithRetry\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $retryMatch.Success | Should -BeTrue -Because "Invoke-GitHubRequestWithRetry must exist so progress suppression can be validated"
+        $retryMatch.Groups["body"].Value | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"' -Because "the GET/POST transport must suppress the progress UI"
+
+        $validateMatch = [regex]::Match($content, 'function\s+Validate-GitHubTokenForRepoAccess\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $validateMatch.Success | Should -BeTrue -Because "Validate-GitHubTokenForRepoAccess must exist so progress suppression can be validated"
+        $validateMatch.Groups["body"].Value | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"' -Because "the token-validation transport must suppress the progress UI"
+
+        # -ProgressAction is PowerShell 7.4+ only and must not be relied upon for this contract.
+        $content | Should -Not -Match '-ProgressAction'
+
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+        $testsContent | Should -Match 'suppresses the progress UI for the GET transport'
+        $testsContent | Should -Match 'suppresses the progress UI for the token-validation transport'
+    }
+
+    It "truncates comment text without splitting UTF-16 surrogate pairs" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $content | Should -Match 'function\s+Normalize-CommentText[\s\S]*\[System\.Char\]::IsHighSurrogate'
+    }
+
+    It "renders a single collapsed text delimiter between comment blocks" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        $functionMatch = [regex]::Match($content, 'function\s+Format-UnresolvedThreadsAsText\s*\{(?<body>[\s\S]*?)^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $functionMatch.Success | Should -BeTrue -Because "Format-UnresolvedThreadsAsText must exist so the delimiter contract can be validated"
+        $functionBody = $functionMatch.Groups["body"].Value
+
+        # The leading delimiter is guarded so only one "---" separates adjacent blocks instead of
+        # the legacy doubled "---\n---" seam.
+        $functionBody | Should -Match 'if\s*\(\$lines\.Count\s*-eq\s*0\)\s*\{\s*\r?\n?\s*\$lines\.Add\("---"\)'
+        ([regex]::Matches($functionBody, '\$lines\.Add\("---"\)')).Count | Should -Be 2 -Because "exactly one guarded leading delimiter and one per-block trailing delimiter"
     }
 
     It "uses PSBoundParameters for OutputPath gating in Invoke-Main" {

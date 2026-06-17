@@ -228,25 +228,25 @@ query Demo(
 
     It "validates GraphQL variable payload casing and strictness (<Name>)" -ForEach @(
         @{
-            Name                    = "accepts exact-case GraphQL variable payload keys"
-            Variables               = @{ owner = "org"; repo = "repo"; prNumber = 10 }
-            RejectUnexpected        = $false
-            ShouldThrow             = $false
-            ExpectedThrowPattern    = ""
+            Name                 = "accepts exact-case GraphQL variable payload keys"
+            Variables            = @{ owner = "org"; repo = "repo"; prNumber = 10 }
+            RejectUnexpected     = $false
+            ShouldThrow          = $false
+            ExpectedThrowPattern = ""
         },
         @{
-            Name                    = "rejects payload keys that differ by casing"
-            Variables               = @{ Owner = "org"; Repo = "repo"; prNumber = 10 }
-            RejectUnexpected        = $false
-            ShouldThrow             = $true
-            ExpectedThrowPattern    = "*E_CONFIG_ERROR*case mismatch*owner*Owner*repo*Repo*"
+            Name                 = "rejects payload keys that differ by casing"
+            Variables            = @{ Owner = "org"; Repo = "repo"; prNumber = 10 }
+            RejectUnexpected     = $false
+            ShouldThrow          = $true
+            ExpectedThrowPattern = "*E_CONFIG_ERROR*case mismatch*owner*Owner*repo*Repo*"
         },
         @{
-            Name                    = "rejects unexpected variables when strict mode is requested"
-            Variables               = @{ owner = "org"; repo = "repo"; prNumber = 10; extra = "unexpected" }
-            RejectUnexpected        = $true
-            ShouldThrow             = $true
-            ExpectedThrowPattern    = "*E_CONFIG_ERROR*unexpected variables*extra*"
+            Name                 = "rejects unexpected variables when strict mode is requested"
+            Variables            = @{ owner = "org"; repo = "repo"; prNumber = 10; extra = "unexpected" }
+            RejectUnexpected     = $true
+            ShouldThrow          = $true
+            ExpectedThrowPattern = "*E_CONFIG_ERROR*unexpected variables*extra*"
         }
     ) {
         if ($ShouldThrow) {
@@ -355,10 +355,10 @@ Describe "Get-HeaderValues" {
     # TryGetValues branch), plain hashtables, and case-insensitive generic dictionaries (both
     # via the ContainsKey branch). Adding a backing here adds a row, not a copy of the body.
     It "reads <Case>" -ForEach @(
-        @{ Case = "multiple values from real HttpHeaders via TryGetValues"; Backing = "HttpHeaders";       Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
-        @{ Case = "real HttpHeaders regardless of key casing";              Backing = "HttpHeaders";       Entries = @{ "X-OAuth-Scopes" = @("repo") };             LookupKey = "x-oauth-scopes"; Expected = @("repo") }
-        @{ Case = "array-valued hashtable entries";                         Backing = "Hashtable";         Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
-        @{ Case = "case-insensitive generic dictionary entries";            Backing = "GenericDictionary"; Entries = @{ "X-OAuth-Scopes" = "repo" };                LookupKey = "x-oauth-scopes"; Expected = @("repo") }
+        @{ Case = "multiple values from real HttpHeaders via TryGetValues"; Backing = "HttpHeaders"; Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
+        @{ Case = "real HttpHeaders regardless of key casing"; Backing = "HttpHeaders"; Entries = @{ "X-OAuth-Scopes" = @("repo") }; LookupKey = "x-oauth-scopes"; Expected = @("repo") }
+        @{ Case = "array-valued hashtable entries"; Backing = "Hashtable"; Entries = @{ "X-OAuth-Scopes" = @("repo", "read:org") }; LookupKey = "X-OAuth-Scopes"; Expected = @("repo", "read:org") }
+        @{ Case = "case-insensitive generic dictionary entries"; Backing = "GenericDictionary"; Entries = @{ "X-OAuth-Scopes" = "repo" }; LookupKey = "x-oauth-scopes"; Expected = @("repo") }
     ) {
         param($Backing, $Entries, $LookupKey, $Expected)
 
@@ -518,8 +518,52 @@ Describe "Redact-SensitiveText" {
     }
 }
 
+Describe "Test-ShouldUseClipboardOsc52" {
+    BeforeAll {
+        $script:originalTermProgram = $env:TERM_PROGRAM
+        $script:originalWtSession = $env:WT_SESSION
+        $script:originalSshClient = $env:SSH_CLIENT
+        $script:originalSshTty = $env:SSH_TTY
+    }
+
+    BeforeEach {
+        $env:TERM_PROGRAM = $null
+        $env:WT_SESSION = $null
+        $env:SSH_CLIENT = $null
+        $env:SSH_TTY = $null
+    }
+
+    AfterAll {
+        $env:TERM_PROGRAM = $script:originalTermProgram
+        $env:WT_SESSION = $script:originalWtSession
+        $env:SSH_CLIENT = $script:originalSshClient
+        $env:SSH_TTY = $script:originalSshTty
+    }
+
+    It "never uses OSC52 when stdout is redirected, even in a supported terminal" {
+        $env:TERM_PROGRAM = "vscode"
+        Mock Test-IsConsoleOutputRedirected { $true }
+
+        Test-ShouldUseClipboardOsc52 | Should -BeFalse
+    }
+
+    It "uses OSC52 in a supported terminal when stdout is not redirected" {
+        $env:TERM_PROGRAM = "vscode"
+        Mock Test-IsConsoleOutputRedirected { $false }
+
+        Test-ShouldUseClipboardOsc52 | Should -BeTrue
+    }
+
+    It "does not use OSC52 outside a supported terminal even when not redirected" {
+        Mock Test-IsConsoleOutputRedirected { $false }
+
+        Test-ShouldUseClipboardOsc52 | Should -BeFalse
+    }
+}
+
 Describe "Get-ClipboardCommand" {
     It "prefers Set-Clipboard when available" {
+        Mock Test-ShouldUseClipboardOsc52 { $false }
         Mock Get-Command {
             [pscustomobject]@{ Name = "Set-Clipboard" }
         } -ParameterFilter { $Name -eq "Set-Clipboard" }
@@ -529,6 +573,7 @@ Describe "Get-ClipboardCommand" {
     }
 
     It "falls back to xclip when Set-Clipboard and pbcopy are unavailable" {
+        Mock Test-ShouldUseClipboardOsc52 { $false }
         Mock Get-Command { $null } -ParameterFilter { $Name -eq "Set-Clipboard" }
         Mock Get-Command { $null } -ParameterFilter { $Name -eq "pbcopy" }
         Mock Get-Command { [pscustomobject]@{ Name = "xclip" } } -ParameterFilter { $Name -eq "xclip" }
@@ -539,19 +584,37 @@ Describe "Get-ClipboardCommand" {
 }
 
 Describe "Get-ClipboardCommandPriority" {
-    It "adds OSC52 strategy before Set-Clipboard when terminal supports it" {
-        Mock Get-Command {
-            [pscustomobject]@{
-                Name       = "Set-Clipboard"
-                Parameters = @{ AsOSC52 = $true }
-            }
-        } -ParameterFilter { $Name -eq "Set-Clipboard" }
-        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
+    It "adds Osc52 before Set-Clipboard on non-Windows when the terminal supports it" {
+        Mock Test-IsWindowsPlatform { $false }
         Mock Test-ShouldUseClipboardOsc52 { $true }
+        Mock Get-Command { [pscustomobject]@{ Name = "Set-Clipboard" } } -ParameterFilter { $Name -eq "Set-Clipboard" }
+        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
 
         $commands = @(Get-ClipboardCommandPriority)
-        $commands[0] | Should -Be "Set-Clipboard-AsOSC52"
+        $commands[0] | Should -Be "Osc52"
         $commands[1] | Should -Be "Set-Clipboard"
+    }
+
+    It "prefers the Windows GUI clipboard before Osc52" {
+        Mock Test-IsWindowsPlatform { $true }
+        Mock Test-ShouldUseClipboardOsc52 { $true }
+        Mock Get-Command { [pscustomobject]@{ Name = "Set-Clipboard" } } -ParameterFilter { $Name -eq "Set-Clipboard" }
+        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
+
+        $commands = @(Get-ClipboardCommandPriority)
+        $commands[0] | Should -Be "Set-Clipboard"
+        $commands[1] | Should -Be "Osc52"
+    }
+
+    It "omits Osc52 when the terminal context does not support it" {
+        Mock Test-IsWindowsPlatform { $false }
+        Mock Test-ShouldUseClipboardOsc52 { $false }
+        Mock Get-Command { [pscustomobject]@{ Name = "Set-Clipboard" } } -ParameterFilter { $Name -eq "Set-Clipboard" }
+        Mock Get-Command { $null } -ParameterFilter { $Name -ne "Set-Clipboard" }
+
+        $commands = @(Get-ClipboardCommandPriority)
+        $commands | Should -Not -Contain "Osc52"
+        $commands | Should -Contain "Set-Clipboard"
     }
 }
 
@@ -598,128 +661,593 @@ Describe "Copy-ToClipboard" {
         $script:lastWarningMessage | Should -Not -Match [regex]::Escape($secret)
     }
 
-    It "falls back to Set-Clipboard when OSC52 attempt fails" {
+    It "falls back to Set-Clipboard when the Osc52 strategy fails" {
         $script:clipboardAttemptOrder = @()
-        Mock Get-ClipboardCommandPriority { @("Set-Clipboard-AsOSC52", "Set-Clipboard") }
+        Mock Get-ClipboardCommandPriority { @("Osc52", "Set-Clipboard") }
+        Mock Write-Osc52Clipboard {
+            $script:clipboardAttemptOrder += "Osc52"
+            throw "osc52 failed"
+        }
         Mock Set-ClipboardValue {
-            param(
-                [string]$Value,
-                [switch]$AsOSC52
-            )
-
-            if ($AsOSC52.IsPresent) {
-                $script:clipboardAttemptOrder += "Set-Clipboard-AsOSC52"
-                throw "Set-Clipboard -AsOSC52 failed"
-            }
-
             $script:clipboardAttemptOrder += "Set-Clipboard"
         }
 
         $copied = Copy-ToClipboard -Text "copy me"
 
         $copied | Should -BeTrue
-        (($script:clipboardAttemptOrder) -join ",") | Should -Be "Set-Clipboard-AsOSC52,Set-Clipboard" -Because "clipboard fallback should preserve OSC52-first attempt order and then recover with plain Set-Clipboard"
-        Assert-MockCalled Set-ClipboardValue -Times 2 -Scope It
-        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent }
-        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { -not $AsOSC52.IsPresent }
+        (($script:clipboardAttemptOrder) -join ",") | Should -Be "Osc52,Set-Clipboard" -Because "clipboard fallback should preserve OSC52-first attempt order and then recover with the native clipboard"
+        Assert-MockCalled Write-Osc52Clipboard -Times 1 -Scope It
+        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It
     }
 
-    It "uses Set-Clipboard -AsOSC52 when OSC52 strategy is selected" {
-        Mock Get-ClipboardCommandPriority { @("Set-Clipboard-AsOSC52") }
-        Mock Set-ClipboardValue { }
+    It "invokes Write-Osc52Clipboard when the Osc52 strategy is selected" {
+        Mock Get-ClipboardCommandPriority { @("Osc52") }
+        Mock Write-Osc52Clipboard { }
 
         $copied = Copy-ToClipboard -Text "copy me"
 
         $copied | Should -BeTrue
-        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent -and $Value -eq "copy me" }
+        Assert-MockCalled Write-Osc52Clipboard -Times 1 -Scope It -ParameterFilter { $Text -eq "copy me" }
+    }
+
+    It "routes native clipboard tools through the detached Invoke-NativeClipboardTool seam" {
+        $script:nativeToolCalled = $null
+        Mock Get-ClipboardCommandPriority { @("pbcopy") }
+        Mock Invoke-NativeClipboardTool {
+            param($Tool, $Arguments, $Text, $TimeoutSeconds)
+            $script:nativeToolCalled = $Tool
+            return $true
+        }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeTrue
+        $script:nativeToolCalled | Should -Be "pbcopy"
+        Assert-MockCalled Invoke-NativeClipboardTool -Times 1 -Scope It -ParameterFilter { $Tool -eq "pbcopy" -and $Text -eq "copy me" }
     }
 
     It "falls back across native clipboard tools in priority order" {
         $script:nativeClipboardAttemptOrder = @()
         Mock Get-ClipboardCommandPriority { @("pbcopy", "xclip", "xsel") }
+        Mock Invoke-NativeClipboardTool {
+            param($Tool, $Arguments, $Text, $TimeoutSeconds)
+            $script:nativeClipboardAttemptOrder += $Tool
+            # pbcopy and xclip fail; xsel succeeds.
+            return ($Tool -eq "xsel")
+        }
+
+        $copied = Copy-ToClipboard -Text "copy me"
+
+        $copied | Should -BeTrue
+        (($script:nativeClipboardAttemptOrder) -join ",") | Should -Be "pbcopy,xclip,xsel" -Because "native fallback should continue through failed tools and stop after the first success"
+    }
+}
+
+Describe "Invoke-NativeClipboardTool" {
+    BeforeAll {
+        $script:isUnixClipboardHost = -not (Test-IsWindowsPlatform)
+
+        function New-FakeClipboardTool {
+            param(
+                [Parameter(Mandatory = $true)] [string]$Name,
+                [Parameter(Mandatory = $true)] [string]$BashBody
+            )
+            $path = Join-Path -Path $script:clipToolDir -ChildPath $Name
+            $content = "#!/usr/bin/env bash`n" + $BashBody + "`n"
+            [System.IO.File]::WriteAllText($path, ($content -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+            & chmod +x $path
+            return $path
+        }
+    }
+
+    BeforeEach {
+        $script:clipToolDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("cliptool-" + [Guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($script:clipToolDir)
+    }
+
+    AfterEach {
+        if (Test-Path -LiteralPath $script:clipToolDir) {
+            Remove-Item -LiteralPath $script:clipToolDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns false when the tool is not found" {
+        (Invoke-NativeClipboardTool -Tool "definitely-not-a-real-clipboard-tool-xyz" -Text "x") | Should -BeFalse
+    }
+
+    It "delivers the payload as UTF-8 bytes via stdin and returns true on success" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path; Windows uses Set-Clipboard."; return }
+
+        $captured = Join-Path -Path $script:clipToolDir -ChildPath "captured.bin"
+        $tool = New-FakeClipboardTool -Name "faketool" -BashBody "cat > '$captured'`nexit 0"
+
+        $payload = "ascii and " + ([char]0x00E9) + " and " + [char]::ConvertFromUtf32(0x1F680)
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text $payload
+
+        $result | Should -BeTrue
+        $bytes = [System.IO.File]::ReadAllBytes($captured)
+        $expected = [System.Text.Encoding]::UTF8.GetBytes($payload)
+        ($bytes -join ",") | Should -Be ($expected -join ",") -Because "the payload must reach the tool as verbatim UTF-8 bytes regardless of console code page"
+    }
+
+    It "returns false when the tool exits non-zero" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+
+        $tool = New-FakeClipboardTool -Name "failtool" -BashBody "cat > /dev/null`nexit 3"
+        (Invoke-NativeClipboardTool -Tool $tool -Text "x") | Should -BeFalse
+    }
+
+    It "returns false promptly when the tool exceeds the timeout (never hangs the script)" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+
+        $tool = New-FakeClipboardTool -Name "slowtool" -BashBody "cat > /dev/null`nsleep 30`nexit 0"
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text "x" -TimeoutSeconds 2
+        $sw.Stop()
+
+        $result | Should -BeFalse
+        $sw.Elapsed.TotalSeconds | Should -BeLessThan 12 -Because "a blocking clipboard tool must be killed at the timeout, not awaited for its full duration"
+    }
+
+    It "returns promptly for a daemonizing tool that forks a child holding stdout (no terminal hold)" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+
+        # Mimics xclip/xsel/wl-copy: consume stdin, fork a long-lived child, exit immediately.
+        # Because the tool's stdio is redirected (not inherited), the forked child cannot hold the
+        # caller's terminal open, and the direct child exits at once, so the call returns promptly.
+        $tool = New-FakeClipboardTool -Name "daemontool" -BashBody "cat > /dev/null`n( sleep 30 ) &`nexit 0"
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text "x" -TimeoutSeconds 10
+        $sw.Stop()
+
+        $result | Should -BeTrue
+        $sw.Elapsed.TotalSeconds | Should -BeLessThan 10 -Because "a daemonizing tool's forked child must not delay the call (its stdio is redirected, so it cannot hold the terminal)"
+    }
+
+    It "does not hang on the stdin write when the tool never reads stdin" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+
+        # A tool that closes stdin and blocks without ever draining it. A large payload written
+        # synchronously to stdin could fill the pipe buffer and block forever; the write must be
+        # bounded so the timeout still governs total runtime.
+        $tool = New-FakeClipboardTool -Name "noreadtool" -BashBody "exec 0<&-`nsleep 30`nexit 0"
+        $bigPayload = "a" * 5000000
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text $bigPayload -TimeoutSeconds 2
+        $sw.Stop()
+
+        $result | Should -BeFalse
+        $sw.Elapsed.TotalSeconds | Should -BeLessThan 15 -Because "a blocked stdin write must not exceed the bounded timeout budget"
+    }
+
+    It "kills the whole tool process tree on timeout so a forked child cannot linger" {
+        if (-not $script:isUnixClipboardHost) { Set-ItResult -Skipped -Because "native clipboard CLI tools are a Unix-only path."; return }
+        if ((Test-IsDesktopEdition)) { Set-ItResult -Skipped -Because "Process.Kill(true) tree-kill is only available on PowerShell 7+ (Core)."; return }
+
+        $marker = Join-Path -Path $script:clipToolDir -ChildPath "grandchild.txt"
+        # Direct child forks a grandchild that would write a marker after 8s, then the direct child
+        # blocks so the call hits the timeout. Tree-kill must terminate the grandchild before it
+        # writes the marker.
+        $tool = New-FakeClipboardTool -Name "treetool" -BashBody "cat > /dev/null`n( sleep 8; echo x > '$marker' ) &`nsleep 30"
+
+        $result = Invoke-NativeClipboardTool -Tool $tool -Text "x" -TimeoutSeconds 2
+        $result | Should -BeFalse
+        Start-Sleep -Seconds 10
+
+        (Test-Path -LiteralPath $marker) | Should -BeFalse -Because "tree-kill must terminate the forked grandchild before it can act"
+    }
+}
+
+Describe "Wait-TaskObserved" {
+    It "returns true for a task that completes within the timeout" {
+        $task = [System.Threading.Tasks.Task]::Delay(10)
+        (Wait-TaskObserved -Task $task -TimeoutMilliseconds 2000) | Should -BeTrue
+    }
+
+    It "returns false for a task that does not complete within the timeout" {
+        $task = [System.Threading.Tasks.Task]::Delay(5000)
+        (Wait-TaskObserved -Task $task -TimeoutMilliseconds 50) | Should -BeFalse
+    }
+
+    It "returns false for a null task" {
+        (Wait-TaskObserved -Task $null -TimeoutMilliseconds 50) | Should -BeFalse
+    }
+
+    It "observes a faulted task without throwing and marks its exception handled" {
+        $faulting = [System.Threading.Tasks.Task]::Run([System.Action] { throw [System.IO.IOException]::new("broken pipe") })
+        try { $faulting.Wait(2000) } catch { }
+
+        { Wait-TaskObserved -Task $faulting -TimeoutMilliseconds 200 } | Should -Not -Throw
+        # Touching .Exception marks it observed; the task must be in the faulted terminal state.
+        $faulting.IsFaulted | Should -BeTrue
+        $null = $faulting.Exception
+    }
+}
+
+Describe "Clipboard copy process-teardown" {
+    # End-to-end guard for the user-reported "output renders, then the terminal hangs for 10s+" bug.
+    # A native clipboard tool that forks a long-lived selection-server child must not delay the host
+    # PROCESS EXIT, because the detached child stdio cannot hold the parent's streams open. Unit
+    # tests of Invoke-NativeClipboardTool only observe the call duration; this test observes the
+    # whole process lifetime (spawn -> output -> exit) via the stdout pipe closing.
+    BeforeAll {
+        $script:teardownIsUnix = -not (Test-IsWindowsPlatform)
+        $script:scriptUnderTest = Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+    }
+
+    BeforeEach {
+        $script:teardownToolDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("clipteardown-" + [Guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($script:teardownToolDir)
+    }
+
+    AfterEach {
+        if (Test-Path -LiteralPath $script:teardownToolDir) {
+            Remove-Item -LiteralPath $script:teardownToolDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "exits promptly even when the clipboard tool forks a child that lingers" {
+        if (-not $script:teardownIsUnix) { Set-ItResult -Skipped -Because "native clipboard CLI tools and this PTY-free teardown probe are a Unix-only path."; return }
+
+        # Resolve the running PowerShell host executable. Get-Command can resolve an apphost shim
+        # under .store that is not directly launchable, so prefer the current process main module
+        # (the actual pwsh binary) and fall back to $PSHOME/pwsh.
+        $pwshExe = $null
         try {
-            function pbcopy {
-                param(
-                    [Parameter(ValueFromPipeline = $true)]
-                    [AllowNull()]
-                    [string]$InputObject
-                )
-
-                process {
-                    $script:nativeClipboardAttemptOrder += "pbcopy"
-                    $global:LASTEXITCODE = 17
-                }
+            $candidate = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) {
+                $pwshExe = $candidate
             }
+        }
+        catch {
+            $pwshExe = $null
+        }
+        if ($null -eq $pwshExe) {
+            $homeCandidate = Join-Path -Path $PSHOME -ChildPath "pwsh"
+            if (Test-Path -LiteralPath $homeCandidate) { $pwshExe = $homeCandidate }
+        }
+        if ($null -eq $pwshExe) { Set-ItResult -Skipped -Because "could not resolve a launchable pwsh host for the teardown probe."; return }
 
-            function xclip {
-                param(
-                    [string]$selection,
-                    [Parameter(ValueFromPipeline = $true)]
-                    [AllowNull()]
-                    [string]$InputObject
-                )
+        # Daemonizing fake wl-copy: consume stdin, fork a child that sleeps 30s, exit immediately.
+        $fakeTool = Join-Path -Path $script:teardownToolDir -ChildPath "wl-copy"
+        $bash = "#!/usr/bin/env bash`ncat > /dev/null`n( sleep 30 ) &`nexit 0`n"
+        [System.IO.File]::WriteAllText($fakeTool, ($bash -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+        & chmod +x $fakeTool
 
-                process {
-                    $script:nativeClipboardAttemptOrder += "xclip"
-                    $global:LASTEXITCODE = 42
-                }
-            }
+        # Inner script: force the native daemonizing tool path, copy, then signal completion. If the
+        # forked child held our stdout, the parent's stdout pipe would stay open well past this point.
+        $doneFile = Join-Path -Path $script:teardownToolDir -ChildPath "done.txt"
+        $innerScript = @"
+. '$($script:scriptUnderTest)' -NoRun
+function Get-ClipboardCommandPriority { @('wl-copy') }
+[void](Copy-ToClipboard -Text 'render-then-exit')
+[System.IO.File]::WriteAllText('$doneFile', [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString())
+"@
+        $innerFile = Join-Path -Path $script:teardownToolDir -ChildPath "inner.ps1"
+        [System.IO.File]::WriteAllText($innerFile, $innerScript, [System.Text.UTF8Encoding]::new($false))
 
-            function xsel {
-                param(
-                    [string]$clipboard,
-                    [string]$input,
-                    [Parameter(ValueFromPipeline = $true)]
-                    [AllowNull()]
-                    [string]$InputObject
-                )
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = [string]$pwshExe
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $probePath = $script:teardownToolDir + [System.IO.Path]::PathSeparator + $env:PATH
+        Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value $probePath
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-NoProfile", "-NoLogo", "-File", $innerFile)
 
-                process {
-                    $script:nativeClipboardAttemptOrder += "xsel"
-                    $global:LASTEXITCODE = 0
-                }
-            }
+        $proc = [System.Diagnostics.Process]::Start($startInfo)
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
 
-            $copied = Copy-ToClipboard -Text "copy me"
+        # The stdout ReadToEnd completing is the real signal: it returns only once EVERY writer of
+        # the pipe (the pwsh child AND any process holding an inherited copy of its stdout) has
+        # closed. With the detached-stdio fix the forked clipboard child does not inherit it, so this
+        # completes shortly after pwsh exits rather than 30s later.
+        $exited = $proc.WaitForExit(60000)
+        $drained = $stdoutTask.Wait(20000)
+        [void]$stderrTask.Wait(2000)
 
-            $copied | Should -BeTrue
-            (($script:nativeClipboardAttemptOrder) -join ",") | Should -Be "pbcopy,xclip,xsel" -Because "native fallback should continue through failed tools and stop after the first success"
+        try {
+            $exited | Should -BeTrue -Because "the pwsh child must exit within the timeout"
+            (Test-Path -LiteralPath $doneFile) | Should -BeTrue -Because "the copy must have completed"
+            $drained | Should -BeTrue -Because "the parent stdout pipe must reach EOF promptly; a forked clipboard child must not keep it open"
         }
         finally {
-            Remove-Item -Path Function:pbcopy -ErrorAction SilentlyContinue
-            Remove-Item -Path Function:xclip -ErrorAction SilentlyContinue
-            Remove-Item -Path Function:xsel -ErrorAction SilentlyContinue
+            if (-not $proc.HasExited) { try { $proc.Kill($true) } catch { } }
+            $proc.Dispose()
+        }
+    }
+}
+
+Describe "FastExit process termination (end-to-end)" {
+    BeforeAll {
+        $script:feIsUnix = -not (Test-IsWindowsPlatform)
+        $script:feScript = Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+    }
+
+    BeforeEach {
+        $script:feDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("fastexit-" + [Guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($script:feDir)
+    }
+
+    AfterEach {
+        if (Test-Path -LiteralPath $script:feDir) {
+            Remove-Item -LiteralPath $script:feDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "skips the slow managed teardown while preserving exit code and full output" {
+        if (-not $script:feIsUnix) { Set-ItResult -Skipped -Because "the libc fast-exit path is Unix-only; Windows uses [Environment]::Exit."; return }
+
+        $pwshExe = $null
+        try {
+            $candidate = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) { $pwshExe = $candidate }
+        }
+        catch { $pwshExe = $null }
+        if ($null -eq $pwshExe) {
+            $homeCandidate = Join-Path -Path $PSHOME -ChildPath "pwsh"
+            if (Test-Path -LiteralPath $homeCandidate) { $pwshExe = $homeCandidate }
+        }
+        if ($null -eq $pwshExe) { Set-ItResult -Skipped -Because "could not resolve a launchable pwsh host."; return }
+
+        # Inner script: dot-source the real script, then drive the fast-exit path the way the run
+        # guard does (large output, marker as the last managed write, then Invoke-FastProcessExit).
+        $marker = Join-Path -Path $script:feDir -ChildPath "marker.txt"
+        $inner = @"
+. '$($script:feScript)' -NoRun
+1..2000 | ForEach-Object { Write-Output "line-`$_" }
+[System.IO.File]::WriteAllText('$marker', [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString())
+Invoke-FastProcessExit -ExitCode 7
+"@
+        $innerFile = Join-Path -Path $script:feDir -ChildPath "inner.ps1"
+        [System.IO.File]::WriteAllText($innerFile, $inner, [System.Text.UTF8Encoding]::new($false))
+
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = [string]$pwshExe
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-NoProfile", "-NoLogo", "-File", $innerFile)
+
+        $proc = [System.Diagnostics.Process]::Start($startInfo)
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        [void]$proc.StandardError.ReadToEndAsync()
+        $exited = $proc.WaitForExit(60000)
+        [void]$stdoutTask.Wait(5000)
+
+        try {
+            $exited | Should -BeTrue -Because "the fast-exit must terminate the process promptly"
+            $proc.ExitCode | Should -Be 7 -Because "the requested exit code must be preserved by the fast exit"
+            $stdout = [string]$stdoutTask.Result
+            ($stdout -split "`n" | Where-Object { $_ -match '^line-\d+' }).Count | Should -Be 2000 -Because "all buffered output must be flushed before the fast exit (no truncation)"
+            $stdout | Should -Not -Match "Killed" -Because "a clean libc _exit must not raise a SIGKILL 'Killed' message"
+        }
+        finally {
+            if (-not $proc.HasExited) { try { $proc.Kill() } catch { } }
+            $proc.Dispose()
+        }
+    }
+
+    It "does not truncate a large payload before the fast exit" {
+        if (-not $script:feIsUnix) { Set-ItResult -Skipped -Because "the libc fast-exit path is Unix-only; Windows uses [Environment]::Exit."; return }
+
+        $pwshExe = $null
+        try {
+            $candidate = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) { $pwshExe = $candidate }
+        }
+        catch { $pwshExe = $null }
+        if ($null -eq $pwshExe) {
+            $homeCandidate = Join-Path -Path $PSHOME -ChildPath "pwsh"
+            if (Test-Path -LiteralPath $homeCandidate) { $pwshExe = $homeCandidate }
+        }
+        if ($null -eq $pwshExe) { Set-ItResult -Skipped -Because "could not resolve a launchable pwsh host."; return }
+
+        # A ~2.5 MB payload (25000 lines) far exceeds any OS pipe / console buffer, so this proves
+        # the run-guard flush commits all rendered output before the immediate termination. This is
+        # the permanent regression guard against fast-exit truncating large output.
+        $lineCount = 25000
+        $inner = @"
+. '$($script:feScript)' -NoRun
+`$sb = [System.Text.StringBuilder]::new()
+for (`$i = 1; `$i -le $lineCount; `$i++) { [void]`$sb.AppendLine(('{0:D6}:' -f `$i) + ('x' * 80)) }
+Write-Output `$sb.ToString().TrimEnd("``n", "``r")
+Invoke-FastProcessExit -ExitCode 0
+"@
+        $innerFile = Join-Path -Path $script:feDir -ChildPath "big.ps1"
+        [System.IO.File]::WriteAllText($innerFile, $inner, [System.Text.UTF8Encoding]::new($false))
+
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = [string]$pwshExe
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @("-NoProfile", "-NoLogo", "-File", $innerFile)
+
+        $proc = [System.Diagnostics.Process]::Start($startInfo)
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        [void]$proc.StandardError.ReadToEndAsync()
+        $exited = $proc.WaitForExit(60000)
+        [void]$stdoutTask.Wait(10000)
+
+        try {
+            $exited | Should -BeTrue
+            $proc.ExitCode | Should -Be 0
+            $stdout = [string]$stdoutTask.Result
+            $matched = [regex]::Matches($stdout, '(?m)^\d{6}:')
+            $matched.Count | Should -Be $lineCount -Because "every rendered line must survive the fast exit even for a multi-megabyte payload"
+            $stdout | Should -Match ("(?m)^{0:D6}:" -f $lineCount) -Because "the final line must be present (no tail truncation)"
+        }
+        finally {
+            if (-not $proc.HasExited) { try { $proc.Kill() } catch { } }
+            $proc.Dispose()
         }
     }
 }
 
 Describe "Set-ClipboardValue" {
-    # The seam exists so Copy-ToClipboard's clipboard tests can mock a command with an
-    # edition-stable parameter set; these tests assert the seam itself routes to Set-Clipboard
-    # correctly (the branch selection that Copy-ToClipboard's mocks otherwise stub out).
-    It "calls Set-Clipboard without -AsOSC52 by default" {
+    It "routes the value to Set-Clipboard" {
         Mock Set-Clipboard { }
 
         Set-ClipboardValue -Value "plain copy"
 
-        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { -not $AsOSC52.IsPresent -and $Value -eq "plain copy" }
+        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $Value -eq "plain copy" }
+    }
+}
+
+Describe "ConvertTo-Osc52Sequence" {
+    It "wraps UTF-8 base64 with the explicit clipboard selector" {
+        $esc = [char]27
+        $bel = [char]7
+        $expected = "$esc]52;c;" + [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("hello")) + $bel
+
+        ConvertTo-Osc52Sequence -Text "hello" | Should -BeExactly $expected
     }
 
-    It "routes -AsOSC52 through to Set-Clipboard when the parameter exists on this edition" {
-        $setClipboard = Get-Command Set-Clipboard -ErrorAction SilentlyContinue
-        if ($null -eq $setClipboard -or -not $setClipboard.Parameters.ContainsKey('AsOSC52')) {
-            # On Windows PowerShell 5.1 Set-Clipboard has no -AsOSC52, and production never
-            # selects the OSC52 strategy there (Get-ClipboardCommandPriority gates on the same
-            # capability check), so the branch is unreachable and not worth a brittle shim.
-            Set-ItResult -Skipped -Because "Set-Clipboard -AsOSC52 is unavailable on this edition (Windows PowerShell 5.1)."
-            return
+    It "encodes multibyte characters as UTF-8 before base64 (verbatim round-trip)" {
+        $text = [string]([char]0x2014) + "X" + [string]([char]0x2018) + "Y"
+        $esc = [char]27
+        $bel = [char]7
+        $prefix = "$esc]52;c;"
+
+        $seq = ConvertTo-Osc52Sequence -Text $text
+        $seq.StartsWith($prefix) | Should -BeTrue
+        $seq.EndsWith($bel) | Should -BeTrue
+
+        $base64 = $seq.Substring($prefix.Length, $seq.Length - $prefix.Length - 1)
+        $decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($base64))
+        $decoded | Should -BeExactly $text
+    }
+
+    It "produces a pure-ASCII transmittable sequence even for astral characters" {
+        $seq = ConvertTo-Osc52Sequence -Text ([char]::ConvertFromUtf32(0x1F600))
+        foreach ($ch in $seq.ToCharArray()) {
+            ([int]$ch) | Should -BeLessThan 128
+        }
+    }
+}
+
+Describe "Write-Osc52Clipboard" {
+    It "writes the OSC52 sequence through the console seam" {
+        $script:capturedSequence = $null
+        Mock Write-ConsoleHostSequence {
+            param($Sequence)
+            $script:capturedSequence = $Sequence
         }
 
-        Mock Set-Clipboard { }
+        Write-Osc52Clipboard -Text "verbatim"
 
-        Set-ClipboardValue -Value "osc52 copy" -AsOSC52
+        $script:capturedSequence | Should -BeExactly (ConvertTo-Osc52Sequence -Text "verbatim")
+        Assert-MockCalled Write-ConsoleHostSequence -Times 1 -Scope It
+    }
 
-        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $AsOSC52.IsPresent -and $Value -eq "osc52 copy" }
+    It "warns about terminal truncation when the payload exceeds the OSC52 budget" {
+        $script:lastWarning = $null
+        Mock Write-ConsoleHostSequence { }
+        Mock Write-Warning { param($Message) $script:lastWarning = $Message }
+
+        Write-Osc52Clipboard -Text ("a" * 5000) -MaxClipboardBytes 1000
+
+        $script:lastWarning | Should -Match "W_CLIPBOARD_OSC52_TRUNCATION_RISK"
+        # The copy is still attempted as best effort after warning.
+        Assert-MockCalled Write-ConsoleHostSequence -Times 1 -Scope It
+    }
+
+    It "does not warn when the payload is within the OSC52 budget" {
+        $script:lastWarning = $null
+        Mock Write-ConsoleHostSequence { }
+        Mock Write-Warning { param($Message) $script:lastWarning = $Message }
+
+        Write-Osc52Clipboard -Text "small" -MaxClipboardBytes 1000
+
+        $script:lastWarning | Should -BeNullOrEmpty
+    }
+}
+
+Describe "Initialize-Utf8ConsoleOutputEncoding" {
+    It "skips the console code-page change when the console is already UTF-8" {
+        Mock Get-ConsoleOutputEncoding { New-Object System.Text.UTF8Encoding($false) }
+        Mock Set-ConsoleOutputEncoding { }
+
+        Initialize-Utf8ConsoleOutputEncoding
+
+        # Setting [System.Console]::OutputEncoding triggers SetConsoleOutputCP on Windows, a slow
+        # and sometimes flickery code-page switch. It must be skipped when already UTF-8 (the
+        # common case) so it never adds per-invocation terminal latency.
+        Assert-MockCalled Set-ConsoleOutputEncoding -Times 0 -Scope It
+    }
+
+    It "sets UTF-8 only when the console is not already UTF-8" {
+        $script:assignedEncoding = $null
+        Mock Get-ConsoleOutputEncoding { [System.Text.Encoding]::ASCII }
+        Mock Set-ConsoleOutputEncoding { param($Encoding) $script:assignedEncoding = $Encoding }
+
+        Initialize-Utf8ConsoleOutputEncoding
+
+        Assert-MockCalled Set-ConsoleOutputEncoding -Times 1 -Scope It
+        $script:assignedEncoding | Should -Not -BeNullOrEmpty
+        $script:assignedEncoding.CodePage | Should -Be 65001
+    }
+
+    It "is resilient when reading the console encoding throws" {
+        Mock Get-ConsoleOutputEncoding { throw "no console attached" }
+        Mock Set-ConsoleOutputEncoding { }
+
+        { Initialize-Utf8ConsoleOutputEncoding } | Should -Not -Throw
+        Assert-MockCalled Set-ConsoleOutputEncoding -Times 0 -Scope It
+    }
+
+    It "is resilient when setting the console encoding throws" {
+        Mock Get-ConsoleOutputEncoding { [System.Text.Encoding]::ASCII }
+        Mock Set-ConsoleOutputEncoding { throw "cannot set encoding on redirected stream" }
+
+        { Initialize-Utf8ConsoleOutputEncoding } | Should -Not -Throw
+    }
+}
+
+Describe "Invoke-FastProcessExit" {
+    It "flushes output then terminates with the requested exit code" {
+        $script:fastExitCode = $null
+        Mock Stop-CurrentProcessImmediately { param($ExitCode) $script:fastExitCode = $ExitCode }
+
+        Invoke-FastProcessExit -ExitCode 0
+
+        Assert-MockCalled Stop-CurrentProcessImmediately -Times 1 -Scope It -ParameterFilter { $ExitCode -eq 0 }
+        $script:fastExitCode | Should -Be 0
+    }
+
+    It "passes a non-zero exit code through to the terminator" {
+        $script:fastExitCode = $null
+        Mock Stop-CurrentProcessImmediately { param($ExitCode) $script:fastExitCode = $ExitCode }
+
+        Invoke-FastProcessExit -ExitCode 1
+
+        Assert-MockCalled Stop-CurrentProcessImmediately -Times 1 -Scope It -ParameterFilter { $ExitCode -eq 1 }
+        $script:fastExitCode | Should -Be 1
+    }
+
+    It "still terminates even if flushing the console throws" {
+        $script:fastExitCode = $null
+        Mock Stop-CurrentProcessImmediately { param($ExitCode) $script:fastExitCode = $ExitCode }
+        Mock Invoke-ConsoleFlush { throw "no console" }
+
+        { Invoke-FastProcessExit -ExitCode 0 } | Should -Not -Throw
+        Assert-MockCalled Stop-CurrentProcessImmediately -Times 1 -Scope It
+        $script:fastExitCode | Should -Be 0
+    }
+
+    It "flushes the console before terminating" {
+        $script:order = @()
+        Mock Invoke-ConsoleFlush { $script:order += "flush" }
+        Mock Stop-CurrentProcessImmediately { param($ExitCode) $script:order += "exit" }
+
+        Invoke-FastProcessExit -ExitCode 0
+
+        ($script:order -join ",") | Should -Be "flush,exit" -Because "buffered output must be committed before the process is terminated"
     }
 }
 
@@ -806,6 +1334,29 @@ Describe "Normalize-CommentText" {
 
         $normalized | Should -BeExactly $input
     }
+
+    It "does not split a surrogate pair when truncating at the boundary" {
+        $emoji = [char]::ConvertFromUtf32(0x1F600)
+        $text = ("A" * 9) + $emoji
+        $result = Normalize-CommentText -Text $text -MaxLength 10
+
+        $truncatedPortion = $result -replace " \[\.\.\.\]$", ""
+        $truncatedPortion | Should -BeExactly ("A" * 9)
+        [System.Char]::IsHighSurrogate($truncatedPortion[$truncatedPortion.Length - 1]) | Should -BeFalse
+
+        # A lone surrogate would round-trip through UTF-8 as U+FFFD; verbatim output must not.
+        $roundTripped = [System.Text.Encoding]::UTF8.GetString([System.Text.Encoding]::UTF8.GetBytes($result))
+        $roundTripped | Should -BeExactly $result
+    }
+
+    It "keeps a whole surrogate pair that fits exactly at the boundary" {
+        $emoji = [char]::ConvertFromUtf32(0x1F600)
+        $text = ("A" * 8) + $emoji + "BBBBB"
+        $result = Normalize-CommentText -Text $text -MaxLength 10
+
+        $truncatedPortion = $result -replace " \[\.\.\.\]$", ""
+        $truncatedPortion | Should -BeExactly (("A" * 8) + $emoji)
+    }
 }
 
 Describe "Get-EmbeddedCommentLocations" {
@@ -845,6 +1396,257 @@ Describe "Get-EmbeddedCommentLocations" {
         $locations.Count | Should -Be 1
         $locations[0].lineStart | Should -Be 96
         $locations[0].lineEnd | Should -Be 96
+    }
+}
+
+Describe "Comment suggestion blocks" {
+    It "extracts a single suggestion block verbatim" {
+        $body = @'
+Please rename this for clarity.
+
+```suggestion
+$resolvedHostName = $candidateHost.Trim()
+```
+'@
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+
+        $suggestions.Count | Should -Be 1
+        $suggestions[0].kind | Should -Be "suggestion"
+        $suggestions[0].code | Should -BeExactly '$resolvedHostName = $candidateHost.Trim()'
+    }
+
+    It "preserves multi-line suggestion code with exact indentation" {
+        $body = @'
+Use a guard clause.
+
+```suggestion
+if ($null -eq $value) {
+    return
+}
+```
+
+Thanks!
+'@
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+        $expectedCode = "if (`$null -eq `$value) {`n    return`n}"
+
+        $suggestions.Count | Should -Be 1
+        $suggestions[0].code | Should -BeExactly $expectedCode
+    }
+
+    It "extracts multiple suggestion blocks in document order" {
+        $body = @'
+First:
+```suggestion
+alpha
+```
+Second:
+```suggestion
+beta
+```
+'@
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+
+        $suggestions.Count | Should -Be 2
+        $suggestions[0].code | Should -BeExactly "alpha"
+        $suggestions[1].code | Should -BeExactly "beta"
+    }
+
+    It "represents an empty suggestion block as an empty deletion" {
+        $body = @'
+Delete this line.
+
+```suggestion
+```
+'@
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+
+        $suggestions.Count | Should -Be 1
+        $suggestions[0].code | Should -BeExactly ""
+    }
+
+    It "ignores non-suggestion fenced code blocks" {
+        $body = @'
+Example only:
+```powershell
+Get-Thing
+```
+'@
+        @(Get-CommentSuggestionBlocks -Text $body).Count | Should -Be 0
+    }
+
+    It "returns an empty array when no suggestions are present" {
+        @(Get-CommentSuggestionBlocks -Text "Just prose, no code.").Count | Should -Be 0
+        @(Get-CommentSuggestionBlocks -Text $null).Count | Should -Be 0
+        @(Get-CommentSuggestionBlocks -Text "   ").Count | Should -Be 0
+    }
+
+    It "tolerates CRLF line endings in suggestion blocks" {
+        $fence = [string]([char]96) * 3
+        $body = "Fix this.`r`n`r`n${fence}suggestion`r`nGet-Fixed`r`n${fence}"
+        $suggestions = @(Get-CommentSuggestionBlocks -Text $body)
+
+        $suggestions.Count | Should -Be 1
+        $suggestions[0].code | Should -BeExactly "Get-Fixed"
+    }
+
+    It "captures suggestions on a record and strips them from the prose" {
+        $body = @'
+Consider renaming for clarity.
+
+```suggestion
+$normalizedHost = $candidate.Trim()
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_SUGGESTION"
+            isResolved = $false
+            path       = "src/host.ps1"
+            startLine  = 10
+            line       = 10
+            comments   = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        @($record.suggestions).Count | Should -Be 1
+        $record.suggestions[0].kind | Should -Be "suggestion"
+        $record.suggestions[0].code | Should -BeExactly '$normalizedHost = $candidate.Trim()'
+        $record.topLevelComment | Should -Be "Consider renaming for clarity."
+        $record.topLevelComment | Should -Not -Match 'suggestion'
+        $record.topLevelComment | Should -Not -Match 'normalizedHost'
+    }
+
+    It "renders captured suggestions verbatim before the latest-reply line" {
+        $body = @'
+Use a guard clause.
+
+```suggestion
+if ($null -eq $value) {
+    return
+}
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_SUGGESTION_TEXT"
+            isResolved = $false
+            path       = "src/guard.ps1"
+            startLine  = 3
+            line       = 3
+            comments   = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+        $normalized = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+        $normalized | Should -Match "Suggested change:"
+        $normalized | Should -Match ([regex]::Escape('if ($null -eq $value) {'))
+        $normalized | Should -Match ([regex]::Escape('    return'))
+
+        $suggestionIndex = $normalized.IndexOf("Suggested change:")
+        $replyIndex = $normalized.IndexOf("Latest reply summary:")
+        $suggestionIndex | Should -BeGreaterThan -1
+        $suggestionIndex | Should -BeLessThan $replyIndex
+    }
+
+    It "captures a suggestion that appears in a reply, not only the top comment" {
+        # Reviewers and bots frequently attach the suggested change as a follow-up reply rather
+        # than on the first comment, so suggestion extraction must scan every comment in the thread.
+        $topBody = "This value should be validated before use."
+        $replyBody = @'
+Here is the fix:
+
+```suggestion
+MUST_READ_METADATA = True
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_REPLY_SUGGESTION"
+            isResolved = $false
+            path       = "src/driver.py"
+            startLine  = 32
+            line       = 39
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{ body = $topBody },
+                    [pscustomobject]@{ body = $replyBody }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        @($record.suggestions).Count | Should -Be 1
+        $record.suggestions[0].code | Should -BeExactly 'MUST_READ_METADATA = True'
+        # The reply prose is kept (minus the stripped fence); the top comment prose is unchanged.
+        $record.topLevelComment | Should -Be "This value should be validated before use."
+        $record.latestReplySummary | Should -Not -Match 'suggestion'
+        $record.latestReplySummary | Should -Not -Match 'MUST_READ_METADATA'
+    }
+
+    It "captures suggestions from multiple comments in thread order" {
+        $topBody = @'
+First pass.
+
+```suggestion
+first = 1
+```
+'@
+        $replyBody = @'
+Refined.
+
+```suggestion
+second = 2
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_MULTI_SUGGESTION"
+            isResolved = $false
+            path       = "src/multi.py"
+            startLine  = 1
+            line       = 2
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{ body = $topBody },
+                    [pscustomobject]@{ body = $replyBody }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        @($record.suggestions).Count | Should -Be 2
+        $record.suggestions[0].code | Should -BeExactly 'first = 1'
+        $record.suggestions[1].code | Should -BeExactly 'second = 2'
+    }
+
+    It "does not extract suggestions under KeepMarkup" {
+        $body = @'
+Keep raw markup.
+
+```suggestion
+raw code
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_SUGGESTION_KEEPMARKUP"
+            isResolved = $false
+            path       = "src/raw.ps1"
+            startLine  = 1
+            line       = 1
+            comments   = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com" -KeepMarkup
+
+        @($record.suggestions).Count | Should -Be 0
+        $record.topLevelComment | Should -Match 'suggestion'
     }
 }
 
@@ -889,6 +1691,7 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         ($propertyNames -ccontains "githubLineStart") | Should -BeTrue
         ($propertyNames -ccontains "githubLineEnd") | Should -BeTrue
         ($propertyNames -ccontains "embeddedLocations") | Should -BeTrue
+        ($propertyNames -ccontains "suggestions") | Should -BeTrue
         ($propertyNames -ccontains "resolutionState") | Should -BeTrue
         ($propertyNames -ccontains "authSource") | Should -BeFalse
         ($propertyNames -ccontains "owner") | Should -BeTrue
@@ -1219,7 +2022,6 @@ Describe "Format-UnresolvedThreadsAsText" {
 Comment A
 Latest reply summary: (none)
 ---
----
 (src/b.ts) 12-20
 Comment B
 Latest reply summary: Reply B
@@ -1230,6 +2032,68 @@ Latest reply summary: Reply B
         $expectedNormalized = $expected.TrimEnd("`r", "`n") -replace "`r`n", "`n"
 
         $actualNormalized | Should -BeExactly $expectedNormalized
+    }
+
+    It "never emits two adjacent delimiter lines between blocks" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/a.ts"
+                lineStart          = 1
+                lineEnd            = 1
+                topLevelComment    = "A"
+                latestReplySummary = $null
+            },
+            [pscustomobject]@{
+                path               = "src/b.ts"
+                lineStart          = 2
+                lineEnd            = 2
+                topLevelComment    = "B"
+                latestReplySummary = $null
+            },
+            [pscustomobject]@{
+                path               = "src/c.ts"
+                lineStart          = 3
+                lineEnd            = 3
+                topLevelComment    = "C"
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $lines = @(($text -replace "`r`n", "`n") -split "`n")
+
+        # A single delimiter must separate blocks (and bookend the output); two
+        # consecutive "---" lines (the legacy double delimiter) must never appear.
+        for ($i = 0; $i -lt ($lines.Count - 1); $i++) {
+            if ($lines[$i] -eq "---") {
+                $lines[$i + 1] | Should -Not -Be "---" -Because "adjacent '---' lines are the collapsed-delimiter regression"
+            }
+        }
+
+        @($lines | Where-Object { $_ -eq "---" }).Count | Should -Be 4 -Because "three blocks use one leading, two separating, and one trailing delimiter"
+    }
+
+    It "renders a single bookended block for one record" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/only.ts"
+                lineStart          = 5
+                lineEnd            = 7
+                topLevelComment    = "Solo comment"
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $expected = @"
+---
+(src/only.ts) 5-7
+Solo comment
+Latest reply summary: (none)
+---
+"@
+
+        ($text -replace "`r`n", "`n") | Should -BeExactly (($expected.TrimEnd("`r", "`n")) -replace "`r`n", "`n")
     }
 }
 
@@ -1638,6 +2502,74 @@ Describe "Invoke-GitHubRequestWithRetry" {
 
         { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{ "Accept" = "application/json" } -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_NETWORK_ERROR*"
     }
+
+    It "passes the shared web session to the transport when one is set" {
+        $script:capturedSession = "<unset>"
+        Mock Invoke-RestMethod {
+            $script:capturedSession = $WebSession
+            return @{ ok = $true }
+        }
+
+        $previousSession = $script:GitHubWebSession
+        try {
+            $script:GitHubWebSession = New-GitHubWebSession
+            $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+            $result.ok | Should -BeTrue
+            $script:capturedSession | Should -BeOfType ([Microsoft.PowerShell.Commands.WebRequestSession])
+            [object]::ReferenceEquals($script:capturedSession, $script:GitHubWebSession) | Should -BeTrue
+        }
+        finally {
+            $script:GitHubWebSession = $previousSession
+        }
+    }
+
+    It "omits the web session when none is set (dot-sourced default)" {
+        $script:sessionWasBound = "<unset>"
+        Mock Invoke-RestMethod {
+            $script:sessionWasBound = $PSBoundParameters.ContainsKey("WebSession")
+            return @{ ok = $true }
+        }
+
+        $previousSession = $script:GitHubWebSession
+        try {
+            $script:GitHubWebSession = $null
+            $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+            $result.ok | Should -BeTrue
+            $script:sessionWasBound | Should -BeFalse
+        }
+        finally {
+            $script:GitHubWebSession = $previousSession
+        }
+    }
+
+    It "suppresses the progress UI for the GET transport so it cannot probe/corrupt the terminal" {
+        # PowerShell's web cmdlets render a progress bar on a terminal that hides the cursor and
+        # emits DSR cursor-position queries (ESC[6n); the terminal's responses queue into stdin and
+        # corrupt the parent shell's input after the process exits. Progress must be suppressed.
+        $script:capturedProgress = "<unset>"
+        Mock Invoke-RestMethod {
+            $script:capturedProgress = $ProgressPreference
+            return @{ ok = $true }
+        }
+
+        $ProgressPreference = "Continue"
+        $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $result.ok | Should -BeTrue
+        $script:capturedProgress | Should -Be "SilentlyContinue"
+    }
+
+    It "suppresses the progress UI for the POST transport so it cannot probe/corrupt the terminal" {
+        $script:capturedProgress = "<unset>"
+        Mock Invoke-RestMethod {
+            $script:capturedProgress = $ProgressPreference
+            return @{ ok = $true }
+        }
+
+        $ProgressPreference = "Continue"
+        $result = Invoke-GitHubRequestWithRetry -Method POST -Uri "https://api.github.com/graphql" -Headers @{} -Body @{ query = "x" } -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $result.ok | Should -BeTrue
+        $script:capturedProgress | Should -Be "SilentlyContinue"
+    }
 }
 
 Describe "Get-OpenPullRequests" {
@@ -1713,6 +2645,23 @@ Describe "Validate-GitHubTokenForRepoAccess" {
         }
 
         { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Not -Throw
+    }
+
+    It "suppresses the progress UI for the token-validation transport so it cannot probe/corrupt the terminal" {
+        # The Invoke-WebRequest progress bar manipulates the terminal (cursor hide + DSR probes)
+        # exactly like the other web cmdlets, so it must run with progress suppressed too.
+        $script:capturedProgress = "<unset>"
+        Mock Invoke-WebRequest {
+            $script:capturedProgress = $ProgressPreference
+            return [pscustomobject]@{
+                Headers = @{ "X-OAuth-Scopes" = "repo" }
+                Content = '{"private": true}'
+            }
+        }
+
+        $ProgressPreference = "Continue"
+        Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $script:capturedProgress | Should -Be "SilentlyContinue"
     }
 
     It "supports multi-value OAuth scope headers" {

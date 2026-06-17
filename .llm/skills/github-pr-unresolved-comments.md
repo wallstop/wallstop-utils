@@ -1,4 +1,4 @@
-<!-- trigger: github api, unresolved comments, cursor bugbot, bot markup, embedded locations, host allowlist, retries, auth recovery, public rest fallback, git credential, GH_TOKEN, GITHUB_TOKEN, clipboard fallback, output file, powershell completion | Preserve GitHub utility safety and UX contracts | GitHub | skill-details/github-pr-unresolved-comments.md -->
+<!-- trigger: github api, unresolved comments, cursor bugbot, bot markup, embedded locations, host allowlist, retries, auth recovery, public rest fallback, git credential, GH_TOKEN, GITHUB_TOKEN, clipboard fallback, osc52, output encoding, utf-8 verbatim, suggested change, suggestion block, delimiter, surrogate pair, output file, powershell completion | Preserve GitHub utility safety and UX contracts | GitHub | skill-details/github-pr-unresolved-comments.md -->
 
 # GitHub PR Unresolved Comments
 
@@ -13,6 +13,7 @@ Lightweight skill card for GitHub API safety and retry behavior.
 - [Actionable diagnostics and resilience tests](../skill-details/github-pr-unresolved-comments.md#actionable-diagnostics-and-resilience-tests)
 - [Review thread range rendering](../skill-details/github-pr-unresolved-comments.md#review-thread-range-rendering)
 - [Bot comment cleanup](../skill-details/github-pr-unresolved-comments.md#bot-comment-cleanup)
+- [Verbatim output and suggested changes](../skill-details/github-pr-unresolved-comments.md#verbatim-output-and-suggested-changes)
 - [Clipboard fallback and strict mode](../skill-details/github-pr-unresolved-comments.md#clipboard-fallback-and-strict-mode)
 - [Output file contract](../skill-details/github-pr-unresolved-comments.md#output-file-contract)
 - [PowerShell completion contract](../skill-details/github-pr-unresolved-comments.md#powershell-completion-contract)

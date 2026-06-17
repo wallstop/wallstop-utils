@@ -70,10 +70,16 @@ pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https:
 
 ## Output Contract (Text)
 
+Comment blocks are separated by a single `---` delimiter: one leading, one between each
+block, and one trailing (no doubled `---` between blocks). When a comment contains a
+suggested change, it is rendered verbatim under a `Suggested change:` label.
+
 ```text
 ---
 (path/to/file.ext) lineStart-lineEnd
 Comment message
+Suggested change:
+<verbatim suggested code, when present>
 Latest reply summary: <text or (none)>
 ---
 ```
@@ -85,6 +91,13 @@ Latest reply summary: <text or (none)>
   anonymous REST fallback records use `unknown`.
 - Default rendering strips bot metadata and visual chrome from comment text, including HTML comments,
   image embeds, HTML tags, Cursor/Bugbot action buttons, Bugbot footers, and link URLs.
+- Suggested-change blocks (GitHub/Copilot/Cursor `suggestion` code fences) are preserved verbatim and
+  rendered under a `Suggested change:` label with original indentation and line breaks intact. They
+  are extracted out of the single-line prose. `-KeepMarkup` keeps the raw block inline instead.
+- Rendered output and clipboard copies are UTF-8 and byte-for-byte verbatim. `-Truncate` never splits
+  a multi-byte character or a UTF-16 surrogate pair (for example an emoji) at the truncation boundary.
+- UTF-8 terminal rendering is enabled only when the console is not already UTF-8, so a normal run adds
+  no console code-page switch (which is slow on Windows) and no per-invocation terminal latency.
 - `-KeepMarkup` preserves comment markup for debugging or archival workflows. Whitespace is still
   normalized to single-line output, and embedded bot locations are still parsed for range rendering.
 - `-Truncate` restores legacy compact output limits:
@@ -95,16 +108,33 @@ Latest reply summary: <text or (none)>
 - `-OutputPath` writes rendered output to a UTF-8 file (creating parent directories when needed) and still writes the same output to stdout.
 - Clipboard copy failures are non-fatal and emit a warning so normal output remains available.
 
-Clipboard command fallback order:
+Clipboard command fallback order (first reachable mechanism wins):
 
-1. `Set-Clipboard -AsOSC52` (when supported and terminal context is compatible)
-2. `Set-Clipboard`
-3. `pbcopy`
-4. `xclip`
-5. `xsel`
-6. `wl-copy`
+1. `Set-Clipboard` (Windows GUI clipboard — preferred on Windows because it is unbounded and Unicode-correct)
+2. OSC52 terminal escape (when the terminal context is compatible: VS Code, SSH, Windows Terminal, and stdout is a live terminal). Emits an explicit, verbatim `ESC ] 52 ; c ; <utf-8 base64> BEL` sequence
+3. `Set-Clipboard` (non-Windows provider, when present)
+4. `pbcopy`
+5. `xclip`
+6. `xsel`
+7. `wl-copy`
 
-If no supported clipboard command exists, the script warns and continues.
+If no supported clipboard mechanism exists, the script warns and continues.
+
+OSC52 is automatically disabled when stdout is redirected (for example `... -Copy > out.txt` or
+`... -Copy | cat`), so terminal escape bytes never leak into a captured file or pipe; the rendered
+output stays clean and verbatim.
+
+OSC52 size note: terminals cap the OSC52 payload size and may silently truncate large clipboard
+content (a common cause of corrupted trailing characters). When the rendered output exceeds the safe
+budget (default `100000` bytes, overridable via `WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES`), the script
+warns (`W_CLIPBOARD_OSC52_TRUNCATION_RISK`) and recommends `-OutputPath` for a fully verbatim capture.
+
+Native clipboard tools (`pbcopy`/`xclip`/`xsel`/`wl-copy`) are run with fully redirected standard
+streams and a kill-on-timeout bound. This prevents the classic "clipboard hangs the terminal" delay:
+tools such as `xclip`/`xsel`/`wl-copy` fork a long-lived selection-server child, and if that child
+inherited the terminal it would keep it open for seconds after the output already printed. Because the
+child's stdio is detached, the command returns immediately and the terminal is never held. The stdin
+write is also bounded, and on timeout the whole tool process tree is terminated so nothing lingers.
 
 ## PowerShell Completion
 
@@ -177,6 +207,52 @@ pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 `
 - Transient failures use exponential backoff with jitter.
 - With `-WaitOnRateLimit`, the script waits until `X-RateLimit-Reset` when valid.
 - Invalid or expired rate-limit reset headers fail fast with an `E_RATE_LIMIT` error.
+
+## Performance Notes
+
+- The script's own work is fast: typically ~1.5-2.5 seconds (git/`gh` token lookup, one repo-access
+  validation call, one authenticated GraphQL call, rendering, and copy). `-Copy` itself adds no
+  measurable time: the OSC52 clipboard write is sub-millisecond, and the clipboard-tool probe is
+  negligible. This is verified by running the script repeatedly inside one PowerShell session.
+- Almost all of the wall-clock time of `pwsh ./Get-UnresolvedPRComments.ps1 ...` is the **PowerShell
+  process lifecycle**, not this script:
+  - **Startup (before output):** the .NET runtime + PowerShell engine cold start (assembly load +
+    JIT). In a dev container on a slow overlay filesystem this is several seconds.
+  - **Teardown (after output — the "renders, then hangs" part):** .NET/PowerShell managed shutdown.
+    It runs after the comments have already printed, which is why it feels like a post-output hang.
+    Making network calls (the HTTPS/TLS connection pool) and a slow container filesystem both inflate
+    this shutdown. It happens with or without `-Copy`.
+- Because the cost is the per-process spawn/teardown, the effective fix is to **not spawn a fresh
+  `pwsh` per call.** Run the script from inside an already-open PowerShell session instead of from a
+  non-PowerShell shell:
+
+  ```powershell
+  # From a bash/zsh prompt this pays full pwsh startup + teardown every time (slow):
+  #   pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -Copy <url>
+
+  # Instead, start pwsh once, then run the script in-process (measured ~8x faster):
+  pwsh
+  ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -Copy "https://github.com/owner/repo/pull/123"
+  ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -Copy "https://github.com/owner/repo/pull/456"
+  ```
+
+  Running the `.ps1` from a live `pwsh` prompt executes it in-process (a child scope), so it pays the
+  engine startup/teardown only once for the whole session rather than on every invocation.
+
+- If you must launch a fresh `pwsh` per call (for example from a bash prompt), the script **skips the
+  teardown wait by default**. After output is fully rendered and flushed, the process is terminated
+  immediately, skipping the slow .NET/PowerShell managed shutdown (finalizers + the HTTP connection
+  pool). Measured effect in this dev container: ~20s drops to ~5s for the same run, with identical
+  output and a preserved exit code. On Linux/macOS it uses libc `_exit` (a clean exit, not a SIGKILL);
+  on Windows it falls back to `[System.Environment]::Exit`. Output, clipboard, and `-OutputPath`
+  writes all complete before termination, so the result is the same as a standard exit.
+
+  Pass **`-NoFastExit`** to restore the standard managed teardown (for example if a wrapping tool
+  depends on normal process shutdown):
+
+  ```powershell
+  pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -Copy -NoFastExit "https://github.com/owner/repo/pull/123"
+  ```
 
 ## Line Range Edge Cases
 

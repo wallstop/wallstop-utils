@@ -1,5 +1,6 @@
 #!/usr/bin/env pwsh
-<#!
+
+<#
 .SYNOPSIS
 Fetch unresolved GitHub PR review threads and render plain text or JSON output.
 
@@ -72,6 +73,16 @@ Clipboard copy failures are non-fatal and emit a warning.
 .PARAMETER CopyStrict
 Only valid together with -Copy. If set, clipboard copy failure becomes a terminating
 error after output is rendered.
+
+.PARAMETER NoFastExit
+Optional opt-out. By default, after output is rendered and flushed, the process terminates
+immediately, skipping the slow .NET/PowerShell managed teardown (finalizers and HTTP
+connection-pool shutdown) that dominates wall time on slow container filesystems. On Unix
+this uses libc _exit (a clean exit that preserves the exit code and emits no "Killed"
+message); on Windows, or if the native call is unavailable, it falls back to
+[System.Environment]::Exit. Set -NoFastExit to restore the standard managed teardown (for
+example if a wrapping tool depends on normal process shutdown). Output, clipboard, and
+-OutputPath writes all complete before termination either way, so the result is identical.
 #>
 [CmdletBinding()]
 param(
@@ -123,6 +134,9 @@ param(
     [switch]$CopyStrict,
 
     [Parameter(Mandatory = $false)]
+    [switch]$NoFastExit,
+
+    [Parameter(Mandatory = $false)]
     [ValidateRange(1, 100)]
     [int]$PerPage = 100,
 
@@ -145,6 +159,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $script:TopLevelBoundParameters = @{} + $PSBoundParameters
+# One reusable web session per run so every GitHub API call (token validation + paginated
+# GraphQL/REST) shares a single pooled TCP/TLS connection to the host instead of opening a fresh
+# connection (DNS + TCP + TLS handshake) per request. Declared at script scope with a StrictMode-safe
+# default of $null and populated in Invoke-Main; the low-level request functions attach it only when
+# non-null, so dot-sourced unit tests keep their existing behavior.
+$script:GitHubWebSession = $null
 
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/StrictModeHelpers.ps1"
 if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
@@ -1073,6 +1093,58 @@ function Remove-HtmlBlocksContainingText {
     return $builder.ToString()
 }
 
+function Get-SuggestionFenceRegex {
+    # Single source of truth for matching GitHub "suggested change" fenced blocks so the
+    # extractor (Get-CommentSuggestionBlocks) and the prose stripper (Remove-MarkupFromCommentText)
+    # never drift. Matches an opening fence of three or more backticks, the case-insensitive
+    # "suggestion" info string (optionally with trailing attributes), the verbatim body, then a
+    # closing fence of the same length. Operates on LF-normalized text; the named backreference
+    # \k<fence> guarantees the closing fence length matches the opening fence.
+    [OutputType([regex])]
+    [CmdletBinding()]
+    param()
+
+    # The named backreference \k<fence> guarantees the closing fence length matches the opening
+    # fence. The optional (?:\n)? before the closing-fence anchor lets the lazy (?<code>...)
+    # group stop one newline early so a single-line empty block (open fence directly followed by
+    # close fence) still matches with an empty code capture.
+    $pattern = '(?m)^[ \t]*(?<fence>`{3,})[ \t]*suggestion\b[^\n]*\n(?<code>[\s\S]*?)(?:\n)?^[ \t]*\k<fence>[ \t]*$'
+    return [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+}
+
+function Get-CommentSuggestionBlocks {
+    # Extracts GitHub "```suggestion" blocks (Copilot, Cursor, and human reviewers) verbatim so
+    # suggested implementations can be rendered exactly instead of being whitespace-collapsed into
+    # unusable single-line text. Returns an array of objects with `kind` and verbatim `code`.
+    [OutputType([object[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return @() # array-unwrap-safe: callers always wrap with @()
+    }
+
+    $normalized = $Text -replace "`r`n", "`n" -replace "`r", "`n"
+    $regex = Get-SuggestionFenceRegex
+    $suggestions = New-Object System.Collections.Generic.List[object]
+    foreach ($match in $regex.Matches($normalized)) {
+        $code = $match.Groups["code"].Value
+        # Drop the trailing newline artifact that precedes the closing fence while preserving
+        # interior blank lines and indentation exactly.
+        $code = $code -replace "`n+$", ""
+        $suggestions.Add([pscustomobject]@{
+                kind = "suggestion"
+                code = $code
+            }) | Out-Null
+    }
+
+    return @($suggestions.ToArray())
+}
+
 function Remove-MarkupFromCommentText {
     [OutputType([string])]
     [CmdletBinding()]
@@ -1087,7 +1159,13 @@ function Remove-MarkupFromCommentText {
     }
 
     $ignoreCase = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    $cleaned = $Text
+    # Normalize line endings so multiline-anchored cleanup behaves identically for CRLF/LF
+    # source. Downstream single-line normalization collapses remaining whitespace, so this is
+    # safe for prose output.
+    $cleaned = $Text -replace "`r`n", "`n" -replace "`r", "`n"
+    # "```suggestion" blocks are rendered separately and verbatim, so strip them from prose to
+    # avoid duplicated or whitespace-mangled inline copies.
+    $cleaned = (Get-SuggestionFenceRegex).Replace($cleaned, ' ')
     $cleaned = [regex]::Replace($cleaned, '<details\b[^>]*>\s*<summary\b[^>]*>\s*Additional Locations[\s\S]*?</details>', ' ', $ignoreCase)
     $cleaned = Remove-HtmlBlocksContainingText -Text $cleaned -ElementName "div" -MarkerPattern 'cursor\.com/(?:open|agents)|fix-in-(?:cursor|web)'
     $cleaned = Remove-HtmlBlocksContainingText -Text $cleaned -ElementName "sup" -MarkerPattern 'Reviewed by\s+\[?Cursor Bugbot|cursor\.com/bugbot'
@@ -1136,7 +1214,17 @@ function Normalize-CommentText {
         return $singleLine
     }
 
-    return ($singleLine.Substring(0, $MaxLength) + " [...]")
+    # Never split a UTF-16 surrogate pair (for example an emoji) at the truncation boundary:
+    # a lone surrogate round-trips through UTF-8 as the U+FFFD replacement character and
+    # corrupts copied/rendered output. Back off one unit when the boundary lands on a high
+    # surrogate so the pair is dropped whole. The explicit (string, int) overload avoids any
+    # char/string overload ambiguity from indexer extraction.
+    $cutLength = $MaxLength
+    if ($cutLength -gt 0 -and [System.Char]::IsHighSurrogate($singleLine, $cutLength - 1)) {
+        $cutLength--
+    }
+
+    return ($singleLine.Substring(0, $cutLength) + " [...]")
 }
 
 function Resolve-ReviewThreadGitHubAnchor {
@@ -1345,6 +1433,89 @@ function Resolve-ReviewThreadLineRange {
     }
 }
 
+function ConvertTo-Osc52Sequence {
+    # Builds the OSC52 terminal escape that copies $Text to the system clipboard. The payload is
+    # the UTF-8 bytes of $Text, base64-encoded, wrapped as ESC ] 52 ; c ; <base64> BEL. The
+    # explicit "c" clipboard selector is honored by every compliant terminal; an empty selector
+    # (as emitted by Set-Clipboard -AsOSC52) is ambiguous and not reliably mapped to the system
+    # clipboard by some terminals (for example VS Code). The whole sequence is pure ASCII, so it
+    # transmits byte-for-byte regardless of console/output encoding.
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $base64 = [System.Convert]::ToBase64String($bytes)
+    $esc = [char]27
+    $bel = [char]7
+    return "$esc]52;c;$base64$bel"
+}
+
+function Write-ConsoleHostSequence {
+    # Thin, mockable seam that writes a raw terminal control sequence directly to the console
+    # host so OSC52 reaches the terminal emulator. Isolated so clipboard tests can assert the
+    # emitted sequence without writing escape bytes to the test runner's console.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Sequence
+    )
+
+    [System.Console]::Out.Write($Sequence)
+    [System.Console]::Out.Flush()
+}
+
+function Get-Osc52MaxClipboardByteBudget {
+    # Resolves the advisory OSC52 payload-size budget. Terminals cap OSC52 length and silently
+    # truncate larger payloads, which corrupts trailing (often multibyte) characters. The budget
+    # is overridable via WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES for terminals with different limits.
+    [OutputType([int])]
+    [CmdletBinding()]
+    param()
+
+    $default = 100000
+    $raw = $env:WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES
+    if (-not [string]::IsNullOrWhiteSpace($raw)) {
+        $parsed = 0
+        if ([int]::TryParse($raw.Trim(), [ref]$parsed) -and $parsed -gt 0) {
+            return $parsed
+        }
+    }
+
+    return $default
+}
+
+function Write-Osc52Clipboard {
+    # Copies $Text to the system clipboard via an OSC52 terminal escape (the only clipboard
+    # bridge available over SSH, inside containers, and in VS Code's integrated terminal). The
+    # emitted sequence is UTF-8-correct and verbatim. Because terminals cap OSC52 payload size,
+    # oversize content can be silently truncated by the terminal (a common cause of corrupted
+    # trailing characters), so a size guard warns and recommends -OutputPath rather than failing.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text,
+
+        [Parameter(Mandatory = $false)]
+        [int]$MaxClipboardBytes = -1
+    )
+
+    $budget = if ($MaxClipboardBytes -gt 0) { $MaxClipboardBytes } else { Get-Osc52MaxClipboardByteBudget }
+    $byteCount = [System.Text.Encoding]::UTF8.GetByteCount($Text)
+    if ($byteCount -gt $budget) {
+        Write-Warning "W_CLIPBOARD_OSC52_TRUNCATION_RISK: Clipboard payload is $byteCount bytes, exceeding the OSC52 safe budget of $budget bytes; the terminal may truncate it and corrupt the copied text. Use -OutputPath to capture the full output verbatim, or set WALLSTOP_CLIPBOARD_OSC52_MAX_BYTES to adjust the threshold."
+    }
+
+    $sequence = ConvertTo-Osc52Sequence -Text $Text
+    Write-ConsoleHostSequence -Sequence $sequence
+}
+
 function Get-ClipboardCommand {
     [OutputType([string])]
     [CmdletBinding()]
@@ -1358,10 +1529,33 @@ function Get-ClipboardCommand {
     return $commands[0]
 }
 
+function Test-IsConsoleOutputRedirected {
+    # Mockable seam over [System.Console]::IsOutputRedirected. Isolated so the OSC52 gate is
+    # unit-testable and so the property probe can never throw on hosts without a console.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param()
+
+    try {
+        return [System.Console]::IsOutputRedirected
+    }
+    catch {
+        return $false
+    }
+}
+
 function Test-ShouldUseClipboardOsc52 {
     [OutputType([bool])]
     [CmdletBinding()]
     param()
+
+    # OSC52 is a terminal control sequence written to stdout. If stdout is redirected to a file
+    # or pipe, emitting it would inject raw escape bytes into that output (corrupting, for
+    # example, `... -Copy > out.txt` or `... -Copy | cat`) and it would never reach a terminal
+    # anyway. Disable OSC52 whenever stdout is not a live terminal.
+    if (Test-IsConsoleOutputRedirected) {
+        return $false
+    }
 
     return ($env:TERM_PROGRAM -eq "vscode") -or
     (-not [string]::IsNullOrWhiteSpace($env:WT_SESSION)) -or
@@ -1375,17 +1569,24 @@ function Get-ClipboardCommandPriority {
     param()
 
     $commands = New-Object System.Collections.Generic.List[string]
-    $setClipboardCommand = Get-Command Set-Clipboard -ErrorAction SilentlyContinue
-    if ($null -ne $setClipboardCommand) {
-        $supportsOsc52 = $false
-        if ($setClipboardCommand.PSObject.Properties.Name -contains "Parameters" -and $null -ne $setClipboardCommand.Parameters) {
-            $supportsOsc52 = ($setClipboardCommand.Parameters.Keys -contains "AsOSC52")
-        }
+    $onWindows = Test-IsWindowsPlatform
+    $hasSetClipboard = $null -ne (Get-Command Set-Clipboard -ErrorAction SilentlyContinue)
 
-        if ($supportsOsc52 -and (Test-ShouldUseClipboardOsc52)) {
-            $commands.Add("Set-Clipboard-AsOSC52") | Out-Null
-        }
+    # The Windows GUI clipboard is unbounded and Unicode-correct, so it is always preferred over
+    # OSC52 on Windows (OSC52 has a terminal payload cap that can truncate large content).
+    if ($onWindows -and $hasSetClipboard) {
+        $commands.Add("Set-Clipboard") | Out-Null
+    }
 
+    # OSC52 bridges remote/terminal contexts (VS Code, SSH, Windows Terminal) where no local GUI
+    # clipboard is reachable. It emits an explicit, UTF-8-correct sequence (Write-Osc52Clipboard).
+    if (Test-ShouldUseClipboardOsc52) {
+        $commands.Add("Osc52") | Out-Null
+    }
+
+    # Non-Windows Set-Clipboard provider (where present) ranks after OSC52 because it is not a
+    # reliable system clipboard on every non-Windows host.
+    if ((-not $onWindows) -and $hasSetClipboard) {
         $commands.Add("Set-Clipboard") | Out-Null
     }
 
@@ -1412,29 +1613,172 @@ function Get-ClipboardCommandPriority {
 }
 
 function Set-ClipboardValue {
-    # Thin, mockable seam over Set-Clipboard. Tests mock THIS command — whose parameter set is
-    # identical across every PowerShell edition — instead of Set-Clipboard directly. Pester
-    # builds a mock's parameter metadata from the real command, and Set-Clipboard's -AsOSC52
-    # switch exists only on PowerShell 7.4+, so mocking Set-Clipboard with -AsOSC52 fails
-    # parameter binding under Windows PowerShell 5.1 ("A parameter cannot be found that matches
-    # parameter name 'AsOSC52'"). The -AsOSC52 branch here is reached only after a runtime
-    # capability check (Get-ClipboardCommandPriority) confirms the parameter exists.
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', '', Justification = 'Set-Clipboard -AsOSC52 is invoked only after Get-ClipboardCommandPriority confirms the parameter exists via a runtime Parameters.Keys check; Windows PowerShell 5.1 never selects the OSC52 strategy and falls back to plain Set-Clipboard / pbcopy / xclip / xsel / wl-copy.')]
+    # Thin, mockable seam over Set-Clipboard for the Windows/native GUI clipboard strategy. OSC52
+    # no longer routes through Set-Clipboard (see Write-Osc52Clipboard), so this seam is
+    # edition-stable and needs no -AsOSC52 capability handling.
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
-        [string]$Value,
-
-        [Parameter(Mandatory = $false)]
-        [switch]$AsOSC52
+        [string]$Value
     )
 
-    if ($AsOSC52) {
-        Set-Clipboard -Value $Value -AsOSC52
+    Set-Clipboard -Value $Value
+}
+
+function Wait-TaskObserved {
+    # Waits up to a timeout for a Task and ALWAYS observes any fault, so a task that faults (for
+    # example a pending WriteAsync/ReadToEndAsync broken by killing the child process) can never
+    # surface later as an unobserved task exception. Returns $true if the task completed within the
+    # timeout. Best-effort: never throws.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [System.Threading.Tasks.Task]$Task,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 60000)]
+        [int]$TimeoutMilliseconds = 200
+    )
+
+    if ($null -eq $Task) {
+        return $false
     }
-    else {
-        Set-Clipboard -Value $Value
+
+    $completed = $false
+    try {
+        $completed = $Task.Wait($TimeoutMilliseconds)
+    }
+    catch {
+        # A faulted task throws an AggregateException from Wait; observing it here marks the task
+        # exception as handled so the finalizer never re-raises it.
+        $completed = $Task.IsCompleted
+    }
+
+    # Touch the Exception property so a fault that completed between the Wait and here is observed.
+    if ($Task.IsFaulted) {
+        $null = $Task.Exception
+    }
+
+    return $completed
+}
+
+function Invoke-NativeClipboardTool {
+    # Runs a native clipboard CLI (pbcopy/xclip/xsel/wl-copy) with FULLY redirected standard
+    # streams so the tool never inherits the caller's terminal file descriptors. This is the fix
+    # for the classic "clipboard hangs the terminal" bug: tools like xclip/xsel/wl-copy fork a
+    # long-lived background child to serve the X/Wayland selection, and if that child inherits the
+    # terminal's stdout/stderr it keeps them open after the script's own output has printed, so the
+    # shell appears to hang for several seconds. Redirecting the child's stdio to pipes we own means
+    # neither the tool nor its forked children can hold the terminal open. The whole call is also
+    # bounded by a timeout (kill on overrun) so a misbehaving tool can never block the script.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Tool,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$Arguments = @(),
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 60)]
+        [int]$TimeoutSeconds = 5
+    )
+
+    $command = Get-Command -Name $Tool -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $command -or [string]::IsNullOrWhiteSpace([string]$command.Source)) {
+        return $false
+    }
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = [string]$command.Source
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList $Arguments
+
+    $process = $null
+    try {
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+
+        # Drain stdout/stderr asynchronously so a tool that emits output cannot deadlock on a full
+        # pipe buffer while we are writing its stdin. We never block process teardown on these:
+        # abandoning them on the timeout path is safe (verified — .NET does not wait on pending
+        # async pipe reads at exit).
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        $timeoutMilliseconds = $TimeoutSeconds * 1000
+
+        # Write the payload as raw UTF-8 (no BOM) bytes through the base stream. This guarantees
+        # byte-for-byte verbatim delivery independent of $OutputEncoding / the console code page,
+        # and is portable across Windows PowerShell 5.1 and PowerShell 7 (StandardInputEncoding is
+        # 7+-only, so we avoid it). The write is bounded: a tool that never drains stdin could fill
+        # the pipe buffer and block a synchronous Write indefinitely, so we run it on a task and cap
+        # it with the same timeout budget. On overrun we fall through to the WaitForExit timeout,
+        # which kills the process and severs the stream.
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        $baseStream = $process.StandardInput.BaseStream
+        $writeTask = $baseStream.WriteAsync($bytes, 0, $bytes.Length)
+        $writeCompleted = $false
+        try {
+            $writeCompleted = $writeTask.Wait($timeoutMilliseconds)
+        }
+        catch {
+            # WriteAsync faulted (for example the tool exited and broke the pipe). Treated as a
+            # failed write; WaitForExit/ExitCode below still governs the overall outcome.
+        }
+
+        if ($writeCompleted) {
+            try {
+                $baseStream.Flush()
+                $process.StandardInput.Close()
+            }
+            catch {
+                # The tool may have exited and closed its stdin already; treat as best effort and
+                # let WaitForExit/ExitCode decide success.
+            }
+        }
+
+        if (-not $process.WaitForExit($timeoutMilliseconds)) {
+            # Terminate the whole tool process tree (the forked selection-server child included) via
+            # the portable, reflection-guarded helper so nothing lingers after the timeout.
+            try {
+                Stop-ProcessTreePortably -Process $process
+            }
+            catch {
+                # Best-effort termination; a killed tool is still treated as a failed attempt.
+            }
+            # Observe the write task so a pending WriteAsync faulted by the kill (broken pipe) does
+            # not surface later as an unobserved task exception.
+            [void](Wait-TaskObserved -Task $writeTask -TimeoutMilliseconds 200)
+            return $false
+        }
+
+        # Observe the (already completed or faulted) write task before returning on the normal path.
+        [void](Wait-TaskObserved -Task $writeTask -TimeoutMilliseconds 200)
+
+        if ($null -ne $stdoutTask) { [void](Wait-TaskObserved -Task $stdoutTask -TimeoutMilliseconds 1000) }
+        if ($null -ne $stderrTask) { [void](Wait-TaskObserved -Task $stderrTask -TimeoutMilliseconds 1000) }
+
+        return ($process.ExitCode -eq 0)
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
     }
 }
 
@@ -1462,8 +1806,8 @@ function Copy-ToClipboard {
     foreach ($clipboardCommand in $clipboardCommands) {
         try {
             switch ($clipboardCommand) {
-                "Set-Clipboard-AsOSC52" {
-                    Set-ClipboardValue -Value $valueToCopy -AsOSC52
+                "Osc52" {
+                    Write-Osc52Clipboard -Text $valueToCopy
                     return $true
                 }
                 "Set-Clipboard" {
@@ -1471,36 +1815,32 @@ function Copy-ToClipboard {
                     return $true
                 }
                 "pbcopy" {
-                    $valueToCopy | & pbcopy
-                    if ($LASTEXITCODE -ne 0) {
-                        $attemptErrors.Add("[pbcopy] exited with code $LASTEXITCODE") | Out-Null
-                        continue
+                    if (Invoke-NativeClipboardTool -Tool "pbcopy" -Text $valueToCopy) {
+                        return $true
                     }
-                    return $true
+                    $attemptErrors.Add("[pbcopy] copy attempt failed") | Out-Null
+                    continue
                 }
                 "xclip" {
-                    $valueToCopy | & xclip -selection clipboard
-                    if ($LASTEXITCODE -ne 0) {
-                        $attemptErrors.Add("[xclip] exited with code $LASTEXITCODE") | Out-Null
-                        continue
+                    if (Invoke-NativeClipboardTool -Tool "xclip" -Arguments @("-selection", "clipboard") -Text $valueToCopy) {
+                        return $true
                     }
-                    return $true
+                    $attemptErrors.Add("[xclip] copy attempt failed") | Out-Null
+                    continue
                 }
                 "xsel" {
-                    $valueToCopy | & xsel --clipboard --input
-                    if ($LASTEXITCODE -ne 0) {
-                        $attemptErrors.Add("[xsel] exited with code $LASTEXITCODE") | Out-Null
-                        continue
+                    if (Invoke-NativeClipboardTool -Tool "xsel" -Arguments @("--clipboard", "--input") -Text $valueToCopy) {
+                        return $true
                     }
-                    return $true
+                    $attemptErrors.Add("[xsel] copy attempt failed") | Out-Null
+                    continue
                 }
                 "wl-copy" {
-                    $valueToCopy | & wl-copy
-                    if ($LASTEXITCODE -ne 0) {
-                        $attemptErrors.Add("[wl-copy] exited with code $LASTEXITCODE") | Out-Null
-                        continue
+                    if (Invoke-NativeClipboardTool -Tool "wl-copy" -Text $valueToCopy) {
+                        return $true
                     }
-                    return $true
+                    $attemptErrors.Add("[wl-copy] copy attempt failed") | Out-Null
+                    continue
                 }
                 default {
                     $attemptErrors.Add("[$clipboardCommand] unsupported command") | Out-Null
@@ -2008,6 +2348,19 @@ function Convert-ToAuthTokenResolutionResult {
 
     return $normalizedResolution
 }
+function New-GitHubWebSession {
+    # Creates one reusable web session for the whole run. Passing the SAME session object to every
+    # Invoke-RestMethod / Invoke-WebRequest call makes PowerShell reuse a single pooled TCP/TLS
+    # connection to the GitHub host across all requests (token validation + paginated GraphQL/REST),
+    # eliminating a redundant DNS + TCP + TLS handshake on every call after the first. The
+    # WebRequestSession type ships with both Windows PowerShell 5.1 and PowerShell 7+. This is a
+    # mockable seam so unit tests can supply a sentinel session.
+    [CmdletBinding()]
+    param()
+
+    return [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+}
+
 function Invoke-GitHubRequestWithRetry {
     [CmdletBinding()]
     param(
@@ -2048,6 +2401,13 @@ function Invoke-GitHubRequestWithRetry {
     $attempt = 0
     Assert-GitHubRequestUri -Uri $Uri -Context "Invoke-GitHubRequestWithRetry" -AllowedGitHubHosts $AllowedGitHubHostsNormalized
 
+    # Suppress the PowerShell web-cmdlet progress bar. On a real terminal it hides the cursor and
+    # emits DSR cursor-position queries (ESC[6n); the terminal's replies queue into stdin, and the
+    # fast process exit skips PowerShell's progress/input cleanup, leaving those replies to corrupt
+    # the parent shell's input (dead arrow keys / no echo) after the script finishes. It is also
+    # pure noise for this non-interactive tool. Function-scoped so it never leaks to the caller.
+    $ProgressPreference = "SilentlyContinue"
+
     while ($true) {
         $attempt++
 
@@ -2056,12 +2416,21 @@ function Invoke-GitHubRequestWithRetry {
         }
 
         try {
+            # Reuse the per-run pooled connection when a shared session is available (it is $null in
+            # dot-sourced unit tests, which keeps their behavior unchanged). Passing the same session
+            # to every call makes PowerShell reuse one TCP/TLS connection to the host. Only the
+            # optional session is splatted so every other parameter stays an explicit literal.
+            $sessionArgs = @{}
+            if ($null -ne $script:GitHubWebSession) {
+                $sessionArgs["WebSession"] = $script:GitHubWebSession
+            }
+
             if ($Method -eq "GET") {
-                return Invoke-RestMethod -Method GET -Uri $Uri -Headers $Headers -TimeoutSec $RequestTimeoutSeconds
+                return Invoke-RestMethod -Method GET -Uri $Uri -Headers $Headers -TimeoutSec $RequestTimeoutSeconds @sessionArgs
             }
 
             $jsonBody = if ($null -eq $Body) { "{}" } else { $Body | ConvertTo-Json -Depth 20 }
-            return Invoke-RestMethod -Method POST -Uri $Uri -Headers $Headers -ContentType "application/json" -Body $jsonBody -TimeoutSec $RequestTimeoutSeconds
+            return Invoke-RestMethod -Method POST -Uri $Uri -Headers $Headers -ContentType "application/json" -Body $jsonBody -TimeoutSec $RequestTimeoutSeconds @sessionArgs
         }
         catch {
             $statusCode = Get-HttpStatusCode -Exception $_.Exception
@@ -2231,6 +2600,11 @@ function Validate-GitHubTokenForRepoAccess {
     $attempt = 0
     Assert-GitHubRequestUri -Uri $uri -Context "Validate-GitHubTokenForRepoAccess" -AllowedGitHubHosts $AllowedGitHubHostsNormalized
 
+    # Suppress the web-cmdlet progress bar so Invoke-WebRequest cannot probe/manipulate the terminal
+    # (cursor hide + DSR queries) and leave stray query-responses in the parent shell's input.
+    # Function-scoped so it never leaks to the caller.
+    $ProgressPreference = "SilentlyContinue"
+
     while ($true) {
         $attempt++
 
@@ -2246,8 +2620,15 @@ function Validate-GitHubTokenForRepoAccess {
 
         try {
             # -UseBasicParsing avoids the Internet Explorer engine dependency on Windows
-            # PowerShell 5.1 (no-op on PowerShell 7+).
-            $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $effectiveRequestTimeoutSeconds -UseBasicParsing
+            # PowerShell 5.1 (no-op on PowerShell 7+); it stays an explicit literal so the
+            # cross-version compatibility gate can verify it. Only the optional shared session is
+            # splatted, so the per-run pooled connection is reused across this validation call and
+            # the subsequent GraphQL/REST calls without hiding -UseBasicParsing from the analyzer.
+            $sessionArgs = @{}
+            if ($null -ne $script:GitHubWebSession) {
+                $sessionArgs["WebSession"] = $script:GitHubWebSession
+            }
+            $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $effectiveRequestTimeoutSeconds -UseBasicParsing @sessionArgs
             $repoMetadata = $null
             if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
                 $repoMetadata = ConvertFrom-JsonSingleObject -Json $response.Content -Context "Repository metadata response"
@@ -2529,6 +2910,33 @@ function Convert-ReviewThreadToOutputRecord {
         Normalize-CommentText -Text $topBody -DisableTruncation -KeepMarkup:$KeepMarkup
     }
 
+    # Suggested-change blocks are preserved verbatim and rendered separately from prose.
+    # KeepMarkup keeps the raw body intact, so suggestion extraction is skipped there.
+    # Scan EVERY comment in the thread (in order), not just the top comment: reviewers and bots
+    # (Copilot, Cursor) frequently attach the "```suggestion" block as a follow-up reply rather
+    # than on the first comment, so a top-only scan would silently drop those suggestions.
+    $suggestions = @()
+    if (-not $KeepMarkup.IsPresent) {
+        $collectedSuggestions = New-Object System.Collections.Generic.List[object]
+        foreach ($commentNode in $comments) {
+            $commentBody = Get-ObjectPropertyValue -InputObject $commentNode -Name "body"
+            if ($null -eq $commentBody) {
+                continue
+            }
+
+            if ($commentBody -isnot [string]) {
+                $commentBodyType = $commentBody.GetType().FullName
+                throw "E_MALFORMED_RESPONSE: Review thread comment body must be a string (received '$commentBodyType')."
+            }
+
+            foreach ($suggestion in @(Get-CommentSuggestionBlocks -Text $commentBody)) {
+                $collectedSuggestions.Add($suggestion) | Out-Null
+            }
+        }
+
+        $suggestions = @($collectedSuggestions.ToArray())
+    }
+
     $latestReplySummary = if ($null -eq $latestReply) {
         $null
     }
@@ -2550,6 +2958,7 @@ function Convert-ReviewThreadToOutputRecord {
         githubLineStart    = $githubAnchor.Start
         githubLineEnd      = $githubAnchor.End
         embeddedLocations  = @($embeddedLocations)
+        suggestions        = @($suggestions)
         topLevelComment    = $topLevelComment
         latestReplySummary = $latestReplySummary
         resolutionState    = [string]$resolutionState
@@ -2663,6 +3072,45 @@ function Convert-RestReviewCommentsToThreadLikeObjects {
     return $threads.ToArray()
 }
 
+function Add-SuggestionRenderLines {
+    # Appends verbatim "Suggested change" blocks to the rendered text output. Suggestion
+    # code is preserved exactly (multi-line, no whitespace collapsing) so suggested
+    # implementations from Copilot/Cursor/GitHub remain copy-paste accurate.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.Generic.List[string]]$Lines,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Suggestions
+    )
+
+    if ($null -eq $Suggestions) {
+        return
+    }
+
+    foreach ($suggestion in @($Suggestions)) {
+        if ($null -eq $suggestion) {
+            continue
+        }
+
+        $code = Get-ObjectPropertyValue -InputObject $suggestion -Name "code"
+        $codeText = if ($null -eq $code) { "" } else { [string]$code }
+
+        if ([string]::IsNullOrEmpty($codeText)) {
+            # An empty GitHub suggestion block means "delete the targeted lines".
+            $Lines.Add("Suggested change (remove the lines):") | Out-Null
+            continue
+        }
+
+        $Lines.Add("Suggested change:") | Out-Null
+        foreach ($codeLine in ($codeText -split "`n")) {
+            $Lines.Add($codeLine) | Out-Null
+        }
+    }
+}
+
 function Format-UnresolvedThreadsAsText {
     [CmdletBinding()]
     param(
@@ -2677,9 +3125,16 @@ function Format-UnresolvedThreadsAsText {
         $lineStartText = if ($null -eq $record.lineStart) { "?" } else { [string]$record.lineStart }
         $lineEndText = if ($null -eq $record.lineEnd) { "?" } else { [string]$record.lineEnd }
 
-        $lines.Add("---")
+        # Emit a single leading delimiter for the first block; every block then ends
+        # with one delimiter. This yields exactly one "---" between adjacent blocks
+        # instead of the legacy doubled "---\n---" seam.
+        if ($lines.Count -eq 0) {
+            $lines.Add("---")
+        }
+
         $lines.Add(("({0}) {1}-{2}" -f $record.path, $lineStartText, $lineEndText))
         $lines.Add($record.topLevelComment)
+        Add-SuggestionRenderLines -Lines $lines -Suggestions (Get-ObjectPropertyValue -InputObject $record -Name "suggestions")
         if ($null -eq $record.latestReplySummary) {
             $lines.Add("Latest reply summary: (none)")
         }
@@ -3263,9 +3718,145 @@ function Test-GitHubFallbackFailureMayRequireAuth {
     $Message -like "E_NOT_FOUND*"
 }
 
+function Get-ConsoleOutputEncoding {
+    # Mockable seam over the [System.Console]::OutputEncoding getter. Reading the current console
+    # encoding is cheap and side-effect-free (unlike the setter), so it is safe to probe first.
+    [OutputType([System.Text.Encoding])]
+    [CmdletBinding()]
+    param()
+
+    return [System.Console]::OutputEncoding
+}
+
+function Set-ConsoleOutputEncoding {
+    # Mockable seam over the [System.Console]::OutputEncoding setter. On Windows this triggers
+    # SetConsoleOutputCP (a console code-page switch) which is comparatively slow and can flicker,
+    # so callers must only invoke it when the encoding actually needs to change.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Text.Encoding]$Encoding
+    )
+
+    [System.Console]::OutputEncoding = $Encoding
+}
+
+function Initialize-Utf8ConsoleOutputEncoding {
+    # Ensures terminal-rendered output is UTF-8 so on-screen comment text stays verbatim,
+    # WITHOUT paying the per-invocation cost of an unconditional console code-page switch.
+    #
+    # Setting [System.Console]::OutputEncoding triggers SetConsoleOutputCP on Windows, which is a
+    # comparatively slow, sometimes visibly flickery operation and was observed to add noticeable
+    # latency to every run. Modern terminals (Windows Terminal, VS Code, macOS, Linux) are already
+    # UTF-8, so we read the current encoding first (cheap, side-effect-free) and only change it
+    # when it is not already UTF-8 (code page 65001). Both the probe and the set are best-effort:
+    # they throw when no console is attached (for example when all standard streams are redirected).
+    try {
+        $current = Get-ConsoleOutputEncoding
+        if ($null -ne $current -and $current.CodePage -eq 65001) {
+            return
+        }
+    }
+    catch {
+        Write-Verbose "W_CONSOLE_ENCODING_UNAVAILABLE: Unable to read console output encoding: $($_.Exception.Message)"
+        return
+    }
+
+    try {
+        Set-ConsoleOutputEncoding -Encoding (New-Object System.Text.UTF8Encoding($false))
+    }
+    catch {
+        Write-Verbose "W_CONSOLE_ENCODING_UNAVAILABLE: Unable to set console output encoding to UTF-8: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-ConsoleFlush {
+    # Mockable seam that commits all buffered console output to the OS before a fast process exit.
+    # Isolated so Invoke-FastProcessExit can be unit-tested without actually flushing/terminating.
+    [CmdletBinding()]
+    param()
+
+    [System.Console]::Out.Flush()
+    [System.Console]::Error.Flush()
+}
+
+function Stop-CurrentProcessImmediately {
+    # Terminates the current process with $ExitCode, skipping the slow .NET/PowerShell managed
+    # shutdown (finalizers, HTTP connection-pool teardown) that dominates wall time on slow
+    # container filesystems. On Unix this calls libc `_exit`, which terminates immediately without
+    # running finalizers and without raising a SIGKILL "Killed" message (it is a normal exit, so the
+    # requested exit code is preserved). On Windows (and if the native call is unavailable) it falls
+    # back to [System.Environment]::Exit. Callers MUST flush output first (see Invoke-FastProcessExit)
+    # because this bypasses the managed flush. This is a mockable seam: tests stub it so they never
+    # actually terminate the test runner.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ExitCode
+    )
+
+    if (-not (Test-IsWindowsPlatform)) {
+        try {
+            if ($null -eq ('WallstopNativeExit.Libc' -as [type])) {
+                Add-Type -Namespace WallstopNativeExit -Name Libc -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("libc", EntryPoint = "_exit")]
+public static extern void _exit(int code);
+'@
+            }
+
+            [WallstopNativeExit.Libc]::_exit($ExitCode)
+        }
+        catch {
+            # The native fast exit is unavailable on this host (for example a libc/_exit resolution
+            # failure). Surface it so the degradation to the slower managed exit is visible rather
+            # than silent, then fall through to the portable terminator below.
+            Write-Warning "W_FAST_EXIT_NATIVE_UNAVAILABLE: Fast native exit (libc _exit) is unavailable on this host; using the slower managed exit instead. $($_.Exception.Message)"
+        }
+    }
+
+    # Windows path and Unix fallback: the documented cross-platform terminator. Slower than libc
+    # _exit on a loaded Linux container, but always correct.
+    [System.Environment]::Exit($ExitCode)
+}
+
+function Invoke-FastProcessExit {
+    # Flushes buffered output and then terminates the process immediately, skipping the slow managed
+    # teardown. This is the default behavior; the script's -NoFastExit switch opts out. The output
+    # and any -OutputPath file writes are already committed before this runs (rendering completes
+    # synchronously and the flush below commits console buffers), so the only thing skipped is
+    # dead-weight runtime shutdown.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [int]$ExitCode = 0
+    )
+
+    try {
+        Invoke-ConsoleFlush
+    }
+    catch {
+        # A missing/redirected console must not prevent termination; bytes already written to a
+        # redirected stream are committed by the OS regardless.
+    }
+
+    Stop-CurrentProcessImmediately -ExitCode $ExitCode
+}
+
 function Invoke-Main {
     [CmdletBinding()]
     param()
+
+    # Render terminal output as UTF-8 so copied (terminal-screen selection) comment text stays
+    # verbatim, independent of the host's default code page. This is intentionally a no-op when
+    # the console is already UTF-8 so it never adds per-invocation terminal latency. ($OutputEncoding,
+    # which governs only native-program pipes, is set locally in Copy-ToClipboard where the native
+    # clipboard pipes actually run.)
+    Initialize-Utf8ConsoleOutputEncoding
+
+    # Establish one reusable connection for every GitHub API call in this run (token validation +
+    # paginated GraphQL/REST) so they share a single pooled TCP/TLS connection instead of opening a
+    # fresh connection per request. Set before the first network call (interactive listing included).
+    $script:GitHubWebSession = New-GitHubWebSession
 
     $overallDeadlineUtc = [datetime]::UtcNow.AddSeconds($OverallTimeoutSeconds)
     if ($CopyStrict.IsPresent -and -not $Copy.IsPresent) {
@@ -3466,6 +4057,13 @@ function Invoke-Main {
 if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
     try {
         Invoke-Main
+        # By default the process terminates immediately after a successful run, skipping the slow
+        # .NET/PowerShell managed teardown (finalizers + HTTP connection-pool shutdown) that
+        # dominates wall time on slow container filesystems. Output is already rendered and flushed
+        # before this point. -NoFastExit opts out and restores the standard managed teardown.
+        if (-not $NoFastExit.IsPresent) {
+            Invoke-FastProcessExit -ExitCode 0
+        }
     }
     catch {
         if ($null -ne $_) {
@@ -3473,6 +4071,9 @@ if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
         }
         else {
             Microsoft.PowerShell.Utility\Write-Error "E_UNEXPECTED: Script failed with an unknown error."
+        }
+        if (-not $NoFastExit.IsPresent) {
+            Invoke-FastProcessExit -ExitCode 1
         }
         exit 1
     }
