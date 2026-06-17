@@ -752,10 +752,69 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*suggestions\s*=\s*@\(\$suggestions\)'
         $content | Should -Match 'function\s+Add-SuggestionRenderLines[\s\S]*Suggested change'
 
+        # Suggestion extraction must scan EVERY comment in the thread (top comment and replies),
+        # because reviewers/bots frequently attach the suggested change on a follow-up reply. A
+        # regression to a top-comment-only scan would silently drop reply suggestions.
+        $convertMatch = [regex]::Match($content, 'function\s+Convert-ReviewThreadToOutputRecord\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $convertMatch.Success | Should -BeTrue -Because "Convert-ReviewThreadToOutputRecord must exist so the all-comments suggestion scan can be validated"
+        $convertBody = $convertMatch.Groups["body"].Value
+        $convertBody | Should -Match 'foreach\s*\(\$commentNode\s+in\s+\$comments\)' -Because "suggestion extraction must iterate every comment node, not only the top comment"
+
         $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
         $testsContent = Get-Content -Path $testsPath -Raw
         $testsContent | Should -Match 'Describe\s+"Comment suggestion blocks"'
         $testsContent | Should -Match 'captures suggestions on a record and strips them from the prose'
+        $testsContent | Should -Match 'captures a suggestion that appears in a reply'
+    }
+
+    It "reuses one pooled web session across all GitHub requests" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        # A single per-run web session is declared at script scope (StrictMode-safe $null default)
+        # and built via a mockable seam so every GitHub API call reuses one pooled TCP/TLS
+        # connection instead of opening a fresh connection per request.
+        $content | Should -Match '\$script:GitHubWebSession\s*=\s*\$null'
+        $content | Should -Match 'function\s+New-GitHubWebSession'
+        $content | Should -Match '\[Microsoft\.PowerShell\.Commands\.WebRequestSession\]::new\(\)'
+        $content | Should -Match '\$script:GitHubWebSession\s*=\s*New-GitHubWebSession'
+
+        # The session is attached only when non-null so dot-sourced unit tests (which never set it)
+        # keep their existing behavior, and it is threaded into both transports.
+        $content | Should -Match 'if\s*\(\$null\s*-ne\s*\$script:GitHubWebSession\)\s*\{\s*\r?\n?\s*\$sessionArgs\["WebSession"\]\s*=\s*\$script:GitHubWebSession'
+        $content | Should -Match 'Invoke-RestMethod\s+-Method\s+GET[^\r\n]*@sessionArgs'
+        $content | Should -Match 'Invoke-RestMethod\s+-Method\s+POST[^\r\n]*@sessionArgs'
+        $content | Should -Match 'Invoke-WebRequest\s+-Method\s+GET[^\r\n]*-UseBasicParsing\s+@sessionArgs'
+
+        # -UseBasicParsing must remain an explicit literal (not hidden in a splat) so the
+        # cross-version compatibility gate can still verify Windows PowerShell 5.1 safety.
+        $content | Should -Not -Match 'UseBasicParsing\s*=\s*\$true'
+    }
+
+    It "suppresses the web-cmdlet progress UI so it cannot corrupt the terminal" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+
+        # The PowerShell web cmdlets render a progress bar that, on a real terminal, hides the cursor
+        # and emits DSR cursor-position queries (ESC[6n); the terminal's replies queue into stdin and
+        # corrupt the parent shell's input after the (fast) process exit. Both functions that call a
+        # web cmdlet must run with the progress UI suppressed. Use the portable $ProgressPreference
+        # assignment (NOT -ProgressAction, which is PowerShell 7.4+ only).
+        $retryMatch = [regex]::Match($content, 'function\s+Invoke-GitHubRequestWithRetry\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $retryMatch.Success | Should -BeTrue -Because "Invoke-GitHubRequestWithRetry must exist so progress suppression can be validated"
+        $retryMatch.Groups["body"].Value | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"' -Because "the GET/POST transport must suppress the progress UI"
+
+        $validateMatch = [regex]::Match($content, 'function\s+Validate-GitHubTokenForRepoAccess\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $validateMatch.Success | Should -BeTrue -Because "Validate-GitHubTokenForRepoAccess must exist so progress suppression can be validated"
+        $validateMatch.Groups["body"].Value | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"' -Because "the token-validation transport must suppress the progress UI"
+
+        # -ProgressAction is PowerShell 7.4+ only and must not be relied upon for this contract.
+        $content | Should -Not -Match '-ProgressAction'
+
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+        $testsContent | Should -Match 'suppresses the progress UI for the GET transport'
+        $testsContent | Should -Match 'suppresses the progress UI for the token-validation transport'
     }
 
     It "truncates comment text without splitting UTF-16 surrogate pairs" {

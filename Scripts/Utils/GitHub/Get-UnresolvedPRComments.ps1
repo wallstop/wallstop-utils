@@ -159,6 +159,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $script:TopLevelBoundParameters = @{} + $PSBoundParameters
+# One reusable web session per run so every GitHub API call (token validation + paginated
+# GraphQL/REST) shares a single pooled TCP/TLS connection to the host instead of opening a fresh
+# connection (DNS + TCP + TLS handshake) per request. Declared at script scope with a StrictMode-safe
+# default of $null and populated in Invoke-Main; the low-level request functions attach it only when
+# non-null, so dot-sourced unit tests keep their existing behavior.
+$script:GitHubWebSession = $null
 
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/StrictModeHelpers.ps1"
 if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
@@ -2342,6 +2348,19 @@ function Convert-ToAuthTokenResolutionResult {
 
     return $normalizedResolution
 }
+function New-GitHubWebSession {
+    # Creates one reusable web session for the whole run. Passing the SAME session object to every
+    # Invoke-RestMethod / Invoke-WebRequest call makes PowerShell reuse a single pooled TCP/TLS
+    # connection to the GitHub host across all requests (token validation + paginated GraphQL/REST),
+    # eliminating a redundant DNS + TCP + TLS handshake on every call after the first. The
+    # WebRequestSession type ships with both Windows PowerShell 5.1 and PowerShell 7+. This is a
+    # mockable seam so unit tests can supply a sentinel session.
+    [CmdletBinding()]
+    param()
+
+    return [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+}
+
 function Invoke-GitHubRequestWithRetry {
     [CmdletBinding()]
     param(
@@ -2382,6 +2401,13 @@ function Invoke-GitHubRequestWithRetry {
     $attempt = 0
     Assert-GitHubRequestUri -Uri $Uri -Context "Invoke-GitHubRequestWithRetry" -AllowedGitHubHosts $AllowedGitHubHostsNormalized
 
+    # Suppress the PowerShell web-cmdlet progress bar. On a real terminal it hides the cursor and
+    # emits DSR cursor-position queries (ESC[6n); the terminal's replies queue into stdin, and the
+    # fast process exit skips PowerShell's progress/input cleanup, leaving those replies to corrupt
+    # the parent shell's input (dead arrow keys / no echo) after the script finishes. It is also
+    # pure noise for this non-interactive tool. Function-scoped so it never leaks to the caller.
+    $ProgressPreference = "SilentlyContinue"
+
     while ($true) {
         $attempt++
 
@@ -2390,12 +2416,21 @@ function Invoke-GitHubRequestWithRetry {
         }
 
         try {
+            # Reuse the per-run pooled connection when a shared session is available (it is $null in
+            # dot-sourced unit tests, which keeps their behavior unchanged). Passing the same session
+            # to every call makes PowerShell reuse one TCP/TLS connection to the host. Only the
+            # optional session is splatted so every other parameter stays an explicit literal.
+            $sessionArgs = @{}
+            if ($null -ne $script:GitHubWebSession) {
+                $sessionArgs["WebSession"] = $script:GitHubWebSession
+            }
+
             if ($Method -eq "GET") {
-                return Invoke-RestMethod -Method GET -Uri $Uri -Headers $Headers -TimeoutSec $RequestTimeoutSeconds
+                return Invoke-RestMethod -Method GET -Uri $Uri -Headers $Headers -TimeoutSec $RequestTimeoutSeconds @sessionArgs
             }
 
             $jsonBody = if ($null -eq $Body) { "{}" } else { $Body | ConvertTo-Json -Depth 20 }
-            return Invoke-RestMethod -Method POST -Uri $Uri -Headers $Headers -ContentType "application/json" -Body $jsonBody -TimeoutSec $RequestTimeoutSeconds
+            return Invoke-RestMethod -Method POST -Uri $Uri -Headers $Headers -ContentType "application/json" -Body $jsonBody -TimeoutSec $RequestTimeoutSeconds @sessionArgs
         }
         catch {
             $statusCode = Get-HttpStatusCode -Exception $_.Exception
@@ -2565,6 +2600,11 @@ function Validate-GitHubTokenForRepoAccess {
     $attempt = 0
     Assert-GitHubRequestUri -Uri $uri -Context "Validate-GitHubTokenForRepoAccess" -AllowedGitHubHosts $AllowedGitHubHostsNormalized
 
+    # Suppress the web-cmdlet progress bar so Invoke-WebRequest cannot probe/manipulate the terminal
+    # (cursor hide + DSR queries) and leave stray query-responses in the parent shell's input.
+    # Function-scoped so it never leaks to the caller.
+    $ProgressPreference = "SilentlyContinue"
+
     while ($true) {
         $attempt++
 
@@ -2580,8 +2620,15 @@ function Validate-GitHubTokenForRepoAccess {
 
         try {
             # -UseBasicParsing avoids the Internet Explorer engine dependency on Windows
-            # PowerShell 5.1 (no-op on PowerShell 7+).
-            $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $effectiveRequestTimeoutSeconds -UseBasicParsing
+            # PowerShell 5.1 (no-op on PowerShell 7+); it stays an explicit literal so the
+            # cross-version compatibility gate can verify it. Only the optional shared session is
+            # splatted, so the per-run pooled connection is reused across this validation call and
+            # the subsequent GraphQL/REST calls without hiding -UseBasicParsing from the analyzer.
+            $sessionArgs = @{}
+            if ($null -ne $script:GitHubWebSession) {
+                $sessionArgs["WebSession"] = $script:GitHubWebSession
+            }
+            $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $Headers -TimeoutSec $effectiveRequestTimeoutSeconds -UseBasicParsing @sessionArgs
             $repoMetadata = $null
             if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
                 $repoMetadata = ConvertFrom-JsonSingleObject -Json $response.Content -Context "Repository metadata response"
@@ -2865,11 +2912,29 @@ function Convert-ReviewThreadToOutputRecord {
 
     # Suggested-change blocks are preserved verbatim and rendered separately from prose.
     # KeepMarkup keeps the raw body intact, so suggestion extraction is skipped there.
-    $suggestions = if ($KeepMarkup.IsPresent) {
-        @()
-    }
-    else {
-        @(Get-CommentSuggestionBlocks -Text $topBody)
+    # Scan EVERY comment in the thread (in order), not just the top comment: reviewers and bots
+    # (Copilot, Cursor) frequently attach the "```suggestion" block as a follow-up reply rather
+    # than on the first comment, so a top-only scan would silently drop those suggestions.
+    $suggestions = @()
+    if (-not $KeepMarkup.IsPresent) {
+        $collectedSuggestions = New-Object System.Collections.Generic.List[object]
+        foreach ($commentNode in $comments) {
+            $commentBody = Get-ObjectPropertyValue -InputObject $commentNode -Name "body"
+            if ($null -eq $commentBody) {
+                continue
+            }
+
+            if ($commentBody -isnot [string]) {
+                $commentBodyType = $commentBody.GetType().FullName
+                throw "E_MALFORMED_RESPONSE: Review thread comment body must be a string (received '$commentBodyType')."
+            }
+
+            foreach ($suggestion in @(Get-CommentSuggestionBlocks -Text $commentBody)) {
+                $collectedSuggestions.Add($suggestion) | Out-Null
+            }
+        }
+
+        $suggestions = @($collectedSuggestions.ToArray())
     }
 
     $latestReplySummary = if ($null -eq $latestReply) {
@@ -3787,6 +3852,11 @@ function Invoke-Main {
     # which governs only native-program pipes, is set locally in Copy-ToClipboard where the native
     # clipboard pipes actually run.)
     Initialize-Utf8ConsoleOutputEncoding
+
+    # Establish one reusable connection for every GitHub API call in this run (token validation +
+    # paginated GraphQL/REST) so they share a single pooled TCP/TLS connection instead of opening a
+    # fresh connection per request. Set before the first network call (interactive listing included).
+    $script:GitHubWebSession = New-GitHubWebSession
 
     $overallDeadlineUtc = [datetime]::UtcNow.AddSeconds($OverallTimeoutSeconds)
     if ($CopyStrict.IsPresent -and -not $Copy.IsPresent) {

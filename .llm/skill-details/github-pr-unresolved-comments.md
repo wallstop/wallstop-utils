@@ -45,7 +45,7 @@ Rendered comments strip markup by default. Keep coverage that removes HTML comme
 
 Rendered output is a verbatim, copy-safe artifact. Keep these contracts with behavioral plus policy coverage:
 
-- GitHub/Copilot/Cursor suggested-change fences (` ```suggestion `) are extracted verbatim into a `suggestions` record field and rendered under a `Suggested change:` label with original indentation/line breaks intact. Empty suggestion blocks denote deletions.
+- GitHub/Copilot/Cursor suggested-change fences (` ```suggestion `) are extracted verbatim into a `suggestions` record field and rendered under a `Suggested change:` label with original indentation/line breaks intact. Empty suggestion blocks denote deletions. Extraction scans every comment in the thread (top comment and replies, in order), because reviewers and bots frequently attach the suggestion on a follow-up reply.
 - A single shared fence regex (`Get-SuggestionFenceRegex`) is the source of truth used by both `Get-CommentSuggestionBlocks` (extraction) and `Remove-MarkupFromCommentText` (prose stripping) so the two never drift; suggestion code must not be whitespace-collapsed into prose.
 - `-KeepMarkup` keeps the raw block inline and skips suggestion extraction.
 - The text renderer (`Format-UnresolvedThreadsAsText`) collapses block delimiters to a single `---` (one leading, one between blocks, one trailing); never re-introduce the doubled `---` seam.

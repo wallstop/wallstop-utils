@@ -1553,6 +1553,77 @@ if ($null -eq $value) {
         $suggestionIndex | Should -BeLessThan $replyIndex
     }
 
+    It "captures a suggestion that appears in a reply, not only the top comment" {
+        # Reviewers and bots frequently attach the suggested change as a follow-up reply rather
+        # than on the first comment, so suggestion extraction must scan every comment in the thread.
+        $topBody = "This value should be validated before use."
+        $replyBody = @'
+Here is the fix:
+
+```suggestion
+MUST_READ_METADATA = True
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_REPLY_SUGGESTION"
+            isResolved = $false
+            path       = "src/driver.py"
+            startLine  = 32
+            line       = 39
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{ body = $topBody },
+                    [pscustomobject]@{ body = $replyBody }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        @($record.suggestions).Count | Should -Be 1
+        $record.suggestions[0].code | Should -BeExactly 'MUST_READ_METADATA = True'
+        # The reply prose is kept (minus the stripped fence); the top comment prose is unchanged.
+        $record.topLevelComment | Should -Be "This value should be validated before use."
+        $record.latestReplySummary | Should -Not -Match 'suggestion'
+        $record.latestReplySummary | Should -Not -Match 'MUST_READ_METADATA'
+    }
+
+    It "captures suggestions from multiple comments in thread order" {
+        $topBody = @'
+First pass.
+
+```suggestion
+first = 1
+```
+'@
+        $replyBody = @'
+Refined.
+
+```suggestion
+second = 2
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_MULTI_SUGGESTION"
+            isResolved = $false
+            path       = "src/multi.py"
+            startLine  = 1
+            line       = 2
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{ body = $topBody },
+                    [pscustomobject]@{ body = $replyBody }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        @($record.suggestions).Count | Should -Be 2
+        $record.suggestions[0].code | Should -BeExactly 'first = 1'
+        $record.suggestions[1].code | Should -BeExactly 'second = 2'
+    }
+
     It "does not extract suggestions under KeepMarkup" {
         $body = @'
 Keep raw markup.
@@ -2431,6 +2502,74 @@ Describe "Invoke-GitHubRequestWithRetry" {
 
         { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{ "Accept" = "application/json" } -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_NETWORK_ERROR*"
     }
+
+    It "passes the shared web session to the transport when one is set" {
+        $script:capturedSession = "<unset>"
+        Mock Invoke-RestMethod {
+            $script:capturedSession = $WebSession
+            return @{ ok = $true }
+        }
+
+        $previousSession = $script:GitHubWebSession
+        try {
+            $script:GitHubWebSession = New-GitHubWebSession
+            $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+            $result.ok | Should -BeTrue
+            $script:capturedSession | Should -BeOfType ([Microsoft.PowerShell.Commands.WebRequestSession])
+            [object]::ReferenceEquals($script:capturedSession, $script:GitHubWebSession) | Should -BeTrue
+        }
+        finally {
+            $script:GitHubWebSession = $previousSession
+        }
+    }
+
+    It "omits the web session when none is set (dot-sourced default)" {
+        $script:sessionWasBound = "<unset>"
+        Mock Invoke-RestMethod {
+            $script:sessionWasBound = $PSBoundParameters.ContainsKey("WebSession")
+            return @{ ok = $true }
+        }
+
+        $previousSession = $script:GitHubWebSession
+        try {
+            $script:GitHubWebSession = $null
+            $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+            $result.ok | Should -BeTrue
+            $script:sessionWasBound | Should -BeFalse
+        }
+        finally {
+            $script:GitHubWebSession = $previousSession
+        }
+    }
+
+    It "suppresses the progress UI for the GET transport so it cannot probe/corrupt the terminal" {
+        # PowerShell's web cmdlets render a progress bar on a terminal that hides the cursor and
+        # emits DSR cursor-position queries (ESC[6n); the terminal's responses queue into stdin and
+        # corrupt the parent shell's input after the process exits. Progress must be suppressed.
+        $script:capturedProgress = "<unset>"
+        Mock Invoke-RestMethod {
+            $script:capturedProgress = $ProgressPreference
+            return @{ ok = $true }
+        }
+
+        $ProgressPreference = "Continue"
+        $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $result.ok | Should -BeTrue
+        $script:capturedProgress | Should -Be "SilentlyContinue"
+    }
+
+    It "suppresses the progress UI for the POST transport so it cannot probe/corrupt the terminal" {
+        $script:capturedProgress = "<unset>"
+        Mock Invoke-RestMethod {
+            $script:capturedProgress = $ProgressPreference
+            return @{ ok = $true }
+        }
+
+        $ProgressPreference = "Continue"
+        $result = Invoke-GitHubRequestWithRetry -Method POST -Uri "https://api.github.com/graphql" -Headers @{} -Body @{ query = "x" } -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $result.ok | Should -BeTrue
+        $script:capturedProgress | Should -Be "SilentlyContinue"
+    }
 }
 
 Describe "Get-OpenPullRequests" {
@@ -2506,6 +2645,23 @@ Describe "Validate-GitHubTokenForRepoAccess" {
         }
 
         { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Not -Throw
+    }
+
+    It "suppresses the progress UI for the token-validation transport so it cannot probe/corrupt the terminal" {
+        # The Invoke-WebRequest progress bar manipulates the terminal (cursor hide + DSR probes)
+        # exactly like the other web cmdlets, so it must run with progress suppressed too.
+        $script:capturedProgress = "<unset>"
+        Mock Invoke-WebRequest {
+            $script:capturedProgress = $ProgressPreference
+            return [pscustomobject]@{
+                Headers = @{ "X-OAuth-Scopes" = "repo" }
+                Content = '{"private": true}'
+            }
+        }
+
+        $ProgressPreference = "Continue"
+        Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
+        $script:capturedProgress | Should -Be "SilentlyContinue"
     }
 
     It "supports multi-value OAuth scope headers" {
