@@ -476,7 +476,11 @@ Describe "Scope safety conventions" {
                 }, $true))
 
         $violations = New-Object System.Collections.Generic.List[string]
-        $allowedDirectHttpFunctions = @("Invoke-GitHubRequestWithRetry", "Validate-GitHubTokenForRepoAccess")
+        $allowedDirectHttpFunctions = @(
+            "Invoke-GitHubRequestWithRetry",
+            "Validate-GitHubTokenForRepoAccess",
+            "Get-GitHubWebAutomatedSuggestedDiffsByCommentId"
+        )
 
         foreach ($function in $functions) {
             $commandNames = @($function.Body.FindAll({
@@ -495,6 +499,9 @@ Describe "Scope safety conventions" {
         $content = Get-Content -Path $fullPath -Raw
         $content | Should -Match 'function\s+Invoke-GitHubRequestWithRetry[\s\S]*Assert-GitHubRequestUri[\s\S]*Invoke-RestMethod'
         $content | Should -Match 'function\s+Validate-GitHubTokenForRepoAccess[\s\S]*Assert-GitHubRequestUri[\s\S]*Invoke-WebRequest'
+        $content | Should -Match 'function\s+Get-GitHubWebAutomatedSuggestedDiffsByCommentId[\s\S]*Assert-GitHubRequestUri[\s\S]*Invoke-WebRequest'
+        $webSuggestionFetch = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-GitHubWebAutomatedSuggestedDiffsByCommentId" -Context "web suggestion fetch policy"
+        $webSuggestionFetch.Extent.Text | Should -Not -Match '\$script:GitHubWebSession|@sessionArgs|WebSession\s*=' -Because "GitHub web UI HTML fetch must not reuse the API WebRequestSession or inherit API Authorization headers."
     }
 
     It "threads allowlist enforcement through Invoke-Main auth retry branch" {
@@ -522,6 +529,10 @@ Describe "Scope safety conventions" {
         $lowerGitHubLineStartMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineStart\s*=\s*\$githubAnchor\.Start\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerGitHubLineEndMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineEnd\s*=\s*\$githubAnchor\.End\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerEmbeddedLocationsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*embeddedLocations\s*=\s*@\(\$embeddedLocations\)\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerCommentsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*comments\s*=\s*@\(\$commentRecords\)\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerRecommendationsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*recommendations\s*=\s*@\(\$recommendations\)\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerTopLevelAuthorMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*topLevelAuthor\s*=\s*\$topLevelAuthor\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerLatestReplyAuthorMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*latestReplyAuthor\s*=\s*\$latestReplyAuthor\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerResolutionStateMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*resolutionState\s*=\s*\[string\]\$resolutionState\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*owner\s*=\s*\$Owner\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*repo\s*=\s*\$Repo\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
@@ -530,6 +541,10 @@ Describe "Scope safety conventions" {
         $upperPathMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Path\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperResolutionStateMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*ResolutionState\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $authSourceMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*authSource\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperCommentsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Comments\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperRecommendationsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Recommendations\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperTopLevelAuthorMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*TopLevelAuthor\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperLatestReplyAuthorMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*LatestReplyAuthor\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Owner\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Repo\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
 
@@ -539,23 +554,40 @@ Describe "Scope safety conventions" {
         $lowerGitHubLineStartMatches.Count | Should -Be 1
         $lowerGitHubLineEndMatches.Count | Should -Be 1
         $lowerEmbeddedLocationsMatches.Count | Should -Be 1
+        $lowerCommentsMatches.Count | Should -Be 1
+        $lowerRecommendationsMatches.Count | Should -Be 1
+        $lowerTopLevelAuthorMatches.Count | Should -Be 1
+        $lowerLatestReplyAuthorMatches.Count | Should -Be 1
         $lowerResolutionStateMatches.Count | Should -Be 1
         $lowerOwnerMatches.Count | Should -Be 1
         $lowerRepoMatches.Count | Should -Be 1
         $upperPathMatches.Count | Should -Be 0
         $upperResolutionStateMatches.Count | Should -Be 0
         $authSourceMatches.Count | Should -Be 0
+        $upperCommentsMatches.Count | Should -Be 0
+        $upperRecommendationsMatches.Count | Should -Be 0
+        $upperTopLevelAuthorMatches.Count | Should -Be 0
+        $upperLatestReplyAuthorMatches.Count | Should -Be 0
         $upperOwnerMatches.Count | Should -Be 0
         $upperRepoMatches.Count | Should -Be 0
 
         # Array-stable singleton output is preserved via ConvertTo-JsonArrayCompat, the
         # cross-version replacement for `ConvertTo-Json -AsArray` (absent on Windows
         # PowerShell 5.1).
-        $scriptContent | Should -Match 'function\s+Format-UnresolvedThreadsAsJson[\s\S]*ConvertTo-JsonArrayCompat\s+-InputObject\s+\$Records\s+-Depth\s+8'
+        $scriptContent | Should -Match 'function\s+Format-UnresolvedThreadsAsJson[\s\S]*ConvertTo-JsonArrayCompat\s+-InputObject\s+\$outputRecords\s+-Depth\s+8'
 
         $testsContent | Should -Match 'Format-UnresolvedThreadsAsJson'
+        $scriptContent | Should -Match 'suggestedChanges'
         $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"path"\)\s+\|\s+Should\s+-BeTrue'
-        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"resolutionState"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"lineStart"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"lineEnd"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"comments"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"recommendations"\)\s+\|\s+Should\s+-BeFalse'
+        $testsContent | Should -Match '\(\$commentPropertyNames\s+-ccontains\s+"diffHunk"\)\s+\|\s+Should\s+-BeFalse'
+        $testsContent | Should -Match '\.suggestedChanges'
+        $testsContent | Should -Match '\(\$commentPropertyNames\s+-ccontains\s+"suggestedDiffs"\)\s+\|\s+Should\s+-BeFalse'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"topLevelAuthor"\)\s+\|\s+Should\s+-BeFalse'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"resolutionState"\)\s+\|\s+Should\s+-BeFalse'
         $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"Path"\)\s+\|\s+Should\s+-BeFalse'
     }
 
@@ -751,6 +783,15 @@ Describe "Scope safety conventions" {
         # The record carries verbatim suggestions, and the text renderer labels them.
         $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*suggestions\s*=\s*@\(\$suggestions\)'
         $content | Should -Match 'function\s+Add-SuggestionRenderLines[\s\S]*Suggested change'
+        $content | Should -Not -Match 'function\s+Add-ThreadCommentRenderLines[\s\S]*Review context diff hunk:'
+        $content | Should -Match 'function\s+Add-ThreadCommentRenderLines[\s\S]*suggestedChanges'
+        $content | Should -Match 'function\s+Get-GitHubWebAutomatedSuggestedDiffsByCommentIdFromHtml'
+        $content | Should -Match 'function\s+Convert-GitHubWebAutomatedDiffEntriesToSuggestedDiffs[\s\S]*DELETION[\s\S]*ADDITION'
+        $content | Should -Match 'function\s+Add-GitHubWebAutomatedSuggestedDiffsToRecords[\s\S]*databaseId'
+        $content | Should -Match 'function\s+Convert-SuggestedDiffTextToPublicChangeOnlyDiff'
+        $content | Should -Match 'function\s+Add-ThreadCommentRenderLines[\s\S]*Convert-SuggestedDiffTextToPublicChangeOnlyDiff'
+        $content | Should -Match 'function\s+Convert-SuggestedChangeForPublicOutput[\s\S]*Convert-SuggestedDiffTextToPublicChangeOnlyDiff'
+        $content | Should -Match 'changedLines'
 
         # Suggestion extraction must scan EVERY comment in the thread (top comment and replies),
         # because reviewers/bots frequently attach the suggested change on a follow-up reply. A
@@ -758,13 +799,23 @@ Describe "Scope safety conventions" {
         $convertMatch = [regex]::Match($content, 'function\s+Convert-ReviewThreadToOutputRecord\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $convertMatch.Success | Should -BeTrue -Because "Convert-ReviewThreadToOutputRecord must exist so the all-comments suggestion scan can be validated"
         $convertBody = $convertMatch.Groups["body"].Value
-        $convertBody | Should -Match 'foreach\s*\(\$commentNode\s+in\s+\$comments\)' -Because "suggestion extraction must iterate every comment node, not only the top comment"
+        $convertBody | Should -Match 'for\s*\(\$commentIndex\s*=\s*0;\s*\$commentIndex\s*-lt\s*\$commentCount;\s*\$commentIndex\+\+\)' -Because "suggestion extraction must iterate every comment node, not only the top comment"
+        $convertBody | Should -Match '\$commentNode\s*=\s*\$comments\[\$commentIndex\]' -Because "recommendation metadata must preserve stable source comment indexes"
 
         $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
         $testsContent = Get-Content -Path $testsPath -Raw
         $testsContent | Should -Match 'Describe\s+"Comment suggestion blocks"'
         $testsContent | Should -Match 'captures suggestions on a record and strips them from the prose'
         $testsContent | Should -Match 'captures a suggestion that appears in a reply'
+        $testsContent | Should -Match 'preserves bot comment authors internally and emits plain prose in public JSON'
+        $testsContent | Should -Match 'renders per-comment suggestion without the referenced diff hunk'
+        $testsContent | Should -Match 'annotates fenced suggestions with their source comment author'
+        $testsContent | Should -Match 'extracts GitHub web automated suggestions without review context lines'
+        $testsContent | Should -Match 'merges GitHub web automated suggestions into matching comment records'
+        $testsContent | Should -Match 'does not render placeholder prose for suggestion-only comments'
+        $testsContent | Should -Match 'Should -Not -Match "@@"'
+        $testsContent | Should -Match 'throws a redacted error when provided GitHub web cookie cannot fetch changesets'
+        $testsContent | Should -Match 'webSessionParameterWasBound'
     }
 
     It "reuses one pooled web session across all GitHub requests" {
@@ -775,8 +826,11 @@ Describe "Scope safety conventions" {
         # and built via a mockable seam so every GitHub API call reuses one pooled TCP/TLS
         # connection instead of opening a fresh connection per request.
         $content | Should -Match '\$script:GitHubWebSession\s*=\s*\$null'
+        $content | Should -Match 'function\s+Resolve-WebRequestSessionType'
         $content | Should -Match 'function\s+New-GitHubWebSession'
-        $content | Should -Match '\[Microsoft\.PowerShell\.Commands\.WebRequestSession\]::new\(\)'
+        $content | Should -Not -Match '\[Microsoft\.PowerShell\.Commands\.WebRequestSession\]::new\(\)'
+        $content | Should -Match '\$sessionType\s*=\s*Resolve-WebRequestSessionType'
+        $content | Should -Match 'if\s*\(\$null\s*-eq\s*\$sessionType\)\s*\{\s*\r?\n?\s*return\s+\$null'
         $content | Should -Match '\$script:GitHubWebSession\s*=\s*New-GitHubWebSession'
 
         # The session is attached only when non-null so dot-sourced unit tests (which never set it)

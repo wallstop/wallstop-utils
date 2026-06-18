@@ -1519,7 +1519,107 @@ $normalizedHost = $candidate.Trim()
         $record.topLevelComment | Should -Not -Match 'normalizedHost'
     }
 
-    It "renders captured suggestions verbatim before the latest-reply line" {
+    It "preserves bot comment authors internally and emits plain prose in public JSON" {
+        $body = "ToastItem conditionally renders a ReactNode with a truthy check. Use an explicit null/undefined check."
+        $thread = [pscustomobject]@{
+            id         = "THREAD_BOT_PROSE_RECOMMENDATION"
+            isResolved = $false
+            path       = "web/src/components/ui/toast.tsx"
+            startLine  = 100
+            line       = 103
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body   = $body
+                        url    = "https://github.example.test/org/repo/pull/9#discussion_r1"
+                        author = [pscustomobject]@{
+                            login = "Copilot"
+                        }
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        $record.topLevelAuthor | Should -Be "Copilot"
+        $record.latestReplyAuthor | Should -BeNullOrEmpty
+        @($record.suggestions).Count | Should -Be 0
+        @($record.recommendations).Count | Should -Be 1
+        $record.recommendations[0].kind | Should -Be "comment"
+        $record.recommendations[0].authorLogin | Should -Be "Copilot"
+        $record.recommendations[0].text | Should -Be $body
+        ($null -eq $record.recommendations[0].code) | Should -BeTrue
+        $record.recommendations[0].commentIndex | Should -Be 0
+        $record.recommendations[0].url | Should -Be "https://github.example.test/org/repo/pull/9#discussion_r1"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = $json | ConvertFrom-Json
+        @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "recommendations"
+        @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "topLevelAuthor"
+        $parsed[0].comments[0].suggestion | Should -Be $body
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 0
+
+        $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+        $text | Should -Match "Suggestion:"
+        $text | Should -Match ([regex]::Escape($body))
+    }
+
+    It "annotates fenced suggestions with their source comment author" {
+        $body = @'
+Please use the helper here.
+
+```suggestion
+return value ?? fallback
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_AUTHOR_SUGGESTION"
+            isResolved = $false
+            path       = "src/value.ts"
+            startLine  = 8
+            line       = 8
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body   = $body
+                        url    = "https://github.example.test/org/repo/pull/9#discussion_r2"
+                        author = [pscustomobject]@{
+                            login = "cursor[bot]"
+                        }
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        @($record.suggestions).Count | Should -Be 1
+        $record.suggestions[0].kind | Should -Be "suggestion"
+        $record.suggestions[0].code | Should -BeExactly "return value ?? fallback"
+        $record.suggestions[0].authorLogin | Should -Be "cursor[bot]"
+        $record.suggestions[0].commentIndex | Should -Be 0
+        $record.suggestions[0].url | Should -Be "https://github.example.test/org/repo/pull/9#discussion_r2"
+        @($record.comments).Count | Should -Be 1
+        @($record.comments[0].suggestedChanges).Count | Should -Be 1
+        $record.comments[0].suggestedChanges[0].code | Should -BeExactly "return value ?? fallback"
+        @($record.recommendations).Count | Should -Be 2
+        $record.recommendations[0].kind | Should -Be "comment"
+        $record.recommendations[0].authorLogin | Should -Be "cursor[bot]"
+        $record.recommendations[1].kind | Should -Be "suggestion"
+        $record.recommendations[1].authorLogin | Should -Be "cursor[bot]"
+        ($null -eq $record.recommendations[1].text) | Should -BeTrue
+        $record.recommendations[1].code | Should -BeExactly "return value ?? fallback"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = $json | ConvertFrom-Json
+        @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "recommendations"
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 1
+        $parsed[0].comments[0].suggestedChanges[0].kind | Should -Be "suggestion"
+        $parsed[0].comments[0].suggestedChanges[0].value | Should -BeExactly "return value ?? fallback"
+    }
+
+    It "renders captured suggestions verbatim without latest-reply chrome" {
         $body = @'
 Use a guard clause.
 
@@ -1548,9 +1648,39 @@ if ($null -eq $value) {
         $normalized | Should -Match ([regex]::Escape('    return'))
 
         $suggestionIndex = $normalized.IndexOf("Suggested change:")
-        $replyIndex = $normalized.IndexOf("Latest reply summary:")
         $suggestionIndex | Should -BeGreaterThan -1
-        $suggestionIndex | Should -BeLessThan $replyIndex
+        $normalized | Should -Not -Match "Latest reply summary:"
+    }
+
+    It "does not render placeholder prose for suggestion-only comments" {
+        $body = @'
+```suggestion
+return 1
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_SUGGESTION_ONLY"
+            isResolved = $false
+            path       = "src/value.ts"
+            startLine  = 3
+            line       = 3
+            comments   = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+        $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+        $text | Should -Match "Suggested change:"
+        $text | Should -Match "return 1"
+        $text | Should -Not -Match "Suggestion:\n\\(none\\)"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
+        $parsed[0].comments[0].suggestion | Should -BeNullOrEmpty
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 1
+        $parsed[0].comments[0].suggestedChanges[0].value | Should -BeExactly "return 1"
     }
 
     It "captures a suggestion that appears in a reply, not only the top comment" {
@@ -1676,8 +1806,16 @@ Describe "Convert-ReviewThreadToOutputRecord" {
             line       = 12
             comments   = [pscustomobject]@{
                 nodes = @(
-                    [pscustomobject]@{ body = "Top level comment" },
-                    [pscustomobject]@{ body = "Reply summary" }
+                    [pscustomobject]@{
+                        body     = "Top level comment"
+                        url      = "https://github.example.test/org/repo/pull/77#discussion_r1"
+                        diffHunk = "@@ -1,2 +1,3 @@`n old`n+new"
+                    },
+                    [pscustomobject]@{
+                        body     = "Reply summary"
+                        url      = "https://github.example.test/org/repo/pull/77#discussion_r2"
+                        diffHunk = "@@ -8,2 +8,3 @@`n context`n+reply"
+                    }
                 )
             }
         }
@@ -1691,7 +1829,11 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         ($propertyNames -ccontains "githubLineStart") | Should -BeTrue
         ($propertyNames -ccontains "githubLineEnd") | Should -BeTrue
         ($propertyNames -ccontains "embeddedLocations") | Should -BeTrue
+        ($propertyNames -ccontains "comments") | Should -BeTrue
         ($propertyNames -ccontains "suggestions") | Should -BeTrue
+        ($propertyNames -ccontains "recommendations") | Should -BeTrue
+        ($propertyNames -ccontains "topLevelAuthor") | Should -BeTrue
+        ($propertyNames -ccontains "latestReplyAuthor") | Should -BeTrue
         ($propertyNames -ccontains "resolutionState") | Should -BeTrue
         ($propertyNames -ccontains "authSource") | Should -BeFalse
         ($propertyNames -ccontains "owner") | Should -BeTrue
@@ -1708,6 +1850,21 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record.githubLineStart | Should -Be 10
         $record.githubLineEnd | Should -Be 12
         @($record.embeddedLocations).Count | Should -Be 0
+        @($record.comments).Count | Should -Be 2
+        $record.comments[0].commentIndex | Should -Be 0
+        $record.comments[0].body | Should -Be "Top level comment"
+        $record.comments[0].diffHunk | Should -BeExactly "@@ -1,2 +1,3 @@`n old`n+new"
+        @($record.comments[0].suggestedChanges).Count | Should -Be 0
+        $record.comments[0].url | Should -Be "https://github.example.test/org/repo/pull/77#discussion_r1"
+        $record.comments[1].commentIndex | Should -Be 1
+        $record.comments[1].body | Should -Be "Reply summary"
+        $record.comments[1].diffHunk | Should -BeExactly "@@ -8,2 +8,3 @@`n context`n+reply"
+        @($record.comments[1].suggestedChanges).Count | Should -Be 0
+        @($record.recommendations).Count | Should -Be 2
+        $record.recommendations[0].kind | Should -Be "comment"
+        $record.recommendations[1].text | Should -Be "Reply summary"
+        $record.topLevelAuthor | Should -BeNullOrEmpty
+        $record.latestReplyAuthor | Should -BeNullOrEmpty
         $record.topLevelComment | Should -Be "Top level comment"
         $record.latestReplySummary | Should -Be "Reply summary"
         $record.resolutionState | Should -Be "unresolved"
@@ -1717,7 +1874,179 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record.url | Should -Be "https://github.com/org/repo/pull/77"
     }
 
-    It "preserves current GitHub anchor fields separately from merged display ranges" {
+    It "uses original lines for outdated Copilot suggested changeset threads" {
+        $thread = [pscustomobject]@{
+            id                = "THREAD_OUTDATED_COPILOT_CHANGESET"
+            isResolved        = $false
+            isOutdated        = $true
+            path              = "web/src/test/dom-assertions.ts"
+            startLine         = 34
+            line              = 45
+            originalStartLine = 34
+            originalLine      = 37
+            comments          = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body     = "`expectAriaReferencesToExist` accepts a `root` parameter but resolves referenced ids via the global `document`. Use the element's `ownerDocument` for the lookup."
+                        diffHunk = "@@ -10,3 +10,38 @@ export function requireElement<T extends Element>(`n+        expect(`n+          document.getElementById(id),`n+        ).not.toBeNull();"
+                        author   = [pscustomobject]@{ login = "copilot-pull-request-reviewer" }
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com"
+
+        $record.lineStart | Should -Be 34
+        $record.lineEnd | Should -Be 37
+        $record.githubLineStart | Should -Be 34
+        $record.githubLineEnd | Should -Be 45
+        $record.comments[0].suggestedDiffsUnavailable | Should -BeTrue
+        $record.comments[0].suggestedDiffsUnavailableReason | Should -Be "copilot_suggested_diff_may_be_web_only_or_unavailable"
+
+        $text = Format-UnresolvedThreadsAsText -Records @($record)
+        $text | Should -Match "\(web/src/test/dom-assertions\.ts\) 34-37"
+        $text | Should -Not -Match "Suggested change:"
+        $text | Should -Not -Match "copilot_suggested_diff_may_be_web_only_or_unavailable"
+        $text | Should -Not -Match "ownerDocument\.getElementById"
+        $text | Should -Not -Match "Review context diff hunk:"
+        $text | Should -Not -Match "document\.getElementById\(id\),"
+    }
+
+    It "extracts GitHub web automated suggestions without review context lines" {
+        $html = @'
+<script type="application/json" data-target="react-partial.embeddedData">{"props":{"comment":{"databaseId":3424230049,"automatedComment":{"suggestion":{"diffEntries":[{"path":"web/src/test/dom-assertions.ts","diffLines":[{"type":"HUNK","text":"@@ -34,7 +34,7 @@"},{"type":"CONTEXT","text":"        expect("},{"type":"DELETION","text":"          document.getElementById(id),"},{"type":"ADDITION","text":"          element.ownerDocument.getElementById(id),"},{"type":"CONTEXT","text":"        ).not.toBeNull();"}]}]}}}}}</script>
+'@
+
+        $suggestionsByCommentId = Get-GitHubWebAutomatedSuggestedDiffsByCommentIdFromHtml -Html $html
+
+        $suggestionsByCommentId.ContainsKey("3424230049") | Should -BeTrue
+        @($suggestionsByCommentId["3424230049"]).Count | Should -Be 1
+        $suggestionsByCommentId["3424230049"][0].kind | Should -Be "changedLines"
+        $suggestionsByCommentId["3424230049"][0].path | Should -Be "web/src/test/dom-assertions.ts"
+        $suggestionsByCommentId["3424230049"][0].diff | Should -BeExactly "-          document.getElementById(id),`n+          element.ownerDocument.getElementById(id),"
+        $suggestionsByCommentId["3424230049"][0].diff | Should -Not -Match "@@|expect\(|not\.toBeNull"
+    }
+
+    It "prefers explicit GitHub web cookie over environment fallback" {
+        $previousWallstopCookie = $env:WALLSTOP_GITHUB_WEB_COOKIE
+        $previousGitHubCookie = $env:GITHUB_WEB_COOKIE
+        try {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = "wallstop-cookie"
+            $env:GITHUB_WEB_COOKIE = "github-cookie"
+
+            Get-GitHubWebCookie -ExplicitCookie "explicit-cookie" | Should -Be "explicit-cookie"
+            Get-GitHubWebCookie | Should -Be "wallstop-cookie"
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = $null
+            Get-GitHubWebCookie | Should -Be "github-cookie"
+        }
+        finally {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = $previousWallstopCookie
+            $env:GITHUB_WEB_COOKIE = $previousGitHubCookie
+        }
+    }
+
+    It "sends optional GitHub web cookie only to the web changeset request" {
+        $script:capturedWebHeaders = $null
+        $script:webSessionParameterWasBound = $null
+        Mock Invoke-WebRequest {
+            param(
+                [string]$Method,
+                [string]$Uri,
+                [hashtable]$Headers,
+                [int]$TimeoutSec,
+                [switch]$UseBasicParsing,
+                $WebSession
+            )
+
+            $script:capturedWebHeaders = $Headers
+            $script:webSessionParameterWasBound = $PSBoundParameters.ContainsKey("WebSession")
+            return [pscustomobject]@{
+                Content = '<script type="application/json" data-target="react-partial.embeddedData">{"props":{}}</script>'
+            }
+        }
+
+        $result = Get-GitHubWebAutomatedSuggestedDiffsByCommentId -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com" -RequestTimeoutSeconds 5 -GitHubWebCookie "logged-in-cookie" -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("github.com") -SensitiveTokens @("logged-in-cookie")
+
+        $result.Count | Should -Be 0
+        $script:capturedWebHeaders["Cookie"] | Should -Be "logged-in-cookie"
+        $script:webSessionParameterWasBound | Should -BeFalse
+        Assert-MockCalled Invoke-WebRequest -Times 1 -Scope It
+    }
+
+    It "throws a redacted error when provided GitHub web cookie cannot fetch changesets" {
+        Mock Invoke-WebRequest {
+            throw "web auth failed for logged-in-cookie"
+        }
+
+        {
+            Get-GitHubWebAutomatedSuggestedDiffsByCommentId -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com" -RequestTimeoutSeconds 5 -GitHubWebCookie "logged-in-cookie" -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("github.com") -SensitiveTokens @("logged-in-cookie")
+        } | Should -Throw "*E_GITHUB_WEB_SUGGESTIONS_UNAVAILABLE*"
+
+        try {
+            Get-GitHubWebAutomatedSuggestedDiffsByCommentId -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com" -RequestTimeoutSeconds 5 -GitHubWebCookie "logged-in-cookie" -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("github.com") -SensitiveTokens @("logged-in-cookie")
+        }
+        catch {
+            $_.Exception.Message | Should -Not -Match "logged-in-cookie"
+            $_.Exception.Message | Should -Match "\*\*\*REDACTED\*\*\*"
+        }
+    }
+
+    It "merges GitHub web automated suggestions into matching comment records" {
+        $thread = [pscustomobject]@{
+            id                = "THREAD_WEB_AUTOMATED_CHANGESET"
+            isResolved        = $false
+            isOutdated        = $true
+            path              = "web/src/test/dom-assertions.ts"
+            startLine         = 34
+            line              = 45
+            originalStartLine = 34
+            originalLine      = 37
+            comments          = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        databaseId = 3424230049
+                        body       = "`expectAriaReferencesToExist` accepts a `root` parameter but resolves referenced ids via the global `document`."
+                        diffHunk   = "@@ -10,3 +10,38 @@ export function requireElement<T extends Element>(`n+        expect(`n+          document.getElementById(id),`n+        ).not.toBeNull();"
+                        author     = [pscustomobject]@{ login = "copilot-pull-request-reviewer" }
+                    }
+                )
+            }
+        }
+        $suggestionsByCommentId = @{
+            "3424230049" = @(
+                [pscustomobject]@{
+                    kind = "changedLines"
+                    path = "web/src/test/dom-assertions.ts"
+                    diff = "-          document.getElementById(id),`n+          element.ownerDocument.getElementById(id),"
+                }
+            )
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com"
+        $record.comments[0].databaseId | Should -Be "3424230049"
+
+        Add-GitHubWebAutomatedSuggestedDiffsToRecords -Records @($record) -SuggestedDiffsByCommentId $suggestionsByCommentId
+
+        @($record.comments[0].suggestedDiffs).Count | Should -Be 1
+        $record.comments[0].suggestedDiffsUnavailable | Should -BeFalse
+        $record.comments[0].suggestedDiffsUnavailableReason | Should -BeNullOrEmpty
+
+        $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+        $text | Should -Match "Suggested change:"
+        $text | Should -Match "\+          element\.ownerDocument\.getElementById\(id\),"
+        $text | Should -Match "-          document\.getElementById\(id\),"
+        $text | Should -Not -Match "\+        expect\("
+        $text | Should -Not -Match "\+        \)\.not\.toBeNull"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 1
+        $parsed[0].comments[0].suggestedChanges[0].kind | Should -Be "changedLines"
+        $parsed[0].comments[0].suggestedChanges[0].value | Should -BeExactly "-          document.getElementById(id),`n+          element.ownerDocument.getElementById(id),"
+    }
+
+    It "uses current GitHub anchors for non-outdated display ranges" {
         $thread = [pscustomobject]@{
             id                = "THREAD_DIVERGED_ANCHOR"
             isResolved        = $false
@@ -1734,7 +2063,7 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
 
         $record.locationSource | Should -Be "github"
-        $record.lineStart | Should -Be 10
+        $record.lineStart | Should -Be 20
         $record.lineEnd | Should -Be 25
         $record.githubLineStart | Should -Be 20
         $record.githubLineEnd | Should -Be 25
@@ -1757,15 +2086,15 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
 
         $record.lineStart | Should -Be 37
-        $record.lineEnd | Should -Be 52
+        $record.lineEnd | Should -Be 47
 
         $text = Format-UnresolvedThreadsAsText -Records @($record)
-        $text | Should -Match "\(src/range\.ts\) 37-52"
+        $text | Should -Match "\(src/range\.ts\) 37-47"
 
         $json = Format-UnresolvedThreadsAsJson -Records @($record)
         $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
         $parsed[0].lineStart | Should -Be 37
-        $parsed[0].lineEnd | Should -Be 52
+        $parsed[0].lineEnd | Should -Be 47
     }
 
     It "uses original start and current line from generic dictionary threads" {
@@ -1844,11 +2173,11 @@ Describe "Convert-ReviewThreadToOutputRecord" {
 
         $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
 
-        $record.lineStart | Should -Be 12
+        $record.lineStart | Should -Be 15
         $record.lineEnd | Should -BeNullOrEmpty
 
         $text = Format-UnresolvedThreadsAsText -Records @($record)
-        $text | Should -Match "\(src/start-only\.ts\) 12-\?"
+        $text | Should -Match "\(src/start-only\.ts\) 15-\?"
     }
 
     It "throws when comments nodes is not array-wrapped" {
@@ -2020,11 +2349,9 @@ Describe "Format-UnresolvedThreadsAsText" {
 ---
 (src/a.ts) 8-8
 Comment A
-Latest reply summary: (none)
 ---
 (src/b.ts) 12-20
 Comment B
-Latest reply summary: Reply B
 ---
 "@
 
@@ -2089,22 +2416,139 @@ Latest reply summary: Reply B
 ---
 (src/only.ts) 5-7
 Solo comment
-Latest reply summary: (none)
 ---
 "@
 
         ($text -replace "`r`n", "`n") | Should -BeExactly (($expected.TrimEnd("`r", "`n")) -replace "`r`n", "`n")
     }
+
+    It "renders per-comment suggestion without the referenced diff hunk" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/diff.ts"
+                lineStart          = 2
+                lineEnd            = 4
+                topLevelComment    = "Fallback comment"
+                comments           = @(
+                    [pscustomobject]@{
+                        commentIndex = 0
+                        body         = "Please fix the branch."
+                        diffHunk     = "@@ -1,2 +1,4 @@`n context`n-old`n+new"
+                        url          = "https://github.example.test/org/repo/pull/1#discussion_r1"
+                    }
+                )
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $expected = @'
+---
+(src/diff.ts) 2-4
+Suggestion:
+Please fix the branch.
+---
+'@
+
+        ($text -replace "`r`n", "`n") | Should -BeExactly (($expected.TrimEnd("`r", "`n")) -replace "`r`n", "`n")
+        $text | Should -Not -Match "Review context diff hunk:"
+        $text | Should -Not -Match "@@ -1,2 \+1,4 @@"
+        $text | Should -Not -Match "\+new"
+    }
+
+    It "renders per-comment suggested changes even when body and diff hunk are empty" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/suggestion-only.ts"
+                lineStart          = 9
+                lineEnd            = 9
+                topLevelComment    = ""
+                comments           = @(
+                    [pscustomobject]@{
+                        commentIndex     = 0
+                        body             = $null
+                        diffHunk         = $null
+                        suggestedChanges = @(
+                            [pscustomobject]@{
+                                kind = "suggestion"
+                                code = "return value"
+                            }
+                        )
+                    }
+                )
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+
+        $text | Should -Match "Suggested change:"
+        $text | Should -Match "return value"
+        $text | Should -Not -Match "Suggestion:\s*\(none\)"
+    }
 }
 
 Describe "Format-UnresolvedThreadsAsJson" {
-    It "always emits an array and preserves lower-camel schema keys" {
+    It "always emits an array with only file, range, suggestions, and suggested changes" {
         $records = @(
             [pscustomobject]@{
                 path               = "src/main.ts"
                 lineStart          = 10
                 lineEnd            = 12
+                comments           = @(
+                    [pscustomobject]@{
+                        commentIndex = 0
+                        body         = "Top"
+                        diffHunk     = "@@ -1,2 +1,3 @@`n-old`n+new"
+                        suggestedChanges = @(
+                            [pscustomobject]@{
+                                kind        = "suggestion"
+                                code        = "return value"
+                                authorLogin = "cursor[bot]"
+                                url         = "https://github.com/org/repo/pull/77#discussion_r1"
+                            }
+                        )
+                        suggestedDiffs = @(
+                            [pscustomobject]@{
+                                kind = "changedLines"
+                                diff = "@@ -1 +1 @@`n-old`n+new"
+                            }
+                        )
+                        suggestedDiffsUnavailable = $true
+                        suggestedDiffsUnavailableReason = "copilot_suggested_diff_may_be_web_only_or_unavailable"
+                        url          = "https://github.com/org/repo/pull/77#discussion_r1"
+                    }
+                )
+                suggestions        = @(
+                    [pscustomobject]@{
+                        kind         = "suggestion"
+                        code         = "return value"
+                        authorLogin  = "cursor[bot]"
+                        commentIndex = 0
+                        url          = "https://github.com/org/repo/pull/77#discussion_r1"
+                    }
+                )
+                recommendations    = @(
+                    [pscustomobject]@{
+                        kind         = "comment"
+                        authorLogin  = "cursor[bot]"
+                        text         = "Top"
+                        code         = $null
+                        commentIndex = 0
+                        url          = "https://github.com/org/repo/pull/77#discussion_r1"
+                    },
+                    [pscustomobject]@{
+                        kind         = "suggestion"
+                        authorLogin  = "cursor[bot]"
+                        text         = $null
+                        code         = "return value"
+                        commentIndex = 0
+                        url          = "https://github.com/org/repo/pull/77#discussion_r1"
+                    }
+                )
+                topLevelAuthor     = "cursor[bot]"
                 topLevelComment    = "Top"
+                latestReplyAuthor  = "copilot-pull-request-reviewer"
                 latestReplySummary = "Reply"
                 resolutionState    = "unresolved"
                 threadId           = "THREAD_1"
@@ -2123,18 +2567,45 @@ Describe "Format-UnresolvedThreadsAsJson" {
         $propertyNames = @($parsed[0].PSObject.Properties.Name)
 
         ($propertyNames -ccontains "path") | Should -BeTrue
-        ($propertyNames -ccontains "resolutionState") | Should -BeTrue
+        ($propertyNames -ccontains "lineStart") | Should -BeTrue
+        ($propertyNames -ccontains "lineEnd") | Should -BeTrue
+        ($propertyNames -ccontains "comments") | Should -BeTrue
+        ($propertyNames -ccontains "suggestions") | Should -BeFalse
+        ($propertyNames -ccontains "recommendations") | Should -BeFalse
+        ($propertyNames -ccontains "topLevelAuthor") | Should -BeFalse
+        ($propertyNames -ccontains "latestReplyAuthor") | Should -BeFalse
+        ($propertyNames -ccontains "resolutionState") | Should -BeFalse
         ($propertyNames -ccontains "authSource") | Should -BeFalse
-        ($propertyNames -ccontains "owner") | Should -BeTrue
-        ($propertyNames -ccontains "repo") | Should -BeTrue
+        ($propertyNames -ccontains "owner") | Should -BeFalse
+        ($propertyNames -ccontains "repo") | Should -BeFalse
         ($propertyNames -ccontains "Path") | Should -BeFalse
+        ($propertyNames -ccontains "LineStart") | Should -BeFalse
+        ($propertyNames -ccontains "LineEnd") | Should -BeFalse
         ($propertyNames -ccontains "Owner") | Should -BeFalse
         ($propertyNames -ccontains "Repo") | Should -BeFalse
 
         $parsed[0].path | Should -Be "src/main.ts"
-        $parsed[0].resolutionState | Should -Be "unresolved"
-        $parsed[0].owner | Should -Be "org"
-        $parsed[0].repo | Should -Be "repo"
+        $parsed[0].lineStart | Should -Be 10
+        $parsed[0].lineEnd | Should -Be 12
+        @($parsed[0].comments).Count | Should -Be 1
+        $commentPropertyNames = @($parsed[0].comments[0].PSObject.Properties.Name)
+        ($commentPropertyNames -ccontains "suggestion") | Should -BeTrue
+        ($commentPropertyNames -ccontains "suggestedChanges") | Should -BeTrue
+        ($commentPropertyNames -ccontains "body") | Should -BeFalse
+        ($commentPropertyNames -ccontains "diffHunk") | Should -BeFalse
+        ($commentPropertyNames -ccontains "commentIndex") | Should -BeFalse
+        ($commentPropertyNames -ccontains "url") | Should -BeFalse
+        ($commentPropertyNames -ccontains "suggestedDiffs") | Should -BeFalse
+        ($commentPropertyNames -ccontains "suggestedDiffsUnavailable") | Should -BeFalse
+        ($commentPropertyNames -ccontains "suggestedDiffsUnavailableReason") | Should -BeFalse
+
+        $parsed[0].comments[0].suggestion | Should -Be "Top"
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 2
+        $parsed[0].comments[0].suggestedChanges[0].kind | Should -Be "suggestion"
+        $parsed[0].comments[0].suggestedChanges[0].value | Should -Be "return value"
+        $parsed[0].comments[0].suggestedChanges[1].kind | Should -Be "changedLines"
+        $parsed[0].comments[0].suggestedChanges[1].value | Should -BeExactly "-old`n+new"
+        $parsed[0].comments[0].suggestedChanges[1].value | Should -Not -Match "@@"
     }
 }
 
@@ -2504,6 +2975,12 @@ Describe "Invoke-GitHubRequestWithRetry" {
     }
 
     It "passes the shared web session to the transport when one is set" {
+        $sessionType = Resolve-WebRequestSessionType
+        if ($null -eq $sessionType) {
+            Set-ItResult -Skipped -Because "This PowerShell host does not expose Microsoft.PowerShell.Commands.WebRequestSession."
+            return
+        }
+
         $script:capturedSession = "<unset>"
         Mock Invoke-RestMethod {
             $script:capturedSession = $WebSession
@@ -2515,12 +2992,20 @@ Describe "Invoke-GitHubRequestWithRetry" {
             $script:GitHubWebSession = New-GitHubWebSession
             $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
             $result.ok | Should -BeTrue
-            $script:capturedSession | Should -BeOfType ([Microsoft.PowerShell.Commands.WebRequestSession])
+            $script:capturedSession.GetType().FullName | Should -Be $sessionType.FullName
             [object]::ReferenceEquals($script:capturedSession, $script:GitHubWebSession) | Should -BeTrue
         }
         finally {
             $script:GitHubWebSession = $previousSession
         }
+    }
+
+    It "returns null instead of throwing when the shared web session type is unavailable" {
+        Mock Resolve-WebRequestSessionType { $null }
+
+        $session = $null
+        { $session = New-GitHubWebSession } | Should -Not -Throw
+        $session | Should -BeNullOrEmpty
     }
 
     It "omits the web session when none is set (dot-sourced default)" {
@@ -3170,6 +3655,7 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
                         original_start_line = 3
                         original_line       = 7
                         body                = "Top A"
+                        diff_hunk           = "@@ -3,5 +4,5 @@`n context`n-old`n+new"
                         created_at          = "2026-01-01T00:00:00Z"
                         html_url            = "https://github.com/org/repo/pull/9#discussion_r101"
                         user                = [pscustomobject]@{ login = "reviewer-a" }
@@ -3178,6 +3664,7 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
                         id             = 102
                         in_reply_to_id = 101
                         body           = "Reply A"
+                        diff_hunk      = "@@ -6,2 +6,3 @@`n reply context`n+reply new"
                         created_at     = "2026-01-01T00:01:00Z"
                         html_url       = "https://github.com/org/repo/pull/9#discussion_r102"
                         user           = [pscustomobject]@{ login = "reviewer-b" }
@@ -3191,10 +3678,10 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
                     path       = "src/b.ts"
                     start_line = $null
                     line       = 12
-                    body       = "Top B"
+                    body       = "Top B from Copilot"
                     created_at = "2026-01-01T00:02:00Z"
                     html_url   = "https://github.com/org/repo/pull/9#discussion_r201"
-                    user       = [pscustomobject]@{ login = "reviewer-c" }
+                    user       = [pscustomobject]@{ login = "copilot-pull-request-reviewer[bot]" }
                 }
             )
         }
@@ -3209,16 +3696,20 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
         $records.Count | Should -Be 2
         $records[0].threadId | Should -Be "rest:101"
         $records[0].path | Should -Be "src/a.ts"
-        $records[0].lineStart | Should -Be 3
-        $records[0].lineEnd | Should -Be 7
+        $records[0].lineStart | Should -Be 4
+        $records[0].lineEnd | Should -Be 6
         $records[0].githubLineStart | Should -Be 4
         $records[0].githubLineEnd | Should -Be 6
         $records[0].topLevelComment | Should -Be "Top A"
         $records[0].latestReplySummary | Should -Be "Reply A"
+        $records[0].comments[0].diffHunk | Should -BeExactly "@@ -3,5 +4,5 @@`n context`n-old`n+new"
+        $records[0].comments[1].diffHunk | Should -BeExactly "@@ -6,2 +6,3 @@`n reply context`n+reply new"
         $records[0].resolutionState | Should -Be "unknown"
         $records[1].threadId | Should -Be "rest:201"
         $records[1].lineStart | Should -Be 12
         $records[1].lineEnd | Should -Be 12
+        $records[1].comments[0].suggestedDiffsUnavailable | Should -BeTrue
+        $records[1].comments[0].suggestedDiffsUnavailableReason | Should -Be "copilot_suggested_diff_may_be_web_only_or_unavailable"
         $records[1].resolutionState | Should -Be "unknown"
 
         $script:sawAuthorizationHeader | Should -BeFalse
@@ -3230,7 +3721,7 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
 
         $json = Format-UnresolvedThreadsAsJson -Records $records
         $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
-        $parsed[0].resolutionState | Should -Be "unknown"
+        @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "resolutionState"
         @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "authSource"
     }
 }
@@ -3310,6 +3801,10 @@ Describe "Resolve-PullRequestTarget" {
 }
 
 Describe "Invoke-Main" {
+    BeforeEach {
+        Mock Get-GitHubWebAutomatedSuggestedDiffsByCommentId { @{} }
+    }
+
     It "runs the non-interactive happy path and writes json output" {
         $PullRequestUrl = "https://github.com/org/repo/pull/5"
         $Owner = $null

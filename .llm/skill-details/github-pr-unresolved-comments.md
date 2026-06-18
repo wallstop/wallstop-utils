@@ -33,8 +33,8 @@ Keep diagnostics explicit and maintain coverage for URI safety, retries, and hos
 Preserve this utility's displayed range contract for review-thread locations:
 
 - When a comment body contains Cursor/Bugbot `LOCATIONS` metadata, parse it before comment cleanup and use the first matching embedded location for displayed `path`/`lineStart`/`lineEnd`; preserve the current GitHub anchor when available, falling back to original metadata, in `githubPath`/`githubLineStart`/`githubLineEnd`, and expose `locationSource` plus `embeddedLocations` for JSON consumers.
-- Combine current/original GitHub line metadata (`startLine`, `line`, `originalStartLine`, `originalLine`) using the script's min-start/max-end fallback behavior; avoid unused GraphQL fields.
-- Keep regressions for mixed current/original fallback cases, including original-start/current-end and original-start/larger-original-end ranges.
+- Resolve displayed GitHub ranges the way the web UI presents them: use original line metadata for `isOutdated` review threads, otherwise prefer current `startLine`/`line` anchors and only fall back to original fields for missing current endpoints.
+- Keep regressions for outdated Copilot suggested-changeset comments, mixed current/original fallback cases, and REST fallback comments.
 - In thread/comment conversion paths, use the script's property-access helper so `[pscustomobject]` responses and dictionary-backed fixtures both work.
 
 ## Bot Comment Cleanup
@@ -46,6 +46,9 @@ Rendered comments strip markup by default. Keep coverage that removes HTML comme
 Rendered output is a verbatim, copy-safe artifact. Keep these contracts with behavioral plus policy coverage:
 
 - GitHub/Copilot/Cursor suggested-change fences (` ```suggestion `) are extracted verbatim into a `suggestions` record field and rendered under a `Suggested change:` label with original indentation/line breaks intact. Empty suggestion blocks denote deletions. Extraction scans every comment in the thread (top comment and replies, in order), because reviewers and bots frequently attach the suggestion on a follow-up reply.
+- GitHub web-exposed Copilot automated changesets may appear only in PR-page React JSON as `automatedComment.suggestion.diffEntries`, keyed by review comment `databaseId`; parse those best-effort for `github.com` only, send `-GitHubWebCookie` / `WALLSTOP_GITHUB_WEB_COOKIE` / `GITHUB_WEB_COOKIE` only to that web-page request when private HTML access is intentionally needed, and convert only `DELETION`/`ADDITION` lines into `suggestedDiffs` so output never includes the referenced context hunk.
+- GitHub review comments often have an attached review context hunk even when they do not contain a fenced `suggestion` block. Preserve GraphQL `diffHunk` and REST `diff_hunk` internally only for anchor/range handling and diagnostics; public text and JSON output must not emit the hunk because it is context, not the suggested change.
+- Prose-only bot comments from Copilot/Cursor/Bugbot are not fenced suggestions, but they still need machine-readable content. Text output should emphasize the file/range, `Suggestion:`, and real fenced `Suggested change:` content when present; public JSON should project only `path`, `lineStart`, `lineEnd`, and `comments[]` entries with `suggestion` plus normalized `suggestedChanges[]`.
 - A single shared fence regex (`Get-SuggestionFenceRegex`) is the source of truth used by both `Get-CommentSuggestionBlocks` (extraction) and `Remove-MarkupFromCommentText` (prose stripping) so the two never drift; suggestion code must not be whitespace-collapsed into prose.
 - `-KeepMarkup` keeps the raw block inline and skips suggestion extraction.
 - The text renderer (`Format-UnresolvedThreadsAsText`) collapses block delimiters to a single `---` (one leading, one between blocks, one trailing); never re-introduce the doubled `---` seam.
