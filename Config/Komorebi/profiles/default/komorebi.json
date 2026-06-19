@@ -1,0 +1,140 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LGUG2Z/komorebi/v0.1.41/schema.json",
+  "app_specific_configuration_path": "$Env:USERPROFILE/applications.json",
+  "window_hiding_behaviour": "Cloak",
+  "cross_monitor_move_behaviour": "Insert",
+  "default_workspace_padding": 0,
+  "default_container_padding": 0,
+  "border": false,
+  "mouse_follows_focus": true,
+  "animation": {
+    "enabled": false,
+    "fps": 360,
+    "style": "EaseInOutQuart"
+  },
+  "theme": {
+    "palette": "Base16",
+    "name": "Ashes",
+    "unfocused_border": "Base03",
+    "bar_accent": "Base0D"
+  },
+  "window_handling_behaviour": "Async",
+  "stackbar": {
+    "mode": "Never"
+  },
+  "monitors": [
+    {
+      "workspaces": [
+        {
+          "name": "I",
+          "layout": "Scrolling",
+          "layout_options": {
+            "scrolling": {
+              "columns": 1,
+              "center_focused_column": true
+            }
+          },
+          "workspace_padding": 0,
+          "container_padding": 0
+        }
+      ]
+    }
+  ],
+  "float_rules": [
+    {
+      "kind": "Title",
+      "id": " Hot Reload",
+      "matching_strategy": "Equals"
+    },
+    {
+      "kind": "Title",
+      "id": "BALL x PIT",
+      "matching_strategy": "Equals"
+    },
+    {
+      "kind": "Title",
+      "id": "Test Runner",
+      "matching_strategy": "Equals"
+    },
+    {
+      "kind": "Title",
+      "id": "Unity Bug Reporter",
+      "matching_strategy": "Equals"
+    },
+    {
+      "kind": "Title",
+      "id": "Gradient Editor",
+      "matching_strategy": "Equals"
+    },
+    {
+      "kind": "Title",
+      "id": "Unity Hub",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Build Profile",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Slay the Spire",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Select Assembly Definition Asset",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Odin Validator",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Animation Creator",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Extension:",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Sprite Settings Directory Applier",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Animation Copier",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Prefab Check",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Import Unity Package",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Color",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Welcome to JetBrains",
+      "matching_strategy": "Contains"
+    },
+    {
+      "kind": "Title",
+      "id": "Data Visualizer",
+      "matching_strategy": "Equals"
+    }
+  ]
+}

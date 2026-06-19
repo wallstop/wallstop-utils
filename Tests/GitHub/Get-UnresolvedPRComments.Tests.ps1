@@ -276,6 +276,12 @@ Describe "Get-GitHubHeaders" {
         $headers | Should -BeOfType [hashtable]
         $headers["Authorization"] | Should -Be "Bearer token-123"
     }
+
+    It "sanitizes bearer authorization tokens before constructing headers" {
+        $headers = Get-GitHubHeaders -AuthToken "  token`r`n-123  "
+        $headers | Should -BeOfType [hashtable]
+        $headers["Authorization"] | Should -Be "Bearer token-123"
+    }
 }
 
 Describe "Get-HeaderValue" {
@@ -1946,6 +1952,26 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         }
     }
 
+    It "sanitizes GitHub web cookies before they are used as header values" {
+        $previousWallstopCookie = $env:WALLSTOP_GITHUB_WEB_COOKIE
+        $previousGitHubCookie = $env:GITHUB_WEB_COOKIE
+        try {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = "  wallstop`r`n-cookie  "
+            $env:GITHUB_WEB_COOKIE = "github-cookie"
+
+            Get-GitHubWebCookie -ExplicitCookie "  explicit`r`n-cookie  " | Should -Be "explicit-cookie"
+            Get-GitHubWebCookie | Should -Be "wallstop-cookie"
+
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = " `r`n "
+            $env:GITHUB_WEB_COOKIE = "  github`n-cookie  "
+            Get-GitHubWebCookie | Should -Be "github-cookie"
+        }
+        finally {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = $previousWallstopCookie
+            $env:GITHUB_WEB_COOKIE = $previousGitHubCookie
+        }
+    }
+
     It "sends optional GitHub web cookie only to the web changeset request" {
         $script:capturedWebHeaders = $null
         $script:webSessionParameterWasBound = $null
@@ -1966,7 +1992,7 @@ Describe "Convert-ReviewThreadToOutputRecord" {
             }
         }
 
-        $result = Get-GitHubWebAutomatedSuggestedDiffsByCommentId -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com" -RequestTimeoutSeconds 5 -GitHubWebCookie "logged-in-cookie" -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("github.com") -SensitiveTokens @("logged-in-cookie")
+        $result = Get-GitHubWebAutomatedSuggestedDiffsByCommentId -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com" -RequestTimeoutSeconds 5 -GitHubWebCookie "  logged-in`r`n-cookie  " -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("github.com") -SensitiveTokens @("logged-in-cookie")
 
         $result.Count | Should -Be 0
         $script:capturedWebHeaders["Cookie"] | Should -Be "logged-in-cookie"
@@ -2485,6 +2511,45 @@ Please fix the branch.
         $text | Should -Match "Suggested change:"
         $text | Should -Match "return value"
         $text | Should -Not -Match "Suggestion:\s*\(none\)"
+    }
+
+    It "numbers only visible per-comment suggestions when empty entries are skipped" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/numbered.ts"
+                lineStart          = 4
+                lineEnd            = 4
+                topLevelComment    = ""
+                comments           = @(
+                    [pscustomobject]@{
+                        commentIndex     = 0
+                        body             = $null
+                        diffHunk         = $null
+                        suggestedChanges = @()
+                    },
+                    [pscustomobject]@{
+                        commentIndex     = 1
+                        body             = "First visible"
+                        diffHunk         = $null
+                        suggestedChanges = @()
+                    },
+                    [pscustomobject]@{
+                        commentIndex     = 2
+                        body             = "Second visible"
+                        diffHunk         = $null
+                        suggestedChanges = @()
+                    }
+                )
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $normalized = $text -replace "`r`n", "`n"
+
+        $normalized | Should -Match "Suggestion 1:`nFirst visible"
+        $normalized | Should -Match "Suggestion 2:`nSecond visible"
+        $normalized | Should -Not -Match "Suggestion 3:"
     }
 }
 
@@ -3654,6 +3719,7 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
                         line                = 6
                         original_start_line = 3
                         original_line       = 7
+                        outdated            = $true
                         body                = "Top A"
                         diff_hunk           = "@@ -3,5 +4,5 @@`n context`n-old`n+new"
                         created_at          = "2026-01-01T00:00:00Z"
@@ -3696,8 +3762,8 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
         $records.Count | Should -Be 2
         $records[0].threadId | Should -Be "rest:101"
         $records[0].path | Should -Be "src/a.ts"
-        $records[0].lineStart | Should -Be 4
-        $records[0].lineEnd | Should -Be 6
+        $records[0].lineStart | Should -Be 3
+        $records[0].lineEnd | Should -Be 7
         $records[0].githubLineStart | Should -Be 4
         $records[0].githubLineEnd | Should -Be 6
         $records[0].topLevelComment | Should -Be "Top A"
@@ -3723,6 +3789,34 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
         $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
         @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "resolutionState"
         @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "authSource"
+    }
+
+    It "uses current anchors for REST comments without an outdated flag" {
+        $threads = @(Convert-RestReviewCommentsToThreadLikeObjects -Comments @(
+                [pscustomobject]@{
+                    id                  = 301
+                    path                = "src/current-rest.ts"
+                    start_line          = 40
+                    line                = 42
+                    original_start_line = 3
+                    original_line       = 7
+                    body                = "Current REST range"
+                    created_at          = "2026-01-01T00:03:00Z"
+                    html_url            = "https://github.com/org/repo/pull/9#discussion_r301"
+                    user                = [pscustomobject]@{ login = "reviewer-c" }
+                }
+            ))
+
+        $threads.Count | Should -Be 1
+        $threads[0].isOutdated | Should -BeFalse
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $threads[0] -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com"
+
+        $record.threadId | Should -Be "rest:301"
+        $record.lineStart | Should -Be 40
+        $record.lineEnd | Should -Be 42
+        $record.githubLineStart | Should -Be 40
+        $record.githubLineEnd | Should -Be 42
     }
 }
 

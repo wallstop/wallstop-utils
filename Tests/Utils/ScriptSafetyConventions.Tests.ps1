@@ -775,6 +775,10 @@ Describe "Scope safety conventions" {
     It "preserves suggested-change blocks verbatim and strips them from prose" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
 
         $content | Should -Match 'function\s+Get-SuggestionFenceRegex'
         $content | Should -Match 'function\s+Get-CommentSuggestionBlocks'
@@ -792,6 +796,36 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Add-ThreadCommentRenderLines[\s\S]*Convert-SuggestedDiffTextToPublicChangeOnlyDiff'
         $content | Should -Match 'function\s+Convert-SuggestedChangeForPublicOutput[\s\S]*Convert-SuggestedDiffTextToPublicChangeOnlyDiff'
         $content | Should -Match 'changedLines'
+
+        $headerValueSanitizer = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "ConvertTo-SafeHttpHeaderValue" -Context "GitHub header-value sanitization"
+        $headerValueSanitizer.Body.Extent.Text | Should -Match '-replace\s+"\[`r`n\]"' -Because "HTTP header values must strip CR/LF before transport use"
+
+        $githubHeaders = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-GitHubHeaders" -Context "GitHub API header-value sanitization"
+        $githubHeadersBody = $githubHeaders.Body.Extent.Text
+        $githubHeadersBody | Should -Match '\$safeAuthToken\s*=\s*ConvertTo-SafeHttpHeaderValue\s+-Value\s+\$AuthToken'
+        $githubHeadersBody | Should -Match '\$headers\["Authorization"\]\s*=\s*"Bearer \$safeAuthToken"'
+        $githubHeadersBody | Should -Not -Match '\$headers\["Authorization"\]\s*=\s*"Bearer \$AuthToken"'
+
+        $webCookie = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-GitHubWebCookie" -Context "GitHub web cookie sanitization"
+        $webCookieBody = $webCookie.Body.Extent.Text
+        $webCookieBody | Should -Match '\$explicitCookie\s*=\s*ConvertTo-SafeHttpHeaderValue\s+-Value\s+\$ExplicitCookie'
+        $webCookieBody | Should -Match 'ConvertTo-SafeHttpHeaderValue\s+-Value\s+\(\[string\]\$variable\.Value\)'
+
+        $webSuggestionFetch = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-GitHubWebAutomatedSuggestedDiffsByCommentId" -Context "GitHub web suggestion header-value sanitization"
+        $webSuggestionFetchBody = $webSuggestionFetch.Body.Extent.Text
+        $webSuggestionFetchBody | Should -Match '\$safeGitHubWebCookie\s*=\s*ConvertTo-SafeHttpHeaderValue\s+-Value\s+\$GitHubWebCookie'
+        $webSuggestionFetchBody | Should -Match '\$headers\["Cookie"\]\s*=\s*\$safeGitHubWebCookie'
+        $webSuggestionFetchBody | Should -Not -Match '\$headers\["Cookie"\]\s*=\s*\$GitHubWebCookie'
+
+        $restThreads = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Convert-RestReviewCommentsToThreadLikeObjects" -Context "REST review-comment outdated mapping"
+        $restThreadsBody = $restThreads.Body.Extent.Text
+        $restThreadsBody | Should -Match '\$isOutdated\s*=\s*ConvertTo-BooleanValue\s+-Value\s+\(Get-ObjectPropertyValue\s+-InputObject\s+\$topLevelComment\s+-Name\s+"outdated"\)'
+        $restThreadsBody | Should -Match 'isOutdated\s*=\s*\$isOutdated'
+
+        $threadCommentRenderer = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Add-ThreadCommentRenderLines" -Context "visible suggestion label numbering"
+        $threadCommentRendererBody = $threadCommentRenderer.Body.Extent.Text
+        $threadCommentRendererBody | Should -Match '\$visibleBodyOrdinal\+\+'
+        $threadCommentRendererBody | Should -Match '"Suggestion \{0\}:"\s+-f\s+\$visibleBodyOrdinal'
 
         # Suggestion extraction must scan EVERY comment in the thread (top comment and replies),
         # because reviewers/bots frequently attach the suggested change on a follow-up reply. A
@@ -815,6 +849,10 @@ Describe "Scope safety conventions" {
         $testsContent | Should -Match 'does not render placeholder prose for suggestion-only comments'
         $testsContent | Should -Match 'Should -Not -Match "@@"'
         $testsContent | Should -Match 'throws a redacted error when provided GitHub web cookie cannot fetch changesets'
+        $testsContent | Should -Match 'sanitizes GitHub web cookies before they are used as header values'
+        $testsContent | Should -Match 'sanitizes bearer authorization tokens before constructing headers'
+        $testsContent | Should -Match 'numbers only visible per-comment suggestions when empty entries are skipped'
+        $testsContent | Should -Match 'outdated\s*=\s*\$true'
         $testsContent | Should -Match 'webSessionParameterWasBound'
     }
 
@@ -1422,11 +1460,19 @@ Describe "Cross-language quality platform conventions" {
     It "keeps pre-commit utils Pester execution fast-lane scoped to staged utils test files" {
         $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
         $validatorContent = Get-Content -Path $validatorPath -Raw
+        $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
 
         $validatorContent | Should -Match '\$utilsPesterPattern\s*=\s*''\^Tests/Utils/.+\\.Tests\\.ps1\$'''
         $validatorContent | Should -Match '\$utilsScriptPattern\s*=\s*''\^Scripts/Utils/.+\\.ps1\$'''
+        $validatorContent | Should -Match '\$komorebiProfilePattern\s*='
+        $validatorContent | Should -Match 'Scripts/Komorebi/.+\\\.ps1'
+        $validatorContent | Should -Match 'Tests/Utils/KomorebiProfileHelpers\\\.Tests\\\.ps1'
+        $validatorContent | Should -Match 'PreCommitKomorebiProfiles'
+        $validatorContent | Should -Match '\$komorebiPolicyPattern\s*='
+        $validatorContent | Should -Match 'PreCommitKomorebiPolicy'
         $validatorContent | Should -Match 'Skipping Tests/Utils Pester suite for script-only staged changes in fast local mode'
         $validatorContent | Should -Match 'full suite remains enforced in -All/full validation'
+        $preCommitConfig | Should -Match 'Scripts/\(Utils\|Komorebi\)/\.\*\\\.ps1'
     }
 
     It "routes native Lua and workflow checks through the precommit orchestrator" {
@@ -1446,6 +1492,8 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
 
         $preCommitConfig | Should -Match 'pretty-format-json[\s\S]*files:\s+''\^\(Config/Komorebi/'
+        $preCommitConfig | Should -Match 'Config/Komorebi/profiles/\[\^/\]\+/\(applications\|komorebi\|komorebi\\\.bar\)\\\.json'
+        $preCommitConfig | Should -Not -Match 'Config/Komorebi/\(profiles/\[\^/\]\+/\)\?'
         $preCommitConfig | Should -Not -Match 'pretty-format-json[\s\S]*files:\s+''\^Config/PowerToys/'
         $preCommitConfig | Should -Match 'exclude:\s+''\^Config/\(PowerToys/\|\\\.config/\)'''
     }
@@ -3186,14 +3234,23 @@ Describe "Restore script safety conventions" {
 
     It "validates required Komorebi source files before restore copy" {
         $komorebiRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiRestore.ps1') -Raw) -replace "`r", ''
+        $komorebiHelper = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiProfileHelpers.ps1') -Raw) -replace "`r", ''
 
-        $komorebiRestore | Should -Match '\$missingSources\s*=\s*@\('
-        $komorebiRestore | Should -Match 'E_KOMOREBI_RESTORE_SOURCE_MISSING'
-        $komorebiRestore | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiSourceConfig,\s*\$komorebiSourceBarConfig,\s*\$komorebiSourceApplications\)\)'
-        $komorebiRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
-        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceConfig'
-        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceBarConfig'
-        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceApplications'
+        $komorebiRestore | Should -Match 'KomorebiProfileHelpers\.ps1'
+        $komorebiRestore | Should -Match 'Invoke-KomorebiProfileRestore'
+        $komorebiRestore | Should -Not -Match 'Config[\\/]+Komorebi[\\/]+komorebi\.json'
+        $komorebiHelper | Should -Match 'function\s+Invoke-KomorebiProfileRestore'
+        $komorebiHelper | Should -Match 'function\s+Restore-KomorebiSnapshotFiles'
+        $komorebiHelper | Should -Match 'function\s+Update-KomorebiSnapshotFilesTransactionally'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_RESTORE_ROLLBACK_FAILED'
+        $komorebiHelper | Should -Match 'function\s+Resolve-KomorebiRestoreSourceDirectory'
+        $komorebiHelper | Should -Match 'function\s+Assert-KomorebiSnapshotDirectoryComplete'
+        $komorebiHelper | Should -Match 'function\s+Assert-KomorebiSnapshotJsonValid'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_RESTORE_PROFILE_MISSING'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_RESTORE_PROFILE_INCOMPLETE'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_RESTORE_SOURCE_MISSING'
+        $komorebiHelper | Should -Match 'Restore will not silently fall back to another machine, default profile, or legacy root snapshot'
+        $komorebiHelper | Should -Match 'Restore-KomorebiSnapshotFiles[\s\S]*Assert-KomorebiSnapshotDirectoryComplete[\s\S]*Assert-KomorebiSnapshotJsonValid[\s\S]*Update-KomorebiSnapshotFilesTransactionally'
     }
 
     It "fails fast when Config restore backup directory is empty" {
@@ -3501,23 +3558,72 @@ Describe "Backup script safety conventions" {
 
     It "validates Komorebi backup sources before copy operations" {
         $komorebiBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiBackup.ps1') -Raw) -replace "`r", ''
+        $komorebiHelper = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiProfileHelpers.ps1') -Raw) -replace "`r", ''
 
-        $komorebiBackup | Should -Match '\$missingSources\s*=\s*@\('
-        $komorebiBackup | Should -Match 'E_KOMOREBI_BACKUP_SOURCE_MISSING'
-        $komorebiBackup | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiConfig,\s*\$komorebiBarConfig,\s*\$applicationYaml\)\)'
-        $komorebiBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
-        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiConfig'
-        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiBarConfig'
-        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$applicationYaml'
+        $komorebiBackup | Should -Match 'KomorebiProfileHelpers\.ps1'
+        $komorebiBackup | Should -Match 'Invoke-KomorebiProfileBackup'
+        $komorebiBackup | Should -Not -Match 'Config[\\/]+Komorebi[\\/]+komorebi\.json'
+        $komorebiHelper | Should -Match 'function\s+Invoke-KomorebiProfileBackup'
+        $komorebiHelper | Should -Match 'function\s+Initialize-KomorebiProfileFromLegacyRoot'
+        $komorebiHelper | Should -Match 'function\s+Resolve-KomorebiProfileSelection'
+        $komorebiHelper | Should -Match 'function\s+Assert-KomorebiProfileName'
+        $komorebiHelper | Should -Match 'Config[\s\S]*Komorebi[\s\S]*profiles'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_PROFILE_NAME_INVALID'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_MIGRATION_SOURCE_MISSING'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_BACKUP_SOURCE_MISSING'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_BACKUP_JSON_INVALID'
+        $komorebiHelper | Should -Match 'Copy-KomorebiSnapshotFiles[\s\S]*Assert-KomorebiSnapshotDirectoryComplete[\s\S]*Assert-KomorebiSnapshotJsonValid[\s\S]*Update-KomorebiSnapshotFilesTransactionally'
+    }
+
+    It "keeps Komorebi repository snapshots profile scoped" {
+        $profileRoot = Join-Path -Path $script:repoRoot -ChildPath "Config/Komorebi/profiles"
+
+        Test-Path -LiteralPath $profileRoot -PathType Container | Should -BeTrue
+
+        $profiles = @(Get-ChildItem -LiteralPath $profileRoot -Directory -ErrorAction Stop)
+        $profiles.Count | Should -BeGreaterThan 0
+        foreach ($profile in $profiles) {
+            $profile.Name | Should -Match '^[a-z0-9][a-z0-9._-]{0,63}$'
+            foreach ($leafName in @("komorebi.json", "komorebi.bar.json", "applications.json")) {
+                Test-Path -LiteralPath (Join-Path -Path $profile.FullName -ChildPath $leafName) -PathType Leaf |
+                    Should -BeTrue -Because ("Komorebi profile '{0}' must include '{1}'." -f $profile.Name, $leafName)
+            }
+        }
     }
 
     It "documents backup safety contract in LLM context" {
         $llmContext = (Get-Content -Path $script:llmContextPath -Raw) -replace "`r", ''
+        $komorebiSkill = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skills/komorebi-machine-profile-safety.md') -Raw) -replace "`r", ''
+        $komorebiSkillDetail = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details/komorebi-machine-profile-safety.md') -Raw) -replace "`r", ''
 
         $llmContext | Should -Match '## Backup/Restore Safety Contract'
         $llmContext | Should -Match 'Source Validation'
         $llmContext | Should -Match 'Robocopy Exit Codes'
         $llmContext | Should -Match 'Best-Effort Orchestrators'
+        $llmContext | Should -Match 'Komorebi backup/restore must be profile-scoped'
+        $llmContext | Should -Match 'Config/Komorebi/profiles/<profile>/'
+        $llmContext | Should -Match 'must not silently fall back'
+
+        $komorebiSkill | Should -Match 'Config/Komorebi/profiles'
+        $komorebiSkill | Should -Match 'KomorebiProfileHelpers\.Tests\.ps1'
+        $komorebiSkillDetail | Should -Match 'WALLSTOP_KOMOREBI_PROFILE'
+        $komorebiSkillDetail | Should -Match 'Config/Komorebi/profiles/<profile>/'
+        $komorebiSkillDetail | Should -Match 'must not silently fall back'
+    }
+
+    It "keeps Komorebi scripts free of USERPROFILE-dependent path resolution" {
+        $komorebiScriptsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Komorebi"
+        $scripts = @(Get-ChildItem -LiteralPath $komorebiScriptsRoot -Filter "*.ps1" -File -ErrorAction Stop)
+        $violations = @(
+            foreach ($scriptFile in $scripts) {
+                $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+                if ($content -match '\$env:USERPROFILE\b') {
+                    Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
+                }
+            }
+        )
+
+        $violations.Count | Should -Be 0 -Because ("Komorebi scripts should use Resolve-KomorebiUserProfileRoot / HOME fallback, not USERPROFILE. Violations: {0}" -f ($violations -join ", "))
     }
 
     It "keeps utility backup jobs fail-fast with explicit unexpected-error signaling" {

@@ -880,6 +880,27 @@ function Resolve-GitHubRestApiBaseUri {
     return "https://$normalizedHost/api/v3"
 }
 
+function ConvertTo-SafeHttpHeaderValue {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    $normalized = $Value.Trim() -replace "[`r`n]", ""
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return $null
+    }
+
+    return $normalized
+}
+
 function Get-GitHubHeaders {
     [OutputType([hashtable])]
     [CmdletBinding()]
@@ -893,8 +914,9 @@ function Get-GitHubHeaders {
         "User-Agent" = "wallstop-utils-unresolved-pr-comments"
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
-        $headers["Authorization"] = "Bearer $AuthToken"
+    $safeAuthToken = ConvertTo-SafeHttpHeaderValue -Value $AuthToken
+    if (-not [string]::IsNullOrWhiteSpace($safeAuthToken)) {
+        $headers["Authorization"] = "Bearer $safeAuthToken"
     }
 
     return [hashtable]$headers
@@ -1258,14 +1280,22 @@ function Get-GitHubWebCookie {
         [string]$ExplicitCookie
     )
 
-    if (-not [string]::IsNullOrWhiteSpace($ExplicitCookie)) {
-        return $ExplicitCookie
+    $explicitCookie = ConvertTo-SafeHttpHeaderValue -Value $ExplicitCookie
+    if (-not [string]::IsNullOrWhiteSpace($explicitCookie)) {
+        return $explicitCookie
     }
 
     foreach ($variableName in @("WALLSTOP_GITHUB_WEB_COOKIE", "GITHUB_WEB_COOKIE")) {
         $variable = Get-Item -LiteralPath "env:$variableName" -ErrorAction SilentlyContinue
-        if ($null -ne $variable -and -not [string]::IsNullOrWhiteSpace([string]$variable.Value)) {
-            return [string]$variable.Value
+        $cookie = if ($null -eq $variable) {
+            $null
+        }
+        else {
+            ConvertTo-SafeHttpHeaderValue -Value ([string]$variable.Value)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($cookie)) {
+            return $cookie
         }
     }
 
@@ -1718,8 +1748,9 @@ function Get-GitHubWebAutomatedSuggestedDiffsByCommentId {
         Accept       = "text/html,application/xhtml+xml"
         "User-Agent" = "Mozilla/5.0"
     }
-    if (-not [string]::IsNullOrWhiteSpace($GitHubWebCookie)) {
-        $headers["Cookie"] = $GitHubWebCookie
+    $safeGitHubWebCookie = ConvertTo-SafeHttpHeaderValue -Value $GitHubWebCookie
+    if (-not [string]::IsNullOrWhiteSpace($safeGitHubWebCookie)) {
+        $headers["Cookie"] = $safeGitHubWebCookie
     }
 
     try {
@@ -1732,7 +1763,7 @@ function Get-GitHubWebAutomatedSuggestedDiffsByCommentId {
     }
     catch {
         $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
-        if (-not [string]::IsNullOrWhiteSpace($GitHubWebCookie)) {
+        if (-not [string]::IsNullOrWhiteSpace($safeGitHubWebCookie)) {
             throw "E_GITHUB_WEB_SUGGESTIONS_UNAVAILABLE: GitHub web suggested changeset enrichment failed even though a web cookie was provided for $Owner/$Repo#$PrNumber. $message"
         }
 
@@ -1953,6 +1984,37 @@ function Get-FirstIntegerPropertyValue {
     return $null
 }
 
+function ConvertTo-BooleanValue {
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return $false
+    }
+
+    if ($Value -is [bool]) {
+        return [bool]$Value
+    }
+
+    if ($Value -is [string]) {
+        $text = ([string]$Value).Trim()
+        if ($text.Equals("true", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+
+        if ($text.Equals("false", [System.StringComparison]::OrdinalIgnoreCase) -or [string]::IsNullOrWhiteSpace($text)) {
+            return $false
+        }
+    }
+
+    return [bool]$Value
+}
+
 function Resolve-ReviewThreadLineRange {
     [CmdletBinding()]
     param(
@@ -1964,7 +2026,7 @@ function Resolve-ReviewThreadLineRange {
     $currentEnd = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("line")
     $originalStart = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("originalStartLine")
     $originalEnd = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("originalLine")
-    $isOutdated = [bool](Get-ObjectPropertyValue -InputObject $Thread -Name "isOutdated")
+    $isOutdated = ConvertTo-BooleanValue -Value (Get-ObjectPropertyValue -InputObject $Thread -Name "isOutdated")
 
     $start = $null
     $end = $null
@@ -2532,12 +2594,7 @@ function New-AuthTokenResolutionResult {
         [string]$EnvironmentVariable
     )
 
-    $normalizedToken = if ([string]::IsNullOrWhiteSpace($Token)) {
-        $null
-    }
-    else {
-        $Token.Trim()
-    }
+    $normalizedToken = ConvertTo-SafeHttpHeaderValue -Value $Token
 
     $sourceCategory = "unknown"
     switch ($Source) {
@@ -2707,7 +2764,7 @@ function Resolve-AuthTokenWithSource {
             continue
         }
 
-        $trimmedRejectedTokenValue = $rejectedTokenValue.Trim()
+        $trimmedRejectedTokenValue = ConvertTo-SafeHttpHeaderValue -Value $rejectedTokenValue
         if (-not [string]::IsNullOrWhiteSpace($trimmedRejectedTokenValue)) {
             $rejectedTokenSet.Add($trimmedRejectedTokenValue) | Out-Null
         }
@@ -2731,13 +2788,17 @@ function Resolve-AuthTokenWithSource {
             return $null
         }
 
-        $trimmedCandidateToken = $CandidateToken.Trim()
-        if ($rejectedTokenSet.Contains($trimmedCandidateToken)) {
+        $normalizedCandidateToken = ConvertTo-SafeHttpHeaderValue -Value $CandidateToken
+        if ([string]::IsNullOrWhiteSpace($normalizedCandidateToken)) {
+            return $null
+        }
+
+        if ($rejectedTokenSet.Contains($normalizedCandidateToken)) {
             Write-Verbose "Skipping previously rejected token from source '$Source'."
             return $null
         }
 
-        return New-AuthTokenResolutionResult -Token $trimmedCandidateToken -Source $Source -EnvironmentVariable $EnvironmentVariable
+        return New-AuthTokenResolutionResult -Token $normalizedCandidateToken -Source $Source -EnvironmentVariable $EnvironmentVariable
     }
 
     $explicitResolution = & $resolveCandidate -CandidateToken $ExplicitToken -Source "explicit" -EnvironmentVariable $null
@@ -3713,10 +3774,12 @@ function Convert-RestReviewCommentsToThreadLikeObjects {
         $startLine = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "start_line"
         $originalLine = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "original_line"
         $originalStartLine = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "original_start_line"
+        $isOutdated = ConvertTo-BooleanValue -Value (Get-ObjectPropertyValue -InputObject $topLevelComment -Name "outdated")
 
         $threads.Add([pscustomobject]@{
                 id                = "rest:$topLevelIdText"
                 isResolved        = $false
+                isOutdated        = $isOutdated
                 resolutionState   = "unknown"
                 path              = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "path"
                 startLine         = $startLine
@@ -3852,6 +3915,23 @@ function Add-ThreadCommentRenderLines {
 
     $commentArray = @($Comments)
     $commentCount = Get-SafeCount -InputObject $commentArray
+    $visibleBodyCount = 0
+    foreach ($comment in $commentArray) {
+        if ($null -eq $comment) {
+            continue
+        }
+
+        $body = Get-ObjectPropertyValue -InputObject $comment -Name "body"
+        if ([string]$body -eq "(none)") {
+            $body = $null
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$body)) {
+            $visibleBodyCount++
+        }
+    }
+
+    $visibleBodyOrdinal = 0
     for ($index = 0; $index -lt $commentCount; $index++) {
         $comment = $commentArray[$index]
         if ($null -eq $comment) {
@@ -3872,8 +3952,9 @@ function Add-ThreadCommentRenderLines {
         }
 
         if (-not [string]::IsNullOrWhiteSpace([string]$body)) {
-            if ($commentCount -gt 1) {
-                $Lines.Add(("Suggestion {0}:" -f ($index + 1))) | Out-Null
+            $visibleBodyOrdinal++
+            if ($visibleBodyCount -gt 1) {
+                $Lines.Add(("Suggestion {0}:" -f $visibleBodyOrdinal)) | Out-Null
             }
             else {
                 $Lines.Add("Suggestion:") | Out-Null

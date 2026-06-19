@@ -1,34 +1,38 @@
+param(
+    [Parameter(Mandatory = $false)]
+    [string]$ProfileName,
+
+    [Parameter(Mandatory = $false)]
+    [string]$UserProfileRoot
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $rootDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $rootDirectory -ChildPath "..") -ErrorAction Stop).Path
+$profileHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "KomorebiProfileHelpers.ps1"
+if (-not (Test-Path -LiteralPath $profileHelpersPath -PathType Leaf)) {
+    throw "E_KOMOREBI_PROFILE_HELPER_MISSING: Komorebi profile helper script not found at '$profileHelpersPath'."
+}
+
+. $profileHelpersPath
+
 Push-Location -LiteralPath $rootDirectory
 try {
-    $applicationYaml = "$env:USERPROFILE\applications.yaml"
-    $komorebiConfig = "$env:USERPROFILE\komorebi.json"
-    $komorebiBarConfig = "$env:USERPROFILE\komorebi.bar.json"
-
-    $komorebiSourceConfig = "$rootDirectory\Config\Komorebi\komorebi.json"
-    $komorebiSourceBarConfig = "$rootDirectory\Config\Komorebi\komorebi.bar.json"
-    $komorebiSourceApplications = "$rootDirectory\Config\Komorebi\applications.yaml"
-
-    $missingSources = @()
-    foreach ($sourcePath in @($komorebiSourceConfig, $komorebiSourceBarConfig, $komorebiSourceApplications)) {
-        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-            $missingSources += $sourcePath
-        }
+    try {
+        $result = Invoke-KomorebiProfileRestore -RepositoryRoot $rootDirectory -UserProfileRoot $UserProfileRoot -ProfileName $ProfileName
+        Write-Host (
+            "Successfully restored Komorebi profile '{0}' ({1}) from {2}" -f
+            $result.ProfileName,
+            $result.ProfileSource,
+            $result.ProfileDirectory
+        ) -ForegroundColor Green
     }
-
-    if ($missingSources.Count -gt 0) {
-        Write-Error ("E_KOMOREBI_RESTORE_SOURCE_MISSING: Missing required Komorebi backup file(s): {0}" -f ($missingSources -join ', '))
+    catch {
+        Write-Error $_.Exception.Message
         exit 1
     }
-
-    Copy-Item -LiteralPath $komorebiSourceConfig -Destination $komorebiConfig -Force
-    Copy-Item -LiteralPath $komorebiSourceBarConfig -Destination $komorebiBarConfig -Force
-    Copy-Item -LiteralPath $komorebiSourceApplications -Destination $applicationYaml -Force
-    Write-Host "Successfully restored Komorebi" -ForegroundColor Green
 }
 finally {
     Pop-Location

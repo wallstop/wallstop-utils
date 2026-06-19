@@ -1433,7 +1433,9 @@ try {
     $utilsScriptPattern = '^Scripts/Utils/.+\.ps1$'
     $utilsPesterPattern = '^Tests/Utils/.+\.Tests\.ps1$'
     $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
-    $scriptPattern = '^Scripts/Utils/.+\.ps1$'
+    $komorebiProfilePattern = '^(Scripts/Komorebi/.+\.ps1|Tests/Utils/KomorebiProfileHelpers\.Tests\.ps1)$'
+    $komorebiPolicyPattern = '^(Scripts/Komorebi/.+\.ps1|Scripts/Utils/Run-PreCommitValidation\.ps1|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1|\.pre-commit-config\.yaml)$'
+    $scriptPattern = '^(Scripts/Utils|Scripts/Komorebi)/.+\.ps1$'
     $shellQualityPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push))$'
     $shellSafetyTriggerPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push)|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1)$'
     $nativeQualityPattern = '^(Config/Wezterm/wezterm\.lua|\.github/workflows/.+\.(yml|yaml))$'
@@ -1475,6 +1477,8 @@ try {
     $utilsScriptFiles = @($stagedFiles | Where-Object { $_ -match $utilsScriptPattern })
     $utilsTestFiles = @($stagedFiles | Where-Object { $_ -match $utilsPesterPattern })
     $githubTestFiles = @($stagedFiles | Where-Object { $_ -match $githubTestPattern })
+    $komorebiProfileFiles = @($stagedFiles | Where-Object { $_ -match $komorebiProfilePattern })
+    $komorebiPolicyFiles = @($stagedFiles | Where-Object { $_ -match $komorebiPolicyPattern })
     $scriptFiles = @($stagedFiles | Where-Object { $_ -match $scriptPattern })
     $compatibilityTargetFiles = @()
     if ($All) {
@@ -1555,6 +1559,8 @@ try {
     }
 
     $runUtilsTests = $All -and $utilsTestTargets.Count -gt 0
+    $runKomorebiProfileTests = (-not $All) -and $komorebiProfileFiles.Count -gt 0
+    $runKomorebiPolicyTests = (-not $All) -and $komorebiPolicyFiles.Count -gt 0
     $runGitHubTests = $All
     $runShellQualityChecks = $All -or $shellQualityFiles.Count -gt 0
     $runNativeQualityChecks = $All -or $nativeQualityFiles.Count -gt 0
@@ -1611,7 +1617,7 @@ try {
         Write-Verbose ("Skipping LLM harness validation: allMode={0}; source={1}; matchedCount={2}" -f $All.IsPresent, $llmHarnessPatternSource, $llmHarnessFiles.Count)
     }
 
-    if (-not $runUtilsTests -and -not $runGitHubTests -and -not $runShellQualityChecks -and -not $runNativeQualityChecks -and -not $runShellSafetySuite -and -not $runWindowsLanguageChecks -and -not $runCompatibilityGate -and -not $runAnalyzer -and -not $runLlmHarnessValidation -and -not $runGovernanceValidation) {
+    if (-not $runUtilsTests -and -not $runKomorebiProfileTests -and -not $runKomorebiPolicyTests -and -not $runGitHubTests -and -not $runShellQualityChecks -and -not $runNativeQualityChecks -and -not $runShellSafetySuite -and -not $runWindowsLanguageChecks -and -not $runCompatibilityGate -and -not $runAnalyzer -and -not $runLlmHarnessValidation -and -not $runGovernanceValidation) {
         Write-Verbose "No staged files requiring utility validation; skipping validation."
         return
     }
@@ -1908,7 +1914,7 @@ try {
         }
     }
 
-    $requiresPesterModule = $runUtilsTests -or $runGitHubTests -or $runShellSafetySuite
+    $requiresPesterModule = $runUtilsTests -or $runKomorebiProfileTests -or $runKomorebiPolicyTests -or $runGitHubTests -or $runShellSafetySuite
     $requiresCompatibilityAnalyzerModule = $runCompatibilityGate
     $requiresLintAnalyzerModule = (-not $SkipAnalyzer) -and $runAnalyzer
     $requiresScriptAnalyzerModule = $requiresCompatibilityAnalyzerModule -or $requiresLintAnalyzerModule
@@ -1954,7 +1960,7 @@ try {
         }
     }
 
-    if ($runUtilsTests -or $runGitHubTests -or $runShellSafetySuite) {
+    if ($runUtilsTests -or $runKomorebiProfileTests -or $runKomorebiPolicyTests -or $runGitHubTests -or $runShellSafetySuite) {
         $pesterGateScriptPath = Join-Path -Path $repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1"
         if (-not (Test-Path -Path $pesterGateScriptPath -PathType Leaf)) {
             throw "E_CONFIG_ERROR: Pester quality gate script is missing at '$pesterGateScriptPath'."
@@ -1994,6 +2000,16 @@ try {
             Write-Host ("Running {0} Pester suite in isolated process..." -f $utilsTargetDisplay)
             Invoke-PesterQualityGateInIsolatedProcess -RepoRoot $repoRoot -TestPath $resolvedUtilsTestPath -SuiteLabel $utilsSuiteLabel -OutputVerbosity $PesterOutputVerbosity -TimeoutSeconds $PesterTimeoutSeconds
         }
+    }
+
+    if ($runKomorebiProfileTests) {
+        Write-Host "Running Tests/Utils/KomorebiProfileHelpers.Tests.ps1 Pester suite in isolated process..."
+        Invoke-PesterQualityGateInIsolatedProcess -RepoRoot $repoRoot -TestPath (Join-Path -Path $repoRoot -ChildPath "Tests/Utils/KomorebiProfileHelpers.Tests.ps1") -SuiteLabel "PreCommitKomorebiProfiles" -OutputVerbosity $PesterOutputVerbosity -TimeoutSeconds $PesterTimeoutSeconds
+    }
+
+    if ($runKomorebiPolicyTests) {
+        Write-Host "Running Tests/Utils/ScriptSafetyConventions.Tests.ps1 Pester suite for Komorebi policy coverage in isolated process..."
+        Invoke-PesterQualityGateInIsolatedProcess -RepoRoot $repoRoot -TestPath (Join-Path -Path $repoRoot -ChildPath "Tests/Utils/ScriptSafetyConventions.Tests.ps1") -SuiteLabel "PreCommitKomorebiPolicy" -OutputVerbosity $PesterOutputVerbosity -TimeoutSeconds $PesterTimeoutSeconds
     }
 
     if ($runGitHubTests) {
