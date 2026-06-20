@@ -276,6 +276,67 @@ Describe "Get-GitHubHeaders" {
         $headers | Should -BeOfType [hashtable]
         $headers["Authorization"] | Should -Be "Bearer token-123"
     }
+
+    It "sanitizes bearer authorization tokens before constructing headers" {
+        $headers = Get-GitHubHeaders -AuthToken "  token`r`n-123  "
+        $headers | Should -BeOfType [hashtable]
+        $headers["Authorization"] | Should -Be "Bearer token-123"
+    }
+}
+
+Describe "ConvertTo-SafeHttpHeaderValue" {
+    It "returns null for null, empty, or whitespace input" {
+        ConvertTo-SafeHttpHeaderValue -Value $null | Should -BeNullOrEmpty
+        ConvertTo-SafeHttpHeaderValue -Value "" | Should -BeNullOrEmpty
+        ConvertTo-SafeHttpHeaderValue -Value "   " | Should -BeNullOrEmpty
+    }
+
+    It "trims surrounding whitespace while preserving the interior value" {
+        ConvertTo-SafeHttpHeaderValue -Value "   user_session=abc123  " | Should -Be "user_session=abc123"
+    }
+
+    It "strips embedded CR and LF (the header-injection / response-splitting vector)" {
+        # A smuggled CR/LF would let the value inject additional request headers.
+        ConvertTo-SafeHttpHeaderValue -Value "abc`r`nX-Injected: evil" | Should -Be "abcX-Injected: evil"
+        ConvertTo-SafeHttpHeaderValue -Value "a`rb`nc" | Should -Be "abc"
+    }
+
+    It "strips other control characters that are never valid in a header value" {
+        # Tab, NUL, vertical tab, form feed, escape, and DEL must not survive into a header. Build the
+        # string with [char] casts so the literal stays parseable on Windows PowerShell 5.1 (the `u{}
+        # escape is PowerShell 7+ only).
+        $value = "a" + [char]0x09 + "b" + [char]0x00 + "c" + [char]0x0B + "d" + [char]0x0C + "e" + [char]0x1B + "f" + [char]0x7F + "g"
+        ConvertTo-SafeHttpHeaderValue -Value $value | Should -Be "abcdefg"
+    }
+
+    It "preserves ordinary printable token and cookie characters" {
+        $value = "gho_AbC123-._~+/=; path=/; SameSite=Lax"
+        ConvertTo-SafeHttpHeaderValue -Value $value | Should -Be $value
+    }
+
+    It "returns null when the value is only control characters" {
+        ConvertTo-SafeHttpHeaderValue -Value "`r`n`t`0" | Should -BeNullOrEmpty
+    }
+}
+
+Describe "Get-GitHubWebCookie sanitization" {
+    It "sanitizes an explicitly provided cookie (strips CR/LF and trims)" {
+        Get-GitHubWebCookie -ExplicitCookie "  user_session=abc`r`n  " | Should -Be "user_session=abc"
+    }
+
+    It "falls back to environment variables and sanitizes them" {
+        $previousWallstop = $env:WALLSTOP_GITHUB_WEB_COOKIE
+        $previousGeneric = $env:GITHUB_WEB_COOKIE
+        try {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = "session=fromenv`r`ninjected"
+            $env:GITHUB_WEB_COOKIE = $null
+            Get-GitHubWebCookie | Should -Be "session=fromenvinjected"
+        }
+        finally {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = $previousWallstop
+            $env:GITHUB_WEB_COOKIE = $previousGeneric
+        }
+    }
 }
 
 Describe "Get-HeaderValue" {
@@ -1089,6 +1150,227 @@ Invoke-FastProcessExit -ExitCode 0
     }
 }
 
+Describe "Terminal restoration across exit (end-to-end PTY)" {
+    BeforeAll {
+        $script:ptyIsUnix = -not (Test-IsWindowsPlatform)
+        $script:ptyScript = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1")).Path
+        $script:ptyPython = $null
+        foreach ($candidate in @("python3", "python")) {
+            $resolved = Get-Command -Name $candidate -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -ne $resolved -and -not [string]::IsNullOrWhiteSpace([string]$resolved.Source)) {
+                $script:ptyPython = [string]$resolved.Source
+                break
+            }
+        }
+        $script:ptyPwsh = $null
+        try {
+            $candidate = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) { $script:ptyPwsh = $candidate }
+        }
+        catch { $script:ptyPwsh = $null }
+        if ($null -eq $script:ptyPwsh) {
+            $homeCandidate = Join-Path -Path $PSHOME -ChildPath "pwsh"
+            if (Test-Path -LiteralPath $homeCandidate) { $script:ptyPwsh = $homeCandidate }
+        }
+
+        # Drives `pwsh -File <inner>` attached to a real pseudo-terminal, feeds it a line, lets it exit,
+        # and reports the slave TTY's ECHO/ICANON flags afterward. This is the only test that proves the
+        # actual user-visible contract end to end: after the script reads a prompt and the process exits,
+        # the parent terminal must NOT be left with echo/line-editing disabled ("input stops on shell").
+        # Defined in BeforeAll so it is in scope for the run-phase It bodies (Pester v5 scoping).
+        function Invoke-PtyTerminalProbe {
+            param([string]$InnerScriptBody, [string]$Feed)
+
+            $innerFile = Join-Path -Path $script:ptyDir -ChildPath ("inner-" + [Guid]::NewGuid().ToString("N") + ".ps1")
+            [System.IO.File]::WriteAllText($innerFile, $InnerScriptBody, [System.Text.UTF8Encoding]::new($false))
+
+            $driver = @"
+import os, pty, subprocess, select, time, termios, sys
+pwsh = sys.argv[1]; inner = sys.argv[2]; feed = sys.argv[3]
+m, s = pty.openpty()
+proc = subprocess.Popen([pwsh, "-NoProfile", "-NoLogo", "-File", inner], stdin=s, stdout=s, stderr=s, close_fds=True)
+time.sleep(0.8)
+if feed:
+    os.write(m, feed.encode())
+end = time.time() + 25
+while time.time() < end:
+    if proc.poll() is not None:
+        break
+    r, _, _ = select.select([m], [], [], 0.1)
+    if r:
+        try: os.read(m, 65536)
+        except OSError: break
+try: proc.wait(timeout=5)
+except subprocess.TimeoutExpired: proc.kill()
+attrs = termios.tcgetattr(s)
+echo = 1 if (attrs[3] & termios.ECHO) else 0
+icanon = 1 if (attrs[3] & termios.ICANON) else 0
+os.close(m); os.close(s)
+print("ECHO=%d ICANON=%d RC=%s" % (echo, icanon, proc.returncode))
+"@
+            $driverFile = Join-Path -Path $script:ptyDir -ChildPath ("driver-" + [Guid]::NewGuid().ToString("N") + ".py")
+            [System.IO.File]::WriteAllText($driverFile, $driver, [System.Text.UTF8Encoding]::new($false))
+
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $script:ptyPython
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList @($driverFile, $script:ptyPwsh, $innerFile, $Feed)
+            $proc = [System.Diagnostics.Process]::Start($startInfo)
+            $out = $proc.StandardOutput.ReadToEndAsync()
+            [void]$proc.StandardError.ReadToEndAsync()
+            [void]$proc.WaitForExit(40000)
+            [void]$out.Wait(5000)
+            return [string]$out.Result
+        }
+    }
+
+    BeforeEach {
+        $script:ptyDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("pty-" + [Guid]::NewGuid().ToString("N"))
+        [void][System.IO.Directory]::CreateDirectory($script:ptyDir)
+    }
+
+    AfterEach {
+        if ($script:ptyDir -and (Test-Path -LiteralPath $script:ptyDir)) {
+            Remove-Item -LiteralPath $script:ptyDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "restores the parent terminal after a run that reads a prompt then takes the gated exit" {
+        if (-not $script:ptyIsUnix) { Set-ItResult -Skipped -Because "PTY/termios terminal restoration is a Unix concern"; return }
+        if ($null -eq $script:ptyPython) { Set-ItResult -Skipped -Because "python3 (for PTY/termios probing) is unavailable"; return }
+        if ($null -eq $script:ptyPwsh) { Set-ItResult -Skipped -Because "could not resolve a launchable pwsh host"; return }
+
+        # Mirror the run guard exactly: read a prompt through the seam (sets the flag), then take the
+        # gated exit. Because a read occurred, Test-ShouldUseFastExit must force the managed exit, which
+        # restores the terminal. If the gating regressed and libc _exit ran, the TTY would stay raw.
+        $inner = @"
+. '$($script:ptyScript)' -NoRun
+[void](Read-TerminalResponse -Prompt 'GitHub owner')
+if (-not `$NoFastExit.IsPresent -and (Test-ShouldUseFastExit)) { Invoke-FastProcessExit -ExitCode 0 } else { exit 0 }
+"@
+        $result = Invoke-PtyTerminalProbe -InnerScriptBody $inner -Feed "octocat`n"
+        $result | Should -Match "ECHO=1 ICANON=1" -Because "a run that read the terminal must restore echo/line-editing on exit (got: $result)"
+    }
+
+    It "keeps the terminal sane when a no-read run takes the fast exit" {
+        if (-not $script:ptyIsUnix) { Set-ItResult -Skipped -Because "PTY/termios terminal restoration is a Unix concern"; return }
+        if ($null -eq $script:ptyPython) { Set-ItResult -Skipped -Because "python3 (for PTY/termios probing) is unavailable"; return }
+        if ($null -eq $script:ptyPwsh) { Set-ItResult -Skipped -Because "could not resolve a launchable pwsh host"; return }
+
+        # A run that never reads the console never switches the terminal out of canonical mode, so the
+        # fast libc _exit is safe and must leave the TTY untouched.
+        $inner = @"
+. '$($script:ptyScript)' -NoRun
+Write-Output 'no-read'
+if (-not `$NoFastExit.IsPresent -and (Test-ShouldUseFastExit)) { Invoke-FastProcessExit -ExitCode 0 } else { exit 0 }
+"@
+        $result = Invoke-PtyTerminalProbe -InnerScriptBody $inner -Feed ""
+        $result | Should -Match "ECHO=1 ICANON=1" -Because "a no-read run must leave the terminal in its default mode (got: $result)"
+    }
+}
+
+Describe "Terminal-safe interactive read and fast-exit gating" {
+    BeforeEach {
+        $script:savedTerminalInputInitialized = $script:TerminalInputInitialized
+        $script:TerminalInputInitialized = $false
+    }
+
+    AfterEach {
+        $script:TerminalInputInitialized = $script:savedTerminalInputInitialized
+    }
+
+    It "Read-TerminalResponse reads through the canonical [Console]::In seam, never Read-Host" {
+        # The whole point of the seam is to avoid Read-Host, which switches the terminal into a raw
+        # mode that a non-interactive host never restores, stranding the parent shell's input.
+        Mock Read-ConsoleInputLine { "octocat" }
+        Mock Read-Host { throw "Read-Host must never be used; it corrupts the parent terminal." }
+
+        $result = Read-TerminalResponse -Prompt "GitHub owner"
+        $result | Should -Be "octocat"
+        Assert-MockCalled Read-ConsoleInputLine -Times 1 -Scope It
+        Assert-MockCalled Read-Host -Times 0 -Scope It
+    }
+
+    It "Read-TerminalResponse records that the console input subsystem was initialized" {
+        Mock Read-ConsoleInputLine { "value" }
+        $script:TerminalInputInitialized | Should -BeFalse
+
+        [void](Read-TerminalResponse -Prompt "Repository")
+        $script:TerminalInputInitialized | Should -BeTrue -Because "a terminal read must force the safe managed exit so the terminal is restored"
+    }
+
+    It "Test-ShouldUseFastExit returns false after the terminal was read (managed exit restores the tty)" {
+        Mock Test-IsInteractiveHostSession { $false }
+        $script:TerminalInputInitialized = $true
+
+        Test-ShouldUseFastExit | Should -BeFalse
+    }
+
+    It "Test-ShouldUseFastExit returns false in an interactive host even with no terminal read" {
+        Mock Test-IsInteractiveHostSession { $true }
+        $script:TerminalInputInitialized = $false
+
+        Test-ShouldUseFastExit | Should -BeFalse
+    }
+
+    It "Test-ShouldUseFastExit returns true only for a non-interactive run that never read the terminal" {
+        Mock Test-IsInteractiveHostSession { $false }
+        $script:TerminalInputInitialized = $false
+
+        Test-ShouldUseFastExit | Should -BeTrue
+    }
+
+    It "Test-CommandLineIndicatesInteractiveHost treats batch invocations (and their abbreviations) as non-interactive" {
+        # PowerShell accepts unambiguous parameter prefixes; every batch form must be recognized so the
+        # fast exit is not needlessly suppressed for a real `pwsh -File`/`-Command` automation run.
+        foreach ($form in @(
+                @("/usr/bin/pwsh.dll", "-NoProfile", "-File", "script.ps1"),
+                @("pwsh.dll", "-File", "script.ps1"),
+                @("pwsh.dll", "-fi", "script.ps1"),
+                @("pwsh.dll", "-f", "script.ps1"),
+                @("pwsh.dll", "-Command", "x"),
+                @("pwsh.dll", "-com", "x"),
+                @("pwsh.dll", "-c", "x"),
+                @("pwsh.dll", "-EncodedCommand", "abc"),
+                @("pwsh.dll", "-enc", "abc"),
+                @("pwsh.dll", "-e", "abc"),
+                @("pwsh.dll", "-ec", "abc")
+            )) {
+            Test-CommandLineIndicatesInteractiveHost -CommandLineArgs $form | Should -BeFalse -Because "batch form [$($form -join ' ')] must be non-interactive"
+        }
+    }
+
+    It "Test-CommandLineIndicatesInteractiveHost treats a pure REPL or -NoExit as interactive" {
+        Test-CommandLineIndicatesInteractiveHost -CommandLineArgs @("pwsh.dll") | Should -BeTrue -Because "a bare REPL has no batch entry"
+        Test-CommandLineIndicatesInteractiveHost -CommandLineArgs @("pwsh.dll", "-NoProfile", "-NoLogo") | Should -BeTrue -Because "switches that are not batch entries leave it a REPL"
+        Test-CommandLineIndicatesInteractiveHost -CommandLineArgs @("pwsh.dll", "-NoExit", "-File", "script.ps1") | Should -BeTrue -Because "-NoExit keeps the host open after the script"
+        Test-CommandLineIndicatesInteractiveHost -CommandLineArgs @("pwsh.dll", "-noe", "-File", "script.ps1") | Should -BeTrue -Because "-noe is an unambiguous -NoExit abbreviation"
+        Test-CommandLineIndicatesInteractiveHost -CommandLineArgs @() | Should -BeTrue
+    }
+
+    It "Test-CommandLineIndicatesInteractiveHost does not confuse -NoProfile/-NoLogo with -NoExit" {
+        # "no"/"n" prefixes are ambiguous; only "noe"+ may mean -NoExit. -NoProfile must NOT force interactive.
+        Test-CommandLineIndicatesInteractiveHost -CommandLineArgs @("pwsh.dll", "-NoProfile", "-File", "script.ps1") | Should -BeFalse
+        Test-CommandLineIndicatesInteractiveHost -CommandLineArgs @("pwsh.dll", "-nop", "-c", "x") | Should -BeFalse
+    }
+
+    It "Test-IsInteractiveHostSession treats a loaded PSReadLine as interactive" {
+        # PSReadLine is auto-imported only by interactive hosts and puts the terminal in raw mode, so
+        # its presence means a fast exit would strand the user's live session.
+        Mock Get-Module { [pscustomobject]@{ Name = "PSReadLine" } } -ParameterFilter { $Name -eq "PSReadLine" }
+
+        Test-IsInteractiveHostSession | Should -BeTrue
+    }
+
+    It "Test-IsInteractiveHostSession fails safe (interactive) when host inspection throws" {
+        Mock Get-Module { throw "module subsystem unavailable" }
+
+        Test-IsInteractiveHostSession | Should -BeTrue -Because "an undeterminable host must never be fast-exited"
+    }
+}
+
 Describe "Set-ClipboardValue" {
     It "routes the value to Set-Clipboard" {
         Mock Set-Clipboard { }
@@ -1519,7 +1801,107 @@ $normalizedHost = $candidate.Trim()
         $record.topLevelComment | Should -Not -Match 'normalizedHost'
     }
 
-    It "renders captured suggestions verbatim before the latest-reply line" {
+    It "preserves bot comment authors internally and emits plain prose in public JSON" {
+        $body = "ToastItem conditionally renders a ReactNode with a truthy check. Use an explicit null/undefined check."
+        $thread = [pscustomobject]@{
+            id         = "THREAD_BOT_PROSE_RECOMMENDATION"
+            isResolved = $false
+            path       = "web/src/components/ui/toast.tsx"
+            startLine  = 100
+            line       = 103
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body   = $body
+                        url    = "https://github.example.test/org/repo/pull/9#discussion_r1"
+                        author = [pscustomobject]@{
+                            login = "Copilot"
+                        }
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        $record.topLevelAuthor | Should -Be "Copilot"
+        $record.latestReplyAuthor | Should -BeNullOrEmpty
+        @($record.suggestions).Count | Should -Be 0
+        @($record.recommendations).Count | Should -Be 1
+        $record.recommendations[0].kind | Should -Be "comment"
+        $record.recommendations[0].authorLogin | Should -Be "Copilot"
+        $record.recommendations[0].text | Should -Be $body
+        ($null -eq $record.recommendations[0].code) | Should -BeTrue
+        $record.recommendations[0].commentIndex | Should -Be 0
+        $record.recommendations[0].url | Should -Be "https://github.example.test/org/repo/pull/9#discussion_r1"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = $json | ConvertFrom-Json
+        @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "recommendations"
+        @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "topLevelAuthor"
+        $parsed[0].comments[0].suggestion | Should -Be $body
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 0
+
+        $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+        $text | Should -Match "Suggestion:"
+        $text | Should -Match ([regex]::Escape($body))
+    }
+
+    It "annotates fenced suggestions with their source comment author" {
+        $body = @'
+Please use the helper here.
+
+```suggestion
+return value ?? fallback
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_AUTHOR_SUGGESTION"
+            isResolved = $false
+            path       = "src/value.ts"
+            startLine  = 8
+            line       = 8
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body   = $body
+                        url    = "https://github.example.test/org/repo/pull/9#discussion_r2"
+                        author = [pscustomobject]@{
+                            login = "cursor[bot]"
+                        }
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+
+        @($record.suggestions).Count | Should -Be 1
+        $record.suggestions[0].kind | Should -Be "suggestion"
+        $record.suggestions[0].code | Should -BeExactly "return value ?? fallback"
+        $record.suggestions[0].authorLogin | Should -Be "cursor[bot]"
+        $record.suggestions[0].commentIndex | Should -Be 0
+        $record.suggestions[0].url | Should -Be "https://github.example.test/org/repo/pull/9#discussion_r2"
+        @($record.comments).Count | Should -Be 1
+        @($record.comments[0].suggestedChanges).Count | Should -Be 1
+        $record.comments[0].suggestedChanges[0].code | Should -BeExactly "return value ?? fallback"
+        @($record.recommendations).Count | Should -Be 2
+        $record.recommendations[0].kind | Should -Be "comment"
+        $record.recommendations[0].authorLogin | Should -Be "cursor[bot]"
+        $record.recommendations[1].kind | Should -Be "suggestion"
+        $record.recommendations[1].authorLogin | Should -Be "cursor[bot]"
+        ($null -eq $record.recommendations[1].text) | Should -BeTrue
+        $record.recommendations[1].code | Should -BeExactly "return value ?? fallback"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = $json | ConvertFrom-Json
+        @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "recommendations"
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 1
+        $parsed[0].comments[0].suggestedChanges[0].kind | Should -Be "suggestion"
+        $parsed[0].comments[0].suggestedChanges[0].value | Should -BeExactly "return value ?? fallback"
+    }
+
+    It "renders captured suggestions verbatim without latest-reply chrome" {
         $body = @'
 Use a guard clause.
 
@@ -1548,9 +1930,39 @@ if ($null -eq $value) {
         $normalized | Should -Match ([regex]::Escape('    return'))
 
         $suggestionIndex = $normalized.IndexOf("Suggested change:")
-        $replyIndex = $normalized.IndexOf("Latest reply summary:")
         $suggestionIndex | Should -BeGreaterThan -1
-        $suggestionIndex | Should -BeLessThan $replyIndex
+        $normalized | Should -Not -Match "Latest reply summary:"
+    }
+
+    It "does not render placeholder prose for suggestion-only comments" {
+        $body = @'
+```suggestion
+return 1
+```
+'@
+        $thread = [pscustomobject]@{
+            id         = "THREAD_SUGGESTION_ONLY"
+            isResolved = $false
+            path       = "src/value.ts"
+            startLine  = 3
+            line       = 3
+            comments   = [pscustomobject]@{
+                nodes = @([pscustomobject]@{ body = $body })
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+        $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+        $text | Should -Match "Suggested change:"
+        $text | Should -Match "return 1"
+        $text | Should -Not -Match "Suggestion:\n\\(none\\)"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
+        $parsed[0].comments[0].suggestion | Should -BeNullOrEmpty
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 1
+        $parsed[0].comments[0].suggestedChanges[0].value | Should -BeExactly "return 1"
     }
 
     It "captures a suggestion that appears in a reply, not only the top comment" {
@@ -1650,6 +2062,178 @@ raw code
     }
 }
 
+Describe "Test-ThreadCommentHasRenderableContent" {
+    It "is true for non-empty prose" {
+        Test-ThreadCommentHasRenderableContent -Body "Consider trimming the value." | Should -BeTrue
+    }
+
+    It "is false for empty, whitespace, null, or the (none) sentinel" {
+        Test-ThreadCommentHasRenderableContent -Body $null | Should -BeFalse
+        Test-ThreadCommentHasRenderableContent -Body "" | Should -BeFalse
+        Test-ThreadCommentHasRenderableContent -Body "   " | Should -BeFalse
+        Test-ThreadCommentHasRenderableContent -Body "(none)" | Should -BeFalse
+    }
+
+    It "is true when there are extracted suggested changes or attached suggested diffs" {
+        Test-ThreadCommentHasRenderableContent -Body $null -SuggestedChangeCount 1 | Should -BeTrue
+        Test-ThreadCommentHasRenderableContent -Body "(none)" -SuggestedDiffCount 2 | Should -BeTrue
+    }
+
+    It "is false when the only signal is a diffHunk or an unavailable-reason (neither renders publicly)" {
+        # diffHunk is review context (internal only) and suggestedDiffsUnavailableReason is an internal
+        # web-enrichment routing note; neither is ever rendered, so neither makes a comment renderable.
+        Test-ThreadCommentHasRenderableContent -Body "(none)" -SuggestedChangeCount 0 -SuggestedDiffCount 0 | Should -BeFalse
+    }
+}
+
+Describe "Convert-ReviewThreadToOutputRecord diffHunk-only inclusion" {
+    It "does not create a comments[] record for a comment whose only content is a diffHunk" {
+        # A review comment with empty prose, no extracted suggestion, and no web-enrichment candidacy,
+        # carrying only an internal diffHunk, must NOT become a comments[] entry: diffHunk is never
+        # rendered publicly, so the record would be an empty block that also suppresses the
+        # topLevelComment/suggestions fallback. (Copilot review feedback, 2026-06.)
+        $thread = [pscustomobject]@{
+            id         = "THREAD_DIFFHUNK_ONLY"
+            isResolved = $false
+            path       = "src/main.ts"
+            startLine  = 10
+            line       = 12
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body     = "   "
+                        diffHunk = "@@ -1,2 +1,3 @@`n old`n+new"
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+        @($record.comments).Count | Should -Be 0 -Because "a diffHunk-only comment carries no publicly renderable content"
+    }
+
+    It "does not emit an empty thread block in text output for a diffHunk-only comment" {
+        $thread = [pscustomobject]@{
+            id         = "THREAD_DIFFHUNK_ONLY_TEXT"
+            isResolved = $false
+            path       = "src/main.ts"
+            startLine  = 10
+            line       = 12
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body     = "   "
+                        diffHunk = "@@ -1,2 +1,3 @@`n old`n+new"
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+        $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+        $text | Should -Not -Match "(?m)^Suggestion:\s*$" -Because "a skipped diffHunk-only comment must not leave a dangling empty Suggestion header"
+        $text | Should -Not -Match "old" -Because "the internal diffHunk must never appear in public text output"
+        $text | Should -Not -Match "\+new"
+    }
+
+    It "keeps a web-enrichment placeholder record but renders the fallback, never an empty block" {
+        # A Copilot comment with empty prose and no inline suggestion still gets a suggestedDiffsUnavailableReason
+        # so the record survives for best-effort web suggested-diff enrichment (attached later by id).
+        # Until/unless diffs attach, the record is non-renderable: it must NOT emit an empty thread block
+        # and must NOT suppress the topLevelComment/suggestions fallback.
+        $thread = [pscustomobject]@{
+            id         = "THREAD_ENRICH_PLACEHOLDER"
+            isResolved = $false
+            path       = "src/main.ts"
+            startLine  = 10
+            line       = 12
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body       = "   "
+                        databaseId = "2468"
+                        author     = [pscustomobject]@{ login = "copilot-pull-request-reviewer" }
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+        @($record.comments).Count | Should -Be 1 -Because "the placeholder must survive for web suggested-diff enrichment by databaseId"
+        $record.comments[0].suggestedDiffsUnavailableReason | Should -Be "copilot_suggested_diff_may_be_web_only_or_unavailable"
+
+        $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+        $text | Should -Not -Match "(?m)^Suggestion:\s*$" -Because "a non-renderable placeholder must not leave a dangling empty Suggestion header"
+
+        # POSITIVE assertion that the fallback path actually runs: because the only comment is
+        # non-renderable, Format-UnresolvedThreadsAsText must branch on the RENDERABLE count (0) and
+        # render the topLevelComment fallback. This line is absent if the branch regresses to the raw
+        # comments[] count (which would render nothing and suppress the fallback) -- it is the test that
+        # makes the renderableCommentCount change red-green protected.
+        $text | Should -Match "(?m)^\(none\)$" -Because "the topLevelComment fallback must render when no comment is renderable"
+        @($text -split "`n" | Where-Object { -not [string]::IsNullOrEmpty($_) }).Count | Should -BeGreaterThan 2 -Because "the block must carry fallback content, not just the header and trailer delimiters"
+
+        # Text and JSON must agree: the non-renderable placeholder is omitted from the public JSON comments[].
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = $json | ConvertFrom-Json
+        @($parsed[0].comments).Count | Should -Be 0 -Because "JSON must omit the non-renderable placeholder, matching the text fallback"
+    }
+
+    It "treats a suggestedDiff with no actual change lines as non-renderable (text and JSON agree)" {
+        # Defense in depth: if a change-less diff ever reaches a record, it renders nothing in text, so it
+        # must NOT count as renderable (which would emit an empty block) and must be omitted from JSON.
+        $record = [pscustomobject]@{
+            path            = "src/main.ts"
+            lineStart       = 10
+            lineEnd         = 12
+            comments        = @(
+                [pscustomobject]@{
+                    commentIndex     = 0
+                    body             = $null
+                    suggestedChanges = @()
+                    suggestedDiffs   = @([pscustomobject]@{ path = "src/main.ts"; diff = "@@ -1,1 +1,1 @@`n unchanged context only" })
+                }
+            )
+            suggestions     = @()
+            recommendations = @()
+            topLevelComment = "(none)"
+        }
+
+        Test-ThreadCommentRecordIsRenderable -Comment $record.comments[0] | Should -BeFalse -Because "a diff with no +/- change lines renders nothing"
+
+        $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+        $text | Should -Not -Match "(?m)^Suggested change:\s*$"
+        $text | Should -Not -Match "unchanged context only" -Because "context-only diff lines are never public output"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = $json | ConvertFrom-Json
+        @($parsed[0].comments).Count | Should -Be 0 -Because "JSON omits a comment whose only diff has no change lines"
+    }
+
+    It "still creates a record (and keeps the internal diffHunk) when the comment has prose" {
+        $thread = [pscustomobject]@{
+            id         = "THREAD_PROSE_PLUS_DIFFHUNK"
+            isResolved = $false
+            path       = "src/main.ts"
+            startLine  = 10
+            line       = 12
+            comments   = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body     = "Consider trimming the value."
+                        diffHunk = "@@ -1,2 +1,3 @@`n old`n+new"
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
+        @($record.comments).Count | Should -Be 1
+        $record.comments[0].body | Should -Be "Consider trimming the value."
+        $record.comments[0].diffHunk | Should -BeExactly "@@ -1,2 +1,3 @@`n old`n+new"
+    }
+}
+
 Describe "Convert-ReviewThreadToOutputRecord" {
     It "returns null for resolved threads" {
         $thread = [pscustomobject]@{
@@ -1676,8 +2260,16 @@ Describe "Convert-ReviewThreadToOutputRecord" {
             line       = 12
             comments   = [pscustomobject]@{
                 nodes = @(
-                    [pscustomobject]@{ body = "Top level comment" },
-                    [pscustomobject]@{ body = "Reply summary" }
+                    [pscustomobject]@{
+                        body     = "Top level comment"
+                        url      = "https://github.example.test/org/repo/pull/77#discussion_r1"
+                        diffHunk = "@@ -1,2 +1,3 @@`n old`n+new"
+                    },
+                    [pscustomobject]@{
+                        body     = "Reply summary"
+                        url      = "https://github.example.test/org/repo/pull/77#discussion_r2"
+                        diffHunk = "@@ -8,2 +8,3 @@`n context`n+reply"
+                    }
                 )
             }
         }
@@ -1691,7 +2283,11 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         ($propertyNames -ccontains "githubLineStart") | Should -BeTrue
         ($propertyNames -ccontains "githubLineEnd") | Should -BeTrue
         ($propertyNames -ccontains "embeddedLocations") | Should -BeTrue
+        ($propertyNames -ccontains "comments") | Should -BeTrue
         ($propertyNames -ccontains "suggestions") | Should -BeTrue
+        ($propertyNames -ccontains "recommendations") | Should -BeTrue
+        ($propertyNames -ccontains "topLevelAuthor") | Should -BeTrue
+        ($propertyNames -ccontains "latestReplyAuthor") | Should -BeTrue
         ($propertyNames -ccontains "resolutionState") | Should -BeTrue
         ($propertyNames -ccontains "authSource") | Should -BeFalse
         ($propertyNames -ccontains "owner") | Should -BeTrue
@@ -1708,6 +2304,21 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record.githubLineStart | Should -Be 10
         $record.githubLineEnd | Should -Be 12
         @($record.embeddedLocations).Count | Should -Be 0
+        @($record.comments).Count | Should -Be 2
+        $record.comments[0].commentIndex | Should -Be 0
+        $record.comments[0].body | Should -Be "Top level comment"
+        $record.comments[0].diffHunk | Should -BeExactly "@@ -1,2 +1,3 @@`n old`n+new"
+        @($record.comments[0].suggestedChanges).Count | Should -Be 0
+        $record.comments[0].url | Should -Be "https://github.example.test/org/repo/pull/77#discussion_r1"
+        $record.comments[1].commentIndex | Should -Be 1
+        $record.comments[1].body | Should -Be "Reply summary"
+        $record.comments[1].diffHunk | Should -BeExactly "@@ -8,2 +8,3 @@`n context`n+reply"
+        @($record.comments[1].suggestedChanges).Count | Should -Be 0
+        @($record.recommendations).Count | Should -Be 2
+        $record.recommendations[0].kind | Should -Be "comment"
+        $record.recommendations[1].text | Should -Be "Reply summary"
+        $record.topLevelAuthor | Should -BeNullOrEmpty
+        $record.latestReplyAuthor | Should -BeNullOrEmpty
         $record.topLevelComment | Should -Be "Top level comment"
         $record.latestReplySummary | Should -Be "Reply summary"
         $record.resolutionState | Should -Be "unresolved"
@@ -1717,7 +2328,199 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record.url | Should -Be "https://github.com/org/repo/pull/77"
     }
 
-    It "preserves current GitHub anchor fields separately from merged display ranges" {
+    It "uses original lines for outdated Copilot suggested changeset threads" {
+        $thread = [pscustomobject]@{
+            id                = "THREAD_OUTDATED_COPILOT_CHANGESET"
+            isResolved        = $false
+            isOutdated        = $true
+            path              = "web/src/test/dom-assertions.ts"
+            startLine         = 34
+            line              = 45
+            originalStartLine = 34
+            originalLine      = 37
+            comments          = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        body     = "`expectAriaReferencesToExist` accepts a `root` parameter but resolves referenced ids via the global `document`. Use the element's `ownerDocument` for the lookup."
+                        diffHunk = "@@ -10,3 +10,38 @@ export function requireElement<T extends Element>(`n+        expect(`n+          document.getElementById(id),`n+        ).not.toBeNull();"
+                        author   = [pscustomobject]@{ login = "copilot-pull-request-reviewer" }
+                    }
+                )
+            }
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com"
+
+        $record.lineStart | Should -Be 34
+        $record.lineEnd | Should -Be 37
+        $record.githubLineStart | Should -Be 34
+        $record.githubLineEnd | Should -Be 45
+        $record.comments[0].suggestedDiffsUnavailable | Should -BeTrue
+        $record.comments[0].suggestedDiffsUnavailableReason | Should -Be "copilot_suggested_diff_may_be_web_only_or_unavailable"
+
+        $text = Format-UnresolvedThreadsAsText -Records @($record)
+        $text | Should -Match "\(web/src/test/dom-assertions\.ts\) 34-37"
+        $text | Should -Not -Match "Suggested change:"
+        $text | Should -Not -Match "copilot_suggested_diff_may_be_web_only_or_unavailable"
+        $text | Should -Not -Match "ownerDocument\.getElementById"
+        $text | Should -Not -Match "Review context diff hunk:"
+        $text | Should -Not -Match "document\.getElementById\(id\),"
+    }
+
+    It "extracts GitHub web automated suggestions without review context lines" {
+        $html = @'
+<script type="application/json" data-target="react-partial.embeddedData">{"props":{"comment":{"databaseId":3424230049,"automatedComment":{"suggestion":{"diffEntries":[{"path":"web/src/test/dom-assertions.ts","diffLines":[{"type":"HUNK","text":"@@ -34,7 +34,7 @@"},{"type":"CONTEXT","text":"        expect("},{"type":"DELETION","text":"          document.getElementById(id),"},{"type":"ADDITION","text":"          element.ownerDocument.getElementById(id),"},{"type":"CONTEXT","text":"        ).not.toBeNull();"}]}]}}}}}</script>
+'@
+
+        $suggestionsByCommentId = Get-GitHubWebAutomatedSuggestedDiffsByCommentIdFromHtml -Html $html
+
+        $suggestionsByCommentId.ContainsKey("3424230049") | Should -BeTrue
+        @($suggestionsByCommentId["3424230049"]).Count | Should -Be 1
+        $suggestionsByCommentId["3424230049"][0].kind | Should -Be "changedLines"
+        $suggestionsByCommentId["3424230049"][0].path | Should -Be "web/src/test/dom-assertions.ts"
+        $suggestionsByCommentId["3424230049"][0].diff | Should -BeExactly "-          document.getElementById(id),`n+          element.ownerDocument.getElementById(id),"
+        $suggestionsByCommentId["3424230049"][0].diff | Should -Not -Match "@@|expect\(|not\.toBeNull"
+    }
+
+    It "prefers explicit GitHub web cookie over environment fallback" {
+        $previousWallstopCookie = $env:WALLSTOP_GITHUB_WEB_COOKIE
+        $previousGitHubCookie = $env:GITHUB_WEB_COOKIE
+        try {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = "wallstop-cookie"
+            $env:GITHUB_WEB_COOKIE = "github-cookie"
+
+            Get-GitHubWebCookie -ExplicitCookie "explicit-cookie" | Should -Be "explicit-cookie"
+            Get-GitHubWebCookie | Should -Be "wallstop-cookie"
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = $null
+            Get-GitHubWebCookie | Should -Be "github-cookie"
+        }
+        finally {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = $previousWallstopCookie
+            $env:GITHUB_WEB_COOKIE = $previousGitHubCookie
+        }
+    }
+
+    It "sanitizes GitHub web cookies before they are used as header values" {
+        $previousWallstopCookie = $env:WALLSTOP_GITHUB_WEB_COOKIE
+        $previousGitHubCookie = $env:GITHUB_WEB_COOKIE
+        try {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = "  wallstop`r`n-cookie  "
+            $env:GITHUB_WEB_COOKIE = "github-cookie"
+
+            Get-GitHubWebCookie -ExplicitCookie "  explicit`r`n-cookie  " | Should -Be "explicit-cookie"
+            Get-GitHubWebCookie | Should -Be "wallstop-cookie"
+
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = " `r`n "
+            $env:GITHUB_WEB_COOKIE = "  github`n-cookie  "
+            Get-GitHubWebCookie | Should -Be "github-cookie"
+        }
+        finally {
+            $env:WALLSTOP_GITHUB_WEB_COOKIE = $previousWallstopCookie
+            $env:GITHUB_WEB_COOKIE = $previousGitHubCookie
+        }
+    }
+
+    It "sends optional GitHub web cookie only to the web changeset request" {
+        $script:capturedWebHeaders = $null
+        $script:webSessionParameterWasBound = $null
+        Mock Invoke-WebRequest {
+            param(
+                [string]$Method,
+                [string]$Uri,
+                [hashtable]$Headers,
+                [int]$TimeoutSec,
+                [switch]$UseBasicParsing,
+                $WebSession
+            )
+
+            $script:capturedWebHeaders = $Headers
+            $script:webSessionParameterWasBound = $PSBoundParameters.ContainsKey("WebSession")
+            return [pscustomobject]@{
+                Content = '<script type="application/json" data-target="react-partial.embeddedData">{"props":{}}</script>'
+            }
+        }
+
+        $result = Get-GitHubWebAutomatedSuggestedDiffsByCommentId -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com" -RequestTimeoutSeconds 5 -GitHubWebCookie "  logged-in`r`n-cookie  " -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("github.com") -SensitiveTokens @("logged-in-cookie")
+
+        $result.Count | Should -Be 0
+        $script:capturedWebHeaders["Cookie"] | Should -Be "logged-in-cookie"
+        $script:webSessionParameterWasBound | Should -BeFalse
+        Assert-MockCalled Invoke-WebRequest -Times 1 -Scope It
+    }
+
+    It "throws a redacted error when provided GitHub web cookie cannot fetch changesets" {
+        Mock Invoke-WebRequest {
+            throw "web auth failed for logged-in-cookie"
+        }
+
+        {
+            Get-GitHubWebAutomatedSuggestedDiffsByCommentId -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com" -RequestTimeoutSeconds 5 -GitHubWebCookie "logged-in-cookie" -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("github.com") -SensitiveTokens @("logged-in-cookie")
+        } | Should -Throw "*E_GITHUB_WEB_SUGGESTIONS_UNAVAILABLE*"
+
+        try {
+            Get-GitHubWebAutomatedSuggestedDiffsByCommentId -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com" -RequestTimeoutSeconds 5 -GitHubWebCookie "logged-in-cookie" -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("github.com") -SensitiveTokens @("logged-in-cookie")
+        }
+        catch {
+            $_.Exception.Message | Should -Not -Match "logged-in-cookie"
+            $_.Exception.Message | Should -Match "\*\*\*REDACTED\*\*\*"
+        }
+    }
+
+    It "merges GitHub web automated suggestions into matching comment records" {
+        $thread = [pscustomobject]@{
+            id                = "THREAD_WEB_AUTOMATED_CHANGESET"
+            isResolved        = $false
+            isOutdated        = $true
+            path              = "web/src/test/dom-assertions.ts"
+            startLine         = 34
+            line              = 45
+            originalStartLine = 34
+            originalLine      = 37
+            comments          = [pscustomobject]@{
+                nodes = @(
+                    [pscustomobject]@{
+                        databaseId = 3424230049
+                        body       = "`expectAriaReferencesToExist` accepts a `root` parameter but resolves referenced ids via the global `document`."
+                        diffHunk   = "@@ -10,3 +10,38 @@ export function requireElement<T extends Element>(`n+        expect(`n+          document.getElementById(id),`n+        ).not.toBeNull();"
+                        author     = [pscustomobject]@{ login = "copilot-pull-request-reviewer" }
+                    }
+                )
+            }
+        }
+        $suggestionsByCommentId = @{
+            "3424230049" = @(
+                [pscustomobject]@{
+                    kind = "changedLines"
+                    path = "web/src/test/dom-assertions.ts"
+                    diff = "-          document.getElementById(id),`n+          element.ownerDocument.getElementById(id),"
+                }
+            )
+        }
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 86 -GitHubHost "github.com"
+        $record.comments[0].databaseId | Should -Be "3424230049"
+
+        Add-GitHubWebAutomatedSuggestedDiffsToRecords -Records @($record) -SuggestedDiffsByCommentId $suggestionsByCommentId
+
+        @($record.comments[0].suggestedDiffs).Count | Should -Be 1
+        $record.comments[0].suggestedDiffsUnavailable | Should -BeFalse
+        $record.comments[0].suggestedDiffsUnavailableReason | Should -BeNullOrEmpty
+
+        $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+        $text | Should -Match "Suggested change:"
+        $text | Should -Match "\+          element\.ownerDocument\.getElementById\(id\),"
+        $text | Should -Match "-          document\.getElementById\(id\),"
+        $text | Should -Not -Match "\+        expect\("
+        $text | Should -Not -Match "\+        \)\.not\.toBeNull"
+
+        $json = Format-UnresolvedThreadsAsJson -Records @($record)
+        $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 1
+        $parsed[0].comments[0].suggestedChanges[0].kind | Should -Be "changedLines"
+        $parsed[0].comments[0].suggestedChanges[0].value | Should -BeExactly "-          document.getElementById(id),`n+          element.ownerDocument.getElementById(id),"
+    }
+
+    It "uses current GitHub anchors for non-outdated display ranges" {
         $thread = [pscustomobject]@{
             id                = "THREAD_DIVERGED_ANCHOR"
             isResolved        = $false
@@ -1734,7 +2537,7 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
 
         $record.locationSource | Should -Be "github"
-        $record.lineStart | Should -Be 10
+        $record.lineStart | Should -Be 20
         $record.lineEnd | Should -Be 25
         $record.githubLineStart | Should -Be 20
         $record.githubLineEnd | Should -Be 25
@@ -1757,15 +2560,15 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
 
         $record.lineStart | Should -Be 37
-        $record.lineEnd | Should -Be 52
+        $record.lineEnd | Should -Be 47
 
         $text = Format-UnresolvedThreadsAsText -Records @($record)
-        $text | Should -Match "\(src/range\.ts\) 37-52"
+        $text | Should -Match "\(src/range\.ts\) 37-47"
 
         $json = Format-UnresolvedThreadsAsJson -Records @($record)
         $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
         $parsed[0].lineStart | Should -Be 37
-        $parsed[0].lineEnd | Should -Be 52
+        $parsed[0].lineEnd | Should -Be 47
     }
 
     It "uses original start and current line from generic dictionary threads" {
@@ -1844,11 +2647,11 @@ Describe "Convert-ReviewThreadToOutputRecord" {
 
         $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "org" -Repo "repo" -PrNumber 77 -GitHubHost "github.com"
 
-        $record.lineStart | Should -Be 12
+        $record.lineStart | Should -Be 15
         $record.lineEnd | Should -BeNullOrEmpty
 
         $text = Format-UnresolvedThreadsAsText -Records @($record)
-        $text | Should -Match "\(src/start-only\.ts\) 12-\?"
+        $text | Should -Match "\(src/start-only\.ts\) 15-\?"
     }
 
     It "throws when comments nodes is not array-wrapped" {
@@ -2020,11 +2823,9 @@ Describe "Format-UnresolvedThreadsAsText" {
 ---
 (src/a.ts) 8-8
 Comment A
-Latest reply summary: (none)
 ---
 (src/b.ts) 12-20
 Comment B
-Latest reply summary: Reply B
 ---
 "@
 
@@ -2089,22 +2890,178 @@ Latest reply summary: Reply B
 ---
 (src/only.ts) 5-7
 Solo comment
-Latest reply summary: (none)
 ---
 "@
 
         ($text -replace "`r`n", "`n") | Should -BeExactly (($expected.TrimEnd("`r", "`n")) -replace "`r`n", "`n")
     }
+
+    It "renders per-comment suggestion without the referenced diff hunk" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/diff.ts"
+                lineStart          = 2
+                lineEnd            = 4
+                topLevelComment    = "Fallback comment"
+                comments           = @(
+                    [pscustomobject]@{
+                        commentIndex = 0
+                        body         = "Please fix the branch."
+                        diffHunk     = "@@ -1,2 +1,4 @@`n context`n-old`n+new"
+                        url          = "https://github.example.test/org/repo/pull/1#discussion_r1"
+                    }
+                )
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $expected = @'
+---
+(src/diff.ts) 2-4
+Suggestion:
+Please fix the branch.
+---
+'@
+
+        ($text -replace "`r`n", "`n") | Should -BeExactly (($expected.TrimEnd("`r", "`n")) -replace "`r`n", "`n")
+        $text | Should -Not -Match "Review context diff hunk:"
+        $text | Should -Not -Match "@@ -1,2 \+1,4 @@"
+        $text | Should -Not -Match "\+new"
+    }
+
+    It "renders per-comment suggested changes even when body and diff hunk are empty" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/suggestion-only.ts"
+                lineStart          = 9
+                lineEnd            = 9
+                topLevelComment    = ""
+                comments           = @(
+                    [pscustomobject]@{
+                        commentIndex     = 0
+                        body             = $null
+                        diffHunk         = $null
+                        suggestedChanges = @(
+                            [pscustomobject]@{
+                                kind = "suggestion"
+                                code = "return value"
+                            }
+                        )
+                    }
+                )
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+
+        $text | Should -Match "Suggested change:"
+        $text | Should -Match "return value"
+        $text | Should -Not -Match "Suggestion:\s*\(none\)"
+    }
+
+    It "numbers only visible per-comment suggestions when empty entries are skipped" {
+        $records = @(
+            [pscustomobject]@{
+                path               = "src/numbered.ts"
+                lineStart          = 4
+                lineEnd            = 4
+                topLevelComment    = ""
+                comments           = @(
+                    [pscustomobject]@{
+                        commentIndex     = 0
+                        body             = $null
+                        diffHunk         = $null
+                        suggestedChanges = @()
+                    },
+                    [pscustomobject]@{
+                        commentIndex     = 1
+                        body             = "First visible"
+                        diffHunk         = $null
+                        suggestedChanges = @()
+                    },
+                    [pscustomobject]@{
+                        commentIndex     = 2
+                        body             = "Second visible"
+                        diffHunk         = $null
+                        suggestedChanges = @()
+                    }
+                )
+                latestReplySummary = $null
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $normalized = $text -replace "`r`n", "`n"
+
+        $normalized | Should -Match "Suggestion 1:`nFirst visible"
+        $normalized | Should -Match "Suggestion 2:`nSecond visible"
+        $normalized | Should -Not -Match "Suggestion 3:"
+    }
 }
 
 Describe "Format-UnresolvedThreadsAsJson" {
-    It "always emits an array and preserves lower-camel schema keys" {
+    It "always emits an array with only file, range, suggestions, and suggested changes" {
         $records = @(
             [pscustomobject]@{
                 path               = "src/main.ts"
                 lineStart          = 10
                 lineEnd            = 12
+                comments           = @(
+                    [pscustomobject]@{
+                        commentIndex = 0
+                        body         = "Top"
+                        diffHunk     = "@@ -1,2 +1,3 @@`n-old`n+new"
+                        suggestedChanges = @(
+                            [pscustomobject]@{
+                                kind        = "suggestion"
+                                code        = "return value"
+                                authorLogin = "cursor[bot]"
+                                url         = "https://github.com/org/repo/pull/77#discussion_r1"
+                            }
+                        )
+                        suggestedDiffs = @(
+                            [pscustomobject]@{
+                                kind = "changedLines"
+                                diff = "@@ -1 +1 @@`n-old`n+new"
+                            }
+                        )
+                        suggestedDiffsUnavailable = $true
+                        suggestedDiffsUnavailableReason = "copilot_suggested_diff_may_be_web_only_or_unavailable"
+                        url          = "https://github.com/org/repo/pull/77#discussion_r1"
+                    }
+                )
+                suggestions        = @(
+                    [pscustomobject]@{
+                        kind         = "suggestion"
+                        code         = "return value"
+                        authorLogin  = "cursor[bot]"
+                        commentIndex = 0
+                        url          = "https://github.com/org/repo/pull/77#discussion_r1"
+                    }
+                )
+                recommendations    = @(
+                    [pscustomobject]@{
+                        kind         = "comment"
+                        authorLogin  = "cursor[bot]"
+                        text         = "Top"
+                        code         = $null
+                        commentIndex = 0
+                        url          = "https://github.com/org/repo/pull/77#discussion_r1"
+                    },
+                    [pscustomobject]@{
+                        kind         = "suggestion"
+                        authorLogin  = "cursor[bot]"
+                        text         = $null
+                        code         = "return value"
+                        commentIndex = 0
+                        url          = "https://github.com/org/repo/pull/77#discussion_r1"
+                    }
+                )
+                topLevelAuthor     = "cursor[bot]"
                 topLevelComment    = "Top"
+                latestReplyAuthor  = "copilot-pull-request-reviewer"
                 latestReplySummary = "Reply"
                 resolutionState    = "unresolved"
                 threadId           = "THREAD_1"
@@ -2123,18 +3080,45 @@ Describe "Format-UnresolvedThreadsAsJson" {
         $propertyNames = @($parsed[0].PSObject.Properties.Name)
 
         ($propertyNames -ccontains "path") | Should -BeTrue
-        ($propertyNames -ccontains "resolutionState") | Should -BeTrue
+        ($propertyNames -ccontains "lineStart") | Should -BeTrue
+        ($propertyNames -ccontains "lineEnd") | Should -BeTrue
+        ($propertyNames -ccontains "comments") | Should -BeTrue
+        ($propertyNames -ccontains "suggestions") | Should -BeFalse
+        ($propertyNames -ccontains "recommendations") | Should -BeFalse
+        ($propertyNames -ccontains "topLevelAuthor") | Should -BeFalse
+        ($propertyNames -ccontains "latestReplyAuthor") | Should -BeFalse
+        ($propertyNames -ccontains "resolutionState") | Should -BeFalse
         ($propertyNames -ccontains "authSource") | Should -BeFalse
-        ($propertyNames -ccontains "owner") | Should -BeTrue
-        ($propertyNames -ccontains "repo") | Should -BeTrue
+        ($propertyNames -ccontains "owner") | Should -BeFalse
+        ($propertyNames -ccontains "repo") | Should -BeFalse
         ($propertyNames -ccontains "Path") | Should -BeFalse
+        ($propertyNames -ccontains "LineStart") | Should -BeFalse
+        ($propertyNames -ccontains "LineEnd") | Should -BeFalse
         ($propertyNames -ccontains "Owner") | Should -BeFalse
         ($propertyNames -ccontains "Repo") | Should -BeFalse
 
         $parsed[0].path | Should -Be "src/main.ts"
-        $parsed[0].resolutionState | Should -Be "unresolved"
-        $parsed[0].owner | Should -Be "org"
-        $parsed[0].repo | Should -Be "repo"
+        $parsed[0].lineStart | Should -Be 10
+        $parsed[0].lineEnd | Should -Be 12
+        @($parsed[0].comments).Count | Should -Be 1
+        $commentPropertyNames = @($parsed[0].comments[0].PSObject.Properties.Name)
+        ($commentPropertyNames -ccontains "suggestion") | Should -BeTrue
+        ($commentPropertyNames -ccontains "suggestedChanges") | Should -BeTrue
+        ($commentPropertyNames -ccontains "body") | Should -BeFalse
+        ($commentPropertyNames -ccontains "diffHunk") | Should -BeFalse
+        ($commentPropertyNames -ccontains "commentIndex") | Should -BeFalse
+        ($commentPropertyNames -ccontains "url") | Should -BeFalse
+        ($commentPropertyNames -ccontains "suggestedDiffs") | Should -BeFalse
+        ($commentPropertyNames -ccontains "suggestedDiffsUnavailable") | Should -BeFalse
+        ($commentPropertyNames -ccontains "suggestedDiffsUnavailableReason") | Should -BeFalse
+
+        $parsed[0].comments[0].suggestion | Should -Be "Top"
+        @($parsed[0].comments[0].suggestedChanges).Count | Should -Be 2
+        $parsed[0].comments[0].suggestedChanges[0].kind | Should -Be "suggestion"
+        $parsed[0].comments[0].suggestedChanges[0].value | Should -Be "return value"
+        $parsed[0].comments[0].suggestedChanges[1].kind | Should -Be "changedLines"
+        $parsed[0].comments[0].suggestedChanges[1].value | Should -BeExactly "-old`n+new"
+        $parsed[0].comments[0].suggestedChanges[1].value | Should -Not -Match "@@"
     }
 }
 
@@ -2504,6 +3488,12 @@ Describe "Invoke-GitHubRequestWithRetry" {
     }
 
     It "passes the shared web session to the transport when one is set" {
+        $sessionType = Resolve-WebRequestSessionType
+        if ($null -eq $sessionType) {
+            Set-ItResult -Skipped -Because "This PowerShell host does not expose Microsoft.PowerShell.Commands.WebRequestSession."
+            return
+        }
+
         $script:capturedSession = "<unset>"
         Mock Invoke-RestMethod {
             $script:capturedSession = $WebSession
@@ -2515,12 +3505,20 @@ Describe "Invoke-GitHubRequestWithRetry" {
             $script:GitHubWebSession = New-GitHubWebSession
             $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
             $result.ok | Should -BeTrue
-            $script:capturedSession | Should -BeOfType ([Microsoft.PowerShell.Commands.WebRequestSession])
+            $script:capturedSession.GetType().FullName | Should -Be $sessionType.FullName
             [object]::ReferenceEquals($script:capturedSession, $script:GitHubWebSession) | Should -BeTrue
         }
         finally {
             $script:GitHubWebSession = $previousSession
         }
+    }
+
+    It "returns null instead of throwing when the shared web session type is unavailable" {
+        Mock Resolve-WebRequestSessionType { $null }
+
+        $session = $null
+        { $session = New-GitHubWebSession } | Should -Not -Throw
+        $session | Should -BeNullOrEmpty
     }
 
     It "omits the web session when none is set (dot-sourced default)" {
@@ -2780,7 +3778,7 @@ Describe "Select-PullRequestInteractively" {
         $script:responses = @("my_org", "demo-repo", "1")
         $script:capturedInteractiveTimeout = $null
 
-        Mock Read-Host {
+        Mock Read-TerminalResponse {
             $value = $script:responses[$script:readIndex]
             $script:readIndex++
             return $value
@@ -2806,7 +3804,7 @@ Describe "Select-PullRequestInteractively" {
         $script:readIndex = 0
         $script:responses = @($owner39, "demo-repo", "1")
 
-        Mock Read-Host {
+        Mock Read-TerminalResponse {
             $value = $script:responses[$script:readIndex]
             $script:readIndex++
             return $value
@@ -2827,7 +3825,7 @@ Describe "Select-PullRequestInteractively" {
         $script:readIndex = 0
         $script:responses = @($owner40, "demo-repo")
 
-        Mock Read-Host {
+        Mock Read-TerminalResponse {
             $value = $script:responses[$script:readIndex]
             $script:readIndex++
             return $value
@@ -3169,7 +4167,9 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
                         line                = 6
                         original_start_line = 3
                         original_line       = 7
+                        outdated            = $true
                         body                = "Top A"
+                        diff_hunk           = "@@ -3,5 +4,5 @@`n context`n-old`n+new"
                         created_at          = "2026-01-01T00:00:00Z"
                         html_url            = "https://github.com/org/repo/pull/9#discussion_r101"
                         user                = [pscustomobject]@{ login = "reviewer-a" }
@@ -3178,6 +4178,7 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
                         id             = 102
                         in_reply_to_id = 101
                         body           = "Reply A"
+                        diff_hunk      = "@@ -6,2 +6,3 @@`n reply context`n+reply new"
                         created_at     = "2026-01-01T00:01:00Z"
                         html_url       = "https://github.com/org/repo/pull/9#discussion_r102"
                         user           = [pscustomobject]@{ login = "reviewer-b" }
@@ -3191,10 +4192,10 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
                     path       = "src/b.ts"
                     start_line = $null
                     line       = 12
-                    body       = "Top B"
+                    body       = "Top B from Copilot"
                     created_at = "2026-01-01T00:02:00Z"
                     html_url   = "https://github.com/org/repo/pull/9#discussion_r201"
-                    user       = [pscustomobject]@{ login = "reviewer-c" }
+                    user       = [pscustomobject]@{ login = "copilot-pull-request-reviewer[bot]" }
                 }
             )
         }
@@ -3215,10 +4216,14 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
         $records[0].githubLineEnd | Should -Be 6
         $records[0].topLevelComment | Should -Be "Top A"
         $records[0].latestReplySummary | Should -Be "Reply A"
+        $records[0].comments[0].diffHunk | Should -BeExactly "@@ -3,5 +4,5 @@`n context`n-old`n+new"
+        $records[0].comments[1].diffHunk | Should -BeExactly "@@ -6,2 +6,3 @@`n reply context`n+reply new"
         $records[0].resolutionState | Should -Be "unknown"
         $records[1].threadId | Should -Be "rest:201"
         $records[1].lineStart | Should -Be 12
         $records[1].lineEnd | Should -Be 12
+        $records[1].comments[0].suggestedDiffsUnavailable | Should -BeTrue
+        $records[1].comments[0].suggestedDiffsUnavailableReason | Should -Be "copilot_suggested_diff_may_be_web_only_or_unavailable"
         $records[1].resolutionState | Should -Be "unknown"
 
         $script:sawAuthorizationHeader | Should -BeFalse
@@ -3230,8 +4235,36 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
 
         $json = Format-UnresolvedThreadsAsJson -Records $records
         $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
-        $parsed[0].resolutionState | Should -Be "unknown"
+        @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "resolutionState"
         @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "authSource"
+    }
+
+    It "uses current anchors for REST comments without an outdated flag" {
+        $threads = @(Convert-RestReviewCommentsToThreadLikeObjects -Comments @(
+                [pscustomobject]@{
+                    id                  = 301
+                    path                = "src/current-rest.ts"
+                    start_line          = 40
+                    line                = 42
+                    original_start_line = 3
+                    original_line       = 7
+                    body                = "Current REST range"
+                    created_at          = "2026-01-01T00:03:00Z"
+                    html_url            = "https://github.com/org/repo/pull/9#discussion_r301"
+                    user                = [pscustomobject]@{ login = "reviewer-c" }
+                }
+            ))
+
+        $threads.Count | Should -Be 1
+        $threads[0].isOutdated | Should -BeFalse
+
+        $record = Convert-ReviewThreadToOutputRecord -Thread $threads[0] -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com"
+
+        $record.threadId | Should -Be "rest:301"
+        $record.lineStart | Should -Be 40
+        $record.lineEnd | Should -Be 42
+        $record.githubLineStart | Should -Be 40
+        $record.githubLineEnd | Should -Be 42
     }
 }
 
@@ -3272,7 +4305,7 @@ Describe "Resolve-PullRequestTarget" {
     }
 
     It "rejects disallowed interactive host values" {
-        Mock Read-Host {
+        Mock Read-TerminalResponse {
             return "localhost"
         }
 
@@ -3310,6 +4343,10 @@ Describe "Resolve-PullRequestTarget" {
 }
 
 Describe "Invoke-Main" {
+    BeforeEach {
+        Mock Get-GitHubWebAutomatedSuggestedDiffsByCommentId { @{} }
+    }
+
     It "runs the non-interactive happy path and writes json output" {
         $PullRequestUrl = "https://github.com/org/repo/pull/5"
         $Owner = $null
@@ -3402,7 +4439,7 @@ Describe "Invoke-Main" {
         Mock Assert-IsHashtableLike { }
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
         Mock Test-CanPromptForLogin { throw "Test-CanPromptForLogin should not be called when REST fallback succeeds." }
-        Mock Read-Host { throw "Read-Host should not be called when REST fallback succeeds." }
+        Mock Read-TerminalResponse { throw "Read-TerminalResponse should not be called when REST fallback succeeds." }
         Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called without an auth token." }
         Mock Get-PublicPullRequestReviewCommentsFallback {
             @(
@@ -3429,7 +4466,7 @@ Describe "Invoke-Main" {
         $script:lastOutput | Should -Be "public fallback"
         Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
         Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "retries after interactive login when unauthenticated request fails" {
@@ -3500,7 +4537,7 @@ Describe "Invoke-Main" {
             )
         }
 
-        Mock Read-Host { "y" }
+        Mock Read-TerminalResponse { "y" }
         Mock Format-UnresolvedThreadsAsText { "ok" }
         $script:lastOutput = $null
         Mock Write-Output {
@@ -3580,7 +4617,7 @@ Describe "Invoke-Main" {
             )
         }
 
-        Mock Read-Host { "y" }
+        Mock Read-TerminalResponse { "y" }
         Mock Format-UnresolvedThreadsAsText { "ok" }
         $script:lastOutput = $null
         Mock Write-Output {
@@ -3593,7 +4630,7 @@ Describe "Invoke-Main" {
         $script:authTokenCallCount | Should -Be 2
         $script:reviewCallCount | Should -Be 1
         $script:lastOutput | Should -Be "ok"
-        Assert-MockCalled Read-Host -Times 1 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 1 -Scope It
     }
 
     It "tries stored credentials before prompting when provided credentials are invalid" {
@@ -3671,7 +4708,7 @@ Describe "Invoke-Main" {
             )
         }
 
-        Mock Read-Host { "y" }
+        Mock Read-TerminalResponse { "y" }
         Mock Format-UnresolvedThreadsAsText { "ok" }
         $script:lastOutput = $null
         Mock Write-Output {
@@ -3684,7 +4721,7 @@ Describe "Invoke-Main" {
         $script:authTokenCallCount | Should -Be 2
         $script:validateCallCount | Should -Be 2
         $script:lastOutput | Should -Be "ok"
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "tries stored credentials before public REST fallback when token validation is rate-limited" {
@@ -3768,7 +4805,7 @@ Describe "Invoke-Main" {
         }
 
         Mock Get-PublicPullRequestReviewCommentsFallback { throw "REST fallback should not be called when stored credentials recover." }
-        Mock Read-Host { throw "Read-Host should not be called when stored credentials recover." }
+        Mock Read-TerminalResponse { throw "Read-TerminalResponse should not be called when stored credentials recover." }
         Mock Format-UnresolvedThreadsAsText { "rate-limit recovered" }
         $script:lastOutput = $null
         Mock Write-Output {
@@ -3783,7 +4820,7 @@ Describe "Invoke-Main" {
         $script:validateCallCount | Should -Be 2
         $script:secondCallRejectedTokens | Should -Contain "rate-limited-token"
         Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 0 -Scope It
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "passes rejected-token exclusions to stored credential retry" {
@@ -3890,7 +4927,7 @@ Describe "Invoke-Main" {
             )
         }
 
-        Mock Read-Host { "y" }
+        Mock Read-TerminalResponse { "y" }
         Mock Format-UnresolvedThreadsAsText { "recovered with fresh token" }
         $script:lastOutput = $null
         Mock Write-Output {
@@ -3986,7 +5023,7 @@ Describe "Invoke-Main" {
             )
         }
 
-        Mock Read-Host { "y" }
+        Mock Read-TerminalResponse { "y" }
         Mock Format-UnresolvedThreadsAsText { "interactive recovered" }
         $script:lastOutput = $null
         Mock Write-Output {
@@ -3999,7 +5036,7 @@ Describe "Invoke-Main" {
         $script:lastOutput | Should -Be "interactive recovered"
         $script:authTokenCallCount | Should -Be 2
         $script:validateCallCount | Should -Be 2
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "fails fast in direct owner/repo mode when an explicit token is invalid" {
@@ -4043,14 +5080,14 @@ Describe "Invoke-Main" {
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
         Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token authentication failed" }
         Mock Test-CanPromptForLogin { $true }
-        Mock Read-Host { throw "Read-Host should not be called in direct mode auth failure." }
+        Mock Read-TerminalResponse { throw "Read-TerminalResponse should not be called in direct mode auth failure." }
         Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called when token validation fails." }
         Mock Get-PublicPullRequestReviewCommentsFallback { throw "Public REST fallback should not be called when an explicit token fails in direct mode." }
 
         { Invoke-Main } | Should -Throw "*E_AUTH_INVALID*"
         Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "bad-token" }
         Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
         Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
         Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 0 -Scope It
     }
@@ -4128,7 +5165,7 @@ Describe "Invoke-Main" {
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
         Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token authentication failed" }
         Mock Test-CanPromptForLogin { $true }
-        Mock Read-Host { throw "Read-Host should not be called in direct mode auth failure." }
+        Mock Read-TerminalResponse { throw "Read-TerminalResponse should not be called in direct mode auth failure." }
         Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called when token validation fails." }
         Mock Get-PublicPullRequestReviewCommentsFallback {
             @(
@@ -4157,7 +5194,7 @@ Describe "Invoke-Main" {
         $script:storedRetryIgnoredEnvironmentTokens | Should -BeTrue
         $script:storedRetryRejectedTokens | Should -Contain "bad-env-token"
         Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
         Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
     }
 
@@ -4220,7 +5257,7 @@ Describe "Invoke-Main" {
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
         Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_RATE_LIMITED: Token temporarily rate limited" }
         Mock Test-CanPromptForLogin { $true }
-        Mock Read-Host { throw "Read-Host should not be called in direct mode auth failure." }
+        Mock Read-TerminalResponse { throw "Read-TerminalResponse should not be called in direct mode auth failure." }
         Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called when token validation fails." }
         Mock Get-PublicPullRequestReviewCommentsFallback {
             @(
@@ -4247,7 +5284,7 @@ Describe "Invoke-Main" {
         $script:lastOutput | Should -Be "direct rate-limit fallback"
         $script:authTokenCallCount | Should -Be 2
         Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
         Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
     }
 
@@ -4300,7 +5337,7 @@ Describe "Invoke-Main" {
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
         Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token authentication failed" }
         Mock Test-CanPromptForLogin { $false }
-        Mock Read-Host { throw "Read-Host should not be called when anonymous fallback succeeds." }
+        Mock Read-TerminalResponse { throw "Read-TerminalResponse should not be called when anonymous fallback succeeds." }
 
         Mock Get-PublicPullRequestReviewCommentsFallback {
             @(
@@ -4330,7 +5367,7 @@ Describe "Invoke-Main" {
         Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
         Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
         Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "surfaces non-auth public REST fallback errors even when prompt is available" {
@@ -4391,7 +5428,7 @@ Describe "Invoke-Main" {
         }
 
         Mock Test-CanPromptForLogin { $true }
-        Mock Read-Host { throw "Read-Host should not be called for non-auth REST fallback failures." }
+        Mock Read-TerminalResponse { throw "Read-TerminalResponse should not be called for non-auth REST fallback failures." }
 
         Mock Get-PublicPullRequestReviewCommentsFallback {
             throw "E_NETWORK_TIMEOUT: Public REST fallback timed out"
@@ -4401,7 +5438,7 @@ Describe "Invoke-Main" {
         { Invoke-Main } | Should -Throw "*E_NETWORK_TIMEOUT*Public REST fallback timed out*"
         $script:authTokenCallCount | Should -Be 2
         $script:validateCallCount | Should -Be 1
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
         Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
     }
 
@@ -4454,13 +5491,13 @@ Describe "Invoke-Main" {
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
         Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token authentication failed" }
         Mock Test-CanPromptForLogin { $false }
-        Mock Read-Host { throw "Read-Host should not be called when interactive prompt is unavailable." }
+        Mock Read-TerminalResponse { throw "Read-TerminalResponse should not be called when interactive prompt is unavailable." }
         Mock Get-PublicPullRequestReviewCommentsFallback { throw "E_NETWORK_TIMEOUT: Public REST fallback timed out" }
         Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called for non-auth REST fallback failures." }
 
         { Invoke-Main } | Should -Throw "*E_NETWORK_TIMEOUT*"
         $script:authTokenCallCount | Should -Be 2
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
         Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
     }
 
@@ -4513,7 +5550,7 @@ Describe "Invoke-Main" {
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
         Mock Validate-GitHubTokenForRepoAccess { throw "E_AUTH_INVALID: Token secret-token-12345 is invalid" }
         Mock Test-CanPromptForLogin { $false }
-        Mock Read-Host { throw "Read-Host should not be called when interactive prompt is unavailable." }
+        Mock Read-TerminalResponse { throw "Read-TerminalResponse should not be called when interactive prompt is unavailable." }
         Mock Get-PublicPullRequestReviewCommentsFallback { throw "E_NETWORK_TIMEOUT: leaked secret-token-12345" }
 
         $thrownMessage = $null
@@ -4559,10 +5596,10 @@ Describe "Invoke-Main" {
         Mock Resolve-GitHubGraphQLEndpoint { "https://api.github.com/graphql" }
         Mock Test-CanPromptForLogin { $false }
         Mock Get-PublicPullRequestReviewCommentsFallback { throw "E_NOT_FOUND: Public REST fallback could not read this PR" }
-        Mock Read-Host { "y" }
+        Mock Read-TerminalResponse { "y" }
 
         { Invoke-Main } | Should -Throw "*E_AUTH_REQUIRED*"
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "copies output when Copy is set and still writes to stdout" {

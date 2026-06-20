@@ -69,7 +69,20 @@ jobs:
           fi
 
           # Strip ANSI escape sequences so downstream parsing is deterministic.
-          sed -E 's/\033\[[0-9;]*[[:alpha:]]//g; s/\r$//' "$precommit_log" > "$clean_precommit_log"
+          # GNU/BSD sed do not portably treat \033 as ESC in ERE mode, so use the
+          # Python already provisioned for this job.
+          python - "$precommit_log" "$clean_precommit_log" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          source_path = pathlib.Path(sys.argv[1])
+          destination_path = pathlib.Path(sys.argv[2])
+          text = source_path.read_text(encoding="utf-8", errors="replace")
+          text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+          text = text.replace("\r\n", "\n").replace("\r", "")
+          destination_path.write_text(text, encoding="utf-8")
+          PY
 
           autofix_hook_ids="$(
             awk '
@@ -111,7 +124,11 @@ jobs:
             echo "::error::E_CI_PRECOMMIT_AUTOFIX_REQUIRED: pre-commit hooks modified files. Run 'pre-commit run --all-files' locally and commit the resulting changes."
             echo "::notice::Auto-fix hook(s): $autofix_hook_ids"
 
-            mapfile -t formatted_files < <(sed -n 's/^[[:space:]]*Formatted[[:space:]][[:space:]]*//p' "$clean_precommit_log" | sed '/^[[:space:]]*$/d' | sort -u)
+            mapfile -t formatted_files < <(
+              sed -n -E 's/^[[:space:]]*(Formatted[[:space:]]+|Fixing( file)?[[:space:]]+)//p' "$clean_precommit_log" |
+                sed '/^[[:space:]]*$/d' |
+                sort -u
+            )
             if [[ ${#formatted_files[@]} -gt 0 ]]; then
               echo "::group::Auto-formatted files"
               printf '%s\n' "${formatted_files[@]}"

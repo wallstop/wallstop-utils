@@ -71,29 +71,48 @@ pwsh ./Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1 -PullRequestUrl "https:
 ## Output Contract (Text)
 
 Comment blocks are separated by a single `---` delimiter: one leading, one between each
-block, and one trailing (no doubled `---` between blocks). When a comment contains a
-suggested change, it is rendered verbatim under a `Suggested change:` label.
+block, and one trailing (no doubled `---` between blocks). The primary text output is
+content-first and excludes GitHub review context hunks: each GitHub review comment is
+rendered with only its normalized suggestion text plus real suggested changes from
+markdown `suggestion` fences or GitHub web-exposed automated changesets when present.
 
-```text
+````text
 ---
 (path/to/file.ext) lineStart-lineEnd
-Comment message
+Suggestion:
+<normalized comment body>
 Suggested change:
 <verbatim suggested code, when present>
-Latest reply summary: <text or (none)>
 ---
-```
+````
 
 ## Output Behavior
 
-- Default behavior is full (untruncated) comment and latest reply text.
-- JSON output includes `resolutionState`. Authenticated GraphQL records use `unresolved`;
-  anonymous REST fallback records use `unknown`.
+- Default behavior is full (untruncated) suggestion text for each unresolved review comment.
+- Internal records track `resolutionState` (`unresolved` for authenticated GraphQL records and
+  `unknown` for anonymous REST fallback records), but default JSON output is a compact public
+  projection with only `path`, `lineStart`, `lineEnd`, and `comments`.
+- JSON `comments[]` entries carry `suggestion` plus `suggestedChanges[]`. Suggested changes are
+  normalized as `{ "kind": "suggestion" | "changedLines", "value": "..." }`. `changedLines`
+  contains only `+`/`-` changed lines from a web-exposed automated changeset, not a full unified
+  diff. Author, URL, latest-reply, and review context hunk metadata are intentionally omitted from
+  public output.
 - Default rendering strips bot metadata and visual chrome from comment text, including HTML comments,
   image embeds, HTML tags, Cursor/Bugbot action buttons, Bugbot footers, and link URLs.
 - Suggested-change blocks (GitHub/Copilot/Cursor `suggestion` code fences) are preserved verbatim and
   rendered under a `Suggested change:` label with original indentation and line breaks intact. They
-  are extracted out of the single-line prose. `-KeepMarkup` keeps the raw block inline instead.
+  are extracted out of the single-line prose and attached to the owning public JSON `comments[]`
+  entry as `suggestedChanges`. `-KeepMarkup` keeps the raw block inline instead.
+- GitHub web-exposed automated changesets are parsed from the PR page when GitHub serves
+  `automatedComment.suggestion.diffEntries`; only `DELETION`/`ADDITION` lines are rendered as the
+  suggested change, never the surrounding review context. Private or otherwise inaccessible web
+  pages simply leave `suggestedChanges` empty unless `-GitHubWebCookie` (or
+  `WALLSTOP_GITHUB_WEB_COOKIE` / `GITHUB_WEB_COOKIE`) supplies a browser/session cookie for the
+  GitHub web UI request.
+- GitHub Copilot/Cursor web-only changesets that are not exposed as markdown `suggestion` fences or
+  web `automatedComment.suggestion.diffEntries` are not fabricated from `diffHunk`; the public
+  output preserves the prose suggestion and leaves `suggestedChanges` empty when GitHub does not
+  expose a real suggested patch.
 - Rendered output and clipboard copies are UTF-8 and byte-for-byte verbatim. `-Truncate` never splits
   a multi-byte character or a UTF-16 surrogate pair (for example an emoji) at the truncation boundary.
 - UTF-8 terminal rendering is enabled only when the console is not already UTF-8, so a normal run adds
@@ -174,6 +193,12 @@ For `github.com`, the script also validates `X-OAuth-Scopes` and expects:
 
 - private repositories: `repo`
 - public repositories: `repo` or `public_repo`
+
+GitHub API tokens do not authenticate `github.com` web UI HTML. For private PRs whose Copilot
+changesets exist only in the web page's `automatedComment.suggestion.diffEntries` payload, pass
+`-GitHubWebCookie` or set `WALLSTOP_GITHUB_WEB_COOKIE`/`GITHUB_WEB_COOKIE` if you intentionally want
+the best-effort web-page enrichment request to use a browser/session cookie. The cookie is redacted
+from diagnostics and is sent only to `github.com` PR-page HTML requests.
 
 ## Host Safety Rules
 

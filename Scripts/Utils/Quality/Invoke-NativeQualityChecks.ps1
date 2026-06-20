@@ -224,6 +224,10 @@ function Resolve-NativeEmbeddedShellCheckExecutable {
     return Resolve-QualityToolingToolExecutable -Context $script:NativeEmbeddedShellQualityContext -Manifest $manifest -ToolName "shellcheck" -RepositoryRoot $RepositoryRoot -LockTimeoutSeconds $script:NativeQualityLockTimeoutSeconds -LockRetryMilliseconds $script:NativeQualityLockRetryMilliseconds -InstallCommand { param($InstallRoot, $AssetSpec, $RepositoryRoot) Install-NativeEmbeddedShellQualityToolAsset -InstallRoot $InstallRoot -AssetSpec $AssetSpec -RepositoryRoot $RepositoryRoot }
 }
 
+function Test-UseActionlintEmbeddedAnalyzers {
+    return (-not (Test-IsWindowsPlatform))
+}
+
 function Resolve-NativeQualityTargetFiles {
     param(
         [Parameter(Mandatory = $true)]
@@ -340,8 +344,8 @@ function Invoke-ActionlintQualityCheck {
         [Parameter(Mandatory = $true)]
         [string]$ExecutablePath,
 
-        [Parameter(Mandatory = $true)]
-        [string]$ShellCheckExecutablePath,
+        [Parameter(Mandatory = $false)]
+        [string]$ShellCheckExecutablePath = "",
 
         [Parameter(Mandatory = $true)]
         [string]$RepositoryRoot,
@@ -350,7 +354,13 @@ function Invoke-ActionlintQualityCheck {
         [string[]]$Files
     )
 
-    $arguments = @("-shellcheck", $ShellCheckExecutablePath)
+    $arguments = if ([string]::IsNullOrEmpty($ShellCheckExecutablePath)) {
+        @("-shellcheck", "", "-pyflakes", "")
+    }
+    else {
+        @("-shellcheck", $ShellCheckExecutablePath)
+    }
+
     foreach ($file in @($Files)) {
         $arguments += (ConvertTo-NativeQualityRelativePath -RepositoryRoot $RepositoryRoot -Path $file)
     }
@@ -412,7 +422,12 @@ function Invoke-NativeQualityChecksMain {
 
     $embeddedShellCheckExecutable = ""
     if ($toolNames -contains "actionlint") {
-        $embeddedShellCheckExecutable = Resolve-NativeEmbeddedShellCheckExecutable -RepositoryRoot $repositoryRoot
+        if (Test-UseActionlintEmbeddedAnalyzers) {
+            $embeddedShellCheckExecutable = Resolve-NativeEmbeddedShellCheckExecutable -RepositoryRoot $repositoryRoot
+        }
+        else {
+            Write-Warning "W_NATIVE_QUALITY_ACTIONLINT_EMBEDDED_ANALYZERS_DISABLED_WINDOWS: actionlint shellcheck/pyflakes subprocess integration is disabled on Windows to avoid native subprocess hangs; Linux CI keeps blocking workflow embedded analyzer coverage."
+        }
     }
 
     if ($OnlyEnsureTools) {

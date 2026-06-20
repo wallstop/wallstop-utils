@@ -188,8 +188,9 @@ Describe "Invoke-NativeQualityChecks target scoping" {
         Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 0 -Exactly
     }
 
-    It "resolves only tools with matching targets in All mode" {
+    It "resolves only tools with matching targets and keeps embedded analyzers when supported in All mode" {
         $script:resolvedNativeTools = New-Object System.Collections.Generic.List[string]
+        $script:actionlintTargetPaths = @()
         $script:actionlintShellCheckPath = ""
         $workflowPath = ".github/workflows/script-quality.yml"
 
@@ -201,12 +202,12 @@ Describe "Invoke-NativeQualityChecks target scoping" {
             $script:resolvedNativeTools.Add($ToolName) | Out-Null
             return "/tmp/$ToolName"
         }
-        Mock Resolve-NativeEmbeddedShellCheckExecutable {
-            return "/tmp/shellcheck"
-        }
+        Mock Test-UseActionlintEmbeddedAnalyzers { return $true }
+        Mock Resolve-NativeEmbeddedShellCheckExecutable { return "/tmp/shellcheck" }
         Mock Invoke-ActionlintQualityCheck {
             param($ExecutablePath, $ShellCheckExecutablePath, $RepositoryRoot, $Files)
             $script:actionlintShellCheckPath = $ShellCheckExecutablePath
+            $script:actionlintTargetPaths = @($Files)
         }
         Mock Invoke-StyluaQualityCheck { throw "stylua should not run for workflow-only targets" }
 
@@ -214,9 +215,40 @@ Describe "Invoke-NativeQualityChecks target scoping" {
 
         @($script:resolvedNativeTools.ToArray()) | Should -Be @("actionlint")
         $script:actionlintShellCheckPath | Should -Be "/tmp/shellcheck"
+        $script:actionlintTargetPaths.Count | Should -Be 1
+        (ConvertTo-NativeQualityRelativePath -RepositoryRoot $script:repoRoot -Path $script:actionlintTargetPaths[0]) |
+            Should -Be ".github/workflows/script-quality.yml"
         Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 1 -Exactly
         Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 1 -Exactly
         Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 0 -Exactly
+    }
+
+    It "disables embedded analyzers with a diagnostic when the host cannot run them reliably" {
+        $script:actionlintShellCheckPath = "unset"
+        $script:nativeQualityWarnings = New-Object System.Collections.Generic.List[string]
+
+        Mock Read-NativeQualityToolManifest {
+            return [pscustomobject]@{ tools = [pscustomobject]@{} }
+        }
+        Mock Resolve-NativeQualityToolExecutable {
+            return "/tmp/$ToolName"
+        }
+        Mock Test-UseActionlintEmbeddedAnalyzers { return $false }
+        Mock Resolve-NativeEmbeddedShellCheckExecutable { throw "embedded shellcheck should be skipped on unsupported hosts" }
+        Mock Invoke-ActionlintQualityCheck {
+            param($ExecutablePath, $ShellCheckExecutablePath, $RepositoryRoot, $Files)
+            $script:actionlintShellCheckPath = $ShellCheckExecutablePath
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:nativeQualityWarnings.Add($Message) | Out-Null
+        }
+
+        Invoke-NativeQualityChecksMain -SelectedTool actionlint -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @(".github/workflows/script-quality.yml")
+
+        $script:actionlintShellCheckPath | Should -Be ""
+        @($script:nativeQualityWarnings.ToArray()) | Should -Contain "W_NATIVE_QUALITY_ACTIONLINT_EMBEDDED_ANALYZERS_DISABLED_WINDOWS: actionlint shellcheck/pyflakes subprocess integration is disabled on Windows to avoid native subprocess hangs; Linux CI keeps blocking workflow embedded analyzer coverage."
+        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
     }
 
     It "still resolves all requested tools in EnsureOnly mode" {
@@ -231,6 +263,7 @@ Describe "Invoke-NativeQualityChecks target scoping" {
             $script:resolvedNativeEnsureTools.Add($ToolName) | Out-Null
             return "/tmp/$ToolName"
         }
+        Mock Test-UseActionlintEmbeddedAnalyzers { return $true }
         Mock Resolve-NativeEmbeddedShellCheckExecutable {
             $script:resolvedNativeEnsureShellCheck = $true
             return "/tmp/shellcheck"
@@ -243,8 +276,8 @@ Describe "Invoke-NativeQualityChecks target scoping" {
     }
 }
 
-Describe "Invoke-NativeQualityChecks actionlint embedded shellcheck" {
-    It "passes repo-managed shellcheck explicitly to actionlint" {
+Describe "Invoke-NativeQualityChecks actionlint optional analyzers" {
+    It "passes repo-managed shellcheck explicitly to actionlint when embedded analyzers are enabled" {
         $script:capturedActionlintArguments = @()
 
         Mock Invoke-QualityToolingProcess {
@@ -255,8 +288,23 @@ Describe "Invoke-NativeQualityChecks actionlint embedded shellcheck" {
 
         Invoke-ActionlintQualityCheck -ExecutablePath "/tmp/actionlint" -ShellCheckExecutablePath "/tmp/shellcheck" -RepositoryRoot $script:repoRoot -Files @(".github/workflows/script-quality.yml")
 
-        $script:capturedActionlintArguments[0] | Should -Be "-shellcheck"
-        $script:capturedActionlintArguments[1] | Should -Be "/tmp/shellcheck"
+        $script:capturedActionlintArguments[0..1] | Should -Be @("-shellcheck", "/tmp/shellcheck")
+        $script:capturedActionlintArguments | Should -Not -Contain "-pyflakes"
+        $script:capturedActionlintArguments | Should -Contain ".github/workflows/script-quality.yml"
+    }
+
+    It "disables shellcheck and pyflakes subprocesses when embedded analyzers are unsupported" {
+        $script:capturedActionlintArguments = @()
+
+        Mock Invoke-QualityToolingProcess {
+            param($Context, $FilePath, $ArgumentList, $WorkingDirectory)
+            $script:capturedActionlintArguments = @($ArgumentList)
+            return 0
+        }
+
+        Invoke-ActionlintQualityCheck -ExecutablePath "/tmp/actionlint" -RepositoryRoot $script:repoRoot -Files @(".github/workflows/script-quality.yml")
+
+        $script:capturedActionlintArguments[0..3] | Should -Be @("-shellcheck", "", "-pyflakes", "")
         $script:capturedActionlintArguments | Should -Contain ".github/workflows/script-quality.yml"
     }
 }

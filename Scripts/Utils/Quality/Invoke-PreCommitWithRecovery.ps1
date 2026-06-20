@@ -445,6 +445,8 @@ function Test-PreCommitEnvironmentFailure {
         'failed to install',
         'healthy\(\)',
         'environment.*(invalid|corrupt|failed)',
+        'InvalidManifestError',
+        '\.pre-commit-hooks\.ya?ml is not a file',
         'nodeenv|npm ERR!|node_modules',
         'rustenv|cargo(\.EXE)?\s+install',
         'go\s+(install|env|version)',

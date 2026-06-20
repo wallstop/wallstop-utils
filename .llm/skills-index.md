@@ -30,6 +30,7 @@ This file is generated. Do not edit generated sections manually.
 | --- | --- | --- | --- |
 | [Cross Platform PowerShell](./skills/cross-platform-powershell.md) | [Expanded Guide](./skill-details/cross-platform-powershell.md) | cross-platform, powershell portability, path separator, os detection, line endings, platform compatibility, case sensitivity, git bash, bash_env, processstartinfo path, fake-command harness | Write portable PowerShell that runs on Windows PowerShell 5.1 and PowerShell 7+ across Windows, macOS, and Linux |
 | [Devcontainer Bootstrap](./skills/devcontainer-bootstrap.md) | [Expanded Guide](./skill-details/devcontainer-bootstrap.md) | devcontainer, bootstrap, toolchain, setup parity | Use devcontainer bootstrap for consistent quality tooling |
+| [Komorebi Machine Profile Safety](./skills/komorebi-machine-profile-safety.md) | [Expanded Guide](./skill-details/komorebi-machine-profile-safety.md) | komorebi, machine profiles, machine-specific config, komorebi backup, komorebi restore | Keep Komorebi backup/restore profile-scoped across shared machines |
 | [macOS AppleScript Validation](./skills/macos-applescript-validation.md) | [Expanded Guide](./skill-details/macos-applescript-validation.md) | macos, applescript, osacompile, migration fallback | Keep macOS AppleScript validation migration-safe |
 | [Windows Language Validation](./skills/windows-language-validation.md) | [Expanded Guide](./skill-details/windows-language-validation.md) | windows, autohotkey, batch, fast lane, runtime budget | Preserve Windows PR lane validation contracts |
 
@@ -37,6 +38,6 @@ This file is generated. Do not edit generated sections manually.
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
-| [GitHub PR Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, cursor bugbot, bot markup, embedded locations, host allowlist, retries, auth recovery, public rest fallback, git credential, GH_TOKEN, GITHUB_TOKEN, clipboard fallback, osc52, output encoding, utf-8 verbatim, suggested change, suggestion block, delimiter, surrogate pair, output file, powershell completion | Preserve GitHub utility safety and UX contracts |
+| [GitHub PR Unresolved Comments](./skills/github-pr-unresolved-comments.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, github copilot, copilot reviewer, copilot-pull-request-reviewer, cursor bugbot, bot markup, prose-only bot comments, review diff hunk, diffHunk, suggested changeset, suggested diff unavailable, recommendation records, comment author metadata, embedded locations, host allowlist, retries, auth recovery, public rest fallback, git credential, GH_TOKEN, GITHUB_TOKEN, clipboard fallback, osc52, output encoding, utf-8 verbatim, suggested change, suggestion block, delimiter, surrogate pair, output file, powershell completion | Preserve GitHub utility safety and UX contracts |
 
 <!-- END GENERATED SKILLS INDEX -->

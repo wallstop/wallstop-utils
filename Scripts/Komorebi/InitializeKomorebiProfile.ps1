@@ -3,7 +3,7 @@ param(
     [string]$ProfileName,
 
     [Parameter(Mandatory = $false)]
-    [string]$UserProfileRoot
+    [switch]$Force
 )
 
 Set-StrictMode -Version Latest
@@ -20,19 +20,17 @@ if (-not (Test-Path -LiteralPath $profileHelpersPath -PathType Leaf)) {
 
 Push-Location -LiteralPath $rootDirectory
 try {
-    try {
-        $result = Invoke-KomorebiProfileBackup -RepositoryRoot $rootDirectory -UserProfileRoot $UserProfileRoot -ProfileName $ProfileName
-        Write-Host (
-            "Successfully backed up Komorebi profile '{0}' ({1}) to {2}" -f
-            $result.ProfileName,
-            $result.ProfileSource,
-            $result.ProfileDirectory
-        ) -ForegroundColor Green
-    }
-    catch {
-        Write-Error $_.Exception.Message
-        exit 1
-    }
+    $result = Initialize-KomorebiProfileFromLegacyRoot -RepositoryRoot $rootDirectory -ProfileName $ProfileName -Force:$Force
+    Write-Host (
+        "Initialized Komorebi profile '{0}' ({1}) from legacy root snapshot at {2}" -f
+        $result.ProfileName,
+        $result.ProfileSource,
+        $result.ProfileDirectory
+    ) -ForegroundColor Green
+}
+catch {
+    Write-Error $_.Exception.Message
+    exit 1
 }
 finally {
     Pop-Location

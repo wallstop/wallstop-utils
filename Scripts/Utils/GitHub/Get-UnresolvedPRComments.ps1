@@ -9,11 +9,14 @@ Given a GitHub PR URL, or through an interactive owner/repo/PR picker, this scri
 unresolved review threads and outputs each thread in the required text block format:
 ---
 (path/to/file.ext) lineStart-lineEnd
-Comment message
-Latest reply summary: <text or (none)>
+Suggestion:
+<normalized comment body>
+Suggested change:
+<verbatim suggested code, when present>
 ---
 
-For automation, use -OutputFormat json to emit an array of objects.
+For automation, use -OutputFormat json to emit a compact array containing only
+file, line range, suggestion text, and suggested changes.
 
 .PARAMETER PullRequestUrl
 GitHub pull request URL. Supports github.com and GitHub Enterprise Server hosts.
@@ -43,6 +46,13 @@ Pull request number for direct owner/repo mode.
 
 .PARAMETER Token
 Explicit GitHub token. This has highest priority if provided.
+
+.PARAMETER GitHubWebCookie
+Optional GitHub web UI Cookie header value for best-effort extraction of web-only
+Copilot automated changesets from private PR pages. The regular GitHub API token
+does not authenticate the github.com web UI; use this only when you intentionally
+want to provide a browser/session cookie to the web-page enrichment request.
+When omitted, WALLSTOP_GITHUB_WEB_COOKIE or GITHUB_WEB_COOKIE may provide it.
 
 .PARAMETER OutputFormat
 text (default) or json.
@@ -108,6 +118,9 @@ param(
     [string]$Token,
 
     [Parameter(Mandatory = $false)]
+    [string]$GitHubWebCookie,
+
+    [Parameter(Mandatory = $false)]
     [ValidateSet("text", "json")]
     [string]$OutputFormat = "text",
 
@@ -165,6 +178,13 @@ $script:TopLevelBoundParameters = @{} + $PSBoundParameters
 # default of $null and populated in Invoke-Main; the low-level request functions attach it only when
 # non-null, so dot-sourced unit tests keep their existing behavior.
 $script:GitHubWebSession = $null
+# Set to $true the moment this run reads from the terminal (see Read-TerminalResponse). Reading from
+# the console initializes the .NET console INPUT subsystem, which switches the terminal out of its
+# default canonical/echo mode. A normal managed exit restores it; the default fast process exit
+# (libc _exit / [Environment]::Exit) does NOT, which leaves the parent shell with echo/line-editing
+# disabled ("input stops on the shell"). Test-ShouldUseFastExit consults this flag so a run that
+# touched the terminal always takes the safe managed exit. Declared StrictMode-safe at script scope.
+$script:TerminalInputInitialized = $false
 
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/StrictModeHelpers.ps1"
 if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
@@ -867,6 +887,33 @@ function Resolve-GitHubRestApiBaseUri {
     return "https://$normalizedHost/api/v3"
 }
 
+function ConvertTo-SafeHttpHeaderValue {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    # Strip ALL control characters (C0 range 0x00-0x1F plus DEL 0x7F), not only CR/LF. CR/LF are the
+    # header-injection vector -- a smuggled CR/LF in a token or cookie value would let a caller inject
+    # additional response-splitting headers into the request -- and no other control character is ever
+    # valid in an HTTP token/cookie value, so removing the whole class is both safer and simpler than
+    # enumerating individual characters. Trim afterwards so removed interior controls cannot leave
+    # stray edge whitespace behind.
+    $normalized = ([regex]::Replace($Value, "[\x00-\x1F\x7F]", "")).Trim()
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return $null
+    }
+
+    return $normalized
+}
+
 function Get-GitHubHeaders {
     [OutputType([hashtable])]
     [CmdletBinding()]
@@ -880,8 +927,9 @@ function Get-GitHubHeaders {
         "User-Agent" = "wallstop-utils-unresolved-pr-comments"
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
-        $headers["Authorization"] = "Bearer $AuthToken"
+    $safeAuthToken = ConvertTo-SafeHttpHeaderValue -Value $AuthToken
+    if (-not [string]::IsNullOrWhiteSpace($safeAuthToken)) {
+        $headers["Authorization"] = "Bearer $safeAuthToken"
     }
 
     return [hashtable]$headers
@@ -1115,13 +1163,26 @@ function Get-SuggestionFenceRegex {
 function Get-CommentSuggestionBlocks {
     # Extracts GitHub "```suggestion" blocks (Copilot, Cursor, and human reviewers) verbatim so
     # suggested implementations can be rendered exactly instead of being whitespace-collapsed into
-    # unusable single-line text. Returns an array of objects with `kind` and verbatim `code`.
+    # unusable single-line text. Returns an array of objects with `kind`, verbatim `code`, and
+    # optional source-comment metadata for internal processing.
     [OutputType([object[]])]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
         [AllowNull()]
-        [string]$Text
+        [string]$Text,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$AuthorLogin,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $CommentIndex,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Url
     )
 
     if ([string]::IsNullOrWhiteSpace($Text)) {
@@ -1137,12 +1198,673 @@ function Get-CommentSuggestionBlocks {
         # interior blank lines and indentation exactly.
         $code = $code -replace "`n+$", ""
         $suggestions.Add([pscustomobject]@{
-                kind = "suggestion"
-                code = $code
+                kind         = "suggestion"
+                code         = $code
+                authorLogin  = if ([string]::IsNullOrWhiteSpace($AuthorLogin)) { $null } else { $AuthorLogin }
+                commentIndex = $CommentIndex
+                url          = if ([string]::IsNullOrWhiteSpace($Url)) { $null } else { $Url }
             }) | Out-Null
     }
 
     return @($suggestions.ToArray())
+}
+
+function Get-ReviewCommentAuthorLogin {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Comment
+    )
+
+    if ($null -eq $Comment) {
+        return $null
+    }
+
+    $author = Get-ObjectPropertyValue -InputObject $Comment -Name "author"
+    $authorLogin = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $author -Name "login")
+    if (-not [string]::IsNullOrWhiteSpace($authorLogin)) {
+        return $authorLogin
+    }
+
+    $user = Get-ObjectPropertyValue -InputObject $Comment -Name "user"
+    return (Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $user -Name "login"))
+}
+
+function Get-ReviewCommentUrl {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Comment
+    )
+
+    if ($null -eq $Comment) {
+        return $null
+    }
+
+    $url = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $Comment -Name "url")
+    if (-not [string]::IsNullOrWhiteSpace($url)) {
+        return $url
+    }
+
+    return (Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $Comment -Name "html_url"))
+}
+
+function Get-ReviewCommentDatabaseId {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Comment
+    )
+
+    if ($null -eq $Comment) {
+        return $null
+    }
+
+    foreach ($propertyName in @("databaseId", "fullDatabaseId", "database_id")) {
+        $value = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $Comment -Name $propertyName)
+        if (-not [string]::IsNullOrWhiteSpace($value) -and $value -match '^\d+$') {
+            return $value
+        }
+    }
+
+    $url = Get-ReviewCommentUrl -Comment $Comment
+    if (-not [string]::IsNullOrWhiteSpace($url)) {
+        $match = [regex]::Match($url, '(?:#|/)discussion_r(?<id>\d+)(?:\b|$)')
+        if ($match.Success) {
+            return $match.Groups["id"].Value
+        }
+    }
+
+    return $null
+}
+
+function Get-GitHubWebCookie {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$ExplicitCookie
+    )
+
+    $explicitCookie = ConvertTo-SafeHttpHeaderValue -Value $ExplicitCookie
+    if (-not [string]::IsNullOrWhiteSpace($explicitCookie)) {
+        return $explicitCookie
+    }
+
+    foreach ($variableName in @("WALLSTOP_GITHUB_WEB_COOKIE", "GITHUB_WEB_COOKIE")) {
+        $variable = Get-Item -LiteralPath "env:$variableName" -ErrorAction SilentlyContinue
+        $cookie = if ($null -eq $variable) {
+            $null
+        }
+        else {
+            ConvertTo-SafeHttpHeaderValue -Value ([string]$variable.Value)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($cookie)) {
+            return $cookie
+        }
+    }
+
+    return $null
+}
+
+function Get-ReviewCommentDiffHunk {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Comment
+    )
+
+    if ($null -eq $Comment) {
+        return $null
+    }
+
+    $diffHunk = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $Comment -Name "diffHunk")
+    if ([string]::IsNullOrWhiteSpace($diffHunk)) {
+        $diffHunk = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $Comment -Name "diff_hunk")
+    }
+
+    if ([string]::IsNullOrWhiteSpace($diffHunk)) {
+        return $null
+    }
+
+    return ($diffHunk -replace "`r`n", "`n" -replace "`r", "`n")
+}
+
+function New-CommentRecommendationRecord {
+    [OutputType([object])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("comment", "suggestion")]
+        [string]$Kind,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$AuthorLogin,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Text,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Code,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $CommentIndex,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Url
+    )
+
+    $textValue = if ($null -eq $Text) { $null } else { [string]$Text }
+    $codeValue = if ($null -eq $Code) { $null } else { [string]$Code }
+
+    return [pscustomobject]@{
+        kind         = $Kind
+        authorLogin  = if ([string]::IsNullOrWhiteSpace($AuthorLogin)) { $null } else { $AuthorLogin }
+        text         = $textValue
+        code         = $codeValue
+        commentIndex = $CommentIndex
+        url          = if ([string]::IsNullOrWhiteSpace($Url)) { $null } else { $Url }
+    }
+}
+
+function New-ThreadCommentRecord {
+    [OutputType([object])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $CommentIndex,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$DatabaseId,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Body,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $DiffHunk,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $SuggestedChanges = @(),
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $SuggestedDiffs = @(),
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$SuggestedDiffsUnavailableReason,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Url
+    )
+
+    $bodyValue = if ($null -eq $Body) { $null } else { [string]$Body }
+    if ($bodyValue -eq "(none)") {
+        $bodyValue = $null
+    }
+
+    $diffHunkValue = if ($null -eq $DiffHunk) { $null } else { [string]$DiffHunk }
+
+    return [pscustomobject]@{
+        commentIndex = $CommentIndex
+        databaseId   = if ([string]::IsNullOrWhiteSpace($DatabaseId)) { $null } else { [string]$DatabaseId }
+        body         = if ([string]::IsNullOrWhiteSpace($bodyValue)) { $null } else { $bodyValue }
+        diffHunk     = if ([string]::IsNullOrWhiteSpace($diffHunkValue)) { $null } else { ($diffHunkValue -replace "`r`n", "`n" -replace "`r", "`n") }
+        suggestedChanges = @($SuggestedChanges)
+        suggestedDiffs = @($SuggestedDiffs)
+        suggestedDiffsUnavailable = -not [string]::IsNullOrWhiteSpace($SuggestedDiffsUnavailableReason)
+        suggestedDiffsUnavailableReason = if ([string]::IsNullOrWhiteSpace($SuggestedDiffsUnavailableReason)) { $null } else { $SuggestedDiffsUnavailableReason }
+        url          = if ([string]::IsNullOrWhiteSpace($Url)) { $null } else { $Url }
+    }
+}
+
+function Test-ThreadCommentHasRenderableContent {
+    # Single source of truth for "does this thread comment carry actionable content that actually
+    # appears in public text/JSON output?" It is shared by record creation
+    # (Convert-ReviewThreadToOutputRecord) and rendering (Add-ThreadCommentRenderLines /
+    # Format-UnresolvedThreadsAsText) so the two can never drift -- that drift is precisely what let a
+    # comment whose only content was an internal diffHunk create an empty thread block while also
+    # suppressing the topLevelComment/suggestions fallback.
+    #
+    # Renderable content is: non-empty prose (excluding the "(none)" sentinel), at least one extracted
+    # suggested change, or at least one attached suggested diff. diffHunk / diff_hunk (review context)
+    # and suggestedDiffsUnavailableReason (an internal web-enrichment routing note) are intentionally
+    # EXCLUDED here because neither is ever emitted publicly.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Body,
+
+        [Parameter(Mandatory = $false)]
+        [int]$SuggestedChangeCount = 0,
+
+        [Parameter(Mandatory = $false)]
+        [int]$SuggestedDiffCount = 0
+    )
+
+    $bodyText = if ($null -eq $Body) { $null } else { [string]$Body }
+    if (-not [string]::IsNullOrWhiteSpace($bodyText) -and $bodyText -ne "(none)") {
+        return $true
+    }
+
+    if ($SuggestedChangeCount -gt 0) {
+        return $true
+    }
+
+    if ($SuggestedDiffCount -gt 0) {
+        return $true
+    }
+
+    return $false
+}
+
+function Test-ThreadCommentRecordIsRenderable {
+    # Object-shaped wrapper over Test-ThreadCommentHasRenderableContent for an already-built comment
+    # record (a [pscustomobject] carrying body / suggestedChanges / suggestedDiffs). Render-time callers
+    # use this so the "is there anything to show?" decision stays identical to record creation.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Comment
+    )
+
+    if ($null -eq $Comment) {
+        return $false
+    }
+
+    $body = Get-ObjectPropertyValue -InputObject $Comment -Name "body"
+    $suggestedChangeCount = Get-SafeCount -InputObject (Get-ObjectPropertyValue -InputObject $Comment -Name "suggestedChanges")
+
+    # Count only suggested diffs that survive Convert-SuggestedDiffTextToPublicChangeOnlyDiff to
+    # non-empty public output. A diff with no actual +/- change lines renders nothing in the text path
+    # (and is omitted by the JSON path), so counting it as renderable would re-create the empty-thread-
+    # block bug this predicate exists to prevent. This keeps the text and JSON paths consistent by
+    # construction even if an upstream producer ever yields a change-less diff.
+    $renderableDiffCount = 0
+    foreach ($suggestedDiff in @(Get-ObjectPropertyValue -InputObject $Comment -Name "suggestedDiffs")) {
+        if ($null -eq $suggestedDiff) {
+            continue
+        }
+
+        $diffText = Get-ObjectPropertyValue -InputObject $suggestedDiff -Name "diff"
+        $publicDiffText = Convert-SuggestedDiffTextToPublicChangeOnlyDiff -Diff ([string]$diffText)
+        if (-not [string]::IsNullOrWhiteSpace($publicDiffText)) {
+            $renderableDiffCount++
+        }
+    }
+
+    return (Test-ThreadCommentHasRenderableContent -Body $body -SuggestedChangeCount $suggestedChangeCount -SuggestedDiffCount $renderableDiffCount)
+}
+
+function Get-SuggestedDiffsUnavailableReason {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$AuthorLogin,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Body,
+
+        [Parameter(Mandatory = $false)]
+        [int]$SuggestedChangeCount = 0
+    )
+
+    if ($SuggestedChangeCount -gt 0) {
+        return $null
+    }
+
+    if ($AuthorLogin -imatch '^copilot-pull-request-reviewer(\[bot\])?$') {
+        return "copilot_suggested_diff_may_be_web_only_or_unavailable"
+    }
+
+    if ($Body -match "BUGBOT_BUG_ID|cursor\.com/(open|agents)") {
+        return "external_bot_suggested_fix_not_exposed_by_github_api"
+    }
+
+    return $null
+}
+
+function Convert-GitHubWebAutomatedDiffEntriesToSuggestedDiffs {
+    [OutputType([object[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $DiffEntries
+    )
+
+    $suggestedDiffs = New-Object System.Collections.Generic.List[object]
+    foreach ($diffEntry in @($DiffEntries)) {
+        if ($null -eq $diffEntry) {
+            continue
+        }
+
+        $path = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $diffEntry -Name "path")
+        $diffLines = Get-ObjectPropertyValue -InputObject $diffEntry -Name "diffLines" -NoEnumerate
+        $changedLines = New-Object System.Collections.Generic.List[string]
+
+        foreach ($diffLine in @($diffLines)) {
+            if ($null -eq $diffLine) {
+                continue
+            }
+
+            $lineType = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $diffLine -Name "type")
+            if ([string]::IsNullOrWhiteSpace($lineType)) {
+                continue
+            }
+
+            $textValue = Get-ObjectPropertyValue -InputObject $diffLine -Name "text"
+            $text = if ($null -eq $textValue) { "" } else { [string]$textValue }
+            if ($lineType.Equals("DELETION", [System.StringComparison]::OrdinalIgnoreCase)) {
+                $changedLines.Add("-$text") | Out-Null
+            }
+            elseif ($lineType.Equals("ADDITION", [System.StringComparison]::OrdinalIgnoreCase)) {
+                $changedLines.Add("+$text") | Out-Null
+            }
+        }
+
+        if ($changedLines.Count -eq 0) {
+            continue
+        }
+
+        $suggestedDiffs.Add([pscustomobject]@{
+                kind   = "changedLines"
+                path   = if ([string]::IsNullOrWhiteSpace($path)) { $null } else { $path }
+                diff   = ($changedLines.ToArray() -join "`n")
+                source = "github_web_automated_comment"
+            }) | Out-Null
+    }
+
+    return @($suggestedDiffs.ToArray())
+}
+
+function Convert-GitHubWebEmbeddedJsonToObject {
+    [OutputType([object])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Json
+    )
+
+    foreach ($candidate in @($Json, [System.Net.WebUtility]::HtmlDecode($Json))) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        try {
+            return (ConvertFrom-JsonSingleObject -Json $candidate -Context "GitHub web embedded comment JSON")
+        }
+        catch {
+            continue
+        }
+    }
+
+    return $null
+}
+
+function Get-GitHubWebAutomatedSuggestedDiffsByCommentIdFromHtml {
+    [OutputType([hashtable])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Html
+    )
+
+    $suggestedDiffsByCommentId = @{}
+    if ([string]::IsNullOrWhiteSpace($Html)) {
+        return $suggestedDiffsByCommentId
+    }
+
+    $normalizedHtml = $Html -replace "`r`n", "`n" -replace "`r", "`n"
+    $scriptPattern = '<script\b[^>]*data-target\s*=\s*["'']react-partial\.embeddedData["''][^>]*>(?<json>[\s\S]*?)</script>'
+    $scriptMatches = [regex]::Matches($normalizedHtml, $scriptPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    foreach ($scriptMatch in $scriptMatches) {
+        $json = $scriptMatch.Groups["json"].Value.Trim()
+        if ([string]::IsNullOrWhiteSpace($json)) {
+            continue
+        }
+
+        $payload = Convert-GitHubWebEmbeddedJsonToObject -Json $json
+        if ($null -eq $payload) {
+            continue
+        }
+
+        $props = Get-ObjectPropertyValue -InputObject $payload -Name "props"
+        $comment = Get-ObjectPropertyValue -InputObject $props -Name "comment"
+        if ($null -eq $comment) {
+            continue
+        }
+
+        $commentId = Get-ReviewCommentDatabaseId -Comment $comment
+        if ([string]::IsNullOrWhiteSpace($commentId)) {
+            continue
+        }
+
+        $automatedComment = Get-ObjectPropertyValue -InputObject $comment -Name "automatedComment"
+        $suggestion = Get-ObjectPropertyValue -InputObject $automatedComment -Name "suggestion"
+        $diffEntries = Get-ObjectPropertyValue -InputObject $suggestion -Name "diffEntries" -NoEnumerate
+        $suggestedDiffs = @(Convert-GitHubWebAutomatedDiffEntriesToSuggestedDiffs -DiffEntries $diffEntries)
+        if ((Get-SafeCount -InputObject $suggestedDiffs) -eq 0) {
+            continue
+        }
+
+        if (-not $suggestedDiffsByCommentId.ContainsKey($commentId)) {
+            $suggestedDiffsByCommentId[$commentId] = @()
+        }
+
+        $suggestedDiffsByCommentId[$commentId] = @($suggestedDiffsByCommentId[$commentId]) + @($suggestedDiffs)
+    }
+
+    return $suggestedDiffsByCommentId
+}
+
+function Set-ObjectNotePropertyValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $InputObject,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Value
+    )
+
+    if ($InputObject.PSObject.Properties.Name -ccontains $Name) {
+        $InputObject.$Name = $Value
+        return
+    }
+
+    Add-Member -InputObject $InputObject -MemberType NoteProperty -Name $Name -Value $Value
+}
+
+function Add-GitHubWebAutomatedSuggestedDiffsToRecords {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyCollection()]
+        [object[]]$Records = @(),
+
+        [Parameter(Mandatory = $false)]
+        [hashtable]$SuggestedDiffsByCommentId = @{}
+    )
+
+    if ($null -eq $SuggestedDiffsByCommentId -or $SuggestedDiffsByCommentId.Count -eq 0) {
+        return
+    }
+
+    foreach ($record in @($Records)) {
+        if ($null -eq $record) {
+            continue
+        }
+
+        foreach ($comment in @(Get-ObjectPropertyValue -InputObject $record -Name "comments")) {
+            if ($null -eq $comment) {
+                continue
+            }
+
+            $commentId = Get-ReviewCommentDatabaseId -Comment $comment
+            if ([string]::IsNullOrWhiteSpace($commentId) -or -not $SuggestedDiffsByCommentId.ContainsKey($commentId)) {
+                continue
+            }
+
+            $existingDiffs = @(Get-ObjectPropertyValue -InputObject $comment -Name "suggestedDiffs")
+            $mergedDiffs = New-Object System.Collections.Generic.List[object]
+            $seenDiffs = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+            foreach ($existingDiff in $existingDiffs) {
+                if ($null -eq $existingDiff) {
+                    continue
+                }
+
+                $existingText = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $existingDiff -Name "diff")
+                if (-not [string]::IsNullOrWhiteSpace($existingText)) {
+                    $seenDiffs.Add($existingText) | Out-Null
+                }
+
+                $mergedDiffs.Add($existingDiff) | Out-Null
+            }
+
+            foreach ($suggestedDiff in @($SuggestedDiffsByCommentId[$commentId])) {
+                if ($null -eq $suggestedDiff) {
+                    continue
+                }
+
+                $diffText = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $suggestedDiff -Name "diff")
+                if ([string]::IsNullOrWhiteSpace($diffText)) {
+                    continue
+                }
+
+                if (-not $seenDiffs.Add($diffText)) {
+                    continue
+                }
+
+                $mergedDiffs.Add($suggestedDiff) | Out-Null
+            }
+
+            if ($mergedDiffs.Count -eq 0) {
+                continue
+            }
+
+            Set-ObjectNotePropertyValue -InputObject $comment -Name "suggestedDiffs" -Value @($mergedDiffs.ToArray())
+            Set-ObjectNotePropertyValue -InputObject $comment -Name "suggestedDiffsUnavailable" -Value $false
+            Set-ObjectNotePropertyValue -InputObject $comment -Name "suggestedDiffsUnavailableReason" -Value $null
+        }
+    }
+}
+
+function Get-GitHubWebAutomatedSuggestedDiffsByCommentId {
+    [OutputType([hashtable])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Owner,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Repo,
+
+        [Parameter(Mandatory = $true)]
+        [int]$PrNumber,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubHost,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(5, 300)]
+        [int]$RequestTimeoutSeconds = 60,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$GitHubWebCookie,
+
+        [Parameter(Mandatory = $true)]
+        [datetime]$OverallDeadlineUtc,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$AllowedGitHubHostsNormalized = @(),
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$SensitiveTokens = @()
+    )
+
+    $emptyMap = @{}
+    if (-not $GitHubHost.Equals("github.com", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $emptyMap
+    }
+
+    $uri = "https://$GitHubHost/$Owner/$Repo/pull/$PrNumber"
+    Assert-GitHubRequestUri -Uri $uri -Context "Get-GitHubWebAutomatedSuggestedDiffsByCommentId" -AllowedGitHubHosts $AllowedGitHubHostsNormalized
+
+    $ProgressPreference = "SilentlyContinue"
+    $remainingSeconds = [int][math]::Floor(($OverallDeadlineUtc - [datetime]::UtcNow).TotalSeconds)
+    if ($remainingSeconds -lt 1) {
+        Write-Verbose "W_GITHUB_WEB_SUGGESTIONS_SKIPPED: No timeout budget remains for GitHub web suggested changeset enrichment."
+        return $emptyMap
+    }
+
+    $effectiveRequestTimeoutSeconds = [math]::Min($RequestTimeoutSeconds, $remainingSeconds)
+    if ($effectiveRequestTimeoutSeconds -lt 1) {
+        Write-Verbose "W_GITHUB_WEB_SUGGESTIONS_SKIPPED: Request timeout budget is exhausted for GitHub web suggested changeset enrichment."
+        return $emptyMap
+    }
+
+    $headers = @{
+        Accept       = "text/html,application/xhtml+xml"
+        "User-Agent" = "Mozilla/5.0"
+    }
+    $safeGitHubWebCookie = ConvertTo-SafeHttpHeaderValue -Value $GitHubWebCookie
+    if (-not [string]::IsNullOrWhiteSpace($safeGitHubWebCookie)) {
+        $headers["Cookie"] = $safeGitHubWebCookie
+    }
+
+    try {
+        # Do not reuse the API WebRequestSession here. PowerShell web sessions can retain default
+        # headers from prior API calls, and the GitHub web UI request must not inherit an API
+        # Authorization header. Any intentional web auth is passed only through the explicit Cookie
+        # header above.
+        $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $headers -TimeoutSec $effectiveRequestTimeoutSeconds -UseBasicParsing
+        return (Get-GitHubWebAutomatedSuggestedDiffsByCommentIdFromHtml -Html $response.Content)
+    }
+    catch {
+        $message = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+        if (-not [string]::IsNullOrWhiteSpace($safeGitHubWebCookie)) {
+            throw "E_GITHUB_WEB_SUGGESTIONS_UNAVAILABLE: GitHub web suggested changeset enrichment failed even though a web cookie was provided for $Owner/$Repo#$PrNumber. $message"
+        }
+
+        Write-Verbose "W_GITHUB_WEB_SUGGESTIONS_UNAVAILABLE: GitHub web suggested changeset enrichment was unavailable for $Owner/$Repo#$PrNumber. $message"
+        return $emptyMap
+    }
 }
 
 function Remove-MarkupFromCommentText {
@@ -1357,6 +2079,37 @@ function Get-FirstIntegerPropertyValue {
     return $null
 }
 
+function ConvertTo-BooleanValue {
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return $false
+    }
+
+    if ($Value -is [bool]) {
+        return [bool]$Value
+    }
+
+    if ($Value -is [string]) {
+        $text = ([string]$Value).Trim()
+        if ($text.Equals("true", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+
+        if ($text.Equals("false", [System.StringComparison]::OrdinalIgnoreCase) -or [string]::IsNullOrWhiteSpace($text)) {
+            return $false
+        }
+    }
+
+    return [bool]$Value
+}
+
 function Resolve-ReviewThreadLineRange {
     [CmdletBinding()]
     param(
@@ -1368,68 +2121,44 @@ function Resolve-ReviewThreadLineRange {
     $currentEnd = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("line")
     $originalStart = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("originalStartLine")
     $originalEnd = Get-FirstIntegerPropertyValue -InputObject $Thread -Names @("originalLine")
+    $isOutdated = ConvertTo-BooleanValue -Value (Get-ObjectPropertyValue -InputObject $Thread -Name "isOutdated")
 
-    $startValues = New-Object System.Collections.Generic.List[int]
-    if ($null -ne $currentStart) {
-        $startValues.Add($currentStart) | Out-Null
-    }
-    if ($null -ne $originalStart) {
-        $startValues.Add($originalStart) | Out-Null
-    }
+    $start = $null
+    $end = $null
 
-    $endValues = New-Object System.Collections.Generic.List[int]
-    if ($null -ne $currentEnd) {
-        $endValues.Add($currentEnd) | Out-Null
+    if ($isOutdated -and ($null -ne $originalStart -or $null -ne $originalEnd)) {
+        $start = if ($null -ne $originalStart) { $originalStart } else { $originalEnd }
+        $end = if ($null -ne $originalEnd) { $originalEnd } else { $originalStart }
     }
-    if ($null -ne $originalEnd) {
-        $endValues.Add($originalEnd) | Out-Null
-    }
-
-    if ($startValues.Count -gt 0) {
-        $start = $startValues[0]
-        foreach ($value in $startValues) {
-            if ($value -lt $start) {
-                $start = $value
-            }
+    elseif ($null -ne $currentStart) {
+        $start = $currentStart
+        if ($null -ne $currentEnd) {
+            $end = $currentEnd
         }
-
-        $end = $null
-        if ($endValues.Count -gt 0) {
-            $end = $endValues[0]
-            foreach ($value in $endValues) {
-                if ($value -gt $end) {
-                    $end = $value
-                }
-            }
-
-            if ($end -lt $start) {
-                $end = $start
-            }
-        }
-
-        return [pscustomobject]@{
-            Start = $start
-            End   = $end
+        elseif ($null -ne $originalEnd) {
+            $end = $originalEnd
         }
     }
+    elseif ($null -ne $currentEnd) {
+        $start = if ($null -ne $originalStart) { $originalStart } else { $currentEnd }
+        $end = $currentEnd
+    }
+    elseif ($null -ne $originalStart) {
+        $start = $originalStart
+        $end = $originalEnd
+    }
+    elseif ($null -ne $originalEnd) {
+        $start = $originalEnd
+        $end = $originalEnd
+    }
 
-    if ($endValues.Count -gt 0) {
-        $end = $endValues[0]
-        foreach ($value in $endValues) {
-            if ($value -gt $end) {
-                $end = $value
-            }
-        }
-
-        return [pscustomobject]@{
-            Start = $end
-            End   = $end
-        }
+    if ($null -ne $start -and $null -ne $end -and $end -lt $start) {
+        $end = $start
     }
 
     return [pscustomobject]@{
-        Start = $null
-        End   = $null
+        Start = $start
+        End   = $end
     }
 }
 
@@ -1944,6 +2673,57 @@ function Test-CanPromptForLogin {
     }
 }
 
+function Read-TerminalResponse {
+    # Canonical-mode replacement for Read-Host and the single seam for every interactive prompt in this
+    # script. Terminal safety here has TWO independent parts and both are required:
+    #   1. Read canonically, never via Read-Host. Read-Host switches the terminal into a host-managed
+    #      raw mode (echo/line editing disabled) that a non-interactive host (pwsh -File / -Command)
+    #      leaves in place even on a NORMAL managed exit, stranding the parent shell. A plain
+    #      [Console]::In.ReadLine() does not enable that extra raw mode, so a managed exit restores the
+    #      terminal cleanly. (Note: ReadLine still initializes the .NET console input subsystem, so it is
+    #      NOT safe to follow with a fast _exit -- that is what part 2 prevents.)
+    #   2. Force the safe managed exit. ANY console read (this one included) initializes the .NET console
+    #      input subsystem; the fast libc _exit / [Environment]::Exit skips the terminal-state
+    #      restoration the managed exit performs, so it would strand the terminal regardless of HOW we
+    #      read. Setting $script:TerminalInputInitialized makes Test-ShouldUseFastExit take the managed
+    #      exit. The managed exit, not the choice of reader, is what restores the terminal; the canonical
+    #      read only avoids the additional Read-Host raw-mode damage that a managed exit cannot undo.
+    # Therefore EVERY terminal read in this script must route through this seam (to set the flag). The
+    # prompt is written to stderr so stdout stays reserved for the verbatim rendered output (data on
+    # stdout, prompts/diagnostics on stderr).
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Prompt
+    )
+
+    $script:TerminalInputInitialized = $true
+
+    try {
+        [Console]::Error.Write($Prompt + ": ")
+        [Console]::Error.Flush()
+    }
+    catch {
+        # No usable console error stream (for example fully redirected output); the read below still
+        # works for piped/redirected input, so the prompt text is best-effort only.
+    }
+
+    return (Read-ConsoleInputLine)
+}
+
+function Read-ConsoleInputLine {
+    # Mockable seam over the canonical-mode console line read so Read-TerminalResponse can be unit
+    # tested without blocking on real stdin. Uses [Console]::In.ReadLine() (NOT Read-Host) so it reads
+    # in the terminal's default canonical mode and avoids the extra host-managed raw mode that Read-Host
+    # leaves behind even on a managed exit -- see Read-TerminalResponse for the full two-part rationale.
+    [OutputType([string])]
+    [CmdletBinding()]
+    param()
+
+    return [Console]::In.ReadLine()
+}
+
 function New-AuthTokenResolutionResult {
     [OutputType([pscustomobject])]
     [CmdletBinding()]
@@ -1960,12 +2740,7 @@ function New-AuthTokenResolutionResult {
         [string]$EnvironmentVariable
     )
 
-    $normalizedToken = if ([string]::IsNullOrWhiteSpace($Token)) {
-        $null
-    }
-    else {
-        $Token.Trim()
-    }
+    $normalizedToken = ConvertTo-SafeHttpHeaderValue -Value $Token
 
     $sourceCategory = "unknown"
     switch ($Source) {
@@ -2135,7 +2910,7 @@ function Resolve-AuthTokenWithSource {
             continue
         }
 
-        $trimmedRejectedTokenValue = $rejectedTokenValue.Trim()
+        $trimmedRejectedTokenValue = ConvertTo-SafeHttpHeaderValue -Value $rejectedTokenValue
         if (-not [string]::IsNullOrWhiteSpace($trimmedRejectedTokenValue)) {
             $rejectedTokenSet.Add($trimmedRejectedTokenValue) | Out-Null
         }
@@ -2159,13 +2934,17 @@ function Resolve-AuthTokenWithSource {
             return $null
         }
 
-        $trimmedCandidateToken = $CandidateToken.Trim()
-        if ($rejectedTokenSet.Contains($trimmedCandidateToken)) {
+        $normalizedCandidateToken = ConvertTo-SafeHttpHeaderValue -Value $CandidateToken
+        if ([string]::IsNullOrWhiteSpace($normalizedCandidateToken)) {
+            return $null
+        }
+
+        if ($rejectedTokenSet.Contains($normalizedCandidateToken)) {
             Write-Verbose "Skipping previously rejected token from source '$Source'."
             return $null
         }
 
-        return New-AuthTokenResolutionResult -Token $trimmedCandidateToken -Source $Source -EnvironmentVariable $EnvironmentVariable
+        return New-AuthTokenResolutionResult -Token $normalizedCandidateToken -Source $Source -EnvironmentVariable $EnvironmentVariable
     }
 
     $explicitResolution = & $resolveCandidate -CandidateToken $ExplicitToken -Source "explicit" -EnvironmentVariable $null
@@ -2348,17 +3127,57 @@ function Convert-ToAuthTokenResolutionResult {
 
     return $normalizedResolution
 }
+function Resolve-WebRequestSessionType {
+    [OutputType([type])]
+    [CmdletBinding()]
+    param()
+
+    $typeName = "Microsoft.PowerShell.Commands.WebRequestSession"
+    foreach ($assembly in [System.AppDomain]::CurrentDomain.GetAssemblies()) {
+        $candidateType = $assembly.GetType($typeName, $false, $false)
+        if ($null -ne $candidateType) {
+            return $candidateType
+        }
+    }
+
+    try {
+        Import-Module -Name Microsoft.PowerShell.Utility -ErrorAction SilentlyContinue
+    }
+    catch {
+        return $null
+    }
+
+    foreach ($assembly in [System.AppDomain]::CurrentDomain.GetAssemblies()) {
+        $candidateType = $assembly.GetType($typeName, $false, $false)
+        if ($null -ne $candidateType) {
+            return $candidateType
+        }
+    }
+
+    return $null
+}
+
 function New-GitHubWebSession {
     # Creates one reusable web session for the whole run. Passing the SAME session object to every
     # Invoke-RestMethod / Invoke-WebRequest call makes PowerShell reuse a single pooled TCP/TLS
     # connection to the GitHub host across all requests (token validation + paginated GraphQL/REST),
     # eliminating a redundant DNS + TCP + TLS handshake on every call after the first. The
-    # WebRequestSession type ships with both Windows PowerShell 5.1 and PowerShell 7+. This is a
-    # mockable seam so unit tests can supply a sentinel session.
+    # WebRequestSession type can be loaded without being resolvable through a bare type literal in
+    # some hosts, so creation goes through a dynamic, nullable seam.
     [CmdletBinding()]
     param()
 
-    return [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+    $sessionType = Resolve-WebRequestSessionType
+    if ($null -eq $sessionType) {
+        return $null
+    }
+
+    try {
+        return [System.Activator]::CreateInstance($sessionType)
+    }
+    catch {
+        return $null
+    }
 }
 
 function Invoke-GitHubRequestWithRetry {
@@ -2765,12 +3584,12 @@ function Select-PullRequestInteractively {
         [string[]]$SensitiveTokens = @()
     )
 
-    $ownerInput = Read-Host "GitHub owner"
+    $ownerInput = Read-TerminalResponse -Prompt "GitHub owner"
     if ([string]::IsNullOrWhiteSpace($ownerInput)) {
         throw "E_INVALID_OWNER_REPO: Owner cannot be empty."
     }
 
-    $repoInput = Read-Host "Repository"
+    $repoInput = Read-TerminalResponse -Prompt "Repository"
     if ([string]::IsNullOrWhiteSpace($repoInput)) {
         throw "E_INVALID_OWNER_REPO: Repository cannot be empty."
     }
@@ -2796,7 +3615,7 @@ function Select-PullRequestInteractively {
         $i++
     }
 
-    $selection = Read-Host "Choose an index or PR number"
+    $selection = Read-TerminalResponse -Prompt "Choose an index or PR number"
     if ([string]::IsNullOrWhiteSpace($selection)) {
         throw "E_INVALID_URL: No selection was provided."
     }
@@ -2910,32 +3729,82 @@ function Convert-ReviewThreadToOutputRecord {
         Normalize-CommentText -Text $topBody -DisableTruncation -KeepMarkup:$KeepMarkup
     }
 
-    # Suggested-change blocks are preserved verbatim and rendered separately from prose.
+    $topLevelAuthor = Get-ReviewCommentAuthorLogin -Comment $top
+    $latestReplyAuthor = if ($null -eq $latestReply) {
+        $null
+    }
+    else {
+        Get-ReviewCommentAuthorLogin -Comment $latestReply
+    }
+
+    # Suggested-change blocks are preserved verbatim and rendered separately from prose. Plain
+    # prose comments are also surfaced as structured recommendation records so bot-authored
+    # recommendations (Copilot/Cursor/Bugbot) are not reduced to anonymous text.
     # KeepMarkup keeps the raw body intact, so suggestion extraction is skipped there.
     # Scan EVERY comment in the thread (in order), not just the top comment: reviewers and bots
     # (Copilot, Cursor) frequently attach the "```suggestion" block as a follow-up reply rather
     # than on the first comment, so a top-only scan would silently drop those suggestions.
     $suggestions = @()
-    if (-not $KeepMarkup.IsPresent) {
-        $collectedSuggestions = New-Object System.Collections.Generic.List[object]
-        foreach ($commentNode in $comments) {
-            $commentBody = Get-ObjectPropertyValue -InputObject $commentNode -Name "body"
-            if ($null -eq $commentBody) {
-                continue
-            }
-
-            if ($commentBody -isnot [string]) {
-                $commentBodyType = $commentBody.GetType().FullName
-                throw "E_MALFORMED_RESPONSE: Review thread comment body must be a string (received '$commentBodyType')."
-            }
-
-            foreach ($suggestion in @(Get-CommentSuggestionBlocks -Text $commentBody)) {
-                $collectedSuggestions.Add($suggestion) | Out-Null
-            }
+    $recommendations = @()
+    $commentRecords = @()
+    $collectedSuggestions = New-Object System.Collections.Generic.List[object]
+    $collectedRecommendations = New-Object System.Collections.Generic.List[object]
+    $collectedCommentRecords = New-Object System.Collections.Generic.List[object]
+    for ($commentIndex = 0; $commentIndex -lt $commentCount; $commentIndex++) {
+        $commentNode = $comments[$commentIndex]
+        $commentBody = Get-ObjectPropertyValue -InputObject $commentNode -Name "body"
+        if ($null -eq $commentBody) {
+            continue
         }
 
-        $suggestions = @($collectedSuggestions.ToArray())
+        if ($commentBody -isnot [string]) {
+            $commentBodyType = $commentBody.GetType().FullName
+            throw "E_MALFORMED_RESPONSE: Review thread comment body must be a string (received '$commentBodyType')."
+        }
+
+        $commentAuthorLogin = Get-ReviewCommentAuthorLogin -Comment $commentNode
+        $commentUrl = Get-ReviewCommentUrl -Comment $commentNode
+        $commentDatabaseId = Get-ReviewCommentDatabaseId -Comment $commentNode
+        $commentDiffHunk = Get-ReviewCommentDiffHunk -Comment $commentNode
+        $commentRecommendationText = if ($Truncate.IsPresent) {
+            Normalize-CommentText -Text $commentBody -MaxLength 500 -KeepMarkup:$KeepMarkup
+        }
+        else {
+            Normalize-CommentText -Text $commentBody -DisableTruncation -KeepMarkup:$KeepMarkup
+        }
+
+        $commentSuggestionRecords = @()
+        if (-not $KeepMarkup.IsPresent) {
+            $commentSuggestionRecords = @(Get-CommentSuggestionBlocks -Text $commentBody -AuthorLogin $commentAuthorLogin -CommentIndex $commentIndex -Url $commentUrl)
+        }
+        $suggestedDiffsUnavailableReason = Get-SuggestedDiffsUnavailableReason -AuthorLogin $commentAuthorLogin -Body $commentBody -SuggestedChangeCount (Get-SafeCount -InputObject $commentSuggestionRecords)
+
+        # Create a comments[] record when the comment is renderable now, OR when it is a candidate for
+        # best-effort GitHub web suggested-diff enrichment (suggestedDiffsUnavailableReason): the
+        # enriched diffs are attached later by database id, so the record must survive creation. A
+        # comment whose ONLY signal is an internal diffHunk is intentionally dropped -- diffHunk never
+        # renders publicly, so keeping it would emit an empty thread block and suppress the
+        # topLevelComment/suggestions fallback. The internal diffHunk is still stored on records that
+        # are created for other reasons.
+        $commentHasRenderableContent = Test-ThreadCommentHasRenderableContent -Body $commentRecommendationText -SuggestedChangeCount (Get-SafeCount -InputObject $commentSuggestionRecords)
+        if ($commentHasRenderableContent -or -not [string]::IsNullOrWhiteSpace($suggestedDiffsUnavailableReason)) {
+            $collectedCommentRecords.Add((New-ThreadCommentRecord -CommentIndex $commentIndex -DatabaseId $commentDatabaseId -Body $commentRecommendationText -DiffHunk $commentDiffHunk -SuggestedChanges $commentSuggestionRecords -SuggestedDiffsUnavailableReason $suggestedDiffsUnavailableReason -Url $commentUrl)) | Out-Null
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($commentRecommendationText) -and $commentRecommendationText -ne "(none)") {
+            $collectedRecommendations.Add((New-CommentRecommendationRecord -Kind "comment" -AuthorLogin $commentAuthorLogin -Text $commentRecommendationText -Code $null -CommentIndex $commentIndex -Url $commentUrl)) | Out-Null
+        }
+
+        foreach ($suggestion in @($commentSuggestionRecords)) {
+            $collectedSuggestions.Add($suggestion) | Out-Null
+            $suggestionCode = Get-ObjectPropertyValue -InputObject $suggestion -Name "code"
+            $collectedRecommendations.Add((New-CommentRecommendationRecord -Kind "suggestion" -AuthorLogin $commentAuthorLogin -Text $null -Code $suggestionCode -CommentIndex $commentIndex -Url $commentUrl)) | Out-Null
+        }
     }
+
+    $suggestions = @($collectedSuggestions.ToArray())
+    $recommendations = @($collectedRecommendations.ToArray())
+    $commentRecords = @($collectedCommentRecords.ToArray())
 
     $latestReplySummary = if ($null -eq $latestReply) {
         $null
@@ -2958,8 +3827,12 @@ function Convert-ReviewThreadToOutputRecord {
         githubLineStart    = $githubAnchor.Start
         githubLineEnd      = $githubAnchor.End
         embeddedLocations  = @($embeddedLocations)
+        comments           = @($commentRecords)
         suggestions        = @($suggestions)
+        recommendations    = @($recommendations)
+        topLevelAuthor     = $topLevelAuthor
         topLevelComment    = $topLevelComment
+        latestReplyAuthor  = $latestReplyAuthor
         latestReplySummary = $latestReplySummary
         resolutionState    = [string]$resolutionState
         threadId           = [string]$threadId
@@ -2978,10 +3851,12 @@ function Convert-RestReviewCommentToThreadCommentNode {
     )
 
     return [pscustomobject]@{
-        body      = Get-ObjectPropertyValue -InputObject $Comment -Name "body"
-        createdAt = Get-ObjectPropertyValue -InputObject $Comment -Name "created_at"
-        url       = Get-ObjectPropertyValue -InputObject $Comment -Name "html_url"
-        author    = [pscustomobject]@{
+        databaseId = Get-ObjectPropertyValue -InputObject $Comment -Name "id"
+        body       = Get-ObjectPropertyValue -InputObject $Comment -Name "body"
+        createdAt  = Get-ObjectPropertyValue -InputObject $Comment -Name "created_at"
+        url        = Get-ObjectPropertyValue -InputObject $Comment -Name "html_url"
+        diffHunk   = Get-ObjectPropertyValue -InputObject $Comment -Name "diff_hunk"
+        author     = [pscustomobject]@{
             login = Get-ObjectPropertyValue -InputObject (Get-ObjectPropertyValue -InputObject $Comment -Name "user") -Name "login"
         }
     }
@@ -3053,10 +3928,12 @@ function Convert-RestReviewCommentsToThreadLikeObjects {
         $startLine = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "start_line"
         $originalLine = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "original_line"
         $originalStartLine = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "original_start_line"
+        $isOutdated = ConvertTo-BooleanValue -Value (Get-ObjectPropertyValue -InputObject $topLevelComment -Name "outdated")
 
         $threads.Add([pscustomobject]@{
                 id                = "rest:$topLevelIdText"
                 isResolved        = $false
+                isOutdated        = $isOutdated
                 resolutionState   = "unknown"
                 path              = Get-ObjectPropertyValue -InputObject $topLevelComment -Name "path"
                 startLine         = $startLine
@@ -3111,6 +3988,163 @@ function Add-SuggestionRenderLines {
     }
 }
 
+function Convert-SuggestedDiffTextToPublicChangeOnlyDiff {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Diff
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Diff)) {
+        return $null
+    }
+
+    $normalized = $Diff -replace "`r`n", "`n" -replace "`r", "`n"
+    $changedLines = New-Object System.Collections.Generic.List[string]
+    $insideHunk = $false
+    foreach ($line in ($normalized -split "`n")) {
+        if ($line -match '^@@\s') {
+            $insideHunk = $true
+            continue
+        }
+
+        if (-not $insideHunk -and ($line -match '^(diff --git|index\s|---\s|\+\+\+\s)')) {
+            continue
+        }
+
+        if ($line -match '^\\ No newline at end of file$') {
+            continue
+        }
+
+        if ($line.StartsWith("+", [System.StringComparison]::Ordinal) -or $line.StartsWith("-", [System.StringComparison]::Ordinal)) {
+            $changedLines.Add($line) | Out-Null
+        }
+    }
+
+    if ($changedLines.Count -eq 0) {
+        return $null
+    }
+
+    return ($changedLines.ToArray() -join "`n")
+}
+
+function Add-CommentRecommendationRenderLines {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.Generic.List[string]]$Lines,
+
+        [Parameter(Mandatory = $true)]
+        $Recommendation
+    )
+
+    $text = Get-ObjectPropertyValue -InputObject $Recommendation -Name "text"
+    if ([string]::IsNullOrWhiteSpace([string]$text)) {
+        return
+    }
+
+    $Lines.Add("Recommendation:") | Out-Null
+
+    foreach ($textLine in ([string]$text -split "`n")) {
+        $Lines.Add($textLine) | Out-Null
+    }
+}
+
+function Add-ThreadCommentRenderLines {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.Generic.List[string]]$Lines,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Comments
+    )
+
+    if ($null -eq $Comments) {
+        return
+    }
+
+    $commentArray = @($Comments)
+    $commentCount = Get-SafeCount -InputObject $commentArray
+    $visibleBodyCount = 0
+    foreach ($comment in $commentArray) {
+        if ($null -eq $comment) {
+            continue
+        }
+
+        $body = Get-ObjectPropertyValue -InputObject $comment -Name "body"
+        if ([string]$body -eq "(none)") {
+            $body = $null
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$body)) {
+            $visibleBodyCount++
+        }
+    }
+
+    $visibleBodyOrdinal = 0
+    for ($index = 0; $index -lt $commentCount; $index++) {
+        $comment = $commentArray[$index]
+        if ($null -eq $comment) {
+            continue
+        }
+
+        $body = Get-ObjectPropertyValue -InputObject $comment -Name "body"
+        if ([string]$body -eq "(none)") {
+            $body = $null
+        }
+        $suggestedChanges = Get-ObjectPropertyValue -InputObject $comment -Name "suggestedChanges"
+        $suggestedChangeCount = Get-SafeCount -InputObject $suggestedChanges
+        $suggestedDiffs = Get-ObjectPropertyValue -InputObject $comment -Name "suggestedDiffs"
+        $suggestedDiffCount = Get-SafeCount -InputObject $suggestedDiffs
+        # Skip comments with nothing to render, using the SAME predicate as record creation so the two
+        # never drift. A record can reach here non-renderable only as an un-enriched web-suggestion
+        # placeholder (suggestedDiffsUnavailableReason set, no diffs attached); it renders nothing, so
+        # the reason alone must not keep it visible.
+        if (-not (Test-ThreadCommentHasRenderableContent -Body $body -SuggestedChangeCount $suggestedChangeCount -SuggestedDiffCount $suggestedDiffCount)) {
+            continue
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$body)) {
+            $visibleBodyOrdinal++
+            if ($visibleBodyCount -gt 1) {
+                $Lines.Add(("Suggestion {0}:" -f $visibleBodyOrdinal)) | Out-Null
+            }
+            else {
+                $Lines.Add("Suggestion:") | Out-Null
+            }
+
+            foreach ($bodyLine in ([string]$body -split "`n")) {
+                $Lines.Add($bodyLine) | Out-Null
+            }
+        }
+
+        if ($null -ne $suggestedChanges -and $suggestedChangeCount -gt 0) {
+            Add-SuggestionRenderLines -Lines $Lines -Suggestions $suggestedChanges
+        }
+
+        if ($suggestedDiffCount -gt 0) {
+            foreach ($suggestedDiff in @($suggestedDiffs)) {
+                $diffText = Get-ObjectPropertyValue -InputObject $suggestedDiff -Name "diff"
+                $publicDiffText = Convert-SuggestedDiffTextToPublicChangeOnlyDiff -Diff ([string]$diffText)
+                if ([string]::IsNullOrWhiteSpace($publicDiffText)) {
+                    continue
+                }
+
+                $Lines.Add("Suggested change:") | Out-Null
+                $Lines.Add('```diff') | Out-Null
+                foreach ($diffLine in ($publicDiffText -split "`n")) {
+                    $Lines.Add($diffLine) | Out-Null
+                }
+                $Lines.Add('```') | Out-Null
+            }
+        }
+    }
+}
+
 function Format-UnresolvedThreadsAsText {
     [CmdletBinding()]
     param(
@@ -3133,13 +4167,44 @@ function Format-UnresolvedThreadsAsText {
         }
 
         $lines.Add(("({0}) {1}-{2}" -f $record.path, $lineStartText, $lineEndText))
-        $lines.Add($record.topLevelComment)
-        Add-SuggestionRenderLines -Lines $lines -Suggestions (Get-ObjectPropertyValue -InputObject $record -Name "suggestions")
-        if ($null -eq $record.latestReplySummary) {
-            $lines.Add("Latest reply summary: (none)")
+        $commentRecordsValue = Get-ObjectPropertyValue -InputObject $record -Name "comments"
+        $commentRecords = if ($null -eq $commentRecordsValue) { @() } else { @($commentRecordsValue) }
+        # Branch on the count of RENDERABLE comments, not the raw record count: a record can be present
+        # yet render nothing (an un-enriched web-suggestion placeholder). Using the raw count there
+        # would emit an empty block AND suppress the topLevelComment/suggestions fallback below.
+        $renderableCommentCount = 0
+        foreach ($commentRecord in $commentRecords) {
+            if (Test-ThreadCommentRecordIsRenderable -Comment $commentRecord) {
+                $renderableCommentCount++
+            }
+        }
+        if ($renderableCommentCount -gt 0) {
+            Add-ThreadCommentRenderLines -Lines $lines -Comments $commentRecords
         }
         else {
-            $lines.Add(("Latest reply summary: {0}" -f $record.latestReplySummary))
+            $topLevelRecommendation = $null
+            foreach ($recommendation in @(Get-ObjectPropertyValue -InputObject $record -Name "recommendations")) {
+                if ($null -eq $recommendation) {
+                    continue
+                }
+
+                $recommendationKind = Get-ObjectPropertyValue -InputObject $recommendation -Name "kind"
+                $recommendationCommentIndex = Get-ObjectPropertyValue -InputObject $recommendation -Name "commentIndex"
+                if ([string]$recommendationKind -eq "comment" -and [string]$recommendationCommentIndex -eq "0") {
+                    $topLevelRecommendation = $recommendation
+                    break
+                }
+            }
+
+            if ($null -ne $topLevelRecommendation) {
+                Add-CommentRecommendationRenderLines -Lines $lines -Recommendation $topLevelRecommendation
+            }
+            else {
+                $lines.Add($record.topLevelComment)
+            }
+        }
+        if ($renderableCommentCount -eq 0) {
+            Add-SuggestionRenderLines -Lines $lines -Suggestions (Get-ObjectPropertyValue -InputObject $record -Name "suggestions")
         }
         $lines.Add("---")
     }
@@ -3151,6 +4216,146 @@ function Format-UnresolvedThreadsAsText {
     return ($lines -join [Environment]::NewLine)
 }
 
+function Convert-SuggestedChangeForPublicOutput {
+    [OutputType([object])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        $SuggestedChange,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("suggestion", "changedLines")]
+        [string]$DefaultKind
+    )
+
+    if ($null -eq $SuggestedChange) {
+        return $null
+    }
+
+    $kind = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $SuggestedChange -Name "kind")
+    if ([string]::IsNullOrWhiteSpace($kind)) {
+        $kind = $DefaultKind
+    }
+
+    $value = $null
+    $valueIsChangedLines = $false
+    $code = Get-ObjectPropertyValue -InputObject $SuggestedChange -Name "code"
+    if ($null -ne $code) {
+        $value = [string]$code
+    }
+    else {
+        $diff = Get-ObjectPropertyValue -InputObject $SuggestedChange -Name "diff"
+        if ($null -ne $diff) {
+            $value = Convert-SuggestedDiffTextToPublicChangeOnlyDiff -Diff ([string]$diff)
+            $valueIsChangedLines = $true
+        }
+    }
+
+    if ($null -eq $value) {
+        return $null
+    }
+
+    if ($valueIsChangedLines) {
+        $kind = "changedLines"
+    }
+
+    return [pscustomobject]@{
+        kind  = [string]$kind
+        value = [string]$value
+    }
+}
+
+function Convert-ThreadCommentForPublicOutput {
+    [OutputType([object])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        $Comment
+    )
+
+    if ($null -eq $Comment) {
+        return $null
+    }
+
+    $body = Get-ObjectPropertyValue -InputObject $Comment -Name "body"
+    $suggestion = if ($null -eq $body) { $null } else { [string]$body }
+    if ($suggestion -eq "(none)") {
+        $suggestion = $null
+    }
+    $suggestedChangeRecords = New-Object System.Collections.Generic.List[object]
+
+    foreach ($suggestedChange in @(Get-ObjectPropertyValue -InputObject $Comment -Name "suggestedChanges")) {
+        if ($null -eq $suggestedChange) {
+            continue
+        }
+
+        $record = Convert-SuggestedChangeForPublicOutput -SuggestedChange $suggestedChange -DefaultKind "suggestion"
+        if ($null -ne $record) {
+            $suggestedChangeRecords.Add($record) | Out-Null
+        }
+    }
+
+    foreach ($suggestedDiff in @(Get-ObjectPropertyValue -InputObject $Comment -Name "suggestedDiffs")) {
+        if ($null -eq $suggestedDiff) {
+            continue
+        }
+
+        $record = Convert-SuggestedChangeForPublicOutput -SuggestedChange $suggestedDiff -DefaultKind "changedLines"
+        if ($null -ne $record) {
+            $suggestedChangeRecords.Add($record) | Out-Null
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($suggestion) -and $suggestedChangeRecords.Count -eq 0) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        suggestion       = if ([string]::IsNullOrWhiteSpace($suggestion)) { $null } else { $suggestion }
+        suggestedChanges = @($suggestedChangeRecords.ToArray())
+    }
+}
+
+function Convert-ThreadRecordForPublicOutput {
+    [OutputType([object])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        $Record
+    )
+
+    $commentRecords = New-Object System.Collections.Generic.List[object]
+    $comments = Get-ObjectPropertyValue -InputObject $Record -Name "comments"
+    foreach ($comment in @($comments)) {
+        $publicComment = Convert-ThreadCommentForPublicOutput -Comment $comment
+        if ($null -ne $publicComment) {
+            $commentRecords.Add($publicComment) | Out-Null
+        }
+    }
+
+    if ($commentRecords.Count -eq 0) {
+        $fallbackComment = [pscustomobject]@{
+            body             = (Get-ObjectPropertyValue -InputObject $Record -Name "topLevelComment")
+            suggestedChanges = @(Get-ObjectPropertyValue -InputObject $Record -Name "suggestions")
+            suggestedDiffs   = @()
+        }
+        $publicComment = Convert-ThreadCommentForPublicOutput -Comment $fallbackComment
+        if ($null -ne $publicComment) {
+            $commentRecords.Add($publicComment) | Out-Null
+        }
+    }
+
+    return [pscustomobject]@{
+        path      = Get-ObjectPropertyValue -InputObject $Record -Name "path"
+        lineStart = Get-ObjectPropertyValue -InputObject $Record -Name "lineStart"
+        lineEnd   = Get-ObjectPropertyValue -InputObject $Record -Name "lineEnd"
+        comments  = @($commentRecords.ToArray())
+    }
+}
+
 function Format-UnresolvedThreadsAsJson {
     [CmdletBinding()]
     param(
@@ -3159,7 +4364,13 @@ function Format-UnresolvedThreadsAsJson {
         [object[]]$Records
     )
 
-    return (ConvertTo-JsonArrayCompat -InputObject $Records -Depth 8)
+    $outputRecords = @(
+        foreach ($record in $Records) {
+            Convert-ThreadRecordForPublicOutput -Record $record
+        }
+    )
+
+    return (ConvertTo-JsonArrayCompat -InputObject $outputRecords -Depth 8)
 }
 
 function Assert-GraphQLVariableMap {
@@ -3327,6 +4538,7 @@ query GetReviewThreads(
         nodes {
           id
           isResolved
+          isOutdated
           path
           startLine
           line
@@ -3334,9 +4546,12 @@ query GetReviewThreads(
           originalLine
           comments(first: 100) {
             nodes {
+              databaseId
+              fullDatabaseId
               body
               createdAt
               url
+              diffHunk
               author {
                 login
               }
@@ -3675,7 +4890,7 @@ function Resolve-PullRequestTarget {
             throw "E_CONFIG_ERROR: Interactive mode requires a future overall deadline timestamp (required for request threading)."
         }
 
-        $hostInput = Read-Host "GitHub host [github.com]"
+        $hostInput = Read-TerminalResponse -Prompt "GitHub host [github.com]"
         if ([string]::IsNullOrWhiteSpace($hostInput)) {
             $hostInput = "github.com"
         }
@@ -3842,9 +5057,116 @@ function Invoke-FastProcessExit {
     Stop-CurrentProcessImmediately -ExitCode $ExitCode
 }
 
+function Test-CommandLineIndicatesInteractiveHost {
+    # Pure, arg-driven helper: given a PowerShell process command line (from
+    # [Environment]::GetCommandLineArgs()), decide whether it denotes an interactive session that must
+    # survive the script. Interactive when -NoExit (or an unambiguous abbreviation) is present, OR there
+    # is no batch entry (-File / -Command / -EncodedCommand, or any unambiguous abbreviation / documented
+    # alias). PowerShell accepts unambiguous parameter-name prefixes (for example -fi, -com, -enc), so
+    # the match is prefix-based rather than an exact set; missing a batch entry only costs the (always
+    # correct) managed exit, so the bias is intentionally toward "interactive". Kept pure so the
+    # abbreviation matching is unit tested without depending on the real process command line.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string[]]$CommandLineArgs
+    )
+
+    $hasBatchEntry = $false
+    foreach ($commandLineArg in @($CommandLineArgs)) {
+        $argText = [string]$commandLineArg
+        if (-not $argText.StartsWith("-")) {
+            continue
+        }
+
+        $normalized = $argText.TrimStart("-").ToLowerInvariant()
+        if ([string]::IsNullOrEmpty($normalized)) {
+            continue
+        }
+
+        # -NoExit keeps the host open after the script. "noe" is the shortest unambiguous abbreviation
+        # (shorter "no"/"n" prefixes also match -NoLogo/-NoProfile/-NonInteractive), so require length 3+.
+        if ($normalized.Length -ge 3 -and "noexit".StartsWith($normalized)) {
+            return $true
+        }
+
+        # -File / -Command / -EncodedCommand (and their unambiguous prefixes) mark a batch invocation.
+        # "-ec" is a documented -EncodedCommand alias that is not a strict prefix, so match it explicitly.
+        if ($normalized -eq "ec" -or
+            "file".StartsWith($normalized) -or
+            "command".StartsWith($normalized) -or
+            "encodedcommand".StartsWith($normalized)) {
+            $hasBatchEntry = $true
+        }
+    }
+
+    return (-not $hasBatchEntry)
+}
+
+function Test-IsInteractiveHostSession {
+    # Returns $true when this PowerShell process is hosting an interactive session whose terminal must
+    # survive the script. A fast process exit there is doubly unsafe: it terminates the user's live
+    # shell AND skips the terminal-state restoration the host performs when control returns to the
+    # prompt. Any one of three independent signals means "interactive":
+    #   1. PSReadLine is loaded. It is auto-imported only by interactive hosts and puts the terminal in
+    #      raw mode for line editing, so its presence is the most reliable signal (a non-interactive
+    #      pwsh -File / -Command run never loads it).
+    #   2. -NoExit (or an abbreviation) is on the process command line: the user explicitly asked the
+    #      host to stay open after the script, so terminating the process would defeat that intent.
+    #   3. The process command line carries no batch entry (-File / -Command / -EncodedCommand or an
+    #      abbreviation): a pure REPL, meaning the script was invoked from an already-running session.
+    # Signals 2 and 3 are computed by the pure Test-CommandLineIndicatesInteractiveHost helper.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param()
+
+    try {
+        if ($null -ne (Get-Module -Name "PSReadLine" -ErrorAction SilentlyContinue)) {
+            return $true
+        }
+
+        return (Test-CommandLineIndicatesInteractiveHost -CommandLineArgs ([Environment]::GetCommandLineArgs()))
+    }
+    catch {
+        # When interactive state cannot be determined, assume interactive: skipping the fast exit only
+        # costs a slightly slower (but always correct) managed exit, whereas a wrong fast exit can
+        # strand the user's terminal. Fail safe.
+        return $true
+    }
+}
+
+function Test-ShouldUseFastExit {
+    # The fast process exit (libc _exit / [Environment]::Exit) skips the .NET/host terminal-state
+    # restoration that a normal managed exit performs. That restoration is only NEEDED when this run
+    # initialized the console INPUT subsystem -- either by reading from the terminal
+    # (TerminalInputInitialized) or by running inside an interactive host (where PSReadLine already put
+    # the terminal in raw mode). When neither holds, the terminal was never switched out of its default
+    # mode and the fast exit is safe; when either holds, fall back to the managed exit so the terminal
+    # is restored (otherwise the parent shell is left with echo/line-editing disabled).
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param()
+
+    if ($script:TerminalInputInitialized) {
+        return $false
+    }
+
+    return (-not (Test-IsInteractiveHostSession))
+}
+
 function Invoke-Main {
     [CmdletBinding()]
     param()
+
+    # Suppress the web-cmdlet progress UI for the whole run. PowerShell's Invoke-WebRequest /
+    # Invoke-RestMethod render a progress bar that hides the cursor and emits DSR cursor-position
+    # queries (ESC[6n); the terminal answers those by injecting ESC[<row>;<col>R into stdin, which
+    # then pollutes the parent shell's input after the process exits. Setting this once here covers
+    # every transport via dynamic scoping (each request function also sets it locally as defense in
+    # depth); a policy test asserts both layers stay in place.
+    $ProgressPreference = "SilentlyContinue"
 
     # Render terminal output as UTF-8 so copied (terminal-screen selection) comment text stays
     # verbatim, independent of the host's default code page. This is intentionally a no-op when
@@ -3888,9 +5210,14 @@ function Invoke-Main {
         $authToken = [string]$authToken
     }
 
+    $githubWebCookieValue = Get-GitHubWebCookie -ExplicitCookie $GitHubWebCookie
+
     $sensitiveTokens = @()
     if (-not [string]::IsNullOrWhiteSpace($authToken)) {
         $sensitiveTokens += [string]$authToken
+    }
+    if (-not [string]::IsNullOrWhiteSpace($githubWebCookieValue)) {
+        $sensitiveTokens += [string]$githubWebCookieValue
     }
 
     $headers = Get-GitHubHeaders -AuthToken $authToken
@@ -3947,6 +5274,9 @@ function Invoke-Main {
             $authTokenSourceCategory = $storedAuthResolution.SourceCategory
             $authTokenEnvironmentVariable = $storedAuthResolution.EnvironmentVariable
             $sensitiveTokens = @($authToken)
+            if (-not [string]::IsNullOrWhiteSpace($githubWebCookieValue)) {
+                $sensitiveTokens += [string]$githubWebCookieValue
+            }
             $headers = Get-GitHubHeaders -AuthToken $authToken
             Assert-IsHashtableLike -Value $headers -Name "Headers"
 
@@ -3979,6 +5309,9 @@ function Invoke-Main {
             $authTokenSourceCategory = "none"
             $authTokenEnvironmentVariable = $null
             $sensitiveTokens = @()
+            if (-not [string]::IsNullOrWhiteSpace($githubWebCookieValue)) {
+                $sensitiveTokens += [string]$githubWebCookieValue
+            }
             $retrievedRecords = $true
         }
         catch {
@@ -3994,7 +5327,7 @@ function Invoke-Main {
     }
 
     if (-not $retrievedRecords -and $allowPromptedLoginFallback -and $lastFailureMayRequireAuth) {
-        $choice = Read-Host "Authentication is missing or invalid. Log in using GitHub CLI now? [y/N]"
+        $choice = Read-TerminalResponse -Prompt "Authentication is missing or invalid. Log in using GitHub CLI now? [y/N]"
         if ($choice -match "^(y|yes)$") {
             $rejectedTokenValuesArray = @($rejectedTokenValues)
             $promptedAuthResolution = Convert-ToAuthTokenResolutionResult -AuthTokenValue (Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive -IncludeSourceMetadata -IgnoreEnvironmentTokens -RejectedTokenValues $rejectedTokenValuesArray) -FallbackSource "unknown"
@@ -4010,6 +5343,9 @@ function Invoke-Main {
             }
 
             $sensitiveTokens = @($authToken)
+            if (-not [string]::IsNullOrWhiteSpace($githubWebCookieValue)) {
+                $sensitiveTokens += [string]$githubWebCookieValue
+            }
             $headers = Get-GitHubHeaders -AuthToken $authToken
             Assert-IsHashtableLike -Value $headers -Name "Headers"
 
@@ -4029,6 +5365,11 @@ function Invoke-Main {
         }
 
         throw $message
+    }
+
+    if ((Get-SafeCount -InputObject $records) -gt 0) {
+        $webSuggestedDiffsByCommentId = Get-GitHubWebAutomatedSuggestedDiffsByCommentId -Owner $target.Owner -Repo $target.Repo -PrNumber $target.PullRequestNumber -GitHubHost $target.Host -RequestTimeoutSeconds $RequestTimeoutSeconds -GitHubWebCookie $githubWebCookieValue -OverallDeadlineUtc $overallDeadlineUtc -AllowedGitHubHostsNormalized $allowedGitHubHostsNormalized -SensitiveTokens $sensitiveTokens
+        Add-GitHubWebAutomatedSuggestedDiffsToRecords -Records $records -SuggestedDiffsByCommentId $webSuggestedDiffsByCommentId
     }
 
     $output = $null
@@ -4061,7 +5402,10 @@ if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
         # .NET/PowerShell managed teardown (finalizers + HTTP connection-pool shutdown) that
         # dominates wall time on slow container filesystems. Output is already rendered and flushed
         # before this point. -NoFastExit opts out and restores the standard managed teardown.
-        if (-not $NoFastExit.IsPresent) {
+        # Test-ShouldUseFastExit additionally suppresses the fast exit whenever it would strand the
+        # terminal (interactive host, or a run that read from the console): those runs take the safe
+        # managed exit so the parent shell keeps echo/line-editing instead of "input stops on the shell".
+        if (-not $NoFastExit.IsPresent -and (Test-ShouldUseFastExit)) {
             Invoke-FastProcessExit -ExitCode 0
         }
     }
@@ -4072,7 +5416,7 @@ if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
         else {
             Microsoft.PowerShell.Utility\Write-Error "E_UNEXPECTED: Script failed with an unknown error."
         }
-        if (-not $NoFastExit.IsPresent) {
+        if (-not $NoFastExit.IsPresent -and (Test-ShouldUseFastExit)) {
             Invoke-FastProcessExit -ExitCode 1
         }
         exit 1

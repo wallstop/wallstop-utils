@@ -476,7 +476,11 @@ Describe "Scope safety conventions" {
                 }, $true))
 
         $violations = New-Object System.Collections.Generic.List[string]
-        $allowedDirectHttpFunctions = @("Invoke-GitHubRequestWithRetry", "Validate-GitHubTokenForRepoAccess")
+        $allowedDirectHttpFunctions = @(
+            "Invoke-GitHubRequestWithRetry",
+            "Validate-GitHubTokenForRepoAccess",
+            "Get-GitHubWebAutomatedSuggestedDiffsByCommentId"
+        )
 
         foreach ($function in $functions) {
             $commandNames = @($function.Body.FindAll({
@@ -495,6 +499,181 @@ Describe "Scope safety conventions" {
         $content = Get-Content -Path $fullPath -Raw
         $content | Should -Match 'function\s+Invoke-GitHubRequestWithRetry[\s\S]*Assert-GitHubRequestUri[\s\S]*Invoke-RestMethod'
         $content | Should -Match 'function\s+Validate-GitHubTokenForRepoAccess[\s\S]*Assert-GitHubRequestUri[\s\S]*Invoke-WebRequest'
+        $content | Should -Match 'function\s+Get-GitHubWebAutomatedSuggestedDiffsByCommentId[\s\S]*Assert-GitHubRequestUri[\s\S]*Invoke-WebRequest'
+        $webSuggestionFetch = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-GitHubWebAutomatedSuggestedDiffsByCommentId" -Context "web suggestion fetch policy"
+        $webSuggestionFetch.Extent.Text | Should -Not -Match '\$script:GitHubWebSession|@sessionArgs|WebSession\s*=' -Because "GitHub web UI HTML fetch must not reuse the API WebRequestSession or inherit API Authorization headers."
+    }
+
+    It "sanitizes every request-header value in the GitHub utility, not only the known sites" {
+        # CLASS-LEVEL GUARD. The name-specific checks elsewhere pin sanitization in the three functions
+        # that build headers TODAY (Get-GitHubHeaders, Get-GitHubWebCookie,
+        # Get-GitHubWebAutomatedSuggestedDiffsByCommentId). This guard instead enforces the underlying
+        # INVARIANT across the whole file so the realistic regression -- a NEW header site forwarding a raw
+        # token, cookie, or environment value (which can carry a smuggled CR/LF, the classic response-
+        # splitting / header-injection vector) into a transport header -- is caught by CI even when it is
+        # added outside those three functions. It is a STATIC CONVENTION GUARD, not a formal taint proof:
+        # it requires every dynamic request-header value to be a string literal, an inline
+        # ConvertTo-SafeHttpHeaderValue call, or a variable that is sanitized -- either named with the
+        # repo's $safe* convention or assigned from ConvertTo-SafeHttpHeaderValue earlier in the file.
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        $sensitiveHeaderNames = @("Authorization", "Cookie", "Proxy-Authorization", "Set-Cookie")
+
+        # Provenance set: bare names of variables assigned anywhere in the file from a
+        # ConvertTo-SafeHttpHeaderValue call (for example $safeAuthToken, $explicitCookie). Keying off
+        # provenance, not only the $safe* name, keeps a correctly sanitized value from tripping the guard
+        # merely because it was not named $safe*, and is why this guard is honest about being a convention
+        # check rather than a taint proof.
+        $sanitizedVariableNames = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($sanitizerAssignment in @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                        $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        @($node.Right.FindAll({
+                                    param($inner)
+                                    $inner -is [System.Management.Automation.Language.CommandAst] -and
+                                    $inner.GetCommandName() -eq "ConvertTo-SafeHttpHeaderValue"
+                                }, $true)).Count -gt 0
+                    }, $true))) {
+            [void]$sanitizedVariableNames.Add((($sanitizerAssignment.Left.VariablePath.UserPath) -split ":")[-1])
+        }
+
+        function Test-HeaderValueAstIsSanitized {
+            param(
+                [AllowNull()][System.Management.Automation.Language.Ast]$ValueAst,
+                [System.Collections.Generic.HashSet[string]]$SanitizedNames
+            )
+
+            if ($null -eq $ValueAst) {
+                return $true
+            }
+
+            # An inline sanitizer call -- e.g. $headers["Cookie"] = (ConvertTo-SafeHttpHeaderValue -Value
+            # $raw) -- is safe by construction regardless of what it wraps.
+            if (@($ValueAst.FindAll({
+                            param($node)
+                            $node -is [System.Management.Automation.Language.CommandAst] -and
+                            $node.GetCommandName() -eq "ConvertTo-SafeHttpHeaderValue"
+                        }, $true)).Count -gt 0) {
+                return $true
+            }
+
+            # Otherwise every variable the value references must be sanitized: named $safe* by convention or
+            # assigned from the sanitizer. A pure literal references no variables and is vacuously safe
+            # (e.g. "application/vnd.github+json").
+            foreach ($variable in @($ValueAst.FindAll({
+                            param($node)
+                            $node -is [System.Management.Automation.Language.VariableExpressionAst]
+                        }, $true))) {
+                $bareName = ($variable.VariablePath.UserPath -split ":")[-1]
+                if ($bareName.StartsWith("safe", [System.StringComparison]::OrdinalIgnoreCase)) {
+                    continue
+                }
+                if ($SanitizedNames.Contains($bareName)) {
+                    continue
+                }
+                return $false
+            }
+
+            return $true
+        }
+
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        # Rule 1: an index ($x["Cookie"] = ...) OR member ($x.Cookie = ...) assignment must carry a
+        # sanitized value when EITHER the target variable is a header map (its name ends with "headers", so
+        # $headers, $tempHeaders, $requestHeaders all qualify) OR the key is a sensitive header name
+        # (regardless of the target variable's name). Covering both assignment forms, and not pinning a
+        # single variable name, is what stops a renamed or dotted-form header site from slipping through.
+        foreach ($assignment in @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                        ($node.Left -is [System.Management.Automation.Language.IndexExpressionAst] -or
+                        $node.Left -is [System.Management.Automation.Language.MemberExpressionAst])
+                    }, $true))) {
+            $left = $assignment.Left
+            if ($left -is [System.Management.Automation.Language.IndexExpressionAst]) {
+                $targetExpression = $left.Target
+                $keyExpression = $left.Index
+            }
+            else {
+                $targetExpression = $left.Expression
+                $keyExpression = $left.Member
+            }
+
+            $targetIsHeaderMap = $false
+            if ($targetExpression -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                $targetName = ($targetExpression.VariablePath.UserPath -split ":")[-1]
+                $targetIsHeaderMap = $targetName.EndsWith("headers", [System.StringComparison]::OrdinalIgnoreCase)
+            }
+
+            $keyText = if ($keyExpression -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                $keyExpression.Value
+            }
+            else {
+                $null
+            }
+            $keyIsSensitive = (-not [string]::IsNullOrEmpty($keyText)) -and ($sensitiveHeaderNames -contains $keyText)
+
+            if (($targetIsHeaderMap -or $keyIsSensitive) -and -not (Test-HeaderValueAstIsSanitized -ValueAst $assignment.Right -SanitizedNames $sanitizedVariableNames)) {
+                $violations.Add(("line {0}: {1}" -f $assignment.Extent.StartLineNumber, $assignment.Extent.Text.Trim())) | Out-Null
+            }
+        }
+
+        # Rule 2: any hashtable pair keyed by a sensitive header name -- anywhere, including an inline
+        # Invoke-WebRequest -Headers @{ Cookie = ... } that bypasses the header-variable idiom -- must carry
+        # a sanitized value. Non-sensitive literal headers (Accept, User-Agent) are intentionally not
+        # policed: a literal cannot carry an injection.
+        foreach ($hashtable in @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.HashtableAst]
+                    }, $true))) {
+            foreach ($pair in $hashtable.KeyValuePairs) {
+                $keyAst = $pair.Item1
+                $keyText = if ($keyAst -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    $keyAst.Value
+                }
+                else {
+                    $keyAst.Extent.Text.Trim('"', "'")
+                }
+
+                if (($sensitiveHeaderNames -contains $keyText) -and -not (Test-HeaderValueAstIsSanitized -ValueAst $pair.Item2 -SanitizedNames $sanitizedVariableNames)) {
+                    $violations.Add(("line {0}: sensitive header '{1}' value is not sanitized: {2}" -f $pair.Item2.Extent.StartLineNumber, $keyText, $pair.Item2.Extent.Text.Trim())) | Out-Null
+                }
+            }
+        }
+
+        # Rule 3: a dictionary-style .Add("<sensitive header>", <value>) method call -- the .NET header API
+        # idiom (for example HttpClient / WebHeaderCollection) -- must carry a sanitized value. Keyed on the
+        # sensitive header literal so it is independent of the receiver expression. The codebase builds
+        # headers with hashtable literals plus index/member assignment today; this closes the remaining
+        # method-call form so the whole class is covered, not only the idioms in use now.
+        foreach ($invocation in @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                        $node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                        $node.Member.Value -eq "Add"
+                    }, $true))) {
+            $invocationArguments = $invocation.Arguments
+            if ($null -eq $invocationArguments -or $invocationArguments.Count -lt 2) {
+                continue
+            }
+            $addKeyAst = $invocationArguments[0]
+            if (-not ($addKeyAst -is [System.Management.Automation.Language.StringConstantExpressionAst])) {
+                continue
+            }
+            if (($sensitiveHeaderNames -contains $addKeyAst.Value) -and -not (Test-HeaderValueAstIsSanitized -ValueAst $invocationArguments[1] -SanitizedNames $sanitizedVariableNames)) {
+                $violations.Add(("line {0}: sensitive header .Add('{1}', ...) value is not sanitized: {2}" -f $invocation.Extent.StartLineNumber, $addKeyAst.Value, $invocationArguments[1].Extent.Text.Trim())) | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Every dynamic request-header value must be a literal or a ConvertTo-SafeHttpHeaderValue-sanitized value (named `$safe* or assigned from the sanitizer) so smuggled CR/LF cannot inject headers. Unsanitized: {0}" -f ($violations -join "; ")
+        )
     }
 
     It "threads allowlist enforcement through Invoke-Main auth retry branch" {
@@ -522,6 +701,10 @@ Describe "Scope safety conventions" {
         $lowerGitHubLineStartMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineStart\s*=\s*\$githubAnchor\.Start\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerGitHubLineEndMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*githubLineEnd\s*=\s*\$githubAnchor\.End\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerEmbeddedLocationsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*embeddedLocations\s*=\s*@\(\$embeddedLocations\)\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerCommentsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*comments\s*=\s*@\(\$commentRecords\)\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerRecommendationsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*recommendations\s*=\s*@\(\$recommendations\)\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerTopLevelAuthorMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*topLevelAuthor\s*=\s*\$topLevelAuthor\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $lowerLatestReplyAuthorMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*latestReplyAuthor\s*=\s*\$latestReplyAuthor\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerResolutionStateMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*resolutionState\s*=\s*\[string\]\$resolutionState\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*owner\s*=\s*\$Owner\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $lowerRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*repo\s*=\s*\$Repo\s*$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
@@ -530,6 +713,10 @@ Describe "Scope safety conventions" {
         $upperPathMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Path\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperResolutionStateMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*ResolutionState\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $authSourceMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*authSource\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperCommentsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Comments\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperRecommendationsMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Recommendations\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperTopLevelAuthorMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*TopLevelAuthor\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $upperLatestReplyAuthorMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*LatestReplyAuthor\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperOwnerMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Owner\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $upperRepoMatches = [regex]::Matches($convertRecordFunctionBody, '^\s*Repo\s*=', [System.Text.RegularExpressions.RegexOptions]::Multiline)
 
@@ -539,23 +726,40 @@ Describe "Scope safety conventions" {
         $lowerGitHubLineStartMatches.Count | Should -Be 1
         $lowerGitHubLineEndMatches.Count | Should -Be 1
         $lowerEmbeddedLocationsMatches.Count | Should -Be 1
+        $lowerCommentsMatches.Count | Should -Be 1
+        $lowerRecommendationsMatches.Count | Should -Be 1
+        $lowerTopLevelAuthorMatches.Count | Should -Be 1
+        $lowerLatestReplyAuthorMatches.Count | Should -Be 1
         $lowerResolutionStateMatches.Count | Should -Be 1
         $lowerOwnerMatches.Count | Should -Be 1
         $lowerRepoMatches.Count | Should -Be 1
         $upperPathMatches.Count | Should -Be 0
         $upperResolutionStateMatches.Count | Should -Be 0
         $authSourceMatches.Count | Should -Be 0
+        $upperCommentsMatches.Count | Should -Be 0
+        $upperRecommendationsMatches.Count | Should -Be 0
+        $upperTopLevelAuthorMatches.Count | Should -Be 0
+        $upperLatestReplyAuthorMatches.Count | Should -Be 0
         $upperOwnerMatches.Count | Should -Be 0
         $upperRepoMatches.Count | Should -Be 0
 
         # Array-stable singleton output is preserved via ConvertTo-JsonArrayCompat, the
         # cross-version replacement for `ConvertTo-Json -AsArray` (absent on Windows
         # PowerShell 5.1).
-        $scriptContent | Should -Match 'function\s+Format-UnresolvedThreadsAsJson[\s\S]*ConvertTo-JsonArrayCompat\s+-InputObject\s+\$Records\s+-Depth\s+8'
+        $scriptContent | Should -Match 'function\s+Format-UnresolvedThreadsAsJson[\s\S]*ConvertTo-JsonArrayCompat\s+-InputObject\s+\$outputRecords\s+-Depth\s+8'
 
         $testsContent | Should -Match 'Format-UnresolvedThreadsAsJson'
+        $scriptContent | Should -Match 'suggestedChanges'
         $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"path"\)\s+\|\s+Should\s+-BeTrue'
-        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"resolutionState"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"lineStart"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"lineEnd"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"comments"\)\s+\|\s+Should\s+-BeTrue'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"recommendations"\)\s+\|\s+Should\s+-BeFalse'
+        $testsContent | Should -Match '\(\$commentPropertyNames\s+-ccontains\s+"diffHunk"\)\s+\|\s+Should\s+-BeFalse'
+        $testsContent | Should -Match '\.suggestedChanges'
+        $testsContent | Should -Match '\(\$commentPropertyNames\s+-ccontains\s+"suggestedDiffs"\)\s+\|\s+Should\s+-BeFalse'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"topLevelAuthor"\)\s+\|\s+Should\s+-BeFalse'
+        $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"resolutionState"\)\s+\|\s+Should\s+-BeFalse'
         $testsContent | Should -Match '\(\$propertyNames\s+-ccontains\s+"Path"\)\s+\|\s+Should\s+-BeFalse'
     }
 
@@ -735,14 +939,45 @@ Describe "Scope safety conventions" {
         $stopBody | Should -Match '\[System\.Environment\]::Exit\(\$ExitCode\)' -Because "Windows and the fallback must use the portable managed terminator"
 
         # The run guard fast-exits by default on both success and failure paths (unless -NoFastExit),
-        # inside the existing dot-source guard so dot-sourced tests never terminate the host.
-        $content | Should -Match 'Invoke-Main\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
-        $content | Should -Match 'if\s*\(-not\s*\$NoFastExit\.IsPresent\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+1'
+        # inside the existing dot-source guard so dot-sourced tests never terminate the host. The fast
+        # exit is ALSO gated by Test-ShouldUseFastExit so a run that would strand the terminal (an
+        # interactive host, or a run that read from the console) takes the safe managed exit instead.
+        $content | Should -Match 'Invoke-Main\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
+        $content | Should -Match 'if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+1'
+    }
+
+    It "gates the fast exit so it never strands an interactive or read-from terminal" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        # The fast process exit (libc _exit / [Environment]::Exit) skips the .NET/host terminal-state
+        # restoration. Test-ShouldUseFastExit must suppress it whenever the terminal could be stranded:
+        # when this run read from the console, or when it runs inside an interactive host.
+        $shouldFastExit = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Test-ShouldUseFastExit" -Context "fast-exit gating"
+        $shouldFastExitBody = $shouldFastExit.Body.Extent.Text
+        $shouldFastExitBody | Should -Match '\$script:TerminalInputInitialized' -Because "a run that read the terminal must take the managed exit"
+        $shouldFastExitBody | Should -Match 'Test-IsInteractiveHostSession' -Because "an interactive host must take the managed exit"
+
+        # Interactive detection must key off PSReadLine (the reliable raw-mode signal) and fail safe.
+        $interactiveHost = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Test-IsInteractiveHostSession" -Context "interactive host detection"
+        $interactiveHostBody = $interactiveHost.Body.Extent.Text
+        $interactiveHostBody | Should -Match 'Get-Module\s+-Name\s+"PSReadLine"' -Because "PSReadLine presence is the primary interactive signal"
+
+        # The flag is declared StrictMode-safe at script scope and set the moment the terminal is read.
+        $content | Should -Match '\$script:TerminalInputInitialized\s*=\s*\$false'
     }
 
     It "preserves suggested-change blocks verbatim and strips them from prose" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
 
         $content | Should -Match 'function\s+Get-SuggestionFenceRegex'
         $content | Should -Match 'function\s+Get-CommentSuggestionBlocks'
@@ -751,6 +986,47 @@ Describe "Scope safety conventions" {
         # The record carries verbatim suggestions, and the text renderer labels them.
         $content | Should -Match 'function\s+Convert-ReviewThreadToOutputRecord[\s\S]*suggestions\s*=\s*@\(\$suggestions\)'
         $content | Should -Match 'function\s+Add-SuggestionRenderLines[\s\S]*Suggested change'
+        $content | Should -Not -Match 'function\s+Add-ThreadCommentRenderLines[\s\S]*Review context diff hunk:'
+        $content | Should -Match 'function\s+Add-ThreadCommentRenderLines[\s\S]*suggestedChanges'
+        $content | Should -Match 'function\s+Get-GitHubWebAutomatedSuggestedDiffsByCommentIdFromHtml'
+        $content | Should -Match 'function\s+Convert-GitHubWebAutomatedDiffEntriesToSuggestedDiffs[\s\S]*DELETION[\s\S]*ADDITION'
+        $content | Should -Match 'function\s+Add-GitHubWebAutomatedSuggestedDiffsToRecords[\s\S]*databaseId'
+        $content | Should -Match 'function\s+Convert-SuggestedDiffTextToPublicChangeOnlyDiff'
+        $content | Should -Match 'function\s+Add-ThreadCommentRenderLines[\s\S]*Convert-SuggestedDiffTextToPublicChangeOnlyDiff'
+        $content | Should -Match 'function\s+Convert-SuggestedChangeForPublicOutput[\s\S]*Convert-SuggestedDiffTextToPublicChangeOnlyDiff'
+        $content | Should -Match 'changedLines'
+
+        $headerValueSanitizer = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "ConvertTo-SafeHttpHeaderValue" -Context "GitHub header-value sanitization"
+        # Strip the whole C0 control range plus DEL (which includes CR/LF, the response-splitting
+        # injection vector), not only CR/LF: no control character is ever valid in a token/cookie value.
+        $headerValueSanitizer.Body.Extent.Text | Should -Match '\\x00-\\x1F' -Because "HTTP header values must strip CR/LF and the full C0 control range before transport use"
+
+        $githubHeaders = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-GitHubHeaders" -Context "GitHub API header-value sanitization"
+        $githubHeadersBody = $githubHeaders.Body.Extent.Text
+        $githubHeadersBody | Should -Match '\$safeAuthToken\s*=\s*ConvertTo-SafeHttpHeaderValue\s+-Value\s+\$AuthToken'
+        $githubHeadersBody | Should -Match '\$headers\["Authorization"\]\s*=\s*"Bearer \$safeAuthToken"'
+        $githubHeadersBody | Should -Not -Match '\$headers\["Authorization"\]\s*=\s*"Bearer \$AuthToken"'
+
+        $webCookie = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-GitHubWebCookie" -Context "GitHub web cookie sanitization"
+        $webCookieBody = $webCookie.Body.Extent.Text
+        $webCookieBody | Should -Match '\$explicitCookie\s*=\s*ConvertTo-SafeHttpHeaderValue\s+-Value\s+\$ExplicitCookie'
+        $webCookieBody | Should -Match 'ConvertTo-SafeHttpHeaderValue\s+-Value\s+\(\[string\]\$variable\.Value\)'
+
+        $webSuggestionFetch = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-GitHubWebAutomatedSuggestedDiffsByCommentId" -Context "GitHub web suggestion header-value sanitization"
+        $webSuggestionFetchBody = $webSuggestionFetch.Body.Extent.Text
+        $webSuggestionFetchBody | Should -Match '\$safeGitHubWebCookie\s*=\s*ConvertTo-SafeHttpHeaderValue\s+-Value\s+\$GitHubWebCookie'
+        $webSuggestionFetchBody | Should -Match '\$headers\["Cookie"\]\s*=\s*\$safeGitHubWebCookie'
+        $webSuggestionFetchBody | Should -Not -Match '\$headers\["Cookie"\]\s*=\s*\$GitHubWebCookie'
+
+        $restThreads = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Convert-RestReviewCommentsToThreadLikeObjects" -Context "REST review-comment outdated mapping"
+        $restThreadsBody = $restThreads.Body.Extent.Text
+        $restThreadsBody | Should -Match '\$isOutdated\s*=\s*ConvertTo-BooleanValue\s+-Value\s+\(Get-ObjectPropertyValue\s+-InputObject\s+\$topLevelComment\s+-Name\s+"outdated"\)'
+        $restThreadsBody | Should -Match 'isOutdated\s*=\s*\$isOutdated'
+
+        $threadCommentRenderer = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Add-ThreadCommentRenderLines" -Context "visible suggestion label numbering"
+        $threadCommentRendererBody = $threadCommentRenderer.Body.Extent.Text
+        $threadCommentRendererBody | Should -Match '\$visibleBodyOrdinal\+\+'
+        $threadCommentRendererBody | Should -Match '"Suggestion \{0\}:"\s+-f\s+\$visibleBodyOrdinal'
 
         # Suggestion extraction must scan EVERY comment in the thread (top comment and replies),
         # because reviewers/bots frequently attach the suggested change on a follow-up reply. A
@@ -758,13 +1034,27 @@ Describe "Scope safety conventions" {
         $convertMatch = [regex]::Match($content, 'function\s+Convert-ReviewThreadToOutputRecord\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
         $convertMatch.Success | Should -BeTrue -Because "Convert-ReviewThreadToOutputRecord must exist so the all-comments suggestion scan can be validated"
         $convertBody = $convertMatch.Groups["body"].Value
-        $convertBody | Should -Match 'foreach\s*\(\$commentNode\s+in\s+\$comments\)' -Because "suggestion extraction must iterate every comment node, not only the top comment"
+        $convertBody | Should -Match 'for\s*\(\$commentIndex\s*=\s*0;\s*\$commentIndex\s*-lt\s*\$commentCount;\s*\$commentIndex\+\+\)' -Because "suggestion extraction must iterate every comment node, not only the top comment"
+        $convertBody | Should -Match '\$commentNode\s*=\s*\$comments\[\$commentIndex\]' -Because "recommendation metadata must preserve stable source comment indexes"
 
         $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
         $testsContent = Get-Content -Path $testsPath -Raw
         $testsContent | Should -Match 'Describe\s+"Comment suggestion blocks"'
         $testsContent | Should -Match 'captures suggestions on a record and strips them from the prose'
         $testsContent | Should -Match 'captures a suggestion that appears in a reply'
+        $testsContent | Should -Match 'preserves bot comment authors internally and emits plain prose in public JSON'
+        $testsContent | Should -Match 'renders per-comment suggestion without the referenced diff hunk'
+        $testsContent | Should -Match 'annotates fenced suggestions with their source comment author'
+        $testsContent | Should -Match 'extracts GitHub web automated suggestions without review context lines'
+        $testsContent | Should -Match 'merges GitHub web automated suggestions into matching comment records'
+        $testsContent | Should -Match 'does not render placeholder prose for suggestion-only comments'
+        $testsContent | Should -Match 'Should -Not -Match "@@"'
+        $testsContent | Should -Match 'throws a redacted error when provided GitHub web cookie cannot fetch changesets'
+        $testsContent | Should -Match 'sanitizes GitHub web cookies before they are used as header values'
+        $testsContent | Should -Match 'sanitizes bearer authorization tokens before constructing headers'
+        $testsContent | Should -Match 'numbers only visible per-comment suggestions when empty entries are skipped'
+        $testsContent | Should -Match 'outdated\s*=\s*\$true'
+        $testsContent | Should -Match 'webSessionParameterWasBound'
     }
 
     It "reuses one pooled web session across all GitHub requests" {
@@ -775,8 +1065,11 @@ Describe "Scope safety conventions" {
         # and built via a mockable seam so every GitHub API call reuses one pooled TCP/TLS
         # connection instead of opening a fresh connection per request.
         $content | Should -Match '\$script:GitHubWebSession\s*=\s*\$null'
+        $content | Should -Match 'function\s+Resolve-WebRequestSessionType'
         $content | Should -Match 'function\s+New-GitHubWebSession'
-        $content | Should -Match '\[Microsoft\.PowerShell\.Commands\.WebRequestSession\]::new\(\)'
+        $content | Should -Not -Match '\[Microsoft\.PowerShell\.Commands\.WebRequestSession\]::new\(\)'
+        $content | Should -Match '\$sessionType\s*=\s*Resolve-WebRequestSessionType'
+        $content | Should -Match 'if\s*\(\$null\s*-eq\s*\$sessionType\)\s*\{\s*\r?\n?\s*return\s+\$null'
         $content | Should -Match '\$script:GitHubWebSession\s*=\s*New-GitHubWebSession'
 
         # The session is attached only when non-null so dot-sourced unit tests (which never set it)
@@ -808,13 +1101,97 @@ Describe "Scope safety conventions" {
         $validateMatch.Success | Should -BeTrue -Because "Validate-GitHubTokenForRepoAccess must exist so progress suppression can be validated"
         $validateMatch.Groups["body"].Value | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"' -Because "the token-validation transport must suppress the progress UI"
 
+        # Defense in depth: Invoke-Main also suppresses progress once for the whole run so any future
+        # web call inherits it via dynamic scoping even if a new call site forgets the per-function set.
+        $mainMatch = [regex]::Match($content, 'function\s+Invoke-Main\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $mainMatch.Success | Should -BeTrue -Because "Invoke-Main must exist so the run-wide progress suppression can be validated"
+        $mainMatch.Groups["body"].Value | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"' -Because "Invoke-Main must suppress the progress UI run-wide as defense in depth"
+
         # -ProgressAction is PowerShell 7.4+ only and must not be relied upon for this contract.
         $content | Should -Not -Match '-ProgressAction'
+
+        # The same terminal-safety contract applies to the pre-commit CLI downloader: a download
+        # progress bar emits the same DSR cursor probes. Install-PreCommitPyzFallback must suppress
+        # progress before its Invoke-WebRequest, matching the native tool downloader.
+        $preCommitHelpersPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PreCommitCliHelpers.ps1"
+        $preCommitHelpersContent = Get-Content -Path $preCommitHelpersPath -Raw
+        $pyzFallbackMatch = [regex]::Match($preCommitHelpersContent, 'function\s+Install-PreCommitPyzFallback\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $pyzFallbackMatch.Success | Should -BeTrue -Because "Install-PreCommitPyzFallback must exist so its progress suppression can be validated"
+        $pyzFallbackBody = $pyzFallbackMatch.Groups["body"].Value
+        $progressIndex = $pyzFallbackBody.IndexOf('$ProgressPreference', [System.StringComparison]::Ordinal)
+        $downloadIndex = $pyzFallbackBody.IndexOf('Invoke-WebRequest', [System.StringComparison]::Ordinal)
+        $progressIndex | Should -BeGreaterThan -1 -Because "Install-PreCommitPyzFallback must suppress the download progress bar"
+        $downloadIndex | Should -BeGreaterThan -1 -Because "Install-PreCommitPyzFallback must perform the pyz download"
+        $progressIndex | Should -BeLessThan $downloadIndex -Because "progress must be suppressed before the download runs"
+        $pyzFallbackBody | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"'
 
         $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
         $testsContent = Get-Content -Path $testsPath -Raw
         $testsContent | Should -Match 'suppresses the progress UI for the GET transport'
         $testsContent | Should -Match 'suppresses the progress UI for the token-validation transport'
+    }
+
+    It "prompts only through the canonical-mode terminal-read seam, never Read-Host" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        # Read-Host switches the terminal into a host-managed raw mode that a non-interactive host
+        # never restores, stranding the parent shell's input. Every interactive prompt MUST go through
+        # Read-TerminalResponse, which reads in canonical mode via [Console]::In and is restored cleanly
+        # on a normal exit. A command-AST scan (formatter-tolerant) asserts Read-Host is never invoked.
+        $readHostCalls = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq "Read-Host"
+                }, $true))
+        $readHostCalls.Count | Should -Be 0 -Because "Read-Host corrupts the parent terminal on non-interactive hosts; use Read-TerminalResponse"
+
+        $reader = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Read-TerminalResponse" -Context "canonical terminal read"
+        $readerBody = $reader.Body.Extent.Text
+        $readerBody | Should -Match '\$script:TerminalInputInitialized\s*=\s*\$true' -Because "reading the terminal must force the safe managed exit"
+        $readerBody | Should -Match 'Read-ConsoleInputLine' -Because "the read must flow through the canonical [Console]::In seam"
+
+        $consoleReader = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Read-ConsoleInputLine" -Context "canonical console line read"
+        $consoleReader.Body.Extent.Text | Should -Match '\[Console\]::In\.ReadLine\(\)' -Because "the canonical read must use [Console]::In.ReadLine, not Read-Host"
+
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+        $testsContent | Should -Match 'Read-TerminalResponse reads through the canonical \[Console\]::In seam'
+        $testsContent | Should -Match 'Test-ShouldUseFastExit returns true only for a non-interactive run'
+    }
+
+    It "keeps the comments[] inclusion predicate identical at record creation and render time" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        # A single shared predicate decides whether a thread comment carries renderable content, used
+        # at BOTH record creation and render time so the two can never drift. Drift is exactly what let
+        # a diffHunk-only comment create an empty thread block while suppressing the topLevelComment
+        # fallback. diffHunk is internal-only and must NOT drive comments[] inclusion.
+        $content | Should -Match 'function\s+Test-ThreadCommentHasRenderableContent'
+
+        $convert = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Convert-ReviewThreadToOutputRecord" -Context "comment-record inclusion predicate"
+        $convertBody = $convert.Body.Extent.Text
+        $convertBody | Should -Match 'Test-ThreadCommentHasRenderableContent' -Because "record creation must use the shared renderable-content predicate"
+        $convertBody | Should -Not -Match 'IsNullOrWhiteSpace\(\$commentDiffHunk\)' -Because "an internal diffHunk must not force a comments[] record (it never renders)"
+
+        $renderer = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Add-ThreadCommentRenderLines" -Context "comment-record render skip predicate"
+        $renderer.Body.Extent.Text | Should -Match 'Test-ThreadCommentHasRenderableContent' -Because "render-time skip must use the same shared predicate as record creation"
+
+        $formatter = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Format-UnresolvedThreadsAsText" -Context "comments-vs-fallback decision"
+        $formatter.Body.Extent.Text | Should -Match 'Test-ThreadCommentRecordIsRenderable' -Because "the comments-vs-fallback branch must count renderable comments, not raw records"
+
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+        $testsContent | Should -Match 'does not create a comments\[\] record for a comment whose only content is a diffHunk'
     }
 
     It "truncates comment text without splitting UTF-16 surrogate pairs" {
@@ -1368,11 +1745,19 @@ Describe "Cross-language quality platform conventions" {
     It "keeps pre-commit utils Pester execution fast-lane scoped to staged utils test files" {
         $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
         $validatorContent = Get-Content -Path $validatorPath -Raw
+        $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
 
         $validatorContent | Should -Match '\$utilsPesterPattern\s*=\s*''\^Tests/Utils/.+\\.Tests\\.ps1\$'''
         $validatorContent | Should -Match '\$utilsScriptPattern\s*=\s*''\^Scripts/Utils/.+\\.ps1\$'''
+        $validatorContent | Should -Match '\$komorebiProfilePattern\s*='
+        $validatorContent | Should -Match 'Scripts/Komorebi/.+\\\.ps1'
+        $validatorContent | Should -Match 'Tests/Utils/KomorebiProfileHelpers\\\.Tests\\\.ps1'
+        $validatorContent | Should -Match 'PreCommitKomorebiProfiles'
+        $validatorContent | Should -Match '\$komorebiPolicyPattern\s*='
+        $validatorContent | Should -Match 'PreCommitKomorebiPolicy'
         $validatorContent | Should -Match 'Skipping Tests/Utils Pester suite for script-only staged changes in fast local mode'
         $validatorContent | Should -Match 'full suite remains enforced in -All/full validation'
+        $preCommitConfig | Should -Match 'Scripts/\(Utils\|Komorebi\)/\.\*\\\.ps1'
     }
 
     It "routes native Lua and workflow checks through the precommit orchestrator" {
@@ -1392,6 +1777,8 @@ Describe "Cross-language quality platform conventions" {
         $preCommitConfig = Get-Content -Path $script:preCommitConfigPath -Raw
 
         $preCommitConfig | Should -Match 'pretty-format-json[\s\S]*files:\s+''\^\(Config/Komorebi/'
+        $preCommitConfig | Should -Match 'Config/Komorebi/profiles/\[\^/\]\+/\(applications\|komorebi\|komorebi\\\.bar\)\\\.json'
+        $preCommitConfig | Should -Not -Match 'Config/Komorebi/\(profiles/\[\^/\]\+/\)\?'
         $preCommitConfig | Should -Not -Match 'pretty-format-json[\s\S]*files:\s+''\^Config/PowerToys/'
         $preCommitConfig | Should -Match 'exclude:\s+''\^Config/\(PowerToys/\|\\\.config/\)'''
     }
@@ -2000,6 +2387,8 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Match 'E_CI_PRECOMMIT_HOOK_FAILURE'
         $workflow | Should -Match 'files were modified by this hook'
         $workflow | Should -Match 'Auto-formatted files'
+        $workflow | Should -Match 're\.sub\(r"\\x1b\\\[\[0-9;\]\*\[A-Za-z\]"'
+        $workflow | Should -Not -Match 'sed\s+-E\s+''s/\\033'
         $workflow | Should -Not -Match 'hook id:[\s\S]*\{\s*print\s+\$NF\s*\}'
         # failed_hook_ids must use awk block-tracking (exit code) not a plain sed to avoid capturing passing hooks
         $workflow | Should -Not -Match 'failed_hook_ids.*sed\s+-n\s+''s.*hook\s+id'
@@ -3132,14 +3521,23 @@ Describe "Restore script safety conventions" {
 
     It "validates required Komorebi source files before restore copy" {
         $komorebiRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiRestore.ps1') -Raw) -replace "`r", ''
+        $komorebiHelper = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiProfileHelpers.ps1') -Raw) -replace "`r", ''
 
-        $komorebiRestore | Should -Match '\$missingSources\s*=\s*@\('
-        $komorebiRestore | Should -Match 'E_KOMOREBI_RESTORE_SOURCE_MISSING'
-        $komorebiRestore | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiSourceConfig,\s*\$komorebiSourceBarConfig,\s*\$komorebiSourceApplications\)\)'
-        $komorebiRestore | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
-        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceConfig'
-        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceBarConfig'
-        $komorebiRestore | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiSourceApplications'
+        $komorebiRestore | Should -Match 'KomorebiProfileHelpers\.ps1'
+        $komorebiRestore | Should -Match 'Invoke-KomorebiProfileRestore'
+        $komorebiRestore | Should -Not -Match 'Config[\\/]+Komorebi[\\/]+komorebi\.json'
+        $komorebiHelper | Should -Match 'function\s+Invoke-KomorebiProfileRestore'
+        $komorebiHelper | Should -Match 'function\s+Restore-KomorebiSnapshotFiles'
+        $komorebiHelper | Should -Match 'function\s+Update-KomorebiSnapshotFilesTransactionally'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_RESTORE_ROLLBACK_FAILED'
+        $komorebiHelper | Should -Match 'function\s+Resolve-KomorebiRestoreSourceDirectory'
+        $komorebiHelper | Should -Match 'function\s+Assert-KomorebiSnapshotDirectoryComplete'
+        $komorebiHelper | Should -Match 'function\s+Assert-KomorebiSnapshotJsonValid'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_RESTORE_PROFILE_MISSING'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_RESTORE_PROFILE_INCOMPLETE'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_RESTORE_SOURCE_MISSING'
+        $komorebiHelper | Should -Match 'Restore will not silently fall back to another machine, default profile, or legacy root snapshot'
+        $komorebiHelper | Should -Match 'Restore-KomorebiSnapshotFiles[\s\S]*Assert-KomorebiSnapshotDirectoryComplete[\s\S]*Assert-KomorebiSnapshotJsonValid[\s\S]*Update-KomorebiSnapshotFilesTransactionally'
     }
 
     It "fails fast when Config restore backup directory is empty" {
@@ -3447,23 +3845,72 @@ Describe "Backup script safety conventions" {
 
     It "validates Komorebi backup sources before copy operations" {
         $komorebiBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiBackup.ps1') -Raw) -replace "`r", ''
+        $komorebiHelper = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiProfileHelpers.ps1') -Raw) -replace "`r", ''
 
-        $komorebiBackup | Should -Match '\$missingSources\s*=\s*@\('
-        $komorebiBackup | Should -Match 'E_KOMOREBI_BACKUP_SOURCE_MISSING'
-        $komorebiBackup | Should -Match 'foreach\s*\(\$sourcePath\s+in\s+@\(\$komorebiConfig,\s*\$komorebiBarConfig,\s*\$applicationYaml\)\)'
-        $komorebiBackup | Should -Match 'Test-Path\s+-LiteralPath\s+\$sourcePath\s+-PathType\s+Leaf'
-        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiConfig'
-        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$komorebiBarConfig'
-        $komorebiBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$applicationYaml'
+        $komorebiBackup | Should -Match 'KomorebiProfileHelpers\.ps1'
+        $komorebiBackup | Should -Match 'Invoke-KomorebiProfileBackup'
+        $komorebiBackup | Should -Not -Match 'Config[\\/]+Komorebi[\\/]+komorebi\.json'
+        $komorebiHelper | Should -Match 'function\s+Invoke-KomorebiProfileBackup'
+        $komorebiHelper | Should -Match 'function\s+Initialize-KomorebiProfileFromLegacyRoot'
+        $komorebiHelper | Should -Match 'function\s+Resolve-KomorebiProfileSelection'
+        $komorebiHelper | Should -Match 'function\s+Assert-KomorebiProfileName'
+        $komorebiHelper | Should -Match 'Config[\s\S]*Komorebi[\s\S]*profiles'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_PROFILE_NAME_INVALID'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_MIGRATION_SOURCE_MISSING'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_BACKUP_SOURCE_MISSING'
+        $komorebiHelper | Should -Match 'E_KOMOREBI_BACKUP_JSON_INVALID'
+        $komorebiHelper | Should -Match 'Copy-KomorebiSnapshotFiles[\s\S]*Assert-KomorebiSnapshotDirectoryComplete[\s\S]*Assert-KomorebiSnapshotJsonValid[\s\S]*Update-KomorebiSnapshotFilesTransactionally'
+    }
+
+    It "keeps Komorebi repository snapshots profile scoped" {
+        $profileRoot = Join-Path -Path $script:repoRoot -ChildPath "Config/Komorebi/profiles"
+
+        Test-Path -LiteralPath $profileRoot -PathType Container | Should -BeTrue
+
+        $profiles = @(Get-ChildItem -LiteralPath $profileRoot -Directory -ErrorAction Stop)
+        $profiles.Count | Should -BeGreaterThan 0
+        foreach ($profile in $profiles) {
+            $profile.Name | Should -Match '^[a-z0-9][a-z0-9._-]{0,63}$'
+            foreach ($leafName in @("komorebi.json", "komorebi.bar.json", "applications.json")) {
+                Test-Path -LiteralPath (Join-Path -Path $profile.FullName -ChildPath $leafName) -PathType Leaf |
+                    Should -BeTrue -Because ("Komorebi profile '{0}' must include '{1}'." -f $profile.Name, $leafName)
+            }
+        }
     }
 
     It "documents backup safety contract in LLM context" {
         $llmContext = (Get-Content -Path $script:llmContextPath -Raw) -replace "`r", ''
+        $komorebiSkill = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skills/komorebi-machine-profile-safety.md') -Raw) -replace "`r", ''
+        $komorebiSkillDetail = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details/komorebi-machine-profile-safety.md') -Raw) -replace "`r", ''
 
         $llmContext | Should -Match '## Backup/Restore Safety Contract'
         $llmContext | Should -Match 'Source Validation'
         $llmContext | Should -Match 'Robocopy Exit Codes'
         $llmContext | Should -Match 'Best-Effort Orchestrators'
+        $llmContext | Should -Match 'Komorebi backup/restore must be profile-scoped'
+        $llmContext | Should -Match 'Config/Komorebi/profiles/<profile>/'
+        $llmContext | Should -Match 'must not silently fall back'
+
+        $komorebiSkill | Should -Match 'Config/Komorebi/profiles'
+        $komorebiSkill | Should -Match 'KomorebiProfileHelpers\.Tests\.ps1'
+        $komorebiSkillDetail | Should -Match 'WALLSTOP_KOMOREBI_PROFILE'
+        $komorebiSkillDetail | Should -Match 'Config/Komorebi/profiles/<profile>/'
+        $komorebiSkillDetail | Should -Match 'must not silently fall back'
+    }
+
+    It "keeps Komorebi scripts free of USERPROFILE-dependent path resolution" {
+        $komorebiScriptsRoot = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Komorebi"
+        $scripts = @(Get-ChildItem -LiteralPath $komorebiScriptsRoot -Filter "*.ps1" -File -ErrorAction Stop)
+        $violations = @(
+            foreach ($scriptFile in $scripts) {
+                $content = (Get-Content -Path $scriptFile.FullName -Raw) -replace "`r", ''
+                if ($content -match '\$env:USERPROFILE\b') {
+                    Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $scriptFile.FullName
+                }
+            }
+        )
+
+        $violations.Count | Should -Be 0 -Because ("Komorebi scripts should use Resolve-KomorebiUserProfileRoot / HOME fallback, not USERPROFILE. Violations: {0}" -f ($violations -join ", "))
     }
 
     It "keeps utility backup jobs fail-fast with explicit unexpected-error signaling" {
@@ -3550,6 +3997,59 @@ Describe "Backup script safety conventions" {
             $content | Should -Match '\.WaitForExit\(' -Because (
                 "$relativePath uses Start-Process -Wait -PassThru and must call .WaitForExit() to avoid the exit code race condition."
             )
+        }
+    }
+
+    It "centralizes canonical JSON serialization in the shared helper without corrupting timestamps" {
+        # Committed config artifacts (Config/scoopfile.json, Config/WindowsTerminal/settings.json,
+        # Config/Komorebi/profiles/*/*.json) are generated/copied by backup scripts but must be
+        # byte-identical to the pretty-format-json hook output. An unattended backup commits with
+        # --no-verify and bypasses the hook, so the canonical 2-space/LF/escaped form must be written at
+        # the source to stop recurring whole-file merge conflicts. That serialization is single-sourced in
+        # Scripts/Utils/Common/CanonicalJsonHelpers.ps1 so every writer shares one proven implementation.
+        $helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CanonicalJsonHelpers.ps1"
+        Test-Path -LiteralPath $helperPath | Should -BeTrue
+        $helperContent = (Get-Content -Path $helperPath -Raw) -replace "`r", ''
+        $tokens = $null
+        $parseErrors = $null
+        $helperAst = [System.Management.Automation.Language.Parser]::ParseFile($helperPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        $canonicalizer = Get-RequiredFunctionDefinitionAst -Ast $helperAst -Name "ConvertTo-CanonicalJsonText" -Context "shared canonical JSON"
+        $canonicalizerBody = $canonicalizer.Body.Extent.Text
+        $canonicalizerBody | Should -Match 'System\.Text\.Json\.JsonDocument' -Because "string-preserving serialization avoids the ConvertFrom-Json/ConvertTo-Json timestamp-corruption footgun"
+        $canonicalizerBody | Should -Match '"System\.Text\.Json\.JsonDocument"\s*-as\s*\[type\]' -Because "the Core-only type must be runtime-gated for Windows PowerShell 5.1"
+
+        # The timestamp-corrupting round-trip must NEVER be invoked when canonicalizing. An AST command
+        # scan (not a text match) is used so cautionary comments naming these cmdlets do not trip the guard.
+        $jsonRoundTripCalls = @($helperAst.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    @("ConvertFrom-Json", "ConvertTo-Json") -contains $node.GetCommandName()
+                }, $true))
+        $jsonRoundTripCalls.Count | Should -Be 0 -Because "ConvertFrom-Json/ConvertTo-Json reparse ISO timestamps into [datetime] and shift their timezone, corrupting committed JSON"
+
+        $helperTestsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/Utils/CanonicalJsonHelpers.Tests.ps1"
+        Test-Path -LiteralPath $helperTestsPath | Should -BeTrue -Because "the shared canonicalizer must have behavioral coverage"
+        $helperTestsContent = Get-Content -Path $helperTestsPath -Raw
+        $helperTestsContent | Should -Match 'timestamps verbatim'
+        $helperTestsContent | Should -Match 'fixed point'
+    }
+
+    It "routes every committed-JSON backup writer through the shared canonicalizer" {
+        # Each writer that persists a JSON artifact under pretty-format-json scope must route through the
+        # shared canonical helper so the unattended --no-verify path lands hook-identical bytes.
+        $writers = @(
+            @{ Path = "Scripts/Scoop/ScoopBackup.ps1"; Pattern = 'ConvertTo-CanonicalJsonText\s+-RawJson' },
+            @{ Path = "Scripts/Komorebi/KomorebiProfileHelpers.ps1"; Pattern = 'Write-CanonicalJsonFile\s+-Path' },
+            @{ Path = "Scripts/WindowsTerminal/WindowsTerminalBackup.ps1"; Pattern = 'Write-CanonicalJsonFile\s+-Path' }
+        )
+
+        foreach ($writer in $writers) {
+            $writerPath = Join-Path -Path $script:repoRoot -ChildPath $writer.Path
+            $writerContent = (Get-Content -Path $writerPath -Raw) -replace "`r", ''
+            $writerContent | Should -Match 'CanonicalJsonHelpers\.ps1' -Because ("{0} must dot-source the shared canonical JSON helper" -f $writer.Path)
+            $writerContent | Should -Match $writer.Pattern -Because ("{0} must canonicalize its committed JSON output" -f $writer.Path)
         }
     }
 }
