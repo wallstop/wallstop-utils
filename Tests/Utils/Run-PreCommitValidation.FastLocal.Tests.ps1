@@ -36,10 +36,87 @@ BeforeAll {
 
         return $matches[0]
     }
+
+    function Get-RequiredVariableAssignmentAst {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Name,
+
+            [Parameter(Mandatory = $true)]
+            [string]$Context
+        )
+
+        $matches = @($Ast.FindAll({
+                    param($node)
+
+                    if ($node -isnot [System.Management.Automation.Language.AssignmentStatementAst]) {
+                        return $false
+                    }
+
+                    $left = $node.Left
+                    return (
+                        $left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $left.VariablePath.UserPath -eq $Name
+                    )
+                }, $true))
+
+        if ($matches.Count -ne 1) {
+            throw "E_CONFIG_ERROR: Expected exactly one assignment to '$Name' for $Context; found $($matches.Count)."
+        }
+
+        return $matches[0]
+    }
+
+    function Get-VariableReferenceNames {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+
+        return @(
+            $Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.VariableExpressionAst]
+                }, $true) |
+                ForEach-Object { $_.VariablePath.UserPath } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique
+        )
+    }
+
+    function Get-IsolatedPesterExecutionGateNames {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+
+        $pesterIfStatements = @($Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+                    $node.Extent.Text -match 'Invoke-PesterQualityGateInIsolatedProcess'
+                }, $true))
+
+        $gateNames = @(
+            foreach ($ifStatement in $pesterIfStatements) {
+                foreach ($clause in $ifStatement.Clauses) {
+                    Get-VariableReferenceNames -Ast $clause.Item1 |
+                        Where-Object { $_ -match '^run[A-Z].*' }
+                }
+            }
+        )
+
+        return @($gateNames | Sort-Object -Unique)
+    }
 }
 
 AfterAll {
     Remove-Item -Path Function:Get-RequiredFunctionDefinitionAst -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:Get-RequiredVariableAssignmentAst -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:Get-VariableReferenceNames -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:Get-IsolatedPesterExecutionGateNames -ErrorAction SilentlyContinue
 }
 
 Describe "Run-PreCommitValidation fast local mode" {
@@ -56,11 +133,43 @@ Describe "Run-PreCommitValidation fast local mode" {
         $script:preCommitContent | Should -Match '\[switch\]\$AllowPreCommitOwnedFixes'
     }
 
-    It "keeps Pester execution gated out of fast local mode" {
-        $script:preCommitContent | Should -Match '\$runUtilsTests\s*=\s*\$All\s+-and\s+\$utilsTestTargets\.Count\s+-gt\s+0'
-        $script:preCommitContent | Should -Match '(?m)^\s*\$runGitHubTests\s*=\s*\$All\s*$'
-        $script:preCommitContent | Should -Match '\$runShellSafetySuite\s*=\s*\$All\s+-and\s+-not\s+\$runUtilsTests'
-        $script:preCommitContent | Should -Match '\$requiresPesterModule\s*=\s*\$runUtilsTests\s+-or\s+\$runGitHubTests\s+-or\s+\$runShellSafetySuite'
+    It "keeps Pester gate '<Variable>' scoped as expected" -ForEach @(
+        @{
+            Variable = 'runUtilsTests'
+            Pattern  = '\$runUtilsTests\s*=\s*\$All\s+-and\s+\$utilsTestTargets\.Count\s+-gt\s+0'
+        }
+        @{
+            Variable = 'runKomorebiProfileTests'
+            Pattern  = '\$runKomorebiProfileTests\s*=\s*\(-not\s+\$All\)\s+-and\s+\$komorebiProfileFiles\.Count\s+-gt\s+0'
+        }
+        @{
+            Variable = 'runKomorebiPolicyTests'
+            Pattern  = '\$runKomorebiPolicyTests\s*=\s*\(-not\s+\$All\)\s+-and\s+\$komorebiPolicyFiles\.Count\s+-gt\s+0'
+        }
+        @{
+            Variable = 'runGitHubTests'
+            Pattern  = '(?m)^\s*\$runGitHubTests\s*=\s*\$All\s*$'
+        }
+        @{
+            Variable = 'runShellSafetySuite'
+            Pattern  = '\$runShellSafetySuite\s*=\s*\$All\s+-and\s+-not\s+\$runUtilsTests'
+        }
+    ) {
+        $script:preCommitContent | Should -Match $Pattern
+    }
+
+    It "requires the Pester module for every isolated Pester execution gate" {
+        $pesterExecutionGates = @(Get-IsolatedPesterExecutionGateNames -Ast $script:preCommitAst)
+        $pesterExecutionGates.Count | Should -BeGreaterThan 0
+
+        $requiresPesterAssignment = Get-RequiredVariableAssignmentAst -Ast $script:preCommitAst -Name "requiresPesterModule" -Context "fast-local Pester module gate"
+        $requiresPesterReferences = @(Get-VariableReferenceNames -Ast $requiresPesterAssignment.Right)
+
+        $requiresPesterReferences.Count | Should -Be $pesterExecutionGates.Count
+        foreach ($pesterExecutionGate in $pesterExecutionGates) {
+            $requiresPesterReferences | Should -Contain $pesterExecutionGate
+        }
+
         $script:preCommitContent | Should -Match 'Invoke-PesterQualityGateInIsolatedProcess'
     }
 

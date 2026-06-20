@@ -111,11 +111,22 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
         Mock Resolve-PreCommitRecoveryRepositoryRootOrThrow { return $script:repoRoot }
     }
 
-    It "classifies hook environment installation failures as repairable" {
+    It "classifies hook environment failure '<Name>' as repairable" -ForEach @(
+        @{
+            Name   = 'tool install failure'
+            Stdout = "[INFO] Installing environment for https://github.com/example/hook."
+            Stderr = "An unexpected error has occurred: CalledProcessError: cargo install failed"
+        }
+        @{
+            Name   = 'stale cloned hook manifest path'
+            Stdout = "[INFO] Installing environment for https://github.com/pre-commit/pre-commit-hooks."
+            Stderr = "An error has occurred: InvalidManifestError:`n=====> /old/repo/.tools/precommit-cli/pre-commit-home/repo_abcd/.pre-commit-hooks.yaml is not a file"
+        }
+    ) {
         $result = [pscustomobject]@{
             ExitCode = 1
-            Stdout   = "[INFO] Installing environment for https://github.com/example/hook."
-            Stderr   = "An unexpected error has occurred: CalledProcessError: cargo install failed"
+            Stdout   = $Stdout
+            Stderr   = $Stderr
             TimedOut = $false
         }
 

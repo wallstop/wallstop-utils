@@ -2102,6 +2102,8 @@ Describe "Cross-language quality platform conventions" {
         $workflow | Should -Match 'E_CI_PRECOMMIT_HOOK_FAILURE'
         $workflow | Should -Match 'files were modified by this hook'
         $workflow | Should -Match 'Auto-formatted files'
+        $workflow | Should -Match 're\.sub\(r"\\x1b\\\[\[0-9;\]\*\[A-Za-z\]"'
+        $workflow | Should -Not -Match 'sed\s+-E\s+''s/\\033'
         $workflow | Should -Not -Match 'hook id:[\s\S]*\{\s*print\s+\$NF\s*\}'
         # failed_hook_ids must use awk block-tracking (exit code) not a plain sed to avoid capturing passing hooks
         $workflow | Should -Not -Match 'failed_hook_ids.*sed\s+-n\s+''s.*hook\s+id'

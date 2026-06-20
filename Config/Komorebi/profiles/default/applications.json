@@ -2161,17 +2161,17 @@
     "ignore": [
       {
         "kind": "Title",
-        "id": "图片查看器",
+        "id": "\u56fe\u7247\u67e5\u770b\u5668",
         "matching_strategy": "Legacy"
       },
       {
         "kind": "Title",
-        "id": "群聊的聊天记录",
+        "id": "\u7fa4\u804a\u7684\u804a\u5929\u8bb0\u5f55",
         "matching_strategy": "Legacy"
       },
       {
         "kind": "Title",
-        "id": "语音通话",
+        "id": "\u8bed\u97f3\u901a\u8bdd",
         "matching_strategy": "Legacy"
       }
     ],
