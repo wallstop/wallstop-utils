@@ -767,9 +767,36 @@ Describe "Scope safety conventions" {
         $stopBody | Should -Match '\[System\.Environment\]::Exit\(\$ExitCode\)' -Because "Windows and the fallback must use the portable managed terminator"
 
         # The run guard fast-exits by default on both success and failure paths (unless -NoFastExit),
-        # inside the existing dot-source guard so dot-sourced tests never terminate the host.
-        $content | Should -Match 'Invoke-Main\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
-        $content | Should -Match 'if\s*\(-not\s*\$NoFastExit\.IsPresent\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+1'
+        # inside the existing dot-source guard so dot-sourced tests never terminate the host. The fast
+        # exit is ALSO gated by Test-ShouldUseFastExit so a run that would strand the terminal (an
+        # interactive host, or a run that read from the console) takes the safe managed exit instead.
+        $content | Should -Match 'Invoke-Main\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
+        $content | Should -Match 'if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+1'
+    }
+
+    It "gates the fast exit so it never strands an interactive or read-from terminal" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        # The fast process exit (libc _exit / [Environment]::Exit) skips the .NET/host terminal-state
+        # restoration. Test-ShouldUseFastExit must suppress it whenever the terminal could be stranded:
+        # when this run read from the console, or when it runs inside an interactive host.
+        $shouldFastExit = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Test-ShouldUseFastExit" -Context "fast-exit gating"
+        $shouldFastExitBody = $shouldFastExit.Body.Extent.Text
+        $shouldFastExitBody | Should -Match '\$script:TerminalInputInitialized' -Because "a run that read the terminal must take the managed exit"
+        $shouldFastExitBody | Should -Match 'Test-IsInteractiveHostSession' -Because "an interactive host must take the managed exit"
+
+        # Interactive detection must key off PSReadLine (the reliable raw-mode signal) and fail safe.
+        $interactiveHost = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Test-IsInteractiveHostSession" -Context "interactive host detection"
+        $interactiveHostBody = $interactiveHost.Body.Extent.Text
+        $interactiveHostBody | Should -Match 'Get-Module\s+-Name\s+"PSReadLine"' -Because "PSReadLine presence is the primary interactive signal"
+
+        # The flag is declared StrictMode-safe at script scope and set the moment the terminal is read.
+        $content | Should -Match '\$script:TerminalInputInitialized\s*=\s*\$false'
     }
 
     It "preserves suggested-change blocks verbatim and strips them from prose" {
@@ -798,7 +825,9 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'changedLines'
 
         $headerValueSanitizer = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "ConvertTo-SafeHttpHeaderValue" -Context "GitHub header-value sanitization"
-        $headerValueSanitizer.Body.Extent.Text | Should -Match '-replace\s+"\[`r`n\]"' -Because "HTTP header values must strip CR/LF before transport use"
+        # Strip the whole C0 control range plus DEL (which includes CR/LF, the response-splitting
+        # injection vector), not only CR/LF: no control character is ever valid in a token/cookie value.
+        $headerValueSanitizer.Body.Extent.Text | Should -Match '\\x00-\\x1F' -Because "HTTP header values must strip CR/LF and the full C0 control range before transport use"
 
         $githubHeaders = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-GitHubHeaders" -Context "GitHub API header-value sanitization"
         $githubHeadersBody = $githubHeaders.Body.Extent.Text
@@ -900,13 +929,97 @@ Describe "Scope safety conventions" {
         $validateMatch.Success | Should -BeTrue -Because "Validate-GitHubTokenForRepoAccess must exist so progress suppression can be validated"
         $validateMatch.Groups["body"].Value | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"' -Because "the token-validation transport must suppress the progress UI"
 
+        # Defense in depth: Invoke-Main also suppresses progress once for the whole run so any future
+        # web call inherits it via dynamic scoping even if a new call site forgets the per-function set.
+        $mainMatch = [regex]::Match($content, 'function\s+Invoke-Main\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $mainMatch.Success | Should -BeTrue -Because "Invoke-Main must exist so the run-wide progress suppression can be validated"
+        $mainMatch.Groups["body"].Value | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"' -Because "Invoke-Main must suppress the progress UI run-wide as defense in depth"
+
         # -ProgressAction is PowerShell 7.4+ only and must not be relied upon for this contract.
         $content | Should -Not -Match '-ProgressAction'
+
+        # The same terminal-safety contract applies to the pre-commit CLI downloader: a download
+        # progress bar emits the same DSR cursor probes. Install-PreCommitPyzFallback must suppress
+        # progress before its Invoke-WebRequest, matching the native tool downloader.
+        $preCommitHelpersPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PreCommitCliHelpers.ps1"
+        $preCommitHelpersContent = Get-Content -Path $preCommitHelpersPath -Raw
+        $pyzFallbackMatch = [regex]::Match($preCommitHelpersContent, 'function\s+Install-PreCommitPyzFallback\s*\{(?<body>[\s\S]*?)\n\}', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        $pyzFallbackMatch.Success | Should -BeTrue -Because "Install-PreCommitPyzFallback must exist so its progress suppression can be validated"
+        $pyzFallbackBody = $pyzFallbackMatch.Groups["body"].Value
+        $progressIndex = $pyzFallbackBody.IndexOf('$ProgressPreference', [System.StringComparison]::Ordinal)
+        $downloadIndex = $pyzFallbackBody.IndexOf('Invoke-WebRequest', [System.StringComparison]::Ordinal)
+        $progressIndex | Should -BeGreaterThan -1 -Because "Install-PreCommitPyzFallback must suppress the download progress bar"
+        $downloadIndex | Should -BeGreaterThan -1 -Because "Install-PreCommitPyzFallback must perform the pyz download"
+        $progressIndex | Should -BeLessThan $downloadIndex -Because "progress must be suppressed before the download runs"
+        $pyzFallbackBody | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"'
 
         $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
         $testsContent = Get-Content -Path $testsPath -Raw
         $testsContent | Should -Match 'suppresses the progress UI for the GET transport'
         $testsContent | Should -Match 'suppresses the progress UI for the token-validation transport'
+    }
+
+    It "prompts only through the canonical-mode terminal-read seam, never Read-Host" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        # Read-Host switches the terminal into a host-managed raw mode that a non-interactive host
+        # never restores, stranding the parent shell's input. Every interactive prompt MUST go through
+        # Read-TerminalResponse, which reads in canonical mode via [Console]::In and is restored cleanly
+        # on a normal exit. A command-AST scan (formatter-tolerant) asserts Read-Host is never invoked.
+        $readHostCalls = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq "Read-Host"
+                }, $true))
+        $readHostCalls.Count | Should -Be 0 -Because "Read-Host corrupts the parent terminal on non-interactive hosts; use Read-TerminalResponse"
+
+        $reader = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Read-TerminalResponse" -Context "canonical terminal read"
+        $readerBody = $reader.Body.Extent.Text
+        $readerBody | Should -Match '\$script:TerminalInputInitialized\s*=\s*\$true' -Because "reading the terminal must force the safe managed exit"
+        $readerBody | Should -Match 'Read-ConsoleInputLine' -Because "the read must flow through the canonical [Console]::In seam"
+
+        $consoleReader = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Read-ConsoleInputLine" -Context "canonical console line read"
+        $consoleReader.Body.Extent.Text | Should -Match '\[Console\]::In\.ReadLine\(\)' -Because "the canonical read must use [Console]::In.ReadLine, not Read-Host"
+
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+        $testsContent | Should -Match 'Read-TerminalResponse reads through the canonical \[Console\]::In seam'
+        $testsContent | Should -Match 'Test-ShouldUseFastExit returns true only for a non-interactive run'
+    }
+
+    It "keeps the comments[] inclusion predicate identical at record creation and render time" {
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        # A single shared predicate decides whether a thread comment carries renderable content, used
+        # at BOTH record creation and render time so the two can never drift. Drift is exactly what let
+        # a diffHunk-only comment create an empty thread block while suppressing the topLevelComment
+        # fallback. diffHunk is internal-only and must NOT drive comments[] inclusion.
+        $content | Should -Match 'function\s+Test-ThreadCommentHasRenderableContent'
+
+        $convert = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Convert-ReviewThreadToOutputRecord" -Context "comment-record inclusion predicate"
+        $convertBody = $convert.Body.Extent.Text
+        $convertBody | Should -Match 'Test-ThreadCommentHasRenderableContent' -Because "record creation must use the shared renderable-content predicate"
+        $convertBody | Should -Not -Match 'IsNullOrWhiteSpace\(\$commentDiffHunk\)' -Because "an internal diffHunk must not force a comments[] record (it never renders)"
+
+        $renderer = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Add-ThreadCommentRenderLines" -Context "comment-record render skip predicate"
+        $renderer.Body.Extent.Text | Should -Match 'Test-ThreadCommentHasRenderableContent' -Because "render-time skip must use the same shared predicate as record creation"
+
+        $formatter = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Format-UnresolvedThreadsAsText" -Context "comments-vs-fallback decision"
+        $formatter.Body.Extent.Text | Should -Match 'Test-ThreadCommentRecordIsRenderable' -Because "the comments-vs-fallback branch must count renderable comments, not raw records"
+
+        $testsPath = Join-Path -Path $script:repoRoot -ChildPath "Tests/GitHub/Get-UnresolvedPRComments.Tests.ps1"
+        $testsContent = Get-Content -Path $testsPath -Raw
+        $testsContent | Should -Match 'does not create a comments\[\] record for a comment whose only content is a diffHunk'
     }
 
     It "truncates comment text without splitting UTF-16 surrogate pairs" {

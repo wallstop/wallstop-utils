@@ -178,6 +178,13 @@ $script:TopLevelBoundParameters = @{} + $PSBoundParameters
 # default of $null and populated in Invoke-Main; the low-level request functions attach it only when
 # non-null, so dot-sourced unit tests keep their existing behavior.
 $script:GitHubWebSession = $null
+# Set to $true the moment this run reads from the terminal (see Read-TerminalResponse). Reading from
+# the console initializes the .NET console INPUT subsystem, which switches the terminal out of its
+# default canonical/echo mode. A normal managed exit restores it; the default fast process exit
+# (libc _exit / [Environment]::Exit) does NOT, which leaves the parent shell with echo/line-editing
+# disabled ("input stops on the shell"). Test-ShouldUseFastExit consults this flag so a run that
+# touched the terminal always takes the safe managed exit. Declared StrictMode-safe at script scope.
+$script:TerminalInputInitialized = $false
 
 $strictModeHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Common/StrictModeHelpers.ps1"
 if (-not (Test-Path -Path $strictModeHelpersPath -PathType Leaf)) {
@@ -893,7 +900,13 @@ function ConvertTo-SafeHttpHeaderValue {
         return $null
     }
 
-    $normalized = $Value.Trim() -replace "[`r`n]", ""
+    # Strip ALL control characters (C0 range 0x00-0x1F plus DEL 0x7F), not only CR/LF. CR/LF are the
+    # header-injection vector -- a smuggled CR/LF in a token or cookie value would let a caller inject
+    # additional response-splitting headers into the request -- and no other control character is ever
+    # valid in an HTTP token/cookie value, so removing the whole class is both safer and simpler than
+    # enumerating individual characters. Trim afterwards so removed interior controls cannot leave
+    # stray edge whitespace behind.
+    $normalized = ([regex]::Replace($Value, "[\x00-\x1F\x7F]", "")).Trim()
     if ([string]::IsNullOrWhiteSpace($normalized)) {
         return $null
     }
@@ -1424,6 +1437,88 @@ function New-ThreadCommentRecord {
         suggestedDiffsUnavailableReason = if ([string]::IsNullOrWhiteSpace($SuggestedDiffsUnavailableReason)) { $null } else { $SuggestedDiffsUnavailableReason }
         url          = if ([string]::IsNullOrWhiteSpace($Url)) { $null } else { $Url }
     }
+}
+
+function Test-ThreadCommentHasRenderableContent {
+    # Single source of truth for "does this thread comment carry actionable content that actually
+    # appears in public text/JSON output?" It is shared by record creation
+    # (Convert-ReviewThreadToOutputRecord) and rendering (Add-ThreadCommentRenderLines /
+    # Format-UnresolvedThreadsAsText) so the two can never drift -- that drift is precisely what let a
+    # comment whose only content was an internal diffHunk create an empty thread block while also
+    # suppressing the topLevelComment/suggestions fallback.
+    #
+    # Renderable content is: non-empty prose (excluding the "(none)" sentinel), at least one extracted
+    # suggested change, or at least one attached suggested diff. diffHunk / diff_hunk (review context)
+    # and suggestedDiffsUnavailableReason (an internal web-enrichment routing note) are intentionally
+    # EXCLUDED here because neither is ever emitted publicly.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Body,
+
+        [Parameter(Mandatory = $false)]
+        [int]$SuggestedChangeCount = 0,
+
+        [Parameter(Mandatory = $false)]
+        [int]$SuggestedDiffCount = 0
+    )
+
+    $bodyText = if ($null -eq $Body) { $null } else { [string]$Body }
+    if (-not [string]::IsNullOrWhiteSpace($bodyText) -and $bodyText -ne "(none)") {
+        return $true
+    }
+
+    if ($SuggestedChangeCount -gt 0) {
+        return $true
+    }
+
+    if ($SuggestedDiffCount -gt 0) {
+        return $true
+    }
+
+    return $false
+}
+
+function Test-ThreadCommentRecordIsRenderable {
+    # Object-shaped wrapper over Test-ThreadCommentHasRenderableContent for an already-built comment
+    # record (a [pscustomobject] carrying body / suggestedChanges / suggestedDiffs). Render-time callers
+    # use this so the "is there anything to show?" decision stays identical to record creation.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Comment
+    )
+
+    if ($null -eq $Comment) {
+        return $false
+    }
+
+    $body = Get-ObjectPropertyValue -InputObject $Comment -Name "body"
+    $suggestedChangeCount = Get-SafeCount -InputObject (Get-ObjectPropertyValue -InputObject $Comment -Name "suggestedChanges")
+
+    # Count only suggested diffs that survive Convert-SuggestedDiffTextToPublicChangeOnlyDiff to
+    # non-empty public output. A diff with no actual +/- change lines renders nothing in the text path
+    # (and is omitted by the JSON path), so counting it as renderable would re-create the empty-thread-
+    # block bug this predicate exists to prevent. This keeps the text and JSON paths consistent by
+    # construction even if an upstream producer ever yields a change-less diff.
+    $renderableDiffCount = 0
+    foreach ($suggestedDiff in @(Get-ObjectPropertyValue -InputObject $Comment -Name "suggestedDiffs")) {
+        if ($null -eq $suggestedDiff) {
+            continue
+        }
+
+        $diffText = Get-ObjectPropertyValue -InputObject $suggestedDiff -Name "diff"
+        $publicDiffText = Convert-SuggestedDiffTextToPublicChangeOnlyDiff -Diff ([string]$diffText)
+        if (-not [string]::IsNullOrWhiteSpace($publicDiffText)) {
+            $renderableDiffCount++
+        }
+    }
+
+    return (Test-ThreadCommentHasRenderableContent -Body $body -SuggestedChangeCount $suggestedChangeCount -SuggestedDiffCount $renderableDiffCount)
 }
 
 function Get-SuggestedDiffsUnavailableReason {
@@ -2578,6 +2673,57 @@ function Test-CanPromptForLogin {
     }
 }
 
+function Read-TerminalResponse {
+    # Canonical-mode replacement for Read-Host and the single seam for every interactive prompt in this
+    # script. Terminal safety here has TWO independent parts and both are required:
+    #   1. Read canonically, never via Read-Host. Read-Host switches the terminal into a host-managed
+    #      raw mode (echo/line editing disabled) that a non-interactive host (pwsh -File / -Command)
+    #      leaves in place even on a NORMAL managed exit, stranding the parent shell. A plain
+    #      [Console]::In.ReadLine() does not enable that extra raw mode, so a managed exit restores the
+    #      terminal cleanly. (Note: ReadLine still initializes the .NET console input subsystem, so it is
+    #      NOT safe to follow with a fast _exit -- that is what part 2 prevents.)
+    #   2. Force the safe managed exit. ANY console read (this one included) initializes the .NET console
+    #      input subsystem; the fast libc _exit / [Environment]::Exit skips the terminal-state
+    #      restoration the managed exit performs, so it would strand the terminal regardless of HOW we
+    #      read. Setting $script:TerminalInputInitialized makes Test-ShouldUseFastExit take the managed
+    #      exit. The managed exit, not the choice of reader, is what restores the terminal; the canonical
+    #      read only avoids the additional Read-Host raw-mode damage that a managed exit cannot undo.
+    # Therefore EVERY terminal read in this script must route through this seam (to set the flag). The
+    # prompt is written to stderr so stdout stays reserved for the verbatim rendered output (data on
+    # stdout, prompts/diagnostics on stderr).
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Prompt
+    )
+
+    $script:TerminalInputInitialized = $true
+
+    try {
+        [Console]::Error.Write($Prompt + ": ")
+        [Console]::Error.Flush()
+    }
+    catch {
+        # No usable console error stream (for example fully redirected output); the read below still
+        # works for piped/redirected input, so the prompt text is best-effort only.
+    }
+
+    return (Read-ConsoleInputLine)
+}
+
+function Read-ConsoleInputLine {
+    # Mockable seam over the canonical-mode console line read so Read-TerminalResponse can be unit
+    # tested without blocking on real stdin. Uses [Console]::In.ReadLine() (NOT Read-Host) so it reads
+    # in the terminal's default canonical mode and avoids the extra host-managed raw mode that Read-Host
+    # leaves behind even on a managed exit -- see Read-TerminalResponse for the full two-part rationale.
+    [OutputType([string])]
+    [CmdletBinding()]
+    param()
+
+    return [Console]::In.ReadLine()
+}
+
 function New-AuthTokenResolutionResult {
     [OutputType([pscustomobject])]
     [CmdletBinding()]
@@ -3438,12 +3584,12 @@ function Select-PullRequestInteractively {
         [string[]]$SensitiveTokens = @()
     )
 
-    $ownerInput = Read-Host "GitHub owner"
+    $ownerInput = Read-TerminalResponse -Prompt "GitHub owner"
     if ([string]::IsNullOrWhiteSpace($ownerInput)) {
         throw "E_INVALID_OWNER_REPO: Owner cannot be empty."
     }
 
-    $repoInput = Read-Host "Repository"
+    $repoInput = Read-TerminalResponse -Prompt "Repository"
     if ([string]::IsNullOrWhiteSpace($repoInput)) {
         throw "E_INVALID_OWNER_REPO: Repository cannot be empty."
     }
@@ -3469,7 +3615,7 @@ function Select-PullRequestInteractively {
         $i++
     }
 
-    $selection = Read-Host "Choose an index or PR number"
+    $selection = Read-TerminalResponse -Prompt "Choose an index or PR number"
     if ([string]::IsNullOrWhiteSpace($selection)) {
         throw "E_INVALID_URL: No selection was provided."
     }
@@ -3633,7 +3779,15 @@ function Convert-ReviewThreadToOutputRecord {
         }
         $suggestedDiffsUnavailableReason = Get-SuggestedDiffsUnavailableReason -AuthorLogin $commentAuthorLogin -Body $commentBody -SuggestedChangeCount (Get-SafeCount -InputObject $commentSuggestionRecords)
 
-        if ((-not [string]::IsNullOrWhiteSpace($commentRecommendationText) -and $commentRecommendationText -ne "(none)") -or -not [string]::IsNullOrWhiteSpace($commentDiffHunk) -or (Get-SafeCount -InputObject $commentSuggestionRecords) -gt 0) {
+        # Create a comments[] record when the comment is renderable now, OR when it is a candidate for
+        # best-effort GitHub web suggested-diff enrichment (suggestedDiffsUnavailableReason): the
+        # enriched diffs are attached later by database id, so the record must survive creation. A
+        # comment whose ONLY signal is an internal diffHunk is intentionally dropped -- diffHunk never
+        # renders publicly, so keeping it would emit an empty thread block and suppress the
+        # topLevelComment/suggestions fallback. The internal diffHunk is still stored on records that
+        # are created for other reasons.
+        $commentHasRenderableContent = Test-ThreadCommentHasRenderableContent -Body $commentRecommendationText -SuggestedChangeCount (Get-SafeCount -InputObject $commentSuggestionRecords)
+        if ($commentHasRenderableContent -or -not [string]::IsNullOrWhiteSpace($suggestedDiffsUnavailableReason)) {
             $collectedCommentRecords.Add((New-ThreadCommentRecord -CommentIndex $commentIndex -DatabaseId $commentDatabaseId -Body $commentRecommendationText -DiffHunk $commentDiffHunk -SuggestedChanges $commentSuggestionRecords -SuggestedDiffsUnavailableReason $suggestedDiffsUnavailableReason -Url $commentUrl)) | Out-Null
         }
 
@@ -3946,8 +4100,11 @@ function Add-ThreadCommentRenderLines {
         $suggestedChangeCount = Get-SafeCount -InputObject $suggestedChanges
         $suggestedDiffs = Get-ObjectPropertyValue -InputObject $comment -Name "suggestedDiffs"
         $suggestedDiffCount = Get-SafeCount -InputObject $suggestedDiffs
-        $suggestedDiffsUnavailableReason = Get-ObjectPropertyValue -InputObject $comment -Name "suggestedDiffsUnavailableReason"
-        if ([string]::IsNullOrWhiteSpace([string]$body) -and $suggestedChangeCount -eq 0 -and $suggestedDiffCount -eq 0 -and [string]::IsNullOrWhiteSpace([string]$suggestedDiffsUnavailableReason)) {
+        # Skip comments with nothing to render, using the SAME predicate as record creation so the two
+        # never drift. A record can reach here non-renderable only as an un-enriched web-suggestion
+        # placeholder (suggestedDiffsUnavailableReason set, no diffs attached); it renders nothing, so
+        # the reason alone must not keep it visible.
+        if (-not (Test-ThreadCommentHasRenderableContent -Body $body -SuggestedChangeCount $suggestedChangeCount -SuggestedDiffCount $suggestedDiffCount)) {
             continue
         }
 
@@ -4012,7 +4169,16 @@ function Format-UnresolvedThreadsAsText {
         $lines.Add(("({0}) {1}-{2}" -f $record.path, $lineStartText, $lineEndText))
         $commentRecordsValue = Get-ObjectPropertyValue -InputObject $record -Name "comments"
         $commentRecords = if ($null -eq $commentRecordsValue) { @() } else { @($commentRecordsValue) }
-        if ((Get-SafeCount -InputObject $commentRecords) -gt 0) {
+        # Branch on the count of RENDERABLE comments, not the raw record count: a record can be present
+        # yet render nothing (an un-enriched web-suggestion placeholder). Using the raw count there
+        # would emit an empty block AND suppress the topLevelComment/suggestions fallback below.
+        $renderableCommentCount = 0
+        foreach ($commentRecord in $commentRecords) {
+            if (Test-ThreadCommentRecordIsRenderable -Comment $commentRecord) {
+                $renderableCommentCount++
+            }
+        }
+        if ($renderableCommentCount -gt 0) {
             Add-ThreadCommentRenderLines -Lines $lines -Comments $commentRecords
         }
         else {
@@ -4037,7 +4203,7 @@ function Format-UnresolvedThreadsAsText {
                 $lines.Add($record.topLevelComment)
             }
         }
-        if ((Get-SafeCount -InputObject $commentRecords) -eq 0) {
+        if ($renderableCommentCount -eq 0) {
             Add-SuggestionRenderLines -Lines $lines -Suggestions (Get-ObjectPropertyValue -InputObject $record -Name "suggestions")
         }
         $lines.Add("---")
@@ -4724,7 +4890,7 @@ function Resolve-PullRequestTarget {
             throw "E_CONFIG_ERROR: Interactive mode requires a future overall deadline timestamp (required for request threading)."
         }
 
-        $hostInput = Read-Host "GitHub host [github.com]"
+        $hostInput = Read-TerminalResponse -Prompt "GitHub host [github.com]"
         if ([string]::IsNullOrWhiteSpace($hostInput)) {
             $hostInput = "github.com"
         }
@@ -4891,9 +5057,116 @@ function Invoke-FastProcessExit {
     Stop-CurrentProcessImmediately -ExitCode $ExitCode
 }
 
+function Test-CommandLineIndicatesInteractiveHost {
+    # Pure, arg-driven helper: given a PowerShell process command line (from
+    # [Environment]::GetCommandLineArgs()), decide whether it denotes an interactive session that must
+    # survive the script. Interactive when -NoExit (or an unambiguous abbreviation) is present, OR there
+    # is no batch entry (-File / -Command / -EncodedCommand, or any unambiguous abbreviation / documented
+    # alias). PowerShell accepts unambiguous parameter-name prefixes (for example -fi, -com, -enc), so
+    # the match is prefix-based rather than an exact set; missing a batch entry only costs the (always
+    # correct) managed exit, so the bias is intentionally toward "interactive". Kept pure so the
+    # abbreviation matching is unit tested without depending on the real process command line.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string[]]$CommandLineArgs
+    )
+
+    $hasBatchEntry = $false
+    foreach ($commandLineArg in @($CommandLineArgs)) {
+        $argText = [string]$commandLineArg
+        if (-not $argText.StartsWith("-")) {
+            continue
+        }
+
+        $normalized = $argText.TrimStart("-").ToLowerInvariant()
+        if ([string]::IsNullOrEmpty($normalized)) {
+            continue
+        }
+
+        # -NoExit keeps the host open after the script. "noe" is the shortest unambiguous abbreviation
+        # (shorter "no"/"n" prefixes also match -NoLogo/-NoProfile/-NonInteractive), so require length 3+.
+        if ($normalized.Length -ge 3 -and "noexit".StartsWith($normalized)) {
+            return $true
+        }
+
+        # -File / -Command / -EncodedCommand (and their unambiguous prefixes) mark a batch invocation.
+        # "-ec" is a documented -EncodedCommand alias that is not a strict prefix, so match it explicitly.
+        if ($normalized -eq "ec" -or
+            "file".StartsWith($normalized) -or
+            "command".StartsWith($normalized) -or
+            "encodedcommand".StartsWith($normalized)) {
+            $hasBatchEntry = $true
+        }
+    }
+
+    return (-not $hasBatchEntry)
+}
+
+function Test-IsInteractiveHostSession {
+    # Returns $true when this PowerShell process is hosting an interactive session whose terminal must
+    # survive the script. A fast process exit there is doubly unsafe: it terminates the user's live
+    # shell AND skips the terminal-state restoration the host performs when control returns to the
+    # prompt. Any one of three independent signals means "interactive":
+    #   1. PSReadLine is loaded. It is auto-imported only by interactive hosts and puts the terminal in
+    #      raw mode for line editing, so its presence is the most reliable signal (a non-interactive
+    #      pwsh -File / -Command run never loads it).
+    #   2. -NoExit (or an abbreviation) is on the process command line: the user explicitly asked the
+    #      host to stay open after the script, so terminating the process would defeat that intent.
+    #   3. The process command line carries no batch entry (-File / -Command / -EncodedCommand or an
+    #      abbreviation): a pure REPL, meaning the script was invoked from an already-running session.
+    # Signals 2 and 3 are computed by the pure Test-CommandLineIndicatesInteractiveHost helper.
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param()
+
+    try {
+        if ($null -ne (Get-Module -Name "PSReadLine" -ErrorAction SilentlyContinue)) {
+            return $true
+        }
+
+        return (Test-CommandLineIndicatesInteractiveHost -CommandLineArgs ([Environment]::GetCommandLineArgs()))
+    }
+    catch {
+        # When interactive state cannot be determined, assume interactive: skipping the fast exit only
+        # costs a slightly slower (but always correct) managed exit, whereas a wrong fast exit can
+        # strand the user's terminal. Fail safe.
+        return $true
+    }
+}
+
+function Test-ShouldUseFastExit {
+    # The fast process exit (libc _exit / [Environment]::Exit) skips the .NET/host terminal-state
+    # restoration that a normal managed exit performs. That restoration is only NEEDED when this run
+    # initialized the console INPUT subsystem -- either by reading from the terminal
+    # (TerminalInputInitialized) or by running inside an interactive host (where PSReadLine already put
+    # the terminal in raw mode). When neither holds, the terminal was never switched out of its default
+    # mode and the fast exit is safe; when either holds, fall back to the managed exit so the terminal
+    # is restored (otherwise the parent shell is left with echo/line-editing disabled).
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param()
+
+    if ($script:TerminalInputInitialized) {
+        return $false
+    }
+
+    return (-not (Test-IsInteractiveHostSession))
+}
+
 function Invoke-Main {
     [CmdletBinding()]
     param()
+
+    # Suppress the web-cmdlet progress UI for the whole run. PowerShell's Invoke-WebRequest /
+    # Invoke-RestMethod render a progress bar that hides the cursor and emits DSR cursor-position
+    # queries (ESC[6n); the terminal answers those by injecting ESC[<row>;<col>R into stdin, which
+    # then pollutes the parent shell's input after the process exits. Setting this once here covers
+    # every transport via dynamic scoping (each request function also sets it locally as defense in
+    # depth); a policy test asserts both layers stay in place.
+    $ProgressPreference = "SilentlyContinue"
 
     # Render terminal output as UTF-8 so copied (terminal-screen selection) comment text stays
     # verbatim, independent of the host's default code page. This is intentionally a no-op when
@@ -5054,7 +5327,7 @@ function Invoke-Main {
     }
 
     if (-not $retrievedRecords -and $allowPromptedLoginFallback -and $lastFailureMayRequireAuth) {
-        $choice = Read-Host "Authentication is missing or invalid. Log in using GitHub CLI now? [y/N]"
+        $choice = Read-TerminalResponse -Prompt "Authentication is missing or invalid. Log in using GitHub CLI now? [y/N]"
         if ($choice -match "^(y|yes)$") {
             $rejectedTokenValuesArray = @($rejectedTokenValues)
             $promptedAuthResolution = Convert-ToAuthTokenResolutionResult -AuthTokenValue (Get-AuthToken -ExplicitToken $null -GitHubHost $target.Host -AllowInteractive -IncludeSourceMetadata -IgnoreEnvironmentTokens -RejectedTokenValues $rejectedTokenValuesArray) -FallbackSource "unknown"
@@ -5129,7 +5402,10 @@ if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
         # .NET/PowerShell managed teardown (finalizers + HTTP connection-pool shutdown) that
         # dominates wall time on slow container filesystems. Output is already rendered and flushed
         # before this point. -NoFastExit opts out and restores the standard managed teardown.
-        if (-not $NoFastExit.IsPresent) {
+        # Test-ShouldUseFastExit additionally suppresses the fast exit whenever it would strand the
+        # terminal (interactive host, or a run that read from the console): those runs take the safe
+        # managed exit so the parent shell keeps echo/line-editing instead of "input stops on the shell".
+        if (-not $NoFastExit.IsPresent -and (Test-ShouldUseFastExit)) {
             Invoke-FastProcessExit -ExitCode 0
         }
     }
@@ -5140,7 +5416,7 @@ if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
         else {
             Microsoft.PowerShell.Utility\Write-Error "E_UNEXPECTED: Script failed with an unknown error."
         }
-        if (-not $NoFastExit.IsPresent) {
+        if (-not $NoFastExit.IsPresent -and (Test-ShouldUseFastExit)) {
             Invoke-FastProcessExit -ExitCode 1
         }
         exit 1

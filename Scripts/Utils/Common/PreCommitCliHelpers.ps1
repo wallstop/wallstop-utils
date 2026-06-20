@@ -744,6 +744,11 @@ function Install-PreCommitPyzFallback {
         $downloadTimeoutSeconds = [Math]::Min($remainingSeconds, 120)
         $downloadUrl = "https://github.com/pre-commit/pre-commit/releases/download/v$ExpectedVersion/pre-commit-$ExpectedVersion.pyz"
         $temporaryDownloadPath = Join-Path -Path $pyzRoot -ChildPath ("pre-commit-$ExpectedVersion.{0}.tmp" -f [guid]::NewGuid().ToString("N"))
+        # Suppress the download progress bar (function-scoped; auto-restored on return). On a real
+        # terminal it hides the cursor and emits DSR cursor-position probes (ESC[6n) whose replies
+        # queue into stdin and corrupt the parent shell's input -- the same terminal-safety contract
+        # the native tool downloader (QualityToolingHelpers.ps1) already follows.
+        $ProgressPreference = "SilentlyContinue"
         try {
             Invoke-WebRequest -Uri $downloadUrl -OutFile $temporaryDownloadPath -UseBasicParsing -TimeoutSec $downloadTimeoutSeconds -ErrorAction Stop
             $actualSha256 = (Get-FileHash -LiteralPath $temporaryDownloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
