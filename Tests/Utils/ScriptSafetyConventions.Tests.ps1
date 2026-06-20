@@ -504,6 +504,178 @@ Describe "Scope safety conventions" {
         $webSuggestionFetch.Extent.Text | Should -Not -Match '\$script:GitHubWebSession|@sessionArgs|WebSession\s*=' -Because "GitHub web UI HTML fetch must not reuse the API WebRequestSession or inherit API Authorization headers."
     }
 
+    It "sanitizes every request-header value in the GitHub utility, not only the known sites" {
+        # CLASS-LEVEL GUARD. The name-specific checks elsewhere pin sanitization in the three functions
+        # that build headers TODAY (Get-GitHubHeaders, Get-GitHubWebCookie,
+        # Get-GitHubWebAutomatedSuggestedDiffsByCommentId). This guard instead enforces the underlying
+        # INVARIANT across the whole file so the realistic regression -- a NEW header site forwarding a raw
+        # token, cookie, or environment value (which can carry a smuggled CR/LF, the classic response-
+        # splitting / header-injection vector) into a transport header -- is caught by CI even when it is
+        # added outside those three functions. It is a STATIC CONVENTION GUARD, not a formal taint proof:
+        # it requires every dynamic request-header value to be a string literal, an inline
+        # ConvertTo-SafeHttpHeaderValue call, or a variable that is sanitized -- either named with the
+        # repo's $safe* convention or assigned from ConvertTo-SafeHttpHeaderValue earlier in the file.
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        $sensitiveHeaderNames = @("Authorization", "Cookie", "Proxy-Authorization", "Set-Cookie")
+
+        # Provenance set: bare names of variables assigned anywhere in the file from a
+        # ConvertTo-SafeHttpHeaderValue call (for example $safeAuthToken, $explicitCookie). Keying off
+        # provenance, not only the $safe* name, keeps a correctly sanitized value from tripping the guard
+        # merely because it was not named $safe*, and is why this guard is honest about being a convention
+        # check rather than a taint proof.
+        $sanitizedVariableNames = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($sanitizerAssignment in @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                        $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        @($node.Right.FindAll({
+                                    param($inner)
+                                    $inner -is [System.Management.Automation.Language.CommandAst] -and
+                                    $inner.GetCommandName() -eq "ConvertTo-SafeHttpHeaderValue"
+                                }, $true)).Count -gt 0
+                    }, $true))) {
+            [void]$sanitizedVariableNames.Add((($sanitizerAssignment.Left.VariablePath.UserPath) -split ":")[-1])
+        }
+
+        function Test-HeaderValueAstIsSanitized {
+            param(
+                [AllowNull()][System.Management.Automation.Language.Ast]$ValueAst,
+                [System.Collections.Generic.HashSet[string]]$SanitizedNames
+            )
+
+            if ($null -eq $ValueAst) {
+                return $true
+            }
+
+            # An inline sanitizer call -- e.g. $headers["Cookie"] = (ConvertTo-SafeHttpHeaderValue -Value
+            # $raw) -- is safe by construction regardless of what it wraps.
+            if (@($ValueAst.FindAll({
+                            param($node)
+                            $node -is [System.Management.Automation.Language.CommandAst] -and
+                            $node.GetCommandName() -eq "ConvertTo-SafeHttpHeaderValue"
+                        }, $true)).Count -gt 0) {
+                return $true
+            }
+
+            # Otherwise every variable the value references must be sanitized: named $safe* by convention or
+            # assigned from the sanitizer. A pure literal references no variables and is vacuously safe
+            # (e.g. "application/vnd.github+json").
+            foreach ($variable in @($ValueAst.FindAll({
+                            param($node)
+                            $node -is [System.Management.Automation.Language.VariableExpressionAst]
+                        }, $true))) {
+                $bareName = ($variable.VariablePath.UserPath -split ":")[-1]
+                if ($bareName.StartsWith("safe", [System.StringComparison]::OrdinalIgnoreCase)) {
+                    continue
+                }
+                if ($SanitizedNames.Contains($bareName)) {
+                    continue
+                }
+                return $false
+            }
+
+            return $true
+        }
+
+        $violations = New-Object System.Collections.Generic.List[string]
+
+        # Rule 1: an index ($x["Cookie"] = ...) OR member ($x.Cookie = ...) assignment must carry a
+        # sanitized value when EITHER the target variable is a header map (its name ends with "headers", so
+        # $headers, $tempHeaders, $requestHeaders all qualify) OR the key is a sensitive header name
+        # (regardless of the target variable's name). Covering both assignment forms, and not pinning a
+        # single variable name, is what stops a renamed or dotted-form header site from slipping through.
+        foreach ($assignment in @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                        ($node.Left -is [System.Management.Automation.Language.IndexExpressionAst] -or
+                        $node.Left -is [System.Management.Automation.Language.MemberExpressionAst])
+                    }, $true))) {
+            $left = $assignment.Left
+            if ($left -is [System.Management.Automation.Language.IndexExpressionAst]) {
+                $targetExpression = $left.Target
+                $keyExpression = $left.Index
+            }
+            else {
+                $targetExpression = $left.Expression
+                $keyExpression = $left.Member
+            }
+
+            $targetIsHeaderMap = $false
+            if ($targetExpression -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                $targetName = ($targetExpression.VariablePath.UserPath -split ":")[-1]
+                $targetIsHeaderMap = $targetName.EndsWith("headers", [System.StringComparison]::OrdinalIgnoreCase)
+            }
+
+            $keyText = if ($keyExpression -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                $keyExpression.Value
+            }
+            else {
+                $null
+            }
+            $keyIsSensitive = (-not [string]::IsNullOrEmpty($keyText)) -and ($sensitiveHeaderNames -contains $keyText)
+
+            if (($targetIsHeaderMap -or $keyIsSensitive) -and -not (Test-HeaderValueAstIsSanitized -ValueAst $assignment.Right -SanitizedNames $sanitizedVariableNames)) {
+                $violations.Add(("line {0}: {1}" -f $assignment.Extent.StartLineNumber, $assignment.Extent.Text.Trim())) | Out-Null
+            }
+        }
+
+        # Rule 2: any hashtable pair keyed by a sensitive header name -- anywhere, including an inline
+        # Invoke-WebRequest -Headers @{ Cookie = ... } that bypasses the header-variable idiom -- must carry
+        # a sanitized value. Non-sensitive literal headers (Accept, User-Agent) are intentionally not
+        # policed: a literal cannot carry an injection.
+        foreach ($hashtable in @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.HashtableAst]
+                    }, $true))) {
+            foreach ($pair in $hashtable.KeyValuePairs) {
+                $keyAst = $pair.Item1
+                $keyText = if ($keyAst -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    $keyAst.Value
+                }
+                else {
+                    $keyAst.Extent.Text.Trim('"', "'")
+                }
+
+                if (($sensitiveHeaderNames -contains $keyText) -and -not (Test-HeaderValueAstIsSanitized -ValueAst $pair.Item2 -SanitizedNames $sanitizedVariableNames)) {
+                    $violations.Add(("line {0}: sensitive header '{1}' value is not sanitized: {2}" -f $pair.Item2.Extent.StartLineNumber, $keyText, $pair.Item2.Extent.Text.Trim())) | Out-Null
+                }
+            }
+        }
+
+        # Rule 3: a dictionary-style .Add("<sensitive header>", <value>) method call -- the .NET header API
+        # idiom (for example HttpClient / WebHeaderCollection) -- must carry a sanitized value. Keyed on the
+        # sensitive header literal so it is independent of the receiver expression. The codebase builds
+        # headers with hashtable literals plus index/member assignment today; this closes the remaining
+        # method-call form so the whole class is covered, not only the idioms in use now.
+        foreach ($invocation in @($ast.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                        $node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                        $node.Member.Value -eq "Add"
+                    }, $true))) {
+            $invocationArguments = $invocation.Arguments
+            if ($null -eq $invocationArguments -or $invocationArguments.Count -lt 2) {
+                continue
+            }
+            $addKeyAst = $invocationArguments[0]
+            if (-not ($addKeyAst -is [System.Management.Automation.Language.StringConstantExpressionAst])) {
+                continue
+            }
+            if (($sensitiveHeaderNames -contains $addKeyAst.Value) -and -not (Test-HeaderValueAstIsSanitized -ValueAst $invocationArguments[1] -SanitizedNames $sanitizedVariableNames)) {
+                $violations.Add(("line {0}: sensitive header .Add('{1}', ...) value is not sanitized: {2}" -f $invocation.Extent.StartLineNumber, $addKeyAst.Value, $invocationArguments[1].Extent.Text.Trim())) | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Every dynamic request-header value must be a literal or a ConvertTo-SafeHttpHeaderValue-sanitized value (named `$safe* or assigned from the sanitizer) so smuggled CR/LF cannot inject headers. Unsanitized: {0}" -f ($violations -join "; ")
+        )
+    }
+
     It "threads allowlist enforcement through Invoke-Main auth retry branch" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
         $content = Get-Content -Path $fullPath -Raw
