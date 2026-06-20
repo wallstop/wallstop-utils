@@ -1,23 +1,24 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$scriptsRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
+$canonicalJsonHelpersPath = Join-Path -Path $scriptsRoot -ChildPath "Utils/Common/CanonicalJsonHelpers.ps1"
+if (-not (Test-Path -LiteralPath $canonicalJsonHelpersPath -PathType Leaf)) {
+    throw "E_SCOOP_BACKUP_CANONICAL_JSON_HELPER_MISSING: canonical JSON helper file not found at '$canonicalJsonHelpersPath'."
+}
+
+. $canonicalJsonHelpersPath
+
 function ConvertTo-CanonicalScoopExportJson {
-    # Re-emits `scoop export` output in the repository's canonical JSON form -- 2-space indent, LF
-    # newlines, single trailing newline -- byte-identical to the pre-commit `pretty-format-json` hook
-    # (which targets Config/scoopfile.json). Writing the canonical form HERE, rather than scoop's raw
-    # 4-space output, is what prevents the recurring whole-file merge conflicts in scoopfile.json: an
-    # unattended backup commit bypasses hooks with `git commit --no-verify`, so without this it would
-    # land 4-space output while an attended/hook-formatted commit lands 2-space. Two indentations of the
-    # same data conflict on every line. Normalizing at the source makes both paths emit the same bytes.
-    #
-    # System.Text.Json (PowerShell 7+) is used via JsonDocument so every string value -- in particular
-    # the ISO-8601 `Updated` timestamps -- is preserved VERBATIM. ConvertFrom-Json | ConvertTo-Json must
-    # NOT be used for this: it reparses timestamp strings into [datetime] and re-serializes them in a
-    # different timezone, silently corrupting the data. UnsafeRelaxedJsonEscaping matches the hook's
-    # Python json.dumps escaping for the ASCII data scoop emits. On Windows PowerShell 5.1, where
-    # System.Text.Json is unavailable, it falls back to LF normalization and an attended commit's hook
-    # canonicalizes the indentation; the timestamps are still preserved because the text is not reparsed.
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '', Justification = 'System.Text.Json is runtime-gated to PowerShell 7+ via a "...-as [type]" probe; Windows PowerShell 5.1 takes the line-ending-normalizing fallback. This is the sanctioned runtime-guarded pattern in .llm/context.md.')]
+    # Thin Scoop-facing wrapper over the shared canonicalizer. `scoop export` emits 4-space JSON, but the
+    # committed Config/scoopfile.json must be byte-identical to the pre-commit `pretty-format-json` hook
+    # output (2-space, LF, single trailing newline). Writing the canonical form HERE, rather than scoop's
+    # raw output, is what prevents recurring whole-file merge conflicts: an unattended backup commits with
+    # `git commit --no-verify` and bypasses the hook, so without this it would land non-canonical bytes
+    # while an attended/hook commit lands canonical bytes, and two formats of the same data conflict on
+    # every line. The shared helper parses via System.Text.Json's JsonDocument so the ISO-8601 `Updated`
+    # timestamps are preserved verbatim (ConvertFrom-Json/ConvertTo-Json would reparse and timezone-shift
+    # them); see Scripts/Utils/Common/CanonicalJsonHelpers.ps1 for the full contract.
     [OutputType([string])]
     [CmdletBinding()]
     param(
@@ -26,31 +27,7 @@ function ConvertTo-CanonicalScoopExportJson {
         [string]$RawJson
     )
 
-    $jsonDocumentType = "System.Text.Json.JsonDocument" -as [type]
-    if ($null -ne $jsonDocumentType) {
-        $document = $null
-        try {
-            $document = [System.Text.Json.JsonDocument]::Parse($RawJson)
-            $serializerOptions = [System.Text.Json.JsonSerializerOptions]::new()
-            $serializerOptions.WriteIndented = $true
-            $serializerOptions.Encoder = [System.Text.Encodings.Web.JavaScriptEncoder]::UnsafeRelaxedJsonEscaping
-            return ([System.Text.Json.JsonSerializer]::Serialize($document.RootElement, $serializerOptions) + "`n")
-        }
-        finally {
-            if ($null -ne $document) {
-                $document.Dispose()
-            }
-        }
-    }
-
-    # Windows PowerShell 5.1 fallback: normalize line endings to LF with exactly one trailing newline so
-    # an attended commit's pretty-format-json hook can canonicalize the indentation. The raw text is
-    # preserved otherwise (no reparse), so timestamps are never corrupted.
-    $normalized = ($RawJson -replace "`r`n", "`n") -replace "`r", "`n"
-    if (-not $normalized.EndsWith("`n")) {
-        $normalized += "`n"
-    }
-    return $normalized
+    return ConvertTo-CanonicalJsonText -RawJson $RawJson
 }
 
 function Invoke-ScoopBackup {

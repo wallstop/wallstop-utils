@@ -1,3 +1,10 @@
+$canonicalJsonHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Utils/Common/CanonicalJsonHelpers.ps1"
+if (-not (Test-Path -LiteralPath $canonicalJsonHelpersPath -PathType Leaf)) {
+    throw "E_KOMOREBI_CANONICAL_JSON_HELPER_MISSING: canonical JSON helper file not found at '$canonicalJsonHelpersPath'."
+}
+
+. $canonicalJsonHelpersPath
+
 function Get-KomorebiRequiredConfigFileNames {
     [OutputType([string[]])]
     param()
@@ -692,6 +699,14 @@ function Update-KomorebiSnapshotFilesTransactionally {
             $sourcePath = Join-Path -Path $SourceDirectory -ChildPath $fileName
             $stagedPath = Join-Path -Path $stagingDirectory -ChildPath $fileName
             Copy-Item -LiteralPath $sourcePath -Destination $stagedPath -Force -ErrorAction Stop
+            # Canonicalize the staged JSON so the bytes the transaction commits are byte-identical to the
+            # pretty-format-json hook output. Komorebi (and the live OS) emit their own indentation/line
+            # endings; without this an unattended `--no-verify` backup would land non-canonical bytes that
+            # conflict on every line with an attended/hook commit. Canonicalizing on the staged copy keeps
+            # the source untouched and applies uniformly to backup, restore, and legacy migration.
+            if ([System.IO.Path]::GetExtension($stagedPath) -eq ".json") {
+                [void](Write-CanonicalJsonFile -Path $stagedPath)
+            }
         }
 
         foreach ($fileName in Get-KomorebiRequiredConfigFileNames) {
