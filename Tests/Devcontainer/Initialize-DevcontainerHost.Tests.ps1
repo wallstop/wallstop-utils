@@ -6,29 +6,29 @@ BeforeAll {
     $script:initializerPath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/Initialize-DevcontainerHost.ps1"
 
     function New-FakeDockerScript {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$TempRoot,
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$TempRoot,
 
-        [Parameter(Mandatory = $true)]
-        [AllowEmptyCollection()]
-        [object[]]$Containers
-    )
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyCollection()]
+            [object[]]$Containers
+        )
 
-    $statePath = Join-Path -Path $TempRoot -ChildPath "containers.json"
-    $logPath = Join-Path -Path $TempRoot -ChildPath "docker.log"
-    $rmLogPath = Join-Path -Path $TempRoot -ChildPath "rm.log"
-    $dockerPath = Join-Path -Path $TempRoot -ChildPath "docker.ps1"
+        $statePath = Join-Path -Path $TempRoot -ChildPath "containers.json"
+        $logPath = Join-Path -Path $TempRoot -ChildPath "docker.log"
+        $rmLogPath = Join-Path -Path $TempRoot -ChildPath "rm.log"
+        $dockerPath = Join-Path -Path $TempRoot -ChildPath "docker.ps1"
 
-    [System.IO.File]::WriteAllText(
-        $statePath,
+        [System.IO.File]::WriteAllText(
+            $statePath,
         ($Containers | ConvertTo-Json -Depth 10),
-        [System.Text.UTF8Encoding]::new($false)
-    )
+            [System.Text.UTF8Encoding]::new($false)
+        )
 
-    [System.IO.File]::WriteAllText(
-        $dockerPath,
-        @'
+        [System.IO.File]::WriteAllText(
+            $dockerPath,
+            @'
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$DockerArgs
@@ -92,108 +92,108 @@ switch ($DockerArgs[0]) {
     }
 }
 '@,
-        [System.Text.UTF8Encoding]::new($false)
-    )
-
-    return [pscustomobject]@{
-        DockerPath = $dockerPath
-        LogPath = $logPath
-        RmLogPath = $rmLogPath
-        StatePath = $statePath
-    }
-}
-
-    function Invoke-HostInitializerWithFakeDocker {
-    param(
-        [Parameter(Mandatory = $true)]
-        [AllowEmptyCollection()]
-        [object[]]$Containers,
-
-        [string]$WorkspaceFolder = "/home/wallstop/wallstop-utils",
-
-        [hashtable]$Environment = @{}
-    )
-
-    $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-devcontainer-host-" + [guid]::NewGuid().ToString("N"))
-    [System.IO.Directory]::CreateDirectory($tempRoot) | Out-Null
-
-    $fakeDocker = New-FakeDockerScript -TempRoot $tempRoot -Containers $Containers
-    $savedDockerPath = $env:WALLSTOP_DEVCONTAINER_DOCKER_PATH
-    $savedState = $env:WALLSTOP_TEST_DOCKER_STATE
-    $savedLog = $env:WALLSTOP_TEST_DOCKER_LOG
-    $savedRmLog = $env:WALLSTOP_TEST_DOCKER_RM_LOG
-    $savedCleanup = $env:WALLSTOP_DEVCONTAINER_HOST_CLEANUP
-
-    try {
-        $env:WALLSTOP_DEVCONTAINER_DOCKER_PATH = $fakeDocker.DockerPath
-        $env:WALLSTOP_TEST_DOCKER_STATE = $fakeDocker.StatePath
-        $env:WALLSTOP_TEST_DOCKER_LOG = $fakeDocker.LogPath
-        $env:WALLSTOP_TEST_DOCKER_RM_LOG = $fakeDocker.RmLogPath
-
-        foreach ($entry in $Environment.GetEnumerator()) {
-            Set-Item -Path "Env:$($entry.Key)" -Value ([string]$entry.Value)
-        }
-
-        $output = @(& $script:initializerPath -WorkspaceFolder $WorkspaceFolder 2>&1)
-        $dockerLog = if (Test-Path -LiteralPath $fakeDocker.LogPath) {
-            Get-Content -LiteralPath $fakeDocker.LogPath -Raw
-        }
-        else {
-            ""
-        }
-        $removed = if (Test-Path -LiteralPath $fakeDocker.RmLogPath) {
-            @(Get-Content -LiteralPath $fakeDocker.RmLogPath)
-        }
-        else {
-            @()
-        }
+            [System.Text.UTF8Encoding]::new($false)
+        )
 
         return [pscustomobject]@{
-            Output = $output
-            DockerLog = $dockerLog
-            Removed = $removed
+            DockerPath = $dockerPath
+            LogPath = $logPath
+            RmLogPath = $rmLogPath
+            StatePath = $statePath
         }
     }
-    finally {
-        if ($null -eq $savedDockerPath) {
-            Remove-Item Env:WALLSTOP_DEVCONTAINER_DOCKER_PATH -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:WALLSTOP_DEVCONTAINER_DOCKER_PATH = $savedDockerPath
-        }
-        if ($null -eq $savedState) {
-            Remove-Item Env:WALLSTOP_TEST_DOCKER_STATE -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:WALLSTOP_TEST_DOCKER_STATE = $savedState
-        }
-        if ($null -eq $savedLog) {
-            Remove-Item Env:WALLSTOP_TEST_DOCKER_LOG -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:WALLSTOP_TEST_DOCKER_LOG = $savedLog
-        }
-        if ($null -eq $savedRmLog) {
-            Remove-Item Env:WALLSTOP_TEST_DOCKER_RM_LOG -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:WALLSTOP_TEST_DOCKER_RM_LOG = $savedRmLog
-        }
-        if ($null -eq $savedCleanup) {
-            Remove-Item Env:WALLSTOP_DEVCONTAINER_HOST_CLEANUP -ErrorAction SilentlyContinue
-        }
-        else {
-            $env:WALLSTOP_DEVCONTAINER_HOST_CLEANUP = $savedCleanup
-        }
-        foreach ($entry in $Environment.GetEnumerator()) {
-            if ($entry.Key -ne "WALLSTOP_DEVCONTAINER_HOST_CLEANUP") {
-                Remove-Item -Path "Env:$($entry.Key)" -ErrorAction SilentlyContinue
+
+    function Invoke-HostInitializerWithFakeDocker {
+        param(
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyCollection()]
+            [object[]]$Containers,
+
+            [string]$WorkspaceFolder = "/home/wallstop/wallstop-utils",
+
+            [hashtable]$Environment = @{}
+        )
+
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-devcontainer-host-" + [guid]::NewGuid().ToString("N"))
+        [System.IO.Directory]::CreateDirectory($tempRoot) | Out-Null
+
+        $fakeDocker = New-FakeDockerScript -TempRoot $tempRoot -Containers $Containers
+        $savedDockerPath = $env:WALLSTOP_DEVCONTAINER_DOCKER_PATH
+        $savedState = $env:WALLSTOP_TEST_DOCKER_STATE
+        $savedLog = $env:WALLSTOP_TEST_DOCKER_LOG
+        $savedRmLog = $env:WALLSTOP_TEST_DOCKER_RM_LOG
+        $savedCleanup = $env:WALLSTOP_DEVCONTAINER_HOST_CLEANUP
+
+        try {
+            $env:WALLSTOP_DEVCONTAINER_DOCKER_PATH = $fakeDocker.DockerPath
+            $env:WALLSTOP_TEST_DOCKER_STATE = $fakeDocker.StatePath
+            $env:WALLSTOP_TEST_DOCKER_LOG = $fakeDocker.LogPath
+            $env:WALLSTOP_TEST_DOCKER_RM_LOG = $fakeDocker.RmLogPath
+
+            foreach ($entry in $Environment.GetEnumerator()) {
+                Set-Item -Path "Env:$($entry.Key)" -Value ([string]$entry.Value)
+            }
+
+            $output = @(& $script:initializerPath -WorkspaceFolder $WorkspaceFolder 2>&1)
+            $dockerLog = if (Test-Path -LiteralPath $fakeDocker.LogPath) {
+                Get-Content -LiteralPath $fakeDocker.LogPath -Raw
+            }
+            else {
+                ""
+            }
+            $removed = if (Test-Path -LiteralPath $fakeDocker.RmLogPath) {
+                @(Get-Content -LiteralPath $fakeDocker.RmLogPath)
+            }
+            else {
+                @()
+            }
+
+            return [pscustomobject]@{
+                Output = $output
+                DockerLog = $dockerLog
+                Removed = $removed
             }
         }
-        if (Test-Path -LiteralPath $tempRoot) {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        finally {
+            if ($null -eq $savedDockerPath) {
+                Remove-Item Env:WALLSTOP_DEVCONTAINER_DOCKER_PATH -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:WALLSTOP_DEVCONTAINER_DOCKER_PATH = $savedDockerPath
+            }
+            if ($null -eq $savedState) {
+                Remove-Item Env:WALLSTOP_TEST_DOCKER_STATE -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:WALLSTOP_TEST_DOCKER_STATE = $savedState
+            }
+            if ($null -eq $savedLog) {
+                Remove-Item Env:WALLSTOP_TEST_DOCKER_LOG -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:WALLSTOP_TEST_DOCKER_LOG = $savedLog
+            }
+            if ($null -eq $savedRmLog) {
+                Remove-Item Env:WALLSTOP_TEST_DOCKER_RM_LOG -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:WALLSTOP_TEST_DOCKER_RM_LOG = $savedRmLog
+            }
+            if ($null -eq $savedCleanup) {
+                Remove-Item Env:WALLSTOP_DEVCONTAINER_HOST_CLEANUP -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:WALLSTOP_DEVCONTAINER_HOST_CLEANUP = $savedCleanup
+            }
+            foreach ($entry in $Environment.GetEnumerator()) {
+                if ($entry.Key -ne "WALLSTOP_DEVCONTAINER_HOST_CLEANUP") {
+                    Remove-Item -Path "Env:$($entry.Key)" -ErrorAction SilentlyContinue
+                }
+            }
+            if (Test-Path -LiteralPath $tempRoot) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force
+            }
         }
-    }
     }
 }
 
