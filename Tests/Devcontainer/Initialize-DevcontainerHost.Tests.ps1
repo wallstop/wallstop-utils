@@ -22,7 +22,7 @@ BeforeAll {
 
         [System.IO.File]::WriteAllText(
             $statePath,
-        ($Containers | ConvertTo-Json -Depth 10),
+            ($Containers | ConvertTo-Json -Depth 10),
             [System.Text.UTF8Encoding]::new($false)
         )
 
