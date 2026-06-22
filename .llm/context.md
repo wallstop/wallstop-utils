@@ -6,7 +6,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 ## Repository Snapshot
 
 - Repo purpose: cross-platform config backup/restore utilities and quality tooling.
-- Primary languages: PowerShell, shell, AppleScript, AutoHotkey, batch, JSON/YAML/Lua.
+- Primary languages: PowerShell, TypeScript (VS Code extension), shell, AppleScript, AutoHotkey, batch, JSON/YAML/Lua.
 - Quality model: agentic targeted validation first, with pre-commit/CI parity as last-resort gating and policy tests.
 
 ## Authoritative Quality Rules
@@ -25,7 +25,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 7. After major changes, run full validation before ending a session.
 8. Prefer PEP 668-safe pre-commit bootstrap guidance (`pipx` or dedicated venv); avoid `python3 -m pip install --user pre-commit`.
 9. When a failure reveals a repeatable category, codify the invariant in skills/context/tests.
-10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, pip, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
+10. Third-party tooling dependencies must be covered by Dependabot weekly grouped updates (Monday 03:00 UTC; ecosystems: github-actions, pre-commit, pip, npm, devcontainers; one PR per ecosystem area per update type), with policy tests that block regressions.
 11. Keep quality-harness diagnostics low-noise: in `Run-PreCommitValidation.ps1`, `Scripts/Utils/Quality/*`, `Scripts/Utils/Common/QualityToolingHelpers.ps1`, and `Scripts/Utils/Remove-BOM.ps1`, use `Write-Verbose` for advisory telemetry (for example discovery diagnostics, probe details, and periodic progress) and reserve `Write-Warning` for actionable degradation only; keep `Write-Host` for concise high-level status summaries. Diagnostic strings that must preserve stable `E_*`/`W_*` codes must not call helper commands inside `$()` interpolation; precompute best-effort detail first so helper failures cannot mask the primary code.
 12. Scripts that invoke `git` must preflight availability with `Get-Command -Name "git" -ErrorAction SilentlyContinue` before the first git call and emit a stable `E_*_GIT_NOT_AVAILABLE` diagnostic when missing.
 13. Treat CI logs containing `files were modified by this hook` as autofix-required formatting drift (not a tool crash); emit explicit `E_CI_PRECOMMIT_AUTOFIX_REQUIRED` diagnostics and list modified files.

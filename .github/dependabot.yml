@@ -61,6 +61,26 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: "npm"
+    directory: "/Extensions/WallstopPrComments"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    pull-request-branch-name:
+      separator: "/"
+    groups:
+      npm-all:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+      npm-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+
   - package-ecosystem: "devcontainers"
     directory: "/"
     schedule:

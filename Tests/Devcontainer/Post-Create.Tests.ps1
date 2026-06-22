@@ -7,6 +7,20 @@ BeforeAll {
 
     $script:postCreatePath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/post-create.sh"
     $script:postCreateContent = Get-Content -Path $script:postCreatePath -Raw
+    $script:initializeHostPath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/initialize-host.sh"
+    $script:initializeHostContent = if (Test-Path -LiteralPath $script:initializeHostPath) {
+        Get-Content -Path $script:initializeHostPath -Raw
+    }
+    else {
+        ""
+    }
+    $script:buildWallstopPrCommentsVsixPath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/build-wallstop-pr-comments-vsix.sh"
+    $script:buildWallstopPrCommentsVsixContent = if (Test-Path -LiteralPath $script:buildWallstopPrCommentsVsixPath) {
+        Get-Content -Path $script:buildWallstopPrCommentsVsixPath -Raw
+    }
+    else {
+        ""
+    }
     $script:devcontainerWorkflowPath = Join-Path -Path $script:repoRoot -ChildPath ".github/workflows/devcontainer-validate.yml"
     $script:devcontainerWorkflowContent = Get-Content -Path $script:devcontainerWorkflowPath -Raw
 
@@ -115,6 +129,67 @@ Describe "post-create.sh file structure" {
 
     It "uses [devcontainer] log prefix conventions throughout" {
         $script:postCreateContent | Should -Match '\[devcontainer\]'
+    }
+}
+
+Describe "initialize-host.sh file structure" {
+    It "exists at .devcontainer/initialize-host.sh" {
+        $script:initializeHostPath | Should -Exist
+    }
+
+    It "has a bash shebang and strict error handling" {
+        $firstLine = ($script:initializeHostContent -split "`n")[0]
+        $firstLine | Should -Match '^#!/usr/bin/env bash'
+        $script:initializeHostContent | Should -Match 'set\s+-euo\s+pipefail'
+    }
+
+    It "runs stale-container cleanup only when pwsh is available" {
+        $script:initializeHostContent | Should -Match '_resolve_powershell_command\(\)'
+        $script:initializeHostContent | Should -Match 'pwsh\.exe'
+        $script:initializeHostContent | Should -Match 'powershell\.exe'
+        $script:initializeHostContent | Should -Match 'wslpath\s+-w'
+        $script:initializeHostContent | Should -Match '_lowercase_windows_drive_letter\(\)'
+        $script:initializeHostContent | Should -Match "tr\s+'\[:upper:\]'\s+'\[:lower:\]'"
+        $script:initializeHostContent | Should -Match '_to_devcontainer_label_path\(\)'
+        $script:initializeHostContent | Should -Match 'workspace_label_path="\$\(_to_devcontainer_label_path'
+        $script:initializeHostContent | Should -Match '-WorkspaceFolder\s+"\$\{workspace_label_path\}"'
+        $script:initializeHostContent | Should -Match 'Initialize-DevcontainerHost\.ps1'
+        $script:initializeHostContent | Should -Match 'W_DEVCONTAINER_HOST_POWERSHELL_NOT_AVAILABLE'
+        $script:initializeHostContent | Should -Match 'W_DEVCONTAINER_HOST_CLEANUP_FAILED'
+    }
+
+    It "builds the Wallstop PR Comments VSIX before container creation without hard-failing by default" {
+        $script:initializeHostContent | Should -Match 'build-wallstop-pr-comments-vsix\.sh'
+        $script:initializeHostContent | Should -Match 'WALLSTOP_DEVCONTAINER_REQUIRE_CUSTOM_EXTENSION'
+        $script:initializeHostContent | Should -Match 'W_DEVCONTAINER_EXTENSION_VSIX_BUILD_FAILED'
+    }
+
+    It "keeps CI strict for the Wallstop PR Comments VSIX build" {
+        $script:devcontainerWorkflowContent | Should -Match 'WALLSTOP_DEVCONTAINER_REQUIRE_CUSTOM_EXTENSION:\s*"1"'
+        $script:devcontainerWorkflowContent | Should -Match 'bash\s+\.devcontainer/initialize-host\.sh\s+"\$\{GITHUB_WORKSPACE\}"'
+        $script:devcontainerWorkflowContent | Should -Match 'test\s+-s\s+Extensions/WallstopPrComments/dist/wallstop-pr-comments-devcontainer\.vsix'
+    }
+}
+
+Describe "build-wallstop-pr-comments-vsix.sh file structure" {
+    It "exists at .devcontainer/build-wallstop-pr-comments-vsix.sh" {
+        $script:buildWallstopPrCommentsVsixPath | Should -Exist
+    }
+
+    It "has a bash shebang and strict error handling" {
+        $firstLine = ($script:buildWallstopPrCommentsVsixContent -split "`n")[0]
+        $firstLine | Should -Match '^#!/usr/bin/env bash'
+        $script:buildWallstopPrCommentsVsixContent | Should -Match 'set\s+-euo\s+pipefail'
+    }
+
+    It "packages Wallstop PR Comments to the stable devcontainer VSIX path" {
+        $script:buildWallstopPrCommentsVsixContent | Should -Match 'Extensions/WallstopPrComments'
+        $script:buildWallstopPrCommentsVsixContent | Should -Match 'vsix_relative_path="dist/wallstop-pr-comments-devcontainer\.vsix"'
+        $script:buildWallstopPrCommentsVsixContent | Should -Match 'cd\s+"\$\{extension_dir\}"'
+        $script:buildWallstopPrCommentsVsixContent | Should -Match '(?m)^\s*npm\s+ci\s*$'
+        $script:buildWallstopPrCommentsVsixContent | Should -Match 'npm\s+run\s+package:vsix\s+--\s+--out\s+"\$\{vsix_relative_path\}"'
+        $script:buildWallstopPrCommentsVsixContent | Should -Match 'wallstop-pr-comments-devcontainer\.vsix'
+        $script:buildWallstopPrCommentsVsixContent | Should -Match 'test\s+-s\s+"\$\{vsix_relative_path\}"'
     }
 }
 
@@ -659,7 +734,7 @@ Describe "devcontainer-validate.yml Codex verification contract" {
         $script:ensureShellQualityStep | Should -Match 'shell:\s+pwsh'
         $script:ensureShellQualityStep | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+-EnsureOnly'
         $script:lintShellQualityStep | Should -Match 'shell:\s+pwsh'
-        $script:lintShellQualityStep | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
+        $script:lintShellQualityStep | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
         $script:devcontainerWorkflowContent | Should -Not -Match 'apt-get\s+install[\s\S]*shellcheck'
         $script:devcontainerWorkflowContent | Should -Not -Match 'shellcheck\s+--severity'
     }
