@@ -60,16 +60,26 @@ Describe "CompatibilityHelpers OS detection" {
 Describe "Resolve-PowerShellExecutablePath" {
     It "exposes the runtime resolver helper" {
         Get-Command Resolve-PowerShellExecutablePath -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        Get-Command Test-PowerShellExecutableCandidateReliably -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
     }
 
-    It "accepts a PowerShell candidate once it executes the bounded sentinel probe" {
+    It "resolves a usable executable in the current environment" {
+        $resolvedExecutable = Resolve-PowerShellExecutablePath
+        $resolvedExecutable | Should -Not -BeNullOrEmpty
+        (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf) | Should -BeTrue
+
+        $probe = Test-PowerShellExecutableCandidateReliably -ExecutablePath $resolvedExecutable -TimeoutSeconds 10 -MaxAttempts 2 -RetryDelayMilliseconds 25
+        $probe.Usable | Should -BeTrue -Because ("resolvedExecutable='{0}'; diagnostic='{1}'; attempts={2}" -f $resolvedExecutable, [string]$probe.Diagnostic, [int]$probe.Attempts)
+    }
+
+    It "prefers a usable live pwsh candidate over Windows PowerShell fallback when available" {
         $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
         if ($null -eq $pwshCommand) {
             Set-ItResult -Skipped -Because "pwsh is not available in this environment."
             return
         }
 
-        $candidate = (
+        $usablePwshCandidates = @(
             Get-Command -Name 'pwsh' -All -ErrorAction SilentlyContinue |
                 ForEach-Object {
                     if ($null -eq $_) {
@@ -88,85 +98,119 @@ Describe "Resolve-PowerShellExecutablePath" {
                 Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
                 Sort-Object -Unique |
                 Where-Object {
-                    $probe = Test-PowerShellExecutableCandidate -ExecutablePath $_ -TimeoutSeconds 10
+                    $probe = Test-PowerShellExecutableCandidateReliably -ExecutablePath $_ -TimeoutSeconds 10 -MaxAttempts 2 -RetryDelayMilliseconds 25
                     [bool]$probe.Usable
-                } |
-                Select-Object -First 1
+                }
         )
 
-        $candidate | Should -Not -BeNullOrEmpty
-        $candidate = [string]$candidate
-        $probe = Test-PowerShellExecutableCandidate -ExecutablePath $candidate -TimeoutSeconds 10
-        $probe.Usable | Should -BeTrue -Because "the resolver probe should not require slow PowerShell shutdown to complete"
-        $probe.Diagnostic | Should -BeExactly "ok"
-    }
-
-    It "returns the discovered pwsh path when pwsh is available" {
-        $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
-        if ($null -eq $pwshCommand) {
-            Set-ItResult -Skipped -Because "pwsh is not available in this environment."
+        if ($usablePwshCandidates.Count -eq 0) {
+            Set-ItResult -Skipped -Because "No discovered pwsh candidate passed the resolver probe in this environment."
             return
         }
 
         $resolvedExecutable = Resolve-PowerShellExecutablePath
-        $resolvedExecutable | Should -Not -BeNullOrEmpty
-        (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf) | Should -BeTrue
-
-        $pwshCandidates = @(
-            Get-Command -Name 'pwsh' -All -ErrorAction SilentlyContinue |
-                ForEach-Object {
-                    if ($null -eq $_) {
-                        return
-                    }
-
-                    if ($null -ne $_.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Source)) {
-                        [string]$_.Source
-                        return
-                    }
-
-                    if ($null -ne $_.PSObject.Properties['Path'] -and -not [string]::IsNullOrWhiteSpace([string]$_.Path)) {
-                        [string]$_.Path
-                    }
-                } |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                Sort-Object -Unique
-        )
-        $pwshCandidates | Should -Contain $resolvedExecutable
+        $usablePwshCandidates | Should -Contain $resolvedExecutable
     }
 
-    It "prefers pwsh over powershell.exe on Windows-capable probes" {
-        Mock -CommandName Test-IsWindowsPlatform -MockWith { return $true }
-        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith {
-            return [pscustomobject]@{ Source = 'C:\Program Files\PowerShell\7\pwsh.exe' }
+    It "retries transient executable probe failures: <Name>" -ForEach @(
+        @{ Name = "immediate success"; Outcomes = @(@{ Usable = $true; Diagnostic = "ok" }); ExpectedUsable = $true; ExpectedDiagnostic = "ok"; ExpectedAttempts = 1; ExpectedSleepCount = 0 }
+        @{ Name = "sentinel miss then success"; Outcomes = @(@{ Usable = $false; Diagnostic = "probe-no-sentinel" }, @{ Usable = $true; Diagnostic = "ok" }); ExpectedUsable = $true; ExpectedDiagnostic = "ok"; ExpectedAttempts = 2; ExpectedSleepCount = 1 }
+        @{ Name = "timeout remains bounded"; Outcomes = @(@{ Usable = $false; Diagnostic = "probe-timeout" }, @{ Usable = $false; Diagnostic = "probe-timeout" }); ExpectedUsable = $false; ExpectedDiagnostic = "probe-timeout"; ExpectedAttempts = 2; ExpectedSleepCount = 1 }
+        @{ Name = "missing path is not retried"; Outcomes = @(@{ Usable = $false; Diagnostic = "path-not-found" }, @{ Usable = $true; Diagnostic = "ok" }); ExpectedUsable = $false; ExpectedDiagnostic = "path-not-found"; ExpectedAttempts = 1; ExpectedSleepCount = 0 }
+        @{ Name = "nonzero exit is not retried"; Outcomes = @(@{ Usable = $false; Diagnostic = "probe-exit-7:boom" }, @{ Usable = $true; Diagnostic = "ok" }); ExpectedUsable = $false; ExpectedDiagnostic = "probe-exit-7:boom"; ExpectedAttempts = 1; ExpectedSleepCount = 0 }
+    ) {
+        $script:probeIndex = 0
+        $script:sleepCount = 0
+        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Tools\pwsh.exe' -and $TimeoutSeconds -eq 7 } -MockWith {
+            $outcome = $Outcomes[$script:probeIndex]
+            $script:probeIndex++
+            return [pscustomobject]@{
+                Usable     = [bool]$outcome.Usable
+                Diagnostic = [string]$outcome.Diagnostic
+            }
         }
-        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
-            return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
-        }
-        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Program Files\PowerShell\7\pwsh.exe' } -MockWith {
-            return [pscustomobject]@{ Usable = $true; Diagnostic = 'ok' }
-        }
-        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' } -MockWith {
-            return [pscustomobject]@{ Usable = $true; Diagnostic = 'ok' }
+        Mock -CommandName Start-Sleep -ParameterFilter { $Milliseconds -eq 1 } -MockWith {
+            $script:sleepCount++
         }
 
-        $verboseRecords = @(& { Resolve-PowerShellExecutablePath -Verbose } 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
-        $selectedExecutable = Resolve-PowerShellExecutablePath
-        $selectedExecutable | Should -BeExactly 'C:\Program Files\PowerShell\7\pwsh.exe'
-        (@($verboseRecords | ForEach-Object { $_.Message }) -join [Environment]::NewLine) | Should -Match "selectedExecutable='C:\\Program Files\\PowerShell\\7\\pwsh\.exe'; source='pwsh'"
+        $probe = Test-PowerShellExecutableCandidateReliably -ExecutablePath 'C:\Tools\pwsh.exe' -TimeoutSeconds 7 -MaxAttempts 2 -RetryDelayMilliseconds 1
+
+        [bool]$probe.Usable | Should -Be $ExpectedUsable
+        $probe.Diagnostic | Should -BeExactly $ExpectedDiagnostic
+        [int]$probe.Attempts | Should -Be $ExpectedAttempts
+        $script:probeIndex | Should -Be $ExpectedAttempts
+        $script:sleepCount | Should -Be $ExpectedSleepCount
     }
 
-    It "falls back to powershell.exe on Windows when pwsh is unavailable" {
-        Mock -CommandName Test-IsWindowsPlatform -MockWith { return $true }
-        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith { return $null }
-        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
-            return [pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+    It "selects candidates by resolver contract: <Name>" -ForEach @(
+        @{
+            Name                         = "first usable pwsh wins"
+            TreatAsWindows               = $true
+            PwshCommands                 = @([pscustomobject]@{ Source = 'C:\Program Files\PowerShell\7\pwsh.exe' })
+            WindowsPowerShellCommands    = @([pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' })
+            ProbeResults                 = @{ 'C:\Program Files\PowerShell\7\pwsh.exe' = @{ Usable = $true; Diagnostic = "ok"; Attempts = 1 } }
+            ExpectedExecutable           = 'C:\Program Files\PowerShell\7\pwsh.exe'
+            ExpectedProbePaths           = @('C:\Program Files\PowerShell\7\pwsh.exe')
+            ExpectedVerboseRegexPatterns = @("selectedExecutable='C:\\Program Files\\PowerShell\\7\\pwsh\.exe'; source='pwsh'; attempts=1")
         }
-        Mock -CommandName Test-PowerShellExecutableCandidate -ParameterFilter { $ExecutablePath -eq 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' } -MockWith {
-            return [pscustomobject]@{ Usable = $true; Diagnostic = 'ok' }
+        @{
+            Name                         = "blank Source falls back to Path"
+            TreatAsWindows               = $true
+            PwshCommands                 = @([pscustomobject]@{ Source = ''; Path = 'C:\Tools\pwsh.exe' })
+            WindowsPowerShellCommands    = @()
+            ProbeResults                 = @{ 'C:\Tools\pwsh.exe' = @{ Usable = $true; Diagnostic = "ok"; Attempts = 1 } }
+            ExpectedExecutable           = 'C:\Tools\pwsh.exe'
+            ExpectedProbePaths           = @('C:\Tools\pwsh.exe')
+            ExpectedVerboseRegexPatterns = @("selectedExecutable='C:\\Tools\\pwsh\.exe'; source='pwsh'; attempts=1")
+        }
+        @{
+            Name                         = "rejected pwsh candidate does not block the next pwsh"
+            TreatAsWindows               = $true
+            PwshCommands                 = @([pscustomobject]@{ Source = 'C:\Bad\pwsh.exe' }, [pscustomobject]@{ Source = 'C:\Good\pwsh.exe' })
+            WindowsPowerShellCommands    = @()
+            ProbeResults                 = @{ 'C:\Bad\pwsh.exe' = @{ Usable = $false; Diagnostic = "probe-no-sentinel"; Attempts = 2 }; 'C:\Good\pwsh.exe' = @{ Usable = $true; Diagnostic = "ok"; Attempts = 1 } }
+            ExpectedExecutable           = 'C:\Good\pwsh.exe'
+            ExpectedProbePaths           = @('C:\Bad\pwsh.exe', 'C:\Good\pwsh.exe')
+            ExpectedVerboseRegexPatterns = @("rejectedExecutable='C:\\Bad\\pwsh\.exe'; source='pwsh'; reason='probe-no-sentinel'; attempts=2", "selectedExecutable='C:\\Good\\pwsh\.exe'; source='pwsh'; attempts=1")
+        }
+        @{
+            Name                         = "Windows fallback is used only after pwsh candidates are rejected"
+            TreatAsWindows               = $true
+            PwshCommands                 = @([pscustomobject]@{ Source = 'C:\Bad\pwsh.exe' })
+            WindowsPowerShellCommands    = @([pscustomobject]@{ Source = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' })
+            ProbeResults                 = @{ 'C:\Bad\pwsh.exe' = @{ Usable = $false; Diagnostic = "probe-timeout"; Attempts = 2 }; 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' = @{ Usable = $true; Diagnostic = "ok"; Attempts = 1 } }
+            ExpectedExecutable           = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+            ExpectedProbePaths           = @('C:\Bad\pwsh.exe', 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')
+            ExpectedVerboseRegexPatterns = @("rejectedExecutable='C:\\Bad\\pwsh\.exe'; source='pwsh'; reason='probe-timeout'; attempts=2", "selectedExecutable='C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe'; source='powershell\.exe-fallback'; attempts=1")
+        }
+    ) {
+        $script:resolverProbePaths = @()
+        Mock -CommandName Test-IsWindowsPlatform -MockWith { return [bool]$TreatAsWindows }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith { return $PwshCommands }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith { return $WindowsPowerShellCommands }
+        Mock -CommandName Test-PowerShellExecutableCandidateReliably -MockWith {
+            $script:resolverProbePaths += [string]$ExecutablePath
+            $probeResult = $ProbeResults[[string]$ExecutablePath]
+            if ($null -eq $probeResult) {
+                throw "Unexpected probe path '$ExecutablePath'."
+            }
+
+            return [pscustomobject]@{
+                Usable     = [bool]$probeResult.Usable
+                Diagnostic = [string]$probeResult.Diagnostic
+                Attempts   = [int]$probeResult.Attempts
+            }
         }
 
-        $resolvedExecutable = Resolve-PowerShellExecutablePath
-        $resolvedExecutable | Should -BeExactly 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+        $script:selectedExecutable = $null
+        $verboseRecords = @(& { $script:selectedExecutable = Resolve-PowerShellExecutablePath -Verbose } 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
+
+        $script:selectedExecutable | Should -BeExactly $ExpectedExecutable
+        (@($script:resolverProbePaths) -join '|') | Should -BeExactly (@($ExpectedProbePaths) -join '|')
+        $verboseText = (@($verboseRecords | ForEach-Object { $_.Message }) -join [Environment]::NewLine)
+        foreach ($pattern in $ExpectedVerboseRegexPatterns) {
+            $verboseText | Should -Match $pattern
+        }
     }
 
     It "throws a stable E_* diagnostic when no PowerShell executable is available" {
@@ -185,20 +229,23 @@ Describe "Resolve-PowerShellExecutablePath" {
         } | Should -Throw -ExpectedMessage '*E_COMPATIBILITY_POWERSHELL_EXECUTABLE_NOT_FOUND*'
     }
 
-    It "resolves the same pwsh path stably across repeated probes (race regression guard)" {
-        # The intermittent WinPS 5.1 failure was a probe race: a usable pwsh wrote its
-        # sentinel and exited inside a single poll window, so the candidate was spuriously
-        # rejected. Re-run the real resolver several times; every run must succeed.
-        $pwshCommand = Get-Command -Name 'pwsh' -ErrorAction SilentlyContinue
-        if ($null -eq $pwshCommand) {
-            Set-ItResult -Skipped -Because "pwsh is not available in this environment."
-            return
+    It "throws a stable E_* diagnostic when every discovered executable is rejected" {
+        Mock -CommandName Test-IsWindowsPlatform -MockWith { return $true }
+        Mock -CommandName Test-IsMacOSPlatform -MockWith { return $false }
+        Mock -CommandName Test-IsLinuxPlatform -MockWith { return $false }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'pwsh' } -MockWith {
+            return [pscustomobject]@{ Source = 'C:\Bad\pwsh.exe' }
+        }
+        Mock -CommandName Get-Command -ParameterFilter { $Name -eq 'powershell.exe' } -MockWith {
+            return [pscustomobject]@{ Source = 'C:\Bad\powershell.exe' }
+        }
+        Mock -CommandName Test-PowerShellExecutableCandidateReliably -MockWith {
+            return [pscustomobject]@{ Usable = $false; Diagnostic = 'probe-exit-1:boom'; Attempts = 1 }
         }
 
-        $resolved = @(1..3 | ForEach-Object { Resolve-PowerShellExecutablePath })
-        $resolved | Should -Not -Contain $null
-        @($resolved | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count | Should -Be 0
-        @($resolved | Sort-Object -Unique).Count | Should -Be 1
+        {
+            Resolve-PowerShellExecutablePath
+        } | Should -Throw -ExpectedMessage '*E_COMPATIBILITY_POWERSHELL_EXECUTABLE_NOT_FOUND*'
     }
 }
 

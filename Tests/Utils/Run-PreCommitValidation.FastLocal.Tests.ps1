@@ -184,6 +184,35 @@ Describe "Run-PreCommitValidation fast local mode" {
         $script:preCommitContent.IndexOf('$requiresCompatibilityAnalyzerModule = $runCompatibilityGate') | Should -BeLessThan $script:preCommitContent.IndexOf('if ($runCompatibilityGate)')
         $script:preCommitContent | Should -Match 'Invoke-CompatibilityChecks\.ps1'
         $script:preCommitContent | Should -Match 'Running cross-version compatibility gate for \{0\} staged target\(s\)'
+        $script:preCommitContent | Should -Match 'Invoke-PreCommitExternalCommand[\s\S]*-ContextLabel "cross-version compatibility gate"'
+        $script:preCommitContent | Should -Match '"-NonInteractive"'
+        $script:preCommitContent | Should -Match 'Invoke-CompatibilityChecks\.ps1[\s\S]*-OutputFormat json -TargetFiles'
+        $script:preCommitContent | Should -Not -Match 'Invoke-CompatibilityChecks\.ps1[\s\S]*-OutputFormat json -NoExit -TargetFiles'
+        $script:preCommitContent | Should -Match 'ConvertFrom-CompatibilityGateOutput\s+-Output\s+\(\[string\]\$compatibilityResult\.Stdout\)'
+        $script:preCommitContent | Should -Match '\[System\.Environment\]::Exit\(\`\$exitCode\)'
+        $script:preCommitContent | Should -Match '\[int\]\$compatibilityResult\.ExitCode\s+-eq\s+0'
+        $script:preCommitContent | Should -Match '-not\s+\[bool\]\$compatibilityResult\.TimedOut'
+        $script:preCommitContent | Should -Not -Match 'W_PRECOMMIT_COMPATIBILITY_PROCESS_DEGRADED_AFTER_PASS'
+        $script:preCommitContent | Should -Not -Match '\$compatibilityOutput\s*=\s*@\(&\s+\$pwshExecutable\s+-NoLogo\s+-NoProfile\s+-EncodedCommand'
+    }
+
+    It "parses compatibility gate JSON from captured subprocess output" {
+        . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/StrictModeHelpers.ps1")
+        $targetFunction = Get-RequiredFunctionDefinitionAst -Ast $script:preCommitAst -Name "ConvertFrom-CompatibilityGateOutput" -Context "compatibility gate output parsing"
+
+        . ([scriptblock]::Create($targetFunction.Extent.Text))
+        try {
+            $result = ConvertFrom-CompatibilityGateOutput -Output "diagnostic before JSON {with braces}`n{`"status`":`"pass`",`"findingCount`":0}`ndiagnostic after JSON {with braces}"
+
+            $result | Should -Not -BeNullOrEmpty
+            $result.status | Should -BeExactly "pass"
+            [int]$result.findingCount | Should -Be 0
+            ConvertFrom-CompatibilityGateOutput -Output "no json here" | Should -BeNullOrEmpty
+            ConvertFrom-CompatibilityGateOutput -Output "" | Should -BeNullOrEmpty
+        }
+        finally {
+            Remove-Item -Path Function:ConvertFrom-CompatibilityGateOutput -ErrorAction SilentlyContinue
+        }
     }
 
     It "keeps shell and native quality checks as all-mode-only orchestrator work" {

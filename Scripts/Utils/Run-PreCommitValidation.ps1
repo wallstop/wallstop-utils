@@ -1171,6 +1171,46 @@ function Assert-PreCommitPowerShellModuleAvailability {
     Assert-ModuleCommandRequirements -Requirements ($requirements.ToArray()) -ErrorCode "E_PRECOMMIT_VALIDATION_MODULES_MISSING" -ContextLabel "Pre-commit module prerequisites"
 }
 
+function ConvertFrom-CompatibilityGateOutput {
+    [CmdletBinding()]
+    [OutputType([object])]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Output
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Output)) {
+        return $null
+    }
+
+    $lines = @($Output -split "`r?`n")
+    for ($startLine = 0; $startLine -lt $lines.Count; $startLine++) {
+        if (-not ([string]$lines[$startLine]).TrimStart().StartsWith('{')) {
+            continue
+        }
+
+        for ($endLine = $startLine; $endLine -lt $lines.Count; $endLine++) {
+            if (-not ([string]$lines[$endLine]).TrimEnd().EndsWith('}')) {
+                continue
+            }
+
+            $jsonText = ($lines[$startLine..$endLine] -join [Environment]::NewLine)
+            try {
+                $candidate = ConvertFrom-JsonSingleObject -Json $jsonText -Context "compatibility gate output"
+                if ($null -ne $candidate -and $null -ne $candidate.PSObject.Properties['status']) {
+                    return $candidate
+                }
+            }
+            catch {
+                Write-Verbose "Compatibility gate JSON parse failed: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    return $null
+}
+
 function Invoke-PesterQualityGateInIsolatedProcess {
     param(
         [Parameter(Mandatory = $true)]
@@ -1937,23 +1977,43 @@ try {
             $compatibilityGateLiteral = "'{0}'" -f ([string]$compatibilityGatePath).Replace("'", "''")
             $compatibilityTargetListLiteral = "'{0}'" -f ([string]$compatibilityTargetListPath).Replace("'", "''")
             $compatibilityCommandText = (
-                "& {{ `$targets = @((Get-Content -LiteralPath {0} -ErrorAction Stop) | Where-Object {{ -not [string]::IsNullOrWhiteSpace(`$_) }}); & {1} -OutputFormat json -TargetFiles `$targets }}" -f
+                "& {{ try {{ `$targets = @((Get-Content -LiteralPath {0} -ErrorAction Stop) | Where-Object {{ -not [string]::IsNullOrWhiteSpace(`$_) }}); & {1} -OutputFormat json -TargetFiles `$targets; `$exitCode = 0 }} catch {{ Write-Error `$_; `$exitCode = 1 }}; try {{ [Console]::Out.Flush(); [Console]::Error.Flush() }} catch {{ }}; [System.Environment]::Exit(`$exitCode) }}" -f
                 $compatibilityTargetListLiteral,
                 $compatibilityGateLiteral
             )
             $compatibilityEncodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($compatibilityCommandText))
 
             Write-Host ("Running cross-version compatibility gate for {0} staged target(s)..." -f $compatibilityTargetFiles.Count)
-            $compatibilityOutput = @(& $pwshExecutable -NoLogo -NoProfile -EncodedCommand $compatibilityEncodedCommand 2>&1)
-            $compatibilityExitCode = $LASTEXITCODE
-            if ($compatibilityExitCode -ne 0) {
+            $compatibilityResult = Invoke-PreCommitExternalCommand `
+                -Executable $pwshExecutable `
+                -Arguments @("-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", $compatibilityEncodedCommand) `
+                -RepositoryRoot $repoRoot `
+                -TimeoutSeconds 120 `
+                -ContextLabel "cross-version compatibility gate"
+            $compatibilityOutput = @(
+                @([string]$compatibilityResult.Stdout -split "`r?`n")
+                @([string]$compatibilityResult.Stderr -split "`r?`n")
+            )
+            $compatibilityJsonResult = ConvertFrom-CompatibilityGateOutput -Output ([string]$compatibilityResult.Stdout)
+            $compatibilityPassed = (
+                $null -ne $compatibilityJsonResult -and
+                $null -ne $compatibilityJsonResult.PSObject.Properties['status'] -and
+                [string]$compatibilityJsonResult.status -eq "pass" -and
+                [int]$compatibilityResult.ExitCode -eq 0 -and
+                -not [bool]$compatibilityResult.TimedOut
+            )
+
+            if (-not $compatibilityPassed) {
                 $compatibilityPreview = Get-OutputPreview -OutputLines $compatibilityOutput -MaxLines 6 -FilterBlankLines -HeadTailWhenTruncated -PerLineMaxCharacters 220
                 throw (
-                    "E_PRECOMMIT_COMPATIBILITY_FAILED: cross-version compatibility gate failed for staged targets (targetCount={0}; outputPreview={1})." -f
+                    "E_PRECOMMIT_COMPATIBILITY_FAILED: cross-version compatibility gate failed for staged targets (targetCount={0}; exitCode={1}; timedOut={2}; outputPreview={3})." -f
                     $compatibilityTargetFiles.Count,
+                    [int]$compatibilityResult.ExitCode,
+                    [bool]$compatibilityResult.TimedOut,
                     $compatibilityPreview
                 )
             }
+
         }
         finally {
             Remove-Item -LiteralPath $compatibilityTargetListPath -Force -ErrorAction SilentlyContinue
