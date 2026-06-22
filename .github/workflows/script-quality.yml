@@ -234,59 +234,8 @@ jobs:
             fi
           }
 
-          security_allowed_count_path="$(mktemp)"
-          printf '0\n' > "$security_allowed_count_path"
-          trap 'rm -f "$security_allowed_count_path"' EXIT
-
-          increment_allowed_security_match_count() {
-            local count
-            count="$(< "$security_allowed_count_path")"
-            printf '%s\n' "$((count + 1))" > "$security_allowed_count_path"
-          }
-
-          is_allowed_security_match() {
-            local match_path="$1"
-            local match_content="$2"
-
-            if [[ "$match_path" == "Tests/Utils/StrictModeHelpers.Tests.ps1" ]]; then
-              local strictmode_token="gh""p_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
-              if [[ "$match_content" == "        \$rawToken = \"${strictmode_token}\"" ]]; then
-                return 0
-              fi
-            fi
-
-            return 1
-          }
-
-          filter_allowed_security_matches() {
-            local raw_matches="$1"
-
-            if [[ -z "$raw_matches" ]]; then
-              return 0
-            fi
-
-            while IFS= read -r match_line; do
-              if [[ -z "$match_line" ]]; then
-                continue
-              fi
-
-              local match_path="${match_line%%:*}"
-              local match_remainder="${match_line#*:}"
-              local match_content="${match_remainder#*:}"
-
-              if is_allowed_security_match "$match_path" "$match_content"; then
-                increment_allowed_security_match_count
-                continue
-              fi
-
-              printf '%s\n' "$match_line"
-            done <<< "$raw_matches"
-          }
-
-          raw_secret_matches="$(run_scan "$secret_pattern" "${scan_files[@]}")"
-          raw_dangerous_matches="$(run_scan "$dangerous_pattern" "${command_scan_files[@]}")"
-          secret_matches="$(filter_allowed_security_matches "$raw_secret_matches")"
-          dangerous_matches="$(filter_allowed_security_matches "$raw_dangerous_matches")"
+          secret_matches="$(run_scan "$secret_pattern" "${scan_files[@]}")"
+          dangerous_matches="$(run_scan "$dangerous_pattern" "${command_scan_files[@]}")"
           matches="$(
             {
               printf '%s\n' "$secret_matches"
@@ -306,18 +255,10 @@ jobs:
           if [[ -n "$matches" ]]; then
             match_count="$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
           fi
-          allowed_match_count="$(< "$security_allowed_count_path")"
-          expected_allowed_match_count=1
 
           echo "  scanner_engine=$scanner_engine"
           echo "  active_pattern=$active_pattern"
           echo "  match_count=$match_count"
-          echo "  allowed_match_count=$allowed_match_count"
-
-          if [[ "$allowed_match_count" -ne "$expected_allowed_match_count" ]]; then
-            echo "Scanner allowlist drift: expected $expected_allowed_match_count allowed fixture match(es), found $allowed_match_count"
-            exit 1
-          fi
 
           # Engine-level behavior corpus to catch false positives and drift.
           sample_ghp="gh""p_0123456789abcdef0123456789abcdef0123"

@@ -147,6 +147,7 @@ test('package manifest exposes one-click local install and setup scripts', () =>
   assert.equal(manifest.scripts?.setup, 'node scripts/install-local.js --setup-only');
   assert.equal(manifest.scripts?.['install:local'], 'node scripts/install-local.js');
   assert.equal(manifest.scripts?.['package:vsix'], 'npm run compile && node scripts/package-vsix.js');
+  assert.equal(manifest.scripts?.test, 'npm run compile && node --test out/test');
   assert.equal(manifest.devDependencies?.['@vscode/vsce'], undefined);
   assert.equal(typeof manifest.devDependencies?.yazl, 'string');
 

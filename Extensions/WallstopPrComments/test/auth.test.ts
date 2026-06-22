@@ -3,16 +3,78 @@ import test from 'node:test';
 
 import { AuthService, redactSecrets, sanitizeHeaderValue } from '../src/auth';
 
-test('sanitizes user supplied header values at the boundary', () => {
-  assert.equal(sanitizeHeaderValue('  ghp_secret\r\nInjected: yes\u007F  '), 'ghp_secretInjected: yes');
-  assert.equal(sanitizeHeaderValue('\r\n\t'), undefined);
-});
+function syntheticGitHubToken(kind: 'ghp' | 'ghs' | 'gho' | 'ghu' | 'ghr' | 'github_pat'): string {
+  return `${kind}_${'a'.repeat(36)}`;
+}
 
-test('redacts GitHub token shapes and explicit sensitive values', () => {
-  const text = 'Authorization failed for ghp_abcdefghijklmnopqrstuvwxyz and custom-secret';
+const sanitizationCases: Array<{
+  readonly name: string;
+  readonly value: string | undefined;
+  readonly expected: string | undefined;
+}> = [
+  {
+    name: 'removes control characters and trims',
+    value: '  ghp_secret\r\nInjected: yes\u007F  ',
+    expected: 'ghp_secretInjected: yes',
+  },
+  {
+    name: 'returns undefined for empty sanitized values',
+    value: '\r\n\t',
+    expected: undefined,
+  },
+  {
+    name: 'preserves undefined',
+    value: undefined,
+    expected: undefined,
+  },
+];
 
-  assert.equal(redactSecrets(text, ['custom-secret']), 'Authorization failed for ***REDACTED*** and ***REDACTED***');
-});
+for (const { name, value, expected } of sanitizationCases) {
+  test(`sanitizes user supplied header values at the boundary: ${name}`, () => {
+    assert.equal(sanitizeHeaderValue(value), expected);
+  });
+}
+
+const redactionCases: Array<{
+  readonly name: string;
+  readonly text: string;
+  readonly sensitiveValues?: readonly string[];
+  readonly expected: string;
+}> = [
+  {
+    name: 'GitHub classic token and explicit sensitive value',
+    text: `Authorization failed for ${syntheticGitHubToken('ghp')} and custom-secret`,
+    sensitiveValues: ['custom-secret'],
+    expected: 'Authorization failed for ***REDACTED*** and ***REDACTED***',
+  },
+  {
+    name: 'GitHub fine-grained token',
+    text: `Token value: ${syntheticGitHubToken('github_pat')}`,
+    expected: 'Token value: ***REDACTED***',
+  },
+  {
+    name: 'Authorization bearer header',
+    text: `Authorization: Bearer ${'a'.repeat(24)}`,
+    expected: 'Authorization: Bearer ***REDACTED***',
+  },
+  {
+    name: 'Authorization token header',
+    text: `Authorization: token ${'b'.repeat(24)}`,
+    expected: 'Authorization: token ***REDACTED***',
+  },
+  {
+    name: 'ignores blank explicit sensitive values',
+    text: 'Nothing to redact',
+    sensitiveValues: ['   '],
+    expected: 'Nothing to redact',
+  },
+];
+
+for (const { name, text, sensitiveValues, expected } of redactionCases) {
+  test(`redacts secrets: ${name}`, () => {
+    assert.equal(redactSecrets(text, sensitiveValues), expected);
+  });
+}
 
 test('uses VS Code GitHub auth for github.com before manual secrets', async () => {
   const calls: string[] = [];
