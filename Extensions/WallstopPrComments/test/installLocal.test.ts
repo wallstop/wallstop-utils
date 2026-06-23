@@ -53,6 +53,14 @@ type InstallLocalModule = {
     args: string[];
     options: { cwd: string; env: NodeJS.ProcessEnv; stdio: string; shell: boolean };
   };
+  createProbeSpawnConfig: (
+    command: string | { command: string; argsPrefix?: string[]; env?: NodeJS.ProcessEnv },
+    options?: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv }
+  ) => {
+    command: string;
+    args: string[];
+    options: { cwd: string; env: NodeJS.ProcessEnv; stdio: string; shell: boolean };
+  };
   mergeCommandEnvironment: (baseEnv: NodeJS.ProcessEnv, commandEnv?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
 };
 
@@ -518,6 +526,29 @@ test('resolved Code CLI environment clears VSCODE_DEV when launching the shim ta
 
   assert.equal(env.ELECTRON_RUN_AS_NODE, '1');
   assert.equal(Object.hasOwn(env, 'VSCODE_DEV'), false);
+});
+
+test('resolved Code CLI probe uses the same environment deletion semantics as install', () => {
+  const { createProbeSpawnConfig } = loadInstallLocalModule();
+  const spawnConfig = createProbeSpawnConfig(
+    {
+      command: 'C:\\Program Files\\Microsoft VS Code\\Code.exe',
+      argsPrefix: ['C:\\Program Files\\Microsoft VS Code\\resources\\app\\out\\cli.js'],
+      env: { ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: undefined }
+    },
+    {
+      platform: 'win32',
+      env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe', ELECTRON_RUN_AS_NODE: '0', VSCODE_DEV: '1' }
+    }
+  );
+
+  assert.equal(spawnConfig.command, 'C:\\Program Files\\Microsoft VS Code\\Code.exe');
+  assert.deepEqual(spawnConfig.args, [
+    'C:\\Program Files\\Microsoft VS Code\\resources\\app\\out\\cli.js',
+    '--version'
+  ]);
+  assert.equal(spawnConfig.options.env.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(Object.hasOwn(spawnConfig.options.env, 'VSCODE_DEV'), false);
 });
 
 test('local install plan preserves resolved VS Code CLI args and environment', () => {

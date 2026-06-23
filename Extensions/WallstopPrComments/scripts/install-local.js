@@ -425,19 +425,23 @@ function runCommand(command, options = {}) {
   });
 }
 
-function probeCommand(command, options = {}) {
+function createProbeSpawnConfig(command, options = {}) {
   const platform = options.platform || process.platform;
   const normalizedCommand = typeof command === 'string'
     ? { command, argsPrefix: [], env: undefined }
     : normalizeCodeCli(command);
-  const env = { ...(options.env || process.env), ...(normalizedCommand.env || {}) };
-  const spawnConfig = createSpawnOptions(
+  const env = mergeCommandEnvironment(options.env || process.env, normalizedCommand.env);
+  return createSpawnOptions(
     normalizedCommand.command,
     [...normalizedCommand.argsPrefix, '--version'],
     process.cwd(),
     platform,
     env
   );
+}
+
+function probeCommand(command, options = {}) {
+  const spawnConfig = createProbeSpawnConfig(command, options);
 
   return new Promise((resolve) => {
     const child = spawn(spawnConfig.command, spawnConfig.args, {
@@ -583,6 +587,7 @@ module.exports = {
   DEFAULT_CODE_CLI_CANDIDATES,
   createCodeCliCommand,
   getNpmCommandEnvironment,
+  createProbeSpawnConfig,
   createSetupPlan,
   createSpawnOptions,
   executeSetupPlan,

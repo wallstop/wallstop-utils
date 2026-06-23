@@ -15,6 +15,8 @@ else {
     throw "E_DEVCONTAINER_HOST_COMPATIBILITY_HELPERS_MISSING: expected compatibility helpers at '$compatibilityHelpersPath'."
 }
 
+$script:DockerShimPowerShellPath = $null
+
 function Write-DevcontainerHostLog {
     param(
         [Parameter(Mandatory = $true)]
@@ -128,8 +130,15 @@ function Invoke-DockerApplicationCommand {
         [string[]]$Arguments,
 
         [Parameter(Mandatory = $true)]
-        [int]$TimeoutSeconds
+        [int]$TimeoutSeconds,
+
+        [string]$DisplayCommand
     )
+
+    $commandDisplay = $DisplayCommand
+    if ([string]::IsNullOrWhiteSpace($commandDisplay)) {
+        $commandDisplay = "docker $($Arguments -join ' ')"
+    }
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $DockerPath
@@ -161,8 +170,8 @@ function Invoke-DockerApplicationCommand {
             return [pscustomobject]@{
                 ExitCode = 124
                 Stdout = @()
-                Stderr = @("docker command timed out after ${TimeoutSeconds}s: docker $($Arguments -join ' ')")
-                Output = @("docker command timed out after ${TimeoutSeconds}s: docker $($Arguments -join ' ')")
+                Stderr = @("docker command timed out after ${TimeoutSeconds}s: $commandDisplay")
+                Output = @("docker command timed out after ${TimeoutSeconds}s: $commandDisplay")
             }
         }
 
@@ -200,25 +209,15 @@ function Invoke-DockerCommand {
             -TimeoutSeconds (Get-DockerCommandTimeoutSeconds)
     }
 
-    $output = @()
-    $exitCode = 0
-    try {
-        $output = @(& $DockerPath @Arguments 2>&1)
-        if ($global:LASTEXITCODE -is [int]) {
-            $exitCode = $global:LASTEXITCODE
-        }
-    }
-    catch {
-        $output = @($_.Exception.Message)
-        $exitCode = 1
+    if ([string]::IsNullOrWhiteSpace($script:DockerShimPowerShellPath)) {
+        $script:DockerShimPowerShellPath = Resolve-PowerShellExecutablePath
     }
 
-    return [pscustomobject]@{
-        ExitCode = $exitCode
-        Stdout = @($output)
-        Stderr = @()
-        Output = @($output)
-    }
+    return Invoke-DockerApplicationCommand `
+        -DockerPath $script:DockerShimPowerShellPath `
+        -Arguments (@("-NoLogo", "-NoProfile", "-NonInteractive", "-File", $DockerPath) + $Arguments) `
+        -TimeoutSeconds (Get-DockerCommandTimeoutSeconds) `
+        -DisplayCommand ("docker {0}" -f ($Arguments -join ' '))
 }
 
 function Get-DevcontainerConfigLabelPath {
@@ -299,7 +298,7 @@ if ($psResult.ExitCode -ne 0) {
 }
 
 $containerIds = @(
-    $psResult.Output |
+    $psResult.Stdout |
         ForEach-Object { [string]$_ } |
         ForEach-Object { $_.Trim() } |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) }

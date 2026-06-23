@@ -11,7 +11,29 @@ export class RepositoryStore {
   constructor(private readonly state: MementoLike) {}
 
   list(): RepositoryRef[] {
-    return this.state.get<RepositoryRef[]>(REPOSITORIES_KEY, []).map(normalizeRepositoryHost);
+    const persisted = this.state.get<unknown>(REPOSITORIES_KEY, []);
+    if (!Array.isArray(persisted)) {
+      return [];
+    }
+
+    const repositories: RepositoryRef[] = [];
+    const seen = new Set<string>();
+    for (const value of persisted) {
+      const repository = tryNormalizePersistedRepository(value);
+      if (repository === undefined) {
+        continue;
+      }
+
+      const key = repositoryKey(repository);
+      if (seen.has(key)) {
+        continue;
+      }
+
+      repositories.push(repository);
+      seen.add(key);
+    }
+
+    return repositories;
   }
 
   async add(repository: RepositoryRef): Promise<void> {
@@ -108,6 +130,42 @@ function normalizeRepositoryHost(repository: RepositoryRef): RepositoryRef {
     ...repository,
     host: assertSafeGitHubHost(repository.host),
   };
+}
+
+function tryNormalizePersistedRepository(value: unknown): RepositoryRef | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const host = readString(value.host);
+  const owner = readRepositorySegment(value.owner);
+  const repo = readRepositorySegment(value.repo);
+  if (host === undefined || owner === undefined || repo === undefined) {
+    return undefined;
+  }
+
+  try {
+    return normalizeRepositoryHost({ host, owner, repo });
+  } catch {
+    return undefined;
+  }
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readRepositorySegment(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed === '' || /[\/\s]/u.test(trimmed) ? undefined : trimmed;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function assertDnsHostFormat(host: string): void {

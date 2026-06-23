@@ -36,6 +36,31 @@ test('de-duplicates repositories by normalized host owner and name', async () =>
   assert.deepEqual(store.list(), [{ host: 'github.com', owner: 'Wallstop', repo: 'Utils' }]);
 });
 
+test('skips invalid persisted repositories instead of throwing during list', async () => {
+  const state = new MemoryMemento();
+  const store = new RepositoryStore(state);
+  await state.update('wallstopPrComments.repositories', [
+    null,
+    'github.com/wallstop/utils',
+    { host: '', owner: 'wallstop', repo: 'utils' },
+    { host: 'localhost', owner: 'wallstop', repo: 'utils' },
+    { host: 'github.com', owner: '', repo: 'utils' },
+    { host: 'github.com', owner: 'wallstop', repo: 'bad/name' },
+    { host: 'GitHub.COM', owner: 'wallstop', repo: 'utils' },
+    { host: 'github.com', owner: 'wallstop', repo: 'utils' },
+  ]);
+
+  assert.deepEqual(store.list(), [{ host: 'github.com', owner: 'wallstop', repo: 'utils' }]);
+});
+
+test('treats non-array persisted repository state as empty', async () => {
+  const state = new MemoryMemento();
+  const store = new RepositoryStore(state);
+  await state.update('wallstopPrComments.repositories', { host: 'github.com', owner: 'wallstop', repo: 'utils' });
+
+  assert.deepEqual(store.list(), []);
+});
+
 test('accepts GitHub Enterprise HTTPS repository URLs with safe hostnames', () => {
   assert.deepEqual(parseRepositoryInput('https://github.enterprise.local/platform/api-repo/pull/42'), {
     host: 'github.enterprise.local',

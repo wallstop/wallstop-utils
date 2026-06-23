@@ -39,6 +39,8 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
   readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
   private readonly pullRequestCache = new Map<string, PullRequestSummary[]>();
   private readonly errorCache = new Map<string, string>();
+  private readonly inFlightLoads = new Map<string, { generation: number; promise: Promise<void> }>();
+  private loadGeneration = 0;
 
   constructor(
     private readonly repositories: RepositorySource,
@@ -46,8 +48,10 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
   ) {}
 
   refresh(): void {
+    this.loadGeneration += 1;
     this.pullRequestCache.clear();
     this.errorCache.clear();
+    this.inFlightLoads.clear();
     this.onDidChangeTreeDataEmitter.fire(undefined);
   }
 
@@ -92,12 +96,12 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
   private async getRepositoryChildren(repository: RepositoryRef): Promise<TreeNode[]> {
     const key = repositoryKey(repository);
     if (!this.pullRequestCache.has(key) && !this.errorCache.has(key)) {
-      try {
-        this.pullRequestCache.set(key, await this.client.listPullRequests(repository, { promptForAuth: true }));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.errorCache.set(key, message);
-      }
+      await this.ensurePullRequestsLoaded(repository, key);
+    }
+
+    const pullRequests = this.pullRequestCache.get(key);
+    if (pullRequests !== undefined) {
+      return this.createPullRequestGroups(repository, pullRequests);
     }
 
     const error = this.errorCache.get(key);
@@ -105,7 +109,49 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
       return [{ kind: 'empty', label: `Failed to load PRs: ${error}` }];
     }
 
-    const grouped = groupPullRequests(this.pullRequestCache.get(key) ?? []);
+    return this.createPullRequestGroups(repository, []);
+  }
+
+  private async ensurePullRequestsLoaded(repository: RepositoryRef, key: string): Promise<void> {
+    const existing = this.inFlightLoads.get(key);
+    if (existing !== undefined && existing.generation === this.loadGeneration) {
+      await existing.promise;
+      return;
+    }
+
+    const generation = this.loadGeneration;
+    let loadPromise!: Promise<void>;
+    loadPromise = this.client.listPullRequests(repository, { promptForAuth: true })
+      .then((pullRequests) => {
+        if (this.loadGeneration !== generation) {
+          return;
+        }
+
+        this.errorCache.delete(key);
+        this.pullRequestCache.set(key, pullRequests);
+      })
+      .catch((error: unknown) => {
+        if (this.loadGeneration !== generation || this.pullRequestCache.has(key)) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+        this.pullRequestCache.delete(key);
+        this.errorCache.set(key, message);
+      })
+      .finally(() => {
+        const current = this.inFlightLoads.get(key);
+        if (current?.promise === loadPromise) {
+          this.inFlightLoads.delete(key);
+        }
+      });
+
+    this.inFlightLoads.set(key, { generation, promise: loadPromise });
+    await loadPromise;
+  }
+
+  private createPullRequestGroups(repository: RepositoryRef, pullRequests: readonly PullRequestSummary[]): TreeNode[] {
+    const grouped = groupPullRequests(pullRequests);
     return [
       {
         kind: 'group',

@@ -55,6 +55,52 @@ test('falls back to REST for all review comments when GraphQL auth is unavailabl
   assert.equal(result.warnings[0], 'GraphQL authentication unavailable; copied all review comments from REST with unknown resolved state.');
 });
 
+test('REST fallback buckets nested review-comment replies by top-level root', async () => {
+  const fetch: FetchLike = async () =>
+    jsonResponse([
+      {
+        id: 1,
+        node_id: 'node-1',
+        path: 'src/rest.ts',
+        body: 'Root comment',
+        line: 7,
+        original_line: 7,
+        user: { login: 'reviewer' },
+      },
+      {
+        id: 2,
+        node_id: 'node-2',
+        in_reply_to_id: 1,
+        path: 'src/rest.ts',
+        body: 'First reply',
+        line: 7,
+        original_line: 7,
+        user: { login: 'reviewer' },
+      },
+      {
+        id: 3,
+        node_id: 'node-3',
+        in_reply_to_id: 2,
+        path: 'src/rest.ts',
+        body: 'Nested reply',
+        line: 7,
+        original_line: 7,
+        user: { login: 'reviewer' },
+      },
+    ]);
+  const client = new GitHubClient({ getToken: async () => undefined, fetch });
+
+  const result = await client.getReviewThreads({ host: 'github.com', owner: 'org', repo: 'repo' }, 10, 'all');
+
+  assert.equal(result.threads.length, 1);
+  assert.equal(result.threads[0].id, 'rest-1');
+  assert.deepEqual(result.threads[0].comments.map((comment) => comment.body), [
+    'Root comment',
+    'First reply',
+    'Nested reply',
+  ]);
+});
+
 test('maps outdated REST fallback comments to original line ranges', async () => {
   const fetch: FetchLike = async () =>
     jsonResponse([

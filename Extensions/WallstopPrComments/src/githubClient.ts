@@ -428,20 +428,31 @@ function mapGraphQLComment(node: GraphQLCommentNode): ReviewComment {
 }
 
 function restCommentsToThreads(comments: readonly RestReviewComment[]): ReviewThread[] {
+  const byId = new Map<number, RestReviewComment>();
+  for (const comment of comments) {
+    if (comment.id !== undefined) {
+      byId.set(comment.id, comment);
+    }
+  }
+
   const groups = new Map<number, RestReviewComment[]>();
   for (const comment of comments) {
     if (comment.id === undefined) {
       continue;
     }
 
-    const rootId = comment.in_reply_to_id ?? comment.id;
+    const rootId = findRestThreadRootId(comment, byId);
     const group = groups.get(rootId) ?? [];
     group.push(comment);
     groups.set(rootId, group);
   }
 
   return [...groups.entries()].map(([rootId, group]) => {
-    const first = group[0];
+    const rootComment = byId.get(rootId);
+    const orderedGroup = rootComment === undefined
+      ? group
+      : [rootComment, ...group.filter((comment) => comment.id !== rootId)];
+    const first = rootComment ?? orderedGroup[0];
     return {
       id: `rest-${rootId}`,
       path: first.path ?? '<conversation>',
@@ -451,9 +462,42 @@ function restCommentsToThreads(comments: readonly RestReviewComment[]): ReviewTh
       startLine: first.start_line ?? first.original_start_line ?? undefined,
       originalLine: first.original_line ?? undefined,
       originalStartLine: first.original_start_line ?? undefined,
-      comments: group.map(mapRestComment),
+      comments: orderedGroup.map(mapRestComment),
     };
   });
+}
+
+function findRestThreadRootId(comment: RestReviewComment, byId: ReadonlyMap<number, RestReviewComment>): number {
+  if (comment.id === undefined) {
+    throw new Error('REST review comment root lookup requires a comment id.');
+  }
+
+  const originalId = comment.id;
+  let current = comment;
+  let rootId = originalId;
+  const seen = new Set<number>();
+
+  while (current.id !== undefined) {
+    if (seen.has(current.id)) {
+      return originalId;
+    }
+    seen.add(current.id);
+
+    const parentId = current.in_reply_to_id ?? undefined;
+    if (parentId === undefined) {
+      return rootId;
+    }
+
+    rootId = parentId;
+    const parent = byId.get(parentId);
+    if (parent === undefined) {
+      return rootId;
+    }
+
+    current = parent;
+  }
+
+  return rootId;
 }
 
 function mapRestComment(comment: RestReviewComment): ReviewComment {

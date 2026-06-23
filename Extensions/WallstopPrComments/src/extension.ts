@@ -7,7 +7,7 @@ import { attachWebSuggestedDiffs } from './webSuggestions';
 import { parseRepositoryInput, RepositoryStore } from './repositoryStore';
 import { collectUnavailableSuggestionWarnings, reviewThreadToRecord } from './records';
 import { PrCommentsTreeProvider, type PullRequestNode, type RepositoryNode, type TreeNode } from './treeProvider';
-import type { RepositoryRef, ReviewScope } from './types';
+import type { RepositoryRef, ReviewScope, ReviewThreadRecord } from './types';
 
 const SCOPE_KEY = 'wallstopPrComments.scope';
 
@@ -154,7 +154,7 @@ async function copyReviewComments(
       async () => client.getReviewThreads(repository, prNumber, scope, { promptForAuth: true }),
     );
 
-    const records = result.threads.map(reviewThreadToRecord).filter((record) => record !== undefined);
+    const records = result.threads.map(reviewThreadToRecord).filter(isReviewThreadRecord);
     try {
       const webDiffs = await client.getWebSuggestedDiffs(repository, prNumber);
       if (webDiffs.size > 0) {
@@ -242,4 +242,8 @@ function findRepository(node: TreeNode | undefined): RepositoryRef | undefined {
 async function showError(error: unknown): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await vscode.window.showErrorMessage(redactSecrets(message));
+}
+
+function isReviewThreadRecord(record: ReviewThreadRecord | undefined): record is ReviewThreadRecord {
+  return record !== undefined;
 }

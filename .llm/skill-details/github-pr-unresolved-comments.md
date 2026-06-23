@@ -137,10 +137,21 @@ surface for the same GitHub PR comment extraction contracts.
   failures, or GraphQL error payloads.
 - Preserve the shared PR-comment data contracts: assert GraphQL variable maps
   before requests; REST fallback threads map `outdated` comments to original line
-  ranges; `diffHunk`/`diff_hunk` stays internal; web-only Copilot suggested
-  changes are best-effort `github.com` HTML enrichment only, with sanitized
-  cookies, public changed lines only, and warnings instead of fabricated
-  suggestions when unavailable.
+  ranges and bucket replies by walking to the top-level REST review-comment root;
+  `diffHunk`/`diff_hunk` stays internal; web-only Copilot suggested changes are
+  best-effort `github.com` HTML enrichment only, with sanitized cookies, public
+  changed lines only, and warnings instead of fabricated suggestions when
+  unavailable.
+- Keep extension UI state resilient: persisted repository lists are untrusted
+  input and must be shape-checked/sanitized on read, skipping invalid entries
+  instead of throwing from tree/sidebar code.
+- Keep sidebar async loading race-safe: per-repository PR loads should de-dupe
+  in-flight requests, make success/error caches mutually exclusive, and ignore
+  stale completions after refresh via a generation token or equivalent.
+- Keep local installer probe execution aligned with install execution:
+  command-specific environment overrides use the same merge/delete semantics in
+  `--version` probes and final command runs, especially clearing inherited
+  `VSCODE_DEV` for Windows `Code.exe` + `cli.js` shims.
 - Repository URL parsing rejects userinfo and ports; host validation rejects
   localhost/`.localhost`, private/local/link-local IP hosts, IPv4 multicast, IPv6
   multicast, IPv6 ULA, and IPv6-mapped private/local addresses before URL

@@ -48,6 +48,9 @@ if ($DockerArgs.Count -eq 0) {
 
 switch ($DockerArgs[0]) {
     'ps' {
+        if (-not [string]::IsNullOrWhiteSpace([string]$env:WALLSTOP_TEST_DOCKER_PS_STDERR)) {
+            [Console]::Error.WriteLine([string]$env:WALLSTOP_TEST_DOCKER_PS_STDERR)
+        }
         foreach ($container in $containers) {
             [string]$container.Id
         }
@@ -207,6 +210,8 @@ Describe "Initialize-DevcontainerHost.ps1 stale Wayland cleanup" {
 
         $content | Should -Match 'Stdout\s*=\s*@\(Split-ProcessOutputLines'
         $content | Should -Match 'Stderr\s*=\s*@\(Split-ProcessOutputLines'
+        $content | Should -Match '\$containerIds\s*=\s*@\(\s*\$psResult\.Stdout'
+        $content | Should -Not -Match '\$containerIds\s*=\s*@\(\s*\$psResult\.Output'
         $content | Should -Match '\$inspectJson\s*=\s*\(\$inspectResult\.Stdout'
         $content | Should -Not -Match '\$inspectJson\s*=\s*\(\$inspectResult\.Output'
     }
@@ -274,6 +279,30 @@ Describe "Initialize-DevcontainerHost.ps1 stale Wayland cleanup" {
         $result = Invoke-HostInitializerWithFakeDocker -Containers $containers
 
         @($result.Removed | Sort-Object) | Should -Be @("created-stale", "stale-exited")
+    }
+
+    It "parses docker ps container IDs from stdout only so stderr warnings are not inspected" {
+        $containers = @(
+            [pscustomobject]@{
+                Id = "stale-exited"
+                StateStatus = "exited"
+                Mounts = @(
+                    [pscustomobject]@{
+                        Type = "bind"
+                        Source = "/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu/stale"
+                        Destination = "/tmp/vscode-wayland-1111.sock"
+                    }
+                )
+            }
+        )
+
+        $result = Invoke-HostInitializerWithFakeDocker `
+            -Containers $containers `
+            -Environment @{ WALLSTOP_TEST_DOCKER_PS_STDERR = "stderr-container-id" }
+
+        $result.DockerLog | Should -Match 'inspect\|--type\|container\|stale-exited'
+        $result.DockerLog | Should -Not -Match 'inspect\|--type\|container\|stderr-container-id'
+        @($result.Removed) | Should -Be @("stale-exited")
     }
 
     It "does not remove stale containers when host cleanup is explicitly disabled" {
