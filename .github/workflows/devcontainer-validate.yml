@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
 
       - name: Validate image-first devcontainer contract
         shell: bash
@@ -331,7 +331,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
 
       - name: Setup Python (system-style, no pipx pre-install)
         uses: actions/setup-python@v6.2.0
