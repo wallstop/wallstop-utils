@@ -8,7 +8,7 @@ import type { RenderableComment, ReviewComment, ReviewThread, ReviewThreadRecord
 
 export function reviewThreadToRecord(thread: ReviewThread): ReviewThreadRecord | undefined {
   const range = resolveLineRange(thread);
-  const comments = thread.comments.map(toRenderableComment).filter((comment) => isRenderableComment(comment));
+  const comments = thread.comments.map(toRenderableComment).filter((comment) => hasRenderableCommentContent(comment));
   if (comments.length === 0) {
     return undefined;
   }
@@ -19,6 +19,15 @@ export function reviewThreadToRecord(thread: ReviewThread): ReviewThreadRecord |
     lineEnd: range.end,
     comments,
   };
+}
+
+export function hasRenderableCommentContent(comment: RenderableComment): boolean {
+  return (
+    comment.body !== '' ||
+    comment.suggestedChanges.length > 0 ||
+    comment.suggestedDiffs.length > 0 ||
+    comment.unavailableReason !== undefined
+  );
 }
 
 export function scopeIncludesThread(thread: ReviewThread, scope: 'unresolved' | 'all' | 'resolved'): boolean {
@@ -75,16 +84,6 @@ function toRenderableComment(comment: ReviewComment, commentIndex: number): Rend
     unavailableReason,
   };
 }
-
-function isRenderableComment(comment: RenderableComment): boolean {
-  return (
-    comment.body !== '' ||
-    comment.suggestedChanges.length > 0 ||
-    comment.suggestedDiffs.length > 0 ||
-    comment.unavailableReason !== undefined
-  );
-}
-
 function resolveLineRange(thread: ReviewThread): { start?: number; end?: number } {
   const currentStart = thread.startLine;
   const currentEnd = thread.line;

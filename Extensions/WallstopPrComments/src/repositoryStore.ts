@@ -59,9 +59,13 @@ export function groupPullRequests(pullRequests: readonly PullRequestSummary[]): 
   closed: PullRequestSummary[];
 } {
   return {
-    open: pullRequests.filter((pullRequest) => pullRequest.state === 'OPEN'),
-    closed: pullRequests.filter((pullRequest) => pullRequest.state !== 'OPEN' || pullRequest.merged),
+    open: pullRequests.filter(isOpenPullRequest),
+    closed: pullRequests.filter((pullRequest) => !isOpenPullRequest(pullRequest)),
   };
+}
+
+export function isOpenPullRequest(pullRequest: PullRequestSummary): boolean {
+  return pullRequest.state === 'OPEN' && !pullRequest.merged;
 }
 
 export function parseRepositoryInput(input: string): RepositoryRef {

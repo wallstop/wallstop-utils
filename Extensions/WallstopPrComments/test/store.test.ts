@@ -113,3 +113,22 @@ test('groups open pull requests first and closed or merged pull requests separat
     closed: [prs[0]],
   });
 });
+
+test('treats merged pull requests as closed even if stale summary state is open', () => {
+  const mergedOpen: PullRequestSummary = {
+    number: 3,
+    title: 'merged with stale open state',
+    state: 'OPEN',
+    isDraft: false,
+    merged: true,
+    author: 'octo',
+    headRefName: 'feature/stale-open',
+    updatedAt: '2026-01-04T00:00:00Z',
+    url: 'https://example.test/3',
+  };
+
+  assert.deepEqual(groupPullRequests([mergedOpen]), {
+    open: [],
+    closed: [mergedOpen],
+  });
+});

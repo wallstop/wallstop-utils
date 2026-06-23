@@ -140,7 +140,7 @@ test('falls back to REST for all review comments when GraphQL returns errors pay
 
     calls.push('rest');
     assert.match(String(url), /\/repos\/org\/repo\/pulls\/10\/comments/);
-    assert.equal((init?.headers as Record<string, string> | undefined)?.Authorization, undefined);
+    assert.equal((init?.headers as Record<string, string> | undefined)?.Authorization, 'Bearer token');
     return jsonResponse([
       {
         id: 1,
@@ -163,6 +163,52 @@ test('falls back to REST for all review comments when GraphQL returns errors pay
   assert.equal(result.threads.length, 1);
   assert.equal(result.threads[0].comments[0].body, 'REST fallback comment');
   assert.equal(result.warnings[0], 'GraphQL returned errors; copied all review comments from REST with unknown resolved state.');
+});
+
+test('retries all-scope REST fallback without auth only after authenticated REST auth failure', async () => {
+  const calls: string[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    if (init?.body !== undefined) {
+      calls.push('graphql');
+      return new Response(JSON.stringify({ message: 'bad credentials' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization;
+    calls.push(authorization === undefined ? 'rest-unauthenticated' : 'rest-authenticated');
+    assert.match(String(url), /\/repos\/org\/repo\/pulls\/10\/comments/);
+    if (authorization !== undefined) {
+      assert.equal(authorization, 'Bearer token');
+      return new Response(JSON.stringify({ message: 'bad credentials' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    return jsonResponse([
+      {
+        id: 1,
+        node_id: 'node-1',
+        path: 'src/rest.ts',
+        body: 'Public REST fallback comment',
+        line: 7,
+        original_line: 7,
+        user: { login: 'reviewer' },
+      },
+    ]);
+  };
+  const client = new GitHubClient({ getToken: async () => 'token', fetch });
+
+  const result = await client.getReviewThreads({ host: 'github.com', owner: 'org', repo: 'repo' }, 10, 'all');
+
+  assert.deepEqual(calls, ['graphql', 'rest-authenticated', 'rest-unauthenticated']);
+  assert.equal(result.threads[0].comments[0].body, 'Public REST fallback comment');
+  assert.deepEqual(result.warnings, [
+    'GraphQL authentication failed; copied all review comments from REST with unknown resolved state.',
+    'Authenticated REST fallback failed; retried unauthenticated REST for public review comments.',
+  ]);
 });
 
 test('passes interactive auth request through list and copy operations when requested', async () => {

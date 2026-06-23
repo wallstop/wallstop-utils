@@ -215,10 +215,7 @@ export class GitHubClient {
       };
     } catch (error) {
       if (scope === 'all' && shouldFallbackToRestForAllScope(error)) {
-        return {
-          threads: await this.fetchRestReviewThreads(repository, prNumber, undefined),
-          warnings: [`${allScopeFallbackReason(error)}; copied all review comments from REST with unknown resolved state.`],
-        };
+        return this.fetchRestReviewThreadsAfterGraphQLFallback(repository, prNumber, token, allScopeFallbackReason(error));
       }
 
       throw error;
@@ -326,6 +323,33 @@ export class GitHubClient {
 
   private async fetchRestReviewThreads(repository: RepositoryRef, prNumber: number, token: string | undefined): Promise<ReviewThread[]> {
     return restCommentsToThreads(await this.fetchRestReviewComments(repository, prNumber, token));
+  }
+
+  private async fetchRestReviewThreadsAfterGraphQLFallback(
+    repository: RepositoryRef,
+    prNumber: number,
+    token: string | undefined,
+    reason: string,
+  ): Promise<ReviewThreadResult> {
+    const warnings = [`${reason}; copied all review comments from REST with unknown resolved state.`];
+    try {
+      return {
+        threads: await this.fetchRestReviewThreads(repository, prNumber, token),
+        warnings,
+      };
+    } catch (error) {
+      if (token === undefined || !isAuthFailure(error)) {
+        throw error;
+      }
+
+      return {
+        threads: await this.fetchRestReviewThreads(repository, prNumber, undefined),
+        warnings: [
+          ...warnings,
+          'Authenticated REST fallback failed; retried unauthenticated REST for public review comments.',
+        ],
+      };
+    }
   }
 
   private async fetchRestReviewComments(repository: RepositoryRef, prNumber: number, token: string | undefined): Promise<RestReviewComment[]> {

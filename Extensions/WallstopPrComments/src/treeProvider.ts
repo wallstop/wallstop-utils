@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { groupPullRequests, repositoryKey } from './repositoryStore';
+import { groupPullRequests, isOpenPullRequest, repositoryKey } from './repositoryStore';
 import type { GitHubClient } from './githubClient';
 import type { PullRequestSummary, RepositoryRef } from './types';
 
@@ -198,7 +198,7 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
     item.description = `${state} by ${pr.author} | ${pr.headRefName} | updated ${formatRelativeTime(pr.updatedAt)}`;
     item.tooltip = `#${pr.number} ${pr.title}\n${state} by ${pr.author}\n${pr.headRefName}\nUpdated ${pr.updatedAt}`;
     item.contextValue = 'pullRequest';
-    item.iconPath = new vscode.ThemeIcon(pr.state === 'OPEN' ? 'git-pull-request' : 'git-merge');
+    item.iconPath = new vscode.ThemeIcon(isOpenPullRequest(pr) ? 'git-pull-request' : 'git-merge');
     item.command = {
       command: 'wallstopPrComments.copyComments',
       title: 'Copy Review Comments',

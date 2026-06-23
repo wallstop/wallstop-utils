@@ -130,3 +130,22 @@ test('ignores stale repository loads that resolve after refresh', async () => {
     assert.deepEqual(freshChildren[0].pullRequests, [pullRequest]);
   }
 });
+
+test('uses merged icon for merged pull request summaries even with stale open state', () => {
+  const { PrCommentsTreeProvider } = loadTreeProvider();
+  const client = { listPullRequests: async () => [] } as unknown as GitHubClient;
+  const provider = new PrCommentsTreeProvider({ list: () => [repository] }, client);
+  const mergedOpenNode: TreeNode = {
+    kind: 'pullRequest',
+    repository,
+    pullRequest: {
+      ...pullRequest,
+      state: 'OPEN',
+      merged: true,
+    },
+  };
+
+  const item = provider.getTreeItem(mergedOpenNode) as { iconPath?: { id: string } };
+
+  assert.equal(item.iconPath?.id, 'git-merge');
+});

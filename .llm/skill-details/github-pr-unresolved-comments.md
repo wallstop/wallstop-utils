@@ -134,17 +134,25 @@ surface for the same GitHub PR comment extraction contracts.
   intent so users can sign in when loading or copying PRs. `unresolved` and
   `resolved` scopes require authenticated GraphQL; `all` may fall back to REST
   with an explicit unknown-resolution warning on missing auth, recoverable auth
-  failures, or GraphQL error payloads.
+  failures, or GraphQL error payloads. If a token was resolved before GraphQL
+  failed, the REST fallback must try that same bearer token first so private
+  repositories stay authenticated; only retry unauthenticated after the
+  authenticated REST request itself fails with 401/403.
 - Preserve the shared PR-comment data contracts: assert GraphQL variable maps
   before requests; REST fallback threads map `outdated` comments to original line
   ranges and bucket replies by walking to the top-level REST review-comment root;
   `diffHunk`/`diff_hunk` stays internal; web-only Copilot suggested changes are
   best-effort `github.com` HTML enrichment only, with sanitized cookies, public
   changed lines only, and warnings instead of fabricated suggestions when
-  unavailable.
+  unavailable. Keep record creation and text rendering on one shared renderable
+  comment predicate so placeholder-only unavailable suggestions do not become
+  `No review comments found.`.
 - Keep extension UI state resilient: persisted repository lists are untrusted
   input and must be shape-checked/sanitized on read, skipping invalid entries
   instead of throwing from tree/sidebar code.
+- Keep PR sidebar classification mutually exclusive through one effective-open
+  predicate (`OPEN` and not merged), and reuse it for grouping and display state
+  so stale `OPEN` + `merged` summaries cannot appear in conflicting groups.
 - Keep sidebar async loading race-safe: per-repository PR loads should de-dupe
   in-flight requests, make success/error caches mutually exclusive, and ignore
   stale completions after refresh via a generation token or equivalent.

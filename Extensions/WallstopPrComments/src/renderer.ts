@@ -1,10 +1,11 @@
 import type { RenderableComment, ReviewThreadRecord } from './types';
+import { hasRenderableCommentContent } from './records';
 
 export function formatReviewThreadRecords(records: readonly ReviewThreadRecord[]): string {
   const renderableRecords = records
     .map((record) => ({
       ...record,
-      comments: record.comments.filter(hasPublicText),
+      comments: record.comments.filter(hasRenderableCommentContent),
     }))
     .filter((record) => record.comments.length > 0);
   if (renderableRecords.length === 0) {
@@ -30,6 +31,11 @@ export function formatReviewThreadRecords(records: readonly ReviewThreadRecord[]
 
       for (const diff of comment.suggestedDiffs) {
         addSuggestedChange(lines, diff.value);
+      }
+
+      if (!hasPublicText(comment) && comment.unavailableReason !== undefined) {
+        lines.push('Suggestion unavailable:');
+        lines.push(comment.unavailableReason);
       }
     }
     lines.push('---');

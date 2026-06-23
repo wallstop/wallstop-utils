@@ -159,3 +159,34 @@ test('keeps unavailable web-only suggestions as metadata without fake suggested-
   assert.doesNotMatch(output, /Suggested change:/);
   assert.doesNotMatch(output, /\(unavailable:/);
 });
+
+test('renders placeholder-only unavailable web suggestions instead of reporting no comments', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/placeholder.ts',
+    isResolved: false,
+    isOutdated: false,
+    line: 9,
+    comments: [
+      {
+        id: 'comment-1',
+        databaseId: 12,
+        body: '![Copilot suggested changeset](https://example.test/suggestion.png)',
+        authorLogin: 'copilot-pull-request-reviewer[bot]',
+      },
+    ],
+  });
+
+  assert.ok(record);
+  assert.equal(record.comments[0].body, '');
+  assert.equal(
+    formatReviewThreadRecords([record]),
+    [
+      '---',
+      '(src/placeholder.ts) 9-9',
+      'Suggestion unavailable:',
+      'GitHub web-only suggested changeset could not be extracted from the public API.',
+      '---',
+    ].join('\n'),
+  );
+});
