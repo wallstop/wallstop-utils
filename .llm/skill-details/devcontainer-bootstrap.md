@@ -16,6 +16,11 @@ Prefer an image-first devcontainer contract for reliability and rebuild speed:
 - Keep persistent cache mounts for `/home/vscode/.cache/pip`, `/home/vscode/.cache/pre-commit`, and `/home/vscode/.npm` to reduce repeat cold-start bootstrap cost.
 - Keep project-specific tool bootstrap in `.devcontainer/post-create.sh`, bounded by timeout guards and explicit non-blocking diagnostics.
 - Keep Codex bootstrap enabled by default so `codex` is available in devcontainers; use `WALLSTOP_DEVCONTAINER_ENABLE_CODEX=0` only for explicit opt-out scenarios.
+- Host-side Docker cleanup must keep process streams separated end to end:
+  parse machine data such as `docker ps -q` IDs and `docker inspect` JSON from
+  stdout only, while using combined output only for diagnostics. Test fakes and
+  `.ps1` Docker shims must preserve stderr as stderr so warnings cannot become
+  container IDs or corrupt JSON.
 
 ## Post-Create Bootstrap Expectations
 

@@ -6,12 +6,14 @@ on:
       - ".devcontainer/**"
       - ".githooks/**"
       - ".github/workflows/devcontainer-validate.yml"
+      - "Extensions/WallstopPrComments/**"
   push:
     branches: [main, master]
     paths:
       - ".devcontainer/**"
       - ".githooks/**"
       - ".github/workflows/devcontainer-validate.yml"
+      - "Extensions/WallstopPrComments/**"
   workflow_dispatch:
 
 permissions:
@@ -82,7 +84,16 @@ jobs:
       - name: Lint post-create.sh and githook scripts
         shell: pwsh
         run: |
-          ./Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All .devcontainer/post-create.sh .githooks/pre-commit .githooks/pre-push
+          ./Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All .devcontainer/post-create.sh .devcontainer/initialize-host.sh .devcontainer/build-wallstop-pr-comments-vsix.sh .githooks/pre-commit .githooks/pre-push
+
+      - name: Build Wallstop PR Comments VSIX
+        shell: bash
+        env:
+          WALLSTOP_DEVCONTAINER_REQUIRE_CUSTOM_EXTENSION: "1"
+        run: |
+          set -euo pipefail
+          bash .devcontainer/initialize-host.sh "${GITHUB_WORKSPACE}"
+          test -s Extensions/WallstopPrComments/dist/wallstop-pr-comments-devcontainer.vsix
 
       - name: Snapshot ~/.bashrc state before post-create.sh
         shell: bash

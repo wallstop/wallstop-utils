@@ -47,7 +47,10 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateSet('text', 'json')]
-    [string]$OutputFormat = 'text'
+    [string]$OutputFormat = 'text',
+
+    [Parameter(Mandatory = $false)]
+    [switch]$NoExit
 )
 
 Set-StrictMode -Version Latest
@@ -595,6 +598,41 @@ foreach ($target in $targets) {
 
 $sortedFindings = @($realFindings | Sort-Object -Property file, line)
 
+function Stop-CompatibilityCheckProcess {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ExitCode
+    )
+
+    try {
+        [Console]::Out.Flush()
+        [Console]::Error.Flush()
+    }
+    catch {
+        Write-Verbose "Compatibility check console flush failed before process exit: $($_.Exception.Message)"
+    }
+
+    $compatibilityCheckRunningOnWindows = ($PSVersionTable.PSEdition -eq 'Desktop' -or [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)
+    if (-not $compatibilityCheckRunningOnWindows) {
+        try {
+            if ($null -eq ('WallstopCompatibilityNativeExit.Libc' -as [type])) {
+                Add-Type -Namespace WallstopCompatibilityNativeExit -Name Libc -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("libc", EntryPoint = "_exit")]
+public static extern void _exit(int code);
+'@
+            }
+
+            [WallstopCompatibilityNativeExit.Libc]::_exit($ExitCode)
+        }
+        catch {
+            Write-Warning "W_COMPAT_FAST_EXIT_NATIVE_UNAVAILABLE: Fast native exit (libc _exit) is unavailable on this host; using managed exit instead. $($_.Exception.Message)"
+        }
+    }
+
+    [System.Environment]::Exit($ExitCode)
+}
+
 if ($sortedFindings.Count -eq 0) {
     $resultStatus = 'pass'
 } else {
@@ -626,8 +664,16 @@ if ($OutputFormat -eq 'json') {
 }
 
 if ($sortedFindings.Count -gt 0) {
-    Write-Error "E_COMPAT_INCOMPATIBILITY: $($sortedFindings.Count) cross-version incompatibilit(ies) detected. Fix in code (portable idiom) or add a justified SuppressMessageAttribute / allowlist entry."
-    exit 1
+    $failureMessage = "E_COMPAT_INCOMPATIBILITY: $($sortedFindings.Count) cross-version incompatibilit(ies) detected. Fix in code (portable idiom) or add a justified SuppressMessageAttribute / allowlist entry."
+    if ($NoExit) {
+        Write-Error $failureMessage -ErrorAction Continue
+        return
+    }
+
+    Write-Error $failureMessage -ErrorAction Continue
+    Stop-CompatibilityCheckProcess -ExitCode 1
 }
 
-exit 0
+if (-not $NoExit) {
+    Stop-CompatibilityCheckProcess -ExitCode 0
+}

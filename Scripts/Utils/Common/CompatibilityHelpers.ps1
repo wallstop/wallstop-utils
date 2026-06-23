@@ -208,9 +208,17 @@ function Test-PowerShellExecutableCandidate {
 
         # Re-check the sentinel authoritatively: the child can write it and exit within a
         # single poll window, so "exited without the sentinel seen during polling" is not a
-        # reliable failure - only a sentinel confirmed absent after exit is. This re-check
-        # is what closes the race that intermittently rejected a perfectly usable pwsh.
+        # reliable failure - only a sentinel confirmed absent after exit is. Give cleanly
+        # exited children a short file-visibility grace window before classifying the probe.
         $sentinelExists = Test-Path -LiteralPath $sentinelPath -PathType Leaf
+        if (-not $sentinelExists -and $process.HasExited -and [int]$process.ExitCode -eq 0) {
+            $sentinelGraceDeadlineUtc = [datetime]::UtcNow.AddMilliseconds(500)
+            while (-not $sentinelExists -and [datetime]::UtcNow -lt $sentinelGraceDeadlineUtc) {
+                Start-Sleep -Milliseconds 25
+                $sentinelExists = Test-Path -LiteralPath $sentinelPath -PathType Leaf
+            }
+        }
+
         if ($sentinelExists) {
             if (-not $process.HasExited -and -not $process.WaitForExit(250)) {
                 try {
@@ -257,6 +265,70 @@ function Test-PowerShellExecutableCandidate {
     }
 }
 
+function Test-PowerShellExecutableCandidateReliably {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ExecutablePath,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 30)]
+        [int]$TimeoutSeconds = 5,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 3)]
+        [int]$MaxAttempts = 2,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 1000)]
+        [int]$RetryDelayMilliseconds = 100
+    )
+
+    $lastProbe = [pscustomobject]@{
+        Usable     = $false
+        Diagnostic = "probe-not-run"
+    }
+    $transientDiagnostics = @('start-failed', 'probe-timeout', 'probe-no-sentinel')
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $lastProbe = Test-PowerShellExecutableCandidate -ExecutablePath $ExecutablePath -TimeoutSeconds $TimeoutSeconds
+        $diagnostic = "probe-no-diagnostic"
+        if ($null -ne $lastProbe -and $null -ne $lastProbe.PSObject.Properties['Diagnostic']) {
+            $diagnostic = [string]$lastProbe.Diagnostic
+        }
+
+        if ($null -ne $lastProbe -and [bool]$lastProbe.Usable) {
+            return [pscustomobject]@{
+                Usable     = $true
+                Diagnostic = $diagnostic
+                Attempts   = $attempt
+            }
+        }
+
+        if ($attempt -ge $MaxAttempts -or ($transientDiagnostics -notcontains $diagnostic)) {
+            break
+        }
+
+        if ($RetryDelayMilliseconds -gt 0) {
+            Start-Sleep -Milliseconds $RetryDelayMilliseconds
+        }
+    }
+
+    $diagnostic = "probe-no-diagnostic"
+    if ($null -ne $lastProbe -and $null -ne $lastProbe.PSObject.Properties['Diagnostic']) {
+        $diagnostic = [string]$lastProbe.Diagnostic
+    }
+
+    $attemptCount = [Math]::Min($attempt, $MaxAttempts)
+    return [pscustomobject]@{
+        Usable     = $false
+        Diagnostic = $diagnostic
+        Attempts   = $attemptCount
+    }
+}
+
 function Resolve-PowerShellExecutablePath {
     # Resolves the PowerShell executable path used to invoke child scripts.
     # Preference order:
@@ -285,19 +357,21 @@ function Resolve-PowerShellExecutablePath {
             continue
         }
 
-        $pwshProbe = Test-PowerShellExecutableCandidate -ExecutablePath $pwshPath
+        $pwshProbe = Test-PowerShellExecutableCandidateReliably -ExecutablePath $pwshPath
         if (-not [bool]$pwshProbe.Usable) {
             Write-Verbose (
-                "PowerShell executable resolver diagnostics: rejectedExecutable='{0}'; source='pwsh'; reason='{1}'." -f
+                "PowerShell executable resolver diagnostics: rejectedExecutable='{0}'; source='pwsh'; reason='{1}'; attempts={2}." -f
                 $pwshPath,
-                [string]$pwshProbe.Diagnostic
+                [string]$pwshProbe.Diagnostic,
+                [int]$pwshProbe.Attempts
             )
             continue
         }
 
         Write-Verbose (
-            "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='pwsh'." -f
-            $pwshPath
+            "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='pwsh'; attempts={1}." -f
+            $pwshPath,
+            [int]$pwshProbe.Attempts
         )
         return $pwshPath
     }
@@ -321,19 +395,21 @@ function Resolve-PowerShellExecutablePath {
                 continue
             }
 
-            $windowsPowerShellProbe = Test-PowerShellExecutableCandidate -ExecutablePath $windowsPowerShellPath
+            $windowsPowerShellProbe = Test-PowerShellExecutableCandidateReliably -ExecutablePath $windowsPowerShellPath
             if (-not [bool]$windowsPowerShellProbe.Usable) {
                 Write-Verbose (
-                    "PowerShell executable resolver diagnostics: rejectedExecutable='{0}'; source='powershell.exe-fallback'; reason='{1}'." -f
+                    "PowerShell executable resolver diagnostics: rejectedExecutable='{0}'; source='powershell.exe-fallback'; reason='{1}'; attempts={2}." -f
                     $windowsPowerShellPath,
-                    [string]$windowsPowerShellProbe.Diagnostic
+                    [string]$windowsPowerShellProbe.Diagnostic,
+                    [int]$windowsPowerShellProbe.Attempts
                 )
                 continue
             }
 
             Write-Verbose (
-                "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='powershell.exe-fallback'." -f
-                $windowsPowerShellPath
+                "PowerShell executable resolver diagnostics: selectedExecutable='{0}'; source='powershell.exe-fallback'; attempts={1}." -f
+                $windowsPowerShellPath,
+                [int]$windowsPowerShellProbe.Attempts
             )
             return $windowsPowerShellPath
         }

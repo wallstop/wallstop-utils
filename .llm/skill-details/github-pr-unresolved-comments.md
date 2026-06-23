@@ -101,6 +101,70 @@ For PowerShell terminal usage, keep value discovery aids in the script parameter
 - `-GitHubHost` keeps completion hint for `github.com`.
 - Completion metadata is additive and must not weaken validation constraints.
 
+## VS Code Extension Companion Contract
+
+The TypeScript VS Code extension in `Extensions/WallstopPrComments` is a companion
+surface for the same GitHub PR comment extraction contracts.
+
+- Keep `package.json` `main` aligned with the compiled entrypoint and keep a
+  manifest test that proves the compiled target exists after `npm run compile`.
+- Keep `npm test` cross-platform: invoke Node's test runner on a directory
+  (`node --test out/test`) rather than shell-expanded globs.
+- Preserve the local install artifact chain: `npm run install:local` restores
+  dependencies through an extension-local `.npm-cache` unless the caller already
+  configured an npm cache, runs `npm test` by default, packages the same VSIX
+  through `scripts/package-vsix.js`, and installs that artifact through a
+  resolved VS Code-family CLI; `npm run setup` restores dependencies and
+  compiles only (no VSIX packaging/install), and does not require a VS Code CLI.
+  Explicit `--code-cli` / `WALLSTOP_VSCODE_CLI` failures fail fast instead of
+  silently falling back to another editor.
+- Keep Windows VS Code CLI execution shell-safe: convert discovered `code*.cmd`
+  / `Code*.exe` hits to the backing executable plus `resources/app/out/cli.js`
+  with `ELECTRON_RUN_AS_NODE=1`, clear inherited `VSCODE_DEV`, invoke `.exe` /
+  `.com` commands directly with `shell: false`, and reject NUL/CR/LF in Windows
+  command tokens before any `cmd.exe` fallback.
+- Keep VSIX packaging deterministic and bounded to runtime inputs: include only
+  `package.json`, `README.md`, `resources/`, compiled `out/src/`, and production
+  dependencies from `package-lock.json` while skipping absent optional platform
+  packages; exclude source/tests/dev dependencies; sort entries ordinally; use
+  stable zip metadata; reject symlinked or out-of-root source/package-lock paths;
+  and reject path- or hard-link-overlapping output paths before creating
+  directories or adding entries.
+- Sidebar, list, and copy operations must propagate VS Code authentication prompt
+  intent so users can sign in when loading or copying PRs. `unresolved` and
+  `resolved` scopes require authenticated GraphQL; `all` may fall back to REST
+  with an explicit unknown-resolution warning on missing auth, recoverable auth
+  failures, or GraphQL error payloads. If a token was resolved before GraphQL
+  failed, the REST fallback must try that same bearer token first so private
+  repositories stay authenticated; only retry unauthenticated after the
+  authenticated REST request itself fails with 401/403.
+- Preserve the shared PR-comment data contracts: assert GraphQL variable maps
+  before requests; REST fallback threads map `outdated` comments to original line
+  ranges and bucket replies by walking to the top-level REST review-comment root;
+  `diffHunk`/`diff_hunk` stays internal; web-only Copilot suggested changes are
+  best-effort `github.com` HTML enrichment only, with sanitized cookies, public
+  changed lines only, and warnings instead of fabricated suggestions when
+  unavailable. Keep record creation and text rendering on one shared renderable
+  comment predicate so placeholder-only unavailable suggestions do not become
+  `No review comments found.`.
+- Keep extension UI state resilient: persisted repository lists are untrusted
+  input and must be shape-checked/sanitized on read, skipping invalid entries
+  instead of throwing from tree/sidebar code.
+- Keep PR sidebar classification mutually exclusive through one effective-open
+  predicate (`OPEN` and not merged), and reuse it for grouping and display state
+  so stale `OPEN` + `merged` summaries cannot appear in conflicting groups.
+- Keep sidebar async loading race-safe: per-repository PR loads should de-dupe
+  in-flight requests, make success/error caches mutually exclusive, and ignore
+  stale completions after refresh via a generation token or equivalent.
+- Keep local installer probe execution aligned with install execution:
+  command-specific environment overrides use the same merge/delete semantics in
+  `--version` probes and final command runs, especially clearing inherited
+  `VSCODE_DEV` for Windows `Code.exe` + `cli.js` shims.
+- Repository URL parsing rejects userinfo and ports; host validation rejects
+  localhost/`.localhost`, private/local/link-local IP hosts, IPv4 multicast, IPv6
+  multicast, IPv6 ULA, and IPv6-mapped private/local addresses before URL
+  construction.
+
 ## Workflow
 
 1. Validate host and owner/repo parameters early.

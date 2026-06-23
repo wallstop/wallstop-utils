@@ -58,6 +58,22 @@ Describe "devcontainer.json image-first contract" {
         $normalizedMounts -join "`n" | Should -Match 'target=/home/vscode/\.npm,type=volume'
     }
 
+    It "runs a host initializer before container startup for stale VS Code socket cleanup" {
+        $initializeCommandProperty = $script:devcontainer.PSObject.Properties["initializeCommand"]
+        $null -eq $initializeCommandProperty | Should -BeFalse
+
+        [string]$initializeCommandProperty.Value | Should -Match 'initialize-host\.sh'
+        [string]$initializeCommandProperty.Value | Should -Match '\$\{localWorkspaceFolder\}'
+    }
+
+    It "installs the private Wallstop PR Comments VSIX built by host initialization" {
+        $customizationsProperty = $script:devcontainer.PSObject.Properties["customizations"]
+        $null -eq $customizationsProperty | Should -BeFalse
+
+        $extensions = @($customizationsProperty.Value.vscode.extensions)
+        $extensions | Should -Contain '${containerWorkspaceFolder}/Extensions/WallstopPrComments/dist/wallstop-pr-comments-devcontainer.vsix'
+    }
+
     It "declares each VS Code extension at most once (case-insensitive)" {
         $customizationsProperty = $script:devcontainer.PSObject.Properties["customizations"]
         $null -eq $customizationsProperty | Should -BeFalse
@@ -96,5 +112,9 @@ Describe "devcontainer.json image-first contract" {
 Describe "devcontainer validate workflow policy contract" {
     It "includes an explicit image-first policy check step" {
         $script:workflowContent | Should -Match 'name:\s+Validate image-first devcontainer contract'
+    }
+
+    It "runs when the custom Wallstop PR Comments extension changes" {
+        $script:workflowContent | Should -Match 'Extensions/WallstopPrComments/\*\*'
     }
 }

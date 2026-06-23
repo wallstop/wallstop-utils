@@ -22,3 +22,7 @@ pr-description.md
 ModuleAnalysisCache*
 StartupProfileData*
 7.4.*/
+Extensions/**/node_modules/
+Extensions/**/out/
+Extensions/**/.npm-cache/
+Extensions/**/dist/

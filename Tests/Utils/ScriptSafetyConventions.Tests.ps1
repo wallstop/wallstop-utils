@@ -1704,7 +1704,7 @@ Describe "Cross-language quality platform conventions" {
         $workflow = Get-Content -Path $script:devcontainerWorkflowPath -Raw
 
         $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+-EnsureOnly'
-        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
+        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
         $workflow | Should -Not -Match 'apt-get\s+install[\s\S]*shellcheck'
         $workflow | Should -Not -Match 'shellcheck\s+--severity'
     }
@@ -4312,10 +4312,10 @@ Describe "Workflow security conventions" {
         $workflow | Should -Match 'Bash case patterns are string matches'
         $workflow | Should -Match 'because \* matches / here'
         $workflow | Should -Not -Match 'Tests/\*\*'
-        $workflow | Should -Match 'filter_allowed_security_matches'
-        $workflow | Should -Match 'is_allowed_security_match'
-        $workflow | Should -Match 'allowed_match_count='
-        $workflow | Should -Match 'expected_allowed_match_count=1'
+        $workflow | Should -Not -Match 'filter_allowed_security_matches'
+        $workflow | Should -Not -Match 'is_allowed_security_match'
+        $workflow | Should -Not -Match 'allowed_match_count='
+        $workflow | Should -Not -Match 'expected_allowed_match_count='
         $workflow | Should -Not -Match '\.github/workflows/script-quality\.yml:\*'
         $workflow | Should -Not -Match '\*\\"token_pattern_rg='
     }
@@ -4390,8 +4390,8 @@ Describe "Workflow security conventions" {
         $workflow | Should -Match 'match_count='
         $workflow | Should -Match 'tracked_file_count='
         $workflow | Should -Match 'command_file_count='
-        $workflow | Should -Match 'allowed_match_count='
-        $workflow | Should -Match 'Scanner allowlist drift'
+        $workflow | Should -Not -Match 'allowed_match_count='
+        $workflow | Should -Not -Match 'Scanner allowlist drift'
         $workflow | Should -Match 'should_detect='
         $workflow | Should -Match 'should_ignore='
         $workflow | Should -Match 'sample_ghp="gh""p_0123456789abcdef0123456789abcdef0123"'
@@ -4449,8 +4449,8 @@ Describe "Dependabot update automation conventions" {
         )
         $ecosystems = @($ecosystemMatches | ForEach-Object { $_.Groups['name'].Value })
 
-        $ecosystems.Count | Should -Be 4
-        @($ecosystems | Sort-Object -Unique) | Should -Be @('devcontainers', 'github-actions', 'pip', 'pre-commit') -Because (
+        $ecosystems.Count | Should -Be 5
+        @($ecosystems | Sort-Object -Unique) | Should -Be @('devcontainers', 'github-actions', 'npm', 'pip', 'pre-commit') -Because (
             "Dependabot coverage must remain aligned to the agreed tooling areas"
         )
     }
@@ -4458,10 +4458,10 @@ Describe "Dependabot update automation conventions" {
     It "uses Monday 03:00 UTC weekly schedule for each configured ecosystem" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count | Should -Be 4
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count | Should -Be 4
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count | Should -Be 4
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*interval:\s*(?:"weekly"|weekly)\s*$')).Count | Should -Be 5
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*day:\s*(?:"monday"|monday)\s*$')).Count | Should -Be 5
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*time:\s*(?:"03:00"|03:00)\s*$')).Count | Should -Be 5
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*timezone:\s*(?:"UTC"|UTC)\s*$')).Count | Should -Be 5
     }
 
     It "groups both version and security updates into one PR per ecosystem area per update type" {
@@ -4499,7 +4499,7 @@ Describe "Dependabot update automation conventions" {
             $ecosystemBlocks[$currentEcosystem] = ($currentLines -join "`n")
         }
 
-        foreach ($ecosystem in @('github-actions', 'pre-commit', 'pip', 'devcontainers')) {
+        foreach ($ecosystem in @('github-actions', 'pre-commit', 'pip', 'npm', 'devcontainers')) {
             $ecosystemBlocks.ContainsKey($ecosystem) | Should -BeTrue -Because "Missing ecosystem block for '$ecosystem'"
             $body = $ecosystemBlocks[$ecosystem]
 
@@ -4533,17 +4533,18 @@ Describe "Dependabot update automation conventions" {
         }
     }
 
-    It "targets repository root directory for all configured ecosystems" {
+    It "targets the expected directory for each configured ecosystem" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
         @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*directory:\s*(?:"/"|/)\s*$')).Count | Should -Be 4
+        $content | Should -Match '(?ms)package-ecosystem:\s*"npm"[\s\S]*?directory:\s*"/Extensions/WallstopPrComments"'
     }
 
     It "caps open version-update PR volume per ecosystem and keeps default branch behavior" {
         $content = (Get-Content -Path $script:dependabotConfigPath -Raw) -replace "`r", ''
 
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*open-pull-requests-limit:\s*10\s*$')).Count | Should -Be 4
-        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*separator:\s*"?/"?\s*$')).Count | Should -Be 4
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*open-pull-requests-limit:\s*10\s*$')).Count | Should -Be 5
+        @([System.Text.RegularExpressions.Regex]::Matches($content, '(?m)^\s*separator:\s*"?/"?\s*$')).Count | Should -Be 5
         # Policy assumption: updates target the repository default branch.
         # If multi-branch release flows are introduced, this policy test should be updated.
         $content | Should -Not -Match '(?m)^\s*target-branch:\s*'
@@ -4698,6 +4699,10 @@ Describe "Dependabot manifest coverage drift conventions" {
 
         Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath 'requirements.txt') -PathType Leaf | Should -BeTrue -Because (
             "Dependabot ecosystem 'pip' requires requirements.txt"
+        )
+
+        Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath 'Extensions/WallstopPrComments/package.json') -PathType Leaf | Should -BeTrue -Because (
+            "Dependabot ecosystem 'npm' requires Extensions/WallstopPrComments/package.json"
         )
 
         Test-Path -Path (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/devcontainer.json') -PathType Leaf | Should -BeTrue -Because (

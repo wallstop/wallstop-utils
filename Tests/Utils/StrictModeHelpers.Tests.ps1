@@ -109,7 +109,7 @@ Describe "ConvertFrom-JsonSingleObject" {
     }
 
     It "redacts token-like secrets in preview diagnostics" {
-        $rawToken = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+        $rawToken = "gh" + "p_" + ("A" * 36)
         $message = ""
         $brokenJson = ('{"token":"' + $rawToken + '",')
 

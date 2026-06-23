@@ -1,0 +1,157 @@
+{
+  "name": "wallstop-pr-comments",
+  "displayName": "Wallstop PR Comments",
+  "description": "Copy GitHub PR review comments and suggested changes from a VS Code sidebar.",
+  "version": "0.1.0",
+  "publisher": "wallstop",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:wallstopPrComments.repos",
+    "onCommand:wallstopPrComments.addRepo",
+    "onCommand:wallstopPrComments.copyComments"
+  ],
+  "main": "./out/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "wallstopPrComments.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "wallstopPrComments.addRepo",
+        "title": "Add Repository",
+        "icon": "$(add)"
+      },
+      {
+        "command": "wallstopPrComments.removeRepo",
+        "title": "Remove Repository",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "wallstopPrComments.copyComments",
+        "title": "Copy Review Comments",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "wallstopPrComments.openInBrowser",
+        "title": "Open in Browser",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "wallstopPrComments.setScope",
+        "title": "Set Comment Scope",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "wallstopPrComments.setToken",
+        "title": "Set Manual Token"
+      },
+      {
+        "command": "wallstopPrComments.clearToken",
+        "title": "Clear Manual Token"
+      },
+      {
+        "command": "wallstopPrComments.setWebCookie",
+        "title": "Set GitHub Web Cookie"
+      },
+      {
+        "command": "wallstopPrComments.clearWebCookie",
+        "title": "Clear GitHub Web Cookie"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "wallstopPrComments",
+          "title": "PR Comments",
+          "icon": "resources/pr-comments.svg"
+        }
+      ]
+    },
+    "views": {
+      "wallstopPrComments": [
+        {
+          "id": "wallstopPrComments.repos",
+          "name": "Repositories"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "wallstopPrComments.refresh",
+          "when": "view == wallstopPrComments.repos",
+          "group": "navigation"
+        },
+        {
+          "command": "wallstopPrComments.addRepo",
+          "when": "view == wallstopPrComments.repos",
+          "group": "navigation"
+        },
+        {
+          "command": "wallstopPrComments.setScope",
+          "when": "view == wallstopPrComments.repos",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "wallstopPrComments.copyComments",
+          "when": "view == wallstopPrComments.repos && viewItem == pullRequest",
+          "group": "inline"
+        },
+        {
+          "command": "wallstopPrComments.openInBrowser",
+          "when": "view == wallstopPrComments.repos && viewItem == pullRequest",
+          "group": "inline"
+        },
+        {
+          "command": "wallstopPrComments.removeRepo",
+          "when": "view == wallstopPrComments.repos && viewItem == repository",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Wallstop PR Comments",
+      "properties": {
+        "wallstopPrComments.defaultScope": {
+          "type": "string",
+          "enum": [
+            "unresolved",
+            "all",
+            "resolved"
+          ],
+          "default": "unresolved",
+          "description": "Default review-comment scope used when copying PR comments."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "setup": "node scripts/install-local.js --setup-only",
+    "install:local": "node scripts/install-local.js",
+    "package:vsix": "npm run compile && node scripts/package-vsix.js",
+    "test": "npm run compile && node --test out/test"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^18.19.112",
+    "@types/vscode": "1.90.0",
+    "typescript": "^5.5.4",
+    "yauzl": "^2.10.0",
+    "yazl": "^2.5.1"
+  }
+}
