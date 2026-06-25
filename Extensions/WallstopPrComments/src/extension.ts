@@ -29,6 +29,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const client = new GitHubClient({
     getToken: (host, createIfNone) => auth.getToken(host, createIfNone),
     getWebCookie: (host) => auth.getWebCookie(host),
+    browserWebHtmlProvider: (url) => getBrowserWebSuggestionsHtml(url),
   });
   const provider = new PrCommentsTreeProvider(store, client);
 
@@ -156,11 +157,13 @@ async function copyReviewComments(
 
     const records = result.threads.map(reviewThreadToRecord).filter(isReviewThreadRecord);
     try {
-      const webDiffs = await client.getWebSuggestedDiffs(repository, prNumber);
-      if (webDiffs.size > 0) {
-        const attached = attachWebSuggestedDiffs(records, webDiffs);
+      const webDiffs = await client.getWebSuggestedDiffs(repository, prNumber, {
+        allowBrowserFallback: getBrowserWebSuggestionsCommand() !== undefined,
+      });
+      if (webDiffs.suggestions.size > 0) {
+        const attached = attachWebSuggestedDiffs(records, webDiffs.suggestions);
         if (attached > 0) {
-          result.warnings.push(`Attached ${attached} GitHub web suggested change diff(s).`);
+          result.warnings.push(`Attached ${attached} suggested change diff(s) from ${webDiffs.provenance}.`);
         }
       }
     } catch (error) {
@@ -179,6 +182,33 @@ async function copyReviewComments(
   } catch (error) {
     await showError(error);
   }
+}
+
+export async function getBrowserWebSuggestionsHtml(url: string): Promise<string | undefined> {
+  const command = getBrowserWebSuggestionsCommand();
+  if (command === undefined) {
+    return undefined;
+  }
+
+  const result = await vscode.commands.executeCommand<unknown>(command, url);
+  if (typeof result === 'string') {
+    return result;
+  }
+
+  if (isRecord(result) && typeof result.html === 'string') {
+    return result.html;
+  }
+
+  throw new Error(`Browser web suggestions command '${command}' must return an HTML string or { html: string }.`);
+}
+
+function getBrowserWebSuggestionsCommand(): string | undefined {
+  const command = vscode.workspace
+    .getConfiguration('wallstopPrComments')
+    .inspect<string>('browserWebSuggestionsCommand')
+    ?.globalValue
+    ?.trim();
+  return command === '' ? undefined : command;
 }
 
 function getCurrentScope(context: vscode.ExtensionContext): ReviewScope {
@@ -246,4 +276,8 @@ async function showError(error: unknown): Promise<void> {
 
 function isReviewThreadRecord(record: ReviewThreadRecord | undefined): record is ReviewThreadRecord {
   return record !== undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

@@ -132,6 +132,12 @@
           ],
           "default": "unresolved",
           "description": "Default review-comment scope used when copying PR comments."
+        },
+        "wallstopPrComments.browserWebSuggestionsCommand": {
+          "type": "string",
+          "scope": "application",
+          "default": "",
+          "description": "Optional VS Code command that returns logged-in GitHub PR files HTML for a supplied URL. Used only for browser/session-backed suggested-change extraction."
         }
       }
     }
