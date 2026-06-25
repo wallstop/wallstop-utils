@@ -233,7 +233,7 @@ export class GitHubClient {
     options: WebSuggestionRequestOptions = {},
   ): Promise<WebSuggestedDiffResult> {
     if (repository.host.toLowerCase() !== 'github.com') {
-      return { suggestions: new Map(), provenance: 'externalBotUnavailable' };
+      return { suggestions: new Map(), provenance: 'webOnlyUnavailable' };
     }
 
     const url = `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/pull/${prNumber}/files`;
@@ -275,7 +275,7 @@ export class GitHubClient {
       throw privateFetchError;
     }
 
-    return { suggestions: new Map(), provenance: 'externalBotUnavailable' };
+    return { suggestions: new Map(), provenance: 'webOnlyUnavailable' };
   }
 
   private async fetchGitHubWebHtml(

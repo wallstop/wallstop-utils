@@ -1,9 +1,11 @@
 export type ReviewScope = 'unresolved' | 'all' | 'resolved';
+export type AutomatedSuggestionSource = 'githubWebAutomatedDiff' | 'browserDomAutomatedDiff';
+export type UnavailableSuggestionSource = 'externalBotUnavailable' | 'webOnlyUnavailable';
+export type WebSuggestedDiffProvenance = AutomatedSuggestionSource | 'webOnlyUnavailable';
 export type SuggestionSource =
   | 'apiMarkdownSuggestion'
-  | 'githubWebAutomatedDiff'
-  | 'browserDomAutomatedDiff'
-  | 'externalBotUnavailable';
+  | AutomatedSuggestionSource
+  | UnavailableSuggestionSource;
 export type SuggestionConfidence = 'high' | 'medium' | 'unavailable';
 
 export interface RepositoryRef {
@@ -37,7 +39,7 @@ export interface SuggestedChange {
 export interface SuggestedDiff {
   kind: 'changedLines';
   value: string;
-  source: 'githubWebAutomatedDiff' | 'browserDomAutomatedDiff';
+  source: AutomatedSuggestionSource;
   confidence: 'medium';
   path?: string;
 }
@@ -77,7 +79,7 @@ export interface RenderableComment {
   suggestedChanges: SuggestedChange[];
   suggestedDiffs: SuggestedDiff[];
   unavailableReason?: string;
-  unavailableSource?: 'externalBotUnavailable';
+  unavailableSource?: UnavailableSuggestionSource;
   unavailableConfidence?: 'unavailable';
 }
 
@@ -106,5 +108,5 @@ export interface ReviewThreadResult {
 
 export interface WebSuggestedDiffResult {
   suggestions: Map<string, SuggestedDiff[]>;
-  provenance: SuggestionSource;
+  provenance: WebSuggestedDiffProvenance;
 }

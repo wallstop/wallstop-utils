@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it';
 
-import type { EmbeddedLocation, SuggestedChange } from './types';
+import { isCopilotPullRequestReviewerAuthor, isCursorBugbotAuthor } from './botAuthors';
+import type { EmbeddedLocation, SuggestedChange, UnavailableSuggestionSource } from './types';
 
 interface MarkdownToken {
   type: string;
@@ -120,9 +121,7 @@ export function isLikelyWebOnlySuggestedChangeset(input: {
 
   const body = input.body ?? '';
   const author = input.authorLogin ?? '';
-  const botAuthor = /\b(copilot|cursor|bugbot)\b|copilot-pull-request-reviewer/iu.test(author);
-  const bodyLooksLikeWebSuggestion = /suggested changeset|web-only suggested|suggested change.*GitHub web UI|Copilot suggested|BUGBOT_BUG_ID|cursor\.com\/(?:open|agents)/iu.test(body);
-  return bodyLooksLikeWebSuggestion && (botAuthor || /suggested changeset/iu.test(body));
+  return isCopilotPullRequestReviewerAuthor(author) && hasCopilotWebOnlySuggestionMarker(body);
 }
 
 export function webOnlyUnavailableReason(): string {
@@ -133,26 +132,48 @@ export function externalBotUnavailableReason(): string {
   return 'External bot suggested fix was not exposed by the GitHub API.';
 }
 
-export function suggestedDiffUnavailableReason(input: {
+export interface SuggestedDiffUnavailable {
+  reason: string;
+  source: UnavailableSuggestionSource;
+  confidence: 'unavailable';
+}
+
+export function suggestedDiffUnavailable(input: {
   authorLogin?: string;
   body?: string;
   suggestionCount: number;
-}): string | undefined {
+}): SuggestedDiffUnavailable | undefined {
   if (input.suggestionCount > 0) {
     return undefined;
   }
 
   const body = input.body ?? '';
   const author = input.authorLogin ?? '';
-  if (/\b(cursor|bugbot)\b/iu.test(author) || /BUGBOT_BUG_ID|cursor\.com\/(?:open|agents)/iu.test(body)) {
-    return externalBotUnavailableReason();
+  if (isCursorBugbotAuthor(author) && hasCursorBugbotExternalFixMarker(body)) {
+    return {
+      reason: externalBotUnavailableReason(),
+      source: 'externalBotUnavailable',
+      confidence: 'unavailable',
+    };
   }
 
-  if (/^copilot-pull-request-reviewer(?:\[bot\])?$/iu.test(author) || /Copilot suggested|suggested changeset/iu.test(body)) {
-    return webOnlyUnavailableReason();
+  if (isCopilotPullRequestReviewerAuthor(author) && hasCopilotWebOnlySuggestionMarker(body)) {
+    return {
+      reason: webOnlyUnavailableReason(),
+      source: 'webOnlyUnavailable',
+      confidence: 'unavailable',
+    };
   }
 
   return undefined;
+}
+
+function hasCursorBugbotExternalFixMarker(body: string): boolean {
+  return /BUGBOT_BUG_ID|cursor\.com\/(?:open|agents)/iu.test(body);
+}
+
+function hasCopilotWebOnlySuggestionMarker(body: string): boolean {
+  return /Copilot suggested|suggested changeset|web-only suggested|suggested change.*GitHub web UI/iu.test(body);
 }
 
 function normalizeLineEndings(text: string): string {

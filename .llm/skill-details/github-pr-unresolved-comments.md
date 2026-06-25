@@ -162,13 +162,18 @@ surface for the same GitHub PR comment extraction contracts.
   user-authored `body` fields and sibling `suggestion.diffEntries` without
   `automatedComment` provenance; expose only `DELETION`/`ADDITION` lines,
   prefix every physical line after CR/LF normalization, label cross-path diffs
-  as `Suggested change (<path>):`, and retain `source`/`confidence`
-  (`githubWebAutomatedDiff` or `browserDomAutomatedDiff`, `medium`).
+  as `Suggested change (<path>):`, deduplicate by normalized path plus public
+  changed-line text, and retain `source`/`confidence` (`githubWebAutomatedDiff`
+  or `browserDomAutomatedDiff`, `medium`).
 - Keep extension Cursor/Bugbot handling conservative: external fixes not exposed
   by GitHub remain unavailable records (`unavailableSource:
   externalBotUnavailable`, `unavailableConfidence: unavailable`) instead of fake
-  suggested diffs; embedded `LOCATIONS` are trusted only from normalized exact
-  bot logins `cursor[bot]`, `cursor-bugbot[bot]`, or `bugbot[bot]`. Same-path
+  suggested diffs; Copilot/GitHub web-only unavailable suggestions use
+  `unavailableSource: webOnlyUnavailable`; unavailable classification requires a
+  trusted exact bot identity plus a generated/web-suggestion marker, never broad
+  substring/word-boundary login matching or marker text alone. Embedded
+  `LOCATIONS` are trusted only from normalized exact bot logins `cursor[bot]`,
+  `cursor-bugbot[bot]`, or `bugbot[bot]`. Same-path
   embedded ranges may override file-anchored review ranges, mismatched embedded
   paths must not override file-anchored threads, and conversation-level bot
   comments may use the first embedded location.

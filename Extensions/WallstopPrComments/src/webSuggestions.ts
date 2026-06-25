@@ -1,10 +1,8 @@
-import type { RenderableComment, ReviewThreadRecord, SuggestedDiff } from './types';
-
-type AutomatedDiffSource = 'githubWebAutomatedDiff' | 'browserDomAutomatedDiff';
+import type { AutomatedSuggestionSource, RenderableComment, ReviewThreadRecord, SuggestedDiff } from './types';
 
 export function extractAutomatedSuggestedDiffsFromHtml(
   html: string,
-  source: AutomatedDiffSource = 'githubWebAutomatedDiff',
+  source: AutomatedSuggestionSource = 'githubWebAutomatedDiff',
 ): Map<string, SuggestedDiff[]> {
   const suggestionsByCommentId = new Map<string, SuggestedDiff[]>();
   for (const payload of extractJsonScriptPayloads(html)) {
@@ -28,14 +26,15 @@ export function attachWebSuggestedDiffs(
         continue;
       }
 
-      const existing = new Set(comment.suggestedDiffs.map((diff) => diff.value));
+      const existing = new Set(comment.suggestedDiffs.map(suggestedDiffIdentity));
       for (const diff of diffs) {
-        if (existing.has(diff.value)) {
+        const identity = suggestedDiffIdentity(diff);
+        if (existing.has(identity)) {
           continue;
         }
 
         comment.suggestedDiffs.push(diff);
-        existing.add(diff.value);
+        existing.add(identity);
         attachedCount++;
       }
 
@@ -96,7 +95,7 @@ function decodeHtmlEntities(value: string): string {
 function collectAutomatedDiffs(
   value: unknown,
   output: Map<string, SuggestedDiff[]>,
-  source: AutomatedDiffSource,
+  source: AutomatedSuggestionSource,
   depth = 0,
   keyHint?: string,
 ): void {
@@ -138,7 +137,7 @@ function collectAutomatedDiffs(
 function collectCandidate(
   value: Record<string, unknown>,
   output: Map<string, SuggestedDiff[]>,
-  source: AutomatedDiffSource,
+  source: AutomatedSuggestionSource,
 ): void {
   const comment = isRecord(value.comment) ? value.comment : value;
   const automatedComment = isRecord(comment.automatedComment) ? comment.automatedComment : undefined;
@@ -165,17 +164,30 @@ function collectCandidate(
   }
 
   const existing = output.get(commentKey) ?? [];
-  const seen = new Set(existing.map((diff) => diff.value));
+  const seen = new Set(existing.map(suggestedDiffIdentity));
   for (const diff of diffs) {
-    if (!seen.has(diff.value)) {
+    const identity = suggestedDiffIdentity(diff);
+    if (!seen.has(identity)) {
       existing.push(diff);
-      seen.add(diff.value);
+      seen.add(identity);
     }
   }
   output.set(commentKey, existing);
 }
 
-function toSuggestedDiff(entry: unknown, source: AutomatedDiffSource): SuggestedDiff | undefined {
+function suggestedDiffIdentity(diff: SuggestedDiff): string {
+  return JSON.stringify([
+    normalizeSuggestedDiffPath(diff.path),
+    diff.value,
+  ]);
+}
+
+function normalizeSuggestedDiffPath(path: string | undefined): string | undefined {
+  const normalized = path?.replace(/\\/gu, '/').trim();
+  return normalized === '' ? undefined : normalized;
+}
+
+function toSuggestedDiff(entry: unknown, source: AutomatedSuggestionSource): SuggestedDiff | undefined {
   if (!isRecord(entry)) {
     return undefined;
   }

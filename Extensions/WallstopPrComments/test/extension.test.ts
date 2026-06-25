@@ -73,6 +73,30 @@ test('browser web suggestions provider invokes configured VS Code command with P
   ]);
 });
 
+test('browser web suggestions provider accepts object html results', async () => {
+  const { getBrowserWebSuggestionsHtml } = loadExtensionWithVscodeStub({
+    command: 'example.browserHtml',
+    executeCommand: async () => ({ html: '<script type="application/json">{}</script>' }),
+  });
+
+  assert.equal(
+    await getBrowserWebSuggestionsHtml('https://github.com/org/repo/pull/1/files'),
+    '<script type="application/json">{}</script>',
+  );
+});
+
+test('browser web suggestions provider error documents every supported return shape', async () => {
+  const { getBrowserWebSuggestionsHtml } = loadExtensionWithVscodeStub({
+    command: 'example.browserHtml',
+    executeCommand: async () => ({ text: '<html></html>' }),
+  });
+
+  await assert.rejects(
+    () => getBrowserWebSuggestionsHtml('https://github.com/org/repo/pull/1/files'),
+    /must return an HTML string or \{ html: string \}/u,
+  );
+});
+
 test('browser web suggestions provider is disabled when no command is configured', async () => {
   let called = false;
   const { getBrowserWebSuggestionsHtml } = loadExtensionWithVscodeStub({

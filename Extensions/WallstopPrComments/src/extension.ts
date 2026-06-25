@@ -199,7 +199,7 @@ export async function getBrowserWebSuggestionsHtml(url: string): Promise<string 
     return result.html;
   }
 
-  throw new Error(`Browser web suggestions command '${command}' must return an HTML string.`);
+  throw new Error(`Browser web suggestions command '${command}' must return an HTML string or { html: string }.`);
 }
 
 function getBrowserWebSuggestionsCommand(): string | undefined {

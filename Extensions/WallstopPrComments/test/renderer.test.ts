@@ -192,6 +192,7 @@ test('keeps unavailable web-only suggestions as metadata without fake suggested-
     record.comments[0].unavailableReason,
     'GitHub web-only suggested changeset could not be extracted from the public API.',
   );
+  assert.equal(record.comments[0].unavailableSource, 'webOnlyUnavailable');
   assert.deepEqual(collectUnavailableSuggestionWarnings([record]), [
     'src/copilot.ts:5: GitHub web-only suggested changeset could not be extracted from the public API.',
   ]);

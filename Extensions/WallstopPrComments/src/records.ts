@@ -2,8 +2,9 @@ import {
   cleanCommentText,
   extractEmbeddedCommentLocations,
   extractSuggestionBlocks,
-  suggestedDiffUnavailableReason,
+  suggestedDiffUnavailable,
 } from './markdownSuggestions';
+import { isCursorBugbotAuthor } from './botAuthors';
 import type { EmbeddedLocation, RenderableComment, ReviewComment, ReviewThread, ReviewThreadRecord } from './types';
 
 export function reviewThreadToRecord(thread: ReviewThread): ReviewThreadRecord | undefined {
@@ -77,8 +78,8 @@ function toRenderableComment(comment: ReviewComment, commentIndex: number): Rend
   });
   const body = cleanCommentText(comment.body);
   const suggestedDiffs = [...(comment.suggestedDiffs ?? [])];
-  const unavailableReason = suggestedDiffs.length === 0
-    ? suggestedDiffUnavailableReason({
+  const unavailable = suggestedDiffs.length === 0
+    ? suggestedDiffUnavailable({
         authorLogin: comment.authorLogin,
         body: comment.body,
         suggestionCount: suggestedChanges.length,
@@ -91,9 +92,9 @@ function toRenderableComment(comment: ReviewComment, commentIndex: number): Rend
     body,
     suggestedChanges,
     suggestedDiffs,
-    unavailableReason,
-    unavailableSource: unavailableReason === undefined ? undefined : 'externalBotUnavailable',
-    unavailableConfidence: unavailableReason === undefined ? undefined : 'unavailable',
+    unavailableReason: unavailable?.reason,
+    unavailableSource: unavailable?.source,
+    unavailableConfidence: unavailable?.confidence,
   };
 }
 
@@ -146,14 +147,7 @@ function selectEmbeddedLocation(
 }
 
 function isTrustedEmbeddedLocationAuthor(authorLogin: string | undefined): boolean {
-  if (authorLogin === undefined) {
-    return false;
-  }
-
-  const normalized = authorLogin.toLowerCase();
-  return normalized === 'cursor[bot]' ||
-    normalized === 'bugbot[bot]' ||
-    normalized === 'cursor-bugbot[bot]';
+  return isCursorBugbotAuthor(authorLogin);
 }
 
 function resolveLineRange(thread: ReviewThread): { start?: number; end?: number } {

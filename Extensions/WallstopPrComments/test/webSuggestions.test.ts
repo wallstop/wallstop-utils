@@ -201,6 +201,50 @@ test('uses discussion URL as a fallback id and deduplicates repeated changed-lin
   assert.equal(suggestions.get('99')?.[0].value, '-old();\n+new();');
 });
 
+test('keeps identical changed-line bodies when automated diff entries target different paths', () => {
+  const html = [
+    '<script type="application/json">',
+    JSON.stringify({
+      props: {
+        comment: {
+          databaseId: 42,
+          automatedComment: {
+            suggestion: {
+              diffEntries: [
+                {
+                  path: 'src/one.ts',
+                  diffLines: [
+                    { type: 'DELETION', text: 'old();' },
+                    { type: 'ADDITION', text: 'new();' },
+                  ],
+                },
+                {
+                  path: 'src/two.ts',
+                  diffLines: [
+                    { type: 'DELETION', text: 'old();' },
+                    { type: 'ADDITION', text: 'new();' },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    }),
+    '</script>',
+  ].join('');
+
+  const suggestions = extractAutomatedSuggestedDiffsFromHtml(html);
+
+  assert.deepEqual(
+    suggestions.get('42')?.map((diff) => ({ path: diff.path, value: diff.value })),
+    [
+      { path: 'src/one.ts', value: '-old();\n+new();' },
+      { path: 'src/two.ts', value: '-old();\n+new();' },
+    ],
+  );
+});
+
 test('ignores malformed web JSON and context-only automated diff entries', () => {
   const html = [
     '<script type="application/json">{not json}</script>',
@@ -227,7 +271,7 @@ test('attaches web suggestions by URL fallback when database id is missing', () 
           suggestedChanges: [],
           suggestedDiffs: [],
           unavailableReason: 'GitHub web-only suggested changeset could not be extracted from the public API.',
-          unavailableSource: 'externalBotUnavailable',
+          unavailableSource: 'webOnlyUnavailable',
           unavailableConfidence: 'unavailable',
         },
       ],
@@ -252,4 +296,51 @@ test('attaches web suggestions by URL fallback when database id is missing', () 
   assert.equal(attached, 1);
   assert.equal(records[0].comments[0].unavailableReason, undefined);
   assert.equal(records[0].comments[0].suggestedDiffs[0].value, '-old();\n+new();');
+});
+
+test('attaches identical changed-line bodies when suggested diffs target different paths', () => {
+  const records: ReviewThreadRecord[] = [
+    {
+      path: 'src/commented.ts',
+      lineStart: 4,
+      lineEnd: 4,
+      comments: [
+        {
+          databaseId: 42,
+          body: 'Copilot suggested changeset available in the GitHub web UI.',
+          suggestedChanges: [],
+          suggestedDiffs: [],
+        },
+      ],
+    },
+  ];
+  const suggestions = new Map([
+    [
+      '42',
+      [
+        {
+          kind: 'changedLines' as const,
+          path: 'src/one.ts',
+          source: 'githubWebAutomatedDiff' as const,
+          confidence: 'medium' as const,
+          value: '-old();\n+new();',
+        },
+        {
+          kind: 'changedLines' as const,
+          path: 'src/two.ts',
+          source: 'githubWebAutomatedDiff' as const,
+          confidence: 'medium' as const,
+          value: '-old();\n+new();',
+        },
+      ],
+    ],
+  ]);
+
+  const attached = attachWebSuggestedDiffs(records, suggestions);
+
+  assert.equal(attached, 2);
+  assert.deepEqual(records[0].comments[0].suggestedDiffs.map((diff) => diff.path), [
+    'src/one.ts',
+    'src/two.ts',
+  ]);
 });

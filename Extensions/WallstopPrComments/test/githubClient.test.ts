@@ -681,5 +681,5 @@ test('does not use browser-backed extractor unless explicitly enabled', async ()
 
   assert.equal(browserCalled, false);
   assert.equal(result.suggestions.size, 0);
-  assert.equal(result.provenance, 'externalBotUnavailable');
+  assert.equal(result.provenance, 'webOnlyUnavailable');
 });

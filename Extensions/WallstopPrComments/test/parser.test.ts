@@ -98,6 +98,56 @@ test('marks likely Copilot web-only suggested changesets as unavailable instead 
   const body = 'Copilot suggested changeset available in the GitHub web UI.';
 
   assert.equal(isLikelyWebOnlySuggestedChangeset({ authorLogin: 'copilot-pull-request-reviewer[bot]', body, suggestionCount: 0 }), true);
+  assert.equal(isLikelyWebOnlySuggestedChangeset({ authorLogin: 'human-reviewer', body, suggestionCount: 0 }), false);
+});
+
+test('does not classify human usernames containing bot names as unavailable suggested diffs', () => {
+  for (const [authorLogin, body] of [
+    ['cursor-fan', 'This normal review comment has no markdown suggestion.'],
+    ['bugbot-fan', 'Suggested changeset is available through https://cursor.com/open?link=abc.'],
+    ['not-copilot-reviewer', 'Copilot suggested changeset available in the GitHub web UI.'],
+    ['human-reviewer', '<!-- BUGBOT_BUG_ID: copied-marker --> Finding text.'],
+  ]) {
+    const record = reviewThreadToRecord({
+      id: `thread-${authorLogin}`,
+      path: 'src/human.ts',
+      isResolved: false,
+      line: 12,
+      comments: [
+        {
+          id: 'comment-1',
+          authorLogin,
+          body,
+        },
+      ],
+    });
+
+    assert.ok(record);
+    assert.equal(record.comments[0].unavailableReason, undefined);
+    assert.equal(record.comments[0].unavailableSource, undefined);
+  }
+});
+
+test('does not mark trusted bot prose as unavailable without a generated suggestion marker', () => {
+  for (const authorLogin of ['cursor[bot]', 'cursor-bugbot[bot]', 'bugbot[bot]', 'copilot-pull-request-reviewer[bot]']) {
+    const record = reviewThreadToRecord({
+      id: `thread-${authorLogin}`,
+      path: 'src/bot-prose.ts',
+      isResolved: false,
+      line: 12,
+      comments: [
+        {
+          id: 'comment-1',
+          authorLogin,
+          body: 'This finding has prose but no generated suggested-fix marker.',
+        },
+      ],
+    });
+
+    assert.ok(record);
+    assert.equal(record.comments[0].unavailableReason, undefined);
+    assert.equal(record.comments[0].unavailableSource, undefined);
+  }
 });
 
 test('strips Cursor and Bugbot chrome while preserving prose', () => {
