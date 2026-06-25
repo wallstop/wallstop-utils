@@ -30,7 +30,7 @@ export function formatReviewThreadRecords(records: readonly ReviewThreadRecord[]
       }
 
       for (const diff of comment.suggestedDiffs) {
-        addSuggestedChange(lines, diff.value);
+        addSuggestedChange(lines, diff.value, suggestedDiffLabel(record.path, diff.path));
       }
 
       if (!hasPublicText(comment) && comment.unavailableReason !== undefined) {
@@ -44,11 +44,26 @@ export function formatReviewThreadRecords(records: readonly ReviewThreadRecord[]
   return lines.join('\n');
 }
 
-function addSuggestedChange(lines: string[], value: string): void {
-  lines.push('Suggested change:');
+function addSuggestedChange(lines: string[], value: string, label = 'Suggested change:'): void {
+  lines.push(label);
   lines.push(...value.split('\n'));
 }
 
 function hasPublicText(comment: RenderableComment): boolean {
   return comment.body !== '' || comment.suggestedChanges.length > 0 || comment.suggestedDiffs.length > 0;
+}
+
+function suggestedDiffLabel(recordPath: string, diffPath: string | undefined): string {
+  if (diffPath === undefined) {
+    return 'Suggested change:';
+  }
+
+  const normalizedDiffPath = normalizePath(diffPath);
+  return normalizedDiffPath === normalizePath(recordPath)
+    ? 'Suggested change:'
+    : `Suggested change (${normalizedDiffPath}):`;
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/gu, '/').replace(/[\r\n]+/gu, ' ').trim();
 }

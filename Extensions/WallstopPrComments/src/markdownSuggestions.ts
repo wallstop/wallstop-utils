@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it';
 
-import type { SuggestedChange } from './types';
+import type { EmbeddedLocation, SuggestedChange } from './types';
 
 interface MarkdownToken {
   type: string;
@@ -18,7 +18,7 @@ const markdown = new MarkdownIt({
 
 export function extractSuggestionBlocks(
   text: string | undefined,
-  metadata: Omit<SuggestedChange, 'kind' | 'value'> = {},
+  metadata: Omit<SuggestedChange, 'kind' | 'value' | 'source' | 'confidence'> = {},
 ): SuggestedChange[] {
   if (text === undefined || text.trim() === '') {
     return [];
@@ -29,8 +29,10 @@ export function extractSuggestionBlocks(
     .map((token) => ({
       kind: 'suggestion',
       value: token.content.replace(/\n+$/u, ''),
+      source: 'apiMarkdownSuggestion',
+      confidence: 'high',
       ...metadata,
-    }));
+    } satisfies SuggestedChange));
 }
 
 export function cleanCommentText(text: string | undefined): string {
@@ -48,8 +50,18 @@ export function cleanCommentText(text: string | undefined): string {
     (token) => token.type === 'fence',
     (token) => token.content.replace(/\n+$/u, '').split('\n'),
   );
+  const withoutCursorButtons = removeHtmlBlocksContainingText(
+    withoutFenceMarkers,
+    'div',
+    /cursor\.com\/(?:open|agents)|fix-in-(?:cursor|web)/iu,
+  );
+  const withoutCursorFooter = removeHtmlBlocksContainingText(
+    withoutCursorButtons,
+    'sup',
+    /Reviewed by\s+\[?Cursor Bugbot|cursor\.com\/bugbot/iu,
+  );
 
-  return withoutFenceMarkers
+  return withoutCursorFooter
     .replace(/<!--[\s\S]*?-->/gu, ' ')
     .replace(/<details\b[^>]*>\s*<summary\b[^>]*>\s*Additional Locations[\s\S]*?<\/details>/giu, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/gu, ' ')
@@ -58,6 +70,43 @@ export function cleanCommentText(text: string | undefined): string {
     .replace(/&nbsp;/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim();
+}
+
+export function extractEmbeddedCommentLocations(text: string | undefined): EmbeddedLocation[] {
+  if (text === undefined || text.trim() === '') {
+    return [];
+  }
+
+  const locations: EmbeddedLocation[] = [];
+  const seen = new Set<string>();
+  const blockRegex = /<!--\s*LOCATIONS\s+START\s+(?<payload>[\s\S]*?)\s+LOCATIONS\s+END\s*-->/giu;
+  for (const block of text.matchAll(blockRegex)) {
+    const payload = block.groups?.payload ?? '';
+    const locationRegex = /(?<target>\S+?)#L(?<start>\d+)(?:-L?(?<end>\d+))?/gu;
+    for (const location of payload.matchAll(locationRegex)) {
+      const path = normalizeEmbeddedLocationPath(location.groups?.target ?? '');
+      const start = Number.parseInt(location.groups?.start ?? '', 10);
+      if (path === undefined || !Number.isInteger(start) || start < 1) {
+        continue;
+      }
+
+      const parsedEnd = Number.parseInt(location.groups?.end ?? '', 10);
+      let end = Number.isInteger(parsedEnd) && parsedEnd >= 1 ? parsedEnd : start;
+      if (end < start) {
+        end = start;
+      }
+
+      const key = `${path.toLowerCase()}|${start}|${end}`;
+      if (seen.has(key)) {
+        continue;
+      }
+
+      locations.push({ path, lineStart: start, lineEnd: end });
+      seen.add(key);
+    }
+  }
+
+  return locations;
 }
 
 export function isLikelyWebOnlySuggestedChangeset(input: {
@@ -72,7 +121,7 @@ export function isLikelyWebOnlySuggestedChangeset(input: {
   const body = input.body ?? '';
   const author = input.authorLogin ?? '';
   const botAuthor = /\b(copilot|cursor|bugbot)\b|copilot-pull-request-reviewer/iu.test(author);
-  const bodyLooksLikeWebSuggestion = /suggested changeset|web-only suggested|suggested change.*GitHub web UI|Copilot suggested/iu.test(body);
+  const bodyLooksLikeWebSuggestion = /suggested changeset|web-only suggested|suggested change.*GitHub web UI|Copilot suggested|BUGBOT_BUG_ID|cursor\.com\/(?:open|agents)/iu.test(body);
   return bodyLooksLikeWebSuggestion && (botAuthor || /suggested changeset/iu.test(body));
 }
 
@@ -80,8 +129,79 @@ export function webOnlyUnavailableReason(): string {
   return 'GitHub web-only suggested changeset could not be extracted from the public API.';
 }
 
+export function externalBotUnavailableReason(): string {
+  return 'External bot suggested fix was not exposed by the GitHub API.';
+}
+
+export function suggestedDiffUnavailableReason(input: {
+  authorLogin?: string;
+  body?: string;
+  suggestionCount: number;
+}): string | undefined {
+  if (input.suggestionCount > 0) {
+    return undefined;
+  }
+
+  const body = input.body ?? '';
+  const author = input.authorLogin ?? '';
+  if (/\b(cursor|bugbot)\b/iu.test(author) || /BUGBOT_BUG_ID|cursor\.com\/(?:open|agents)/iu.test(body)) {
+    return externalBotUnavailableReason();
+  }
+
+  if (/^copilot-pull-request-reviewer(?:\[bot\])?$/iu.test(author) || /Copilot suggested|suggested changeset/iu.test(body)) {
+    return webOnlyUnavailableReason();
+  }
+
+  return undefined;
+}
+
 function normalizeLineEndings(text: string): string {
   return text.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n');
+}
+
+function removeHtmlBlocksContainingText(text: string, elementName: string, marker: RegExp): string {
+  if (text.trim() === '') {
+    return text;
+  }
+
+  const escapedName = escapeRegExp(elementName);
+  const blockRegex = new RegExp(`<${escapedName}\\b[^>]*>[\\s\\S]*?<\\/${escapedName}>`, 'giu');
+  return text.replace(blockRegex, (block) => (marker.test(block) ? ' ' : block));
+}
+
+function normalizeEmbeddedLocationPath(target: string): string | undefined {
+  let candidate = target.trim();
+  if (candidate === '') {
+    return undefined;
+  }
+
+  if (/^https?:\/\//iu.test(candidate)) {
+    try {
+      const url = new URL(candidate);
+      const segments = url.pathname.split('/').filter((segment) => segment !== '');
+      const blobIndex = segments.findIndex((segment) => segment === 'blob');
+      if (blobIndex >= 0 && segments.length > blobIndex + 2) {
+        candidate = segments.slice(blobIndex + 2).join('/');
+      } else {
+        candidate = url.pathname;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  try {
+    candidate = decodeURIComponent(candidate);
+  } catch {
+    // Keep the original text when percent-decoding is malformed.
+  }
+
+  const normalized = candidate.replace(/\\/gu, '/').trim().replace(/^\/+/u, '');
+  return normalized === '' ? undefined : normalized;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
 function firstInfoWord(info: string): string {

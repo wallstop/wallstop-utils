@@ -1,22 +1,33 @@
 import {
   cleanCommentText,
+  extractEmbeddedCommentLocations,
   extractSuggestionBlocks,
-  isLikelyWebOnlySuggestedChangeset,
-  webOnlyUnavailableReason,
+  suggestedDiffUnavailableReason,
 } from './markdownSuggestions';
-import type { RenderableComment, ReviewComment, ReviewThread, ReviewThreadRecord } from './types';
+import type { EmbeddedLocation, RenderableComment, ReviewComment, ReviewThread, ReviewThreadRecord } from './types';
 
 export function reviewThreadToRecord(thread: ReviewThread): ReviewThreadRecord | undefined {
-  const range = resolveLineRange(thread);
+  const githubPath = normalizePath(thread.path);
+  const githubRange = resolveLineRange(thread);
+  const topComment = thread.comments[0];
+  const embeddedLocations = isTrustedEmbeddedLocationAuthor(topComment?.authorLogin)
+    ? extractEmbeddedCommentLocations(topComment?.body)
+    : [];
+  const outputLocation = resolveOutputLocation(githubPath, githubRange, embeddedLocations);
   const comments = thread.comments.map(toRenderableComment).filter((comment) => hasRenderableCommentContent(comment));
   if (comments.length === 0) {
     return undefined;
   }
 
   return {
-    path: normalizePath(thread.path),
-    lineStart: range.start,
-    lineEnd: range.end,
+    path: outputLocation.path,
+    lineStart: outputLocation.start,
+    lineEnd: outputLocation.end,
+    locationSource: outputLocation.source,
+    githubPath,
+    githubLineStart: githubRange.start,
+    githubLineEnd: githubRange.end,
+    embeddedLocations,
     comments,
   };
 }
@@ -66,24 +77,85 @@ function toRenderableComment(comment: ReviewComment, commentIndex: number): Rend
   });
   const body = cleanCommentText(comment.body);
   const suggestedDiffs = [...(comment.suggestedDiffs ?? [])];
-  const unavailableReason =
-    suggestedDiffs.length === 0 &&
-    isLikelyWebOnlySuggestedChangeset({
-      authorLogin: comment.authorLogin,
-      body: comment.body,
-      suggestionCount: suggestedChanges.length,
-    })
-      ? webOnlyUnavailableReason()
-      : undefined;
+  const unavailableReason = suggestedDiffs.length === 0
+    ? suggestedDiffUnavailableReason({
+        authorLogin: comment.authorLogin,
+        body: comment.body,
+        suggestionCount: suggestedChanges.length,
+      })
+    : undefined;
 
   return {
     databaseId: comment.databaseId,
+    url: comment.url,
     body,
     suggestedChanges,
     suggestedDiffs,
     unavailableReason,
+    unavailableSource: unavailableReason === undefined ? undefined : 'externalBotUnavailable',
+    unavailableConfidence: unavailableReason === undefined ? undefined : 'unavailable',
   };
 }
+
+function resolveOutputLocation(
+  githubPath: string,
+  githubRange: { start?: number; end?: number },
+  embeddedLocations: readonly EmbeddedLocation[],
+): { path: string; start?: number; end?: number; source: 'github' | 'embedded' } {
+  const preferred = selectEmbeddedLocation(githubPath, embeddedLocations);
+  if (preferred !== undefined) {
+    return {
+      path: preferred.path,
+      start: preferred.lineStart,
+      end: preferred.lineEnd,
+      source: 'embedded',
+    };
+  }
+
+  return {
+    path: githubPath,
+    start: githubRange.start,
+    end: githubRange.end,
+    source: 'github',
+  };
+}
+
+function selectEmbeddedLocation(
+  githubPath: string,
+  embeddedLocations: readonly EmbeddedLocation[],
+): EmbeddedLocation | undefined {
+  if (embeddedLocations.length === 0) {
+    return undefined;
+  }
+
+  if (githubPath !== '<conversation>') {
+    const exact = embeddedLocations.find((location) => location.path === githubPath);
+    if (exact !== undefined) {
+      return exact;
+    }
+
+    const insensitive = embeddedLocations.find((location) => location.path.toLowerCase() === githubPath.toLowerCase());
+    if (insensitive !== undefined) {
+      return insensitive;
+    }
+
+    return undefined;
+  }
+
+  return embeddedLocations[0];
+}
+
+function isTrustedEmbeddedLocationAuthor(authorLogin: string | undefined): boolean {
+  if (authorLogin === undefined) {
+    return false;
+  }
+
+  const normalized = authorLogin.toLowerCase();
+  return normalized === 'cursor[bot]' ||
+    normalized === 'bugbot[bot]' ||
+    normalized === 'cursor-bugbot[bot]';
+}
+
 function resolveLineRange(thread: ReviewThread): { start?: number; end?: number } {
   const currentStart = thread.startLine;
   const currentEnd = thread.line;

@@ -532,3 +532,154 @@ test('keeps GraphQL results when REST cross-check fails', async () => {
   assert.equal(result.threads[0].comments[0].body, 'GraphQL body');
   assert.match(result.warnings[0], /REST review-comment cross-check failed/i);
 });
+
+test('fetches public GitHub web suggested diffs without a cookie first', async () => {
+  const calls: Array<{ url: string; headers: Record<string, string> | undefined }> = [];
+  const fetch: FetchLike = async (url, init) => {
+    calls.push({
+      url: String(url),
+      headers: init?.headers as Record<string, string> | undefined,
+    });
+    return new Response([
+      '<script type="application/json" data-target="react-partial.embeddedData">',
+      '{"props":{"comment":{"databaseId":42,"automatedComment":{"suggestion":{"diffEntries":[{"path":"src/public.ts","diffLines":[{"type":"DELETION","text":"old();"},{"type":"ADDITION","text":"new();"}]}]}}}}}',
+      '</script>',
+    ].join(''));
+  };
+  const client = new GitHubClient({
+    getToken: async () => 'api-token',
+    getWebCookie: async () => undefined,
+    fetch,
+  });
+
+  const result = await client.getWebSuggestedDiffs({ host: 'github.com', owner: 'org', repo: 'repo' }, 10);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://github.com/org/repo/pull/10/files');
+  assert.deepEqual(calls[0].headers, undefined);
+  assert.equal(result.suggestions.get('42')?.[0].source, 'githubWebAutomatedDiff');
+  assert.equal(result.provenance, 'githubWebAutomatedDiff');
+});
+
+test('retries private GitHub web suggested diffs with an explicit sanitized cookie after public fetch has no diffs', async () => {
+  const calls: Array<Record<string, string> | undefined> = [];
+  const fetch: FetchLike = async (_url, init) => {
+    calls.push(init?.headers as Record<string, string> | undefined);
+    if (calls.length === 1) {
+      return new Response('<html>Sign in</html>', { status: 200 });
+    }
+
+    return new Response([
+      '<script type="application/json" data-target="react-partial.embeddedData">',
+      '{"props":{"comment":{"databaseId":42,"automatedComment":{"suggestion":{"diffEntries":[{"path":"src/private.ts","diffLines":[{"type":"DELETION","text":"old();"},{"type":"ADDITION","text":"new();"}]}]}}}}}',
+      '</script>',
+    ].join(''));
+  };
+  const client = new GitHubClient({
+    getToken: async () => 'api-token',
+    getWebCookie: async () => '  user_session=abc\r\nInjected: nope  ',
+    fetch,
+  });
+
+  const result = await client.getWebSuggestedDiffs({ host: 'github.com', owner: 'org', repo: 'repo' }, 10);
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0], undefined);
+  assert.deepEqual(calls[1], { Cookie: 'user_session=abcInjected: nope' });
+  assert.equal(result.suggestions.get('42')?.[0].path, 'src/private.ts');
+});
+
+test('uses opt-in browser-backed extractor after raw GitHub web HTML exposes no diffs', async () => {
+  const fetch: FetchLike = async () => new Response('<html>No embedded suggestions</html>');
+  const client = new GitHubClient({
+    getToken: async () => 'api-token',
+    getWebCookie: async () => undefined,
+    fetch,
+    browserWebHtmlProvider: async (url) => {
+      assert.equal(url, 'https://github.com/org/repo/pull/10/files');
+      return [
+        '<script type="application/json" data-target="react-partial.embeddedData">',
+        '{"props":{"comment":{"databaseId":42,"automatedComment":{"suggestion":{"diffEntries":[{"path":"src/browser.ts","diffLines":[{"type":"DELETION","text":"old();"},{"type":"ADDITION","text":"new();"}]}]}}}}}',
+        '</script>',
+      ].join('');
+    },
+  });
+
+  const result = await client.getWebSuggestedDiffs(
+    { host: 'github.com', owner: 'org', repo: 'repo' },
+    10,
+    { allowBrowserFallback: true },
+  );
+
+  assert.equal(result.provenance, 'browserDomAutomatedDiff');
+  assert.equal(result.suggestions.get('42')?.[0].source, 'browserDomAutomatedDiff');
+  assert.equal(result.suggestions.get('42')?.[0].path, 'src/browser.ts');
+});
+
+test('uses opt-in browser-backed extractor when an explicit web cookie fetch fails', async () => {
+  const fetch: FetchLike = async (_url, init) => {
+    if (init?.headers !== undefined) {
+      return new Response('bad cookie', { status: 401 });
+    }
+
+    return new Response('<html>No embedded suggestions</html>');
+  };
+  const client = new GitHubClient({
+    getToken: async () => 'api-token',
+    getWebCookie: async () => 'user_session=stale',
+    fetch,
+    browserWebHtmlProvider: async () => [
+      '<script type="application/json" data-target="react-partial.embeddedData">',
+      '{"props":{"comment":{"databaseId":42,"automatedComment":{"suggestion":{"diffEntries":[{"path":"src/browser.ts","diffLines":[{"type":"DELETION","text":"old();"},{"type":"ADDITION","text":"new();"}]}]}}}}}',
+      '</script>',
+    ].join(''),
+  });
+
+  const result = await client.getWebSuggestedDiffs(
+    { host: 'github.com', owner: 'org', repo: 'repo' },
+    10,
+    { allowBrowserFallback: true },
+  );
+
+  assert.equal(result.provenance, 'browserDomAutomatedDiff');
+  assert.equal(result.suggestions.get('42')?.[0].path, 'src/browser.ts');
+});
+
+test('reports explicit web cookie failures when browser fallback cannot provide suggestions', async () => {
+  const client = new GitHubClient({
+    getToken: async () => 'api-token',
+    getWebCookie: async () => 'user_session=stale',
+    fetch: async (_url, init) => init?.headers === undefined
+      ? new Response('<html>No embedded suggestions</html>')
+      : new Response('bad cookie', { status: 401 }),
+    browserWebHtmlProvider: async () => '<html>No embedded suggestions</html>',
+  });
+
+  await assert.rejects(
+    () => client.getWebSuggestedDiffs(
+      { host: 'github.com', owner: 'org', repo: 'repo' },
+      10,
+      { allowBrowserFallback: true },
+    ),
+    /Fetch GitHub web PR page failed/,
+  );
+});
+
+test('does not use browser-backed extractor unless explicitly enabled', async () => {
+  let browserCalled = false;
+  const client = new GitHubClient({
+    getToken: async () => 'api-token',
+    getWebCookie: async () => undefined,
+    fetch: async () => new Response('<html>No embedded suggestions</html>'),
+    browserWebHtmlProvider: async () => {
+      browserCalled = true;
+      return '';
+    },
+  });
+
+  const result = await client.getWebSuggestedDiffs({ host: 'github.com', owner: 'org', repo: 'repo' }, 10);
+
+  assert.equal(browserCalled, false);
+  assert.equal(result.suggestions.size, 0);
+  assert.equal(result.provenance, 'externalBotUnavailable');
+});

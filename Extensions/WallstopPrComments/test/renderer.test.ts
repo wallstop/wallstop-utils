@@ -114,6 +114,8 @@ test('renders public web suggested diffs as changed lines only', () => {
         suggestedDiffs: [
           {
             kind: 'changedLines',
+            source: 'githubWebAutomatedDiff',
+            confidence: 'medium',
             value: '-          document.getElementById(id),\n+          element.ownerDocument.getElementById(id),',
           },
         ],
@@ -126,6 +128,46 @@ test('renders public web suggested diffs as changed lines only', () => {
 
   assert.match(output, /Suggested change:\n-          document\.getElementById\(id\),\n\+          element\.ownerDocument\.getElementById\(id\),/);
   assert.doesNotMatch(output, /@@|not\.toBeNull|CONTEXT/);
+});
+
+test('renders mismatched web suggested diff paths in the suggestion label', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/commented.ts',
+    isResolved: false,
+    line: 10,
+    comments: [
+      {
+        id: 'comment-1',
+        body: 'Copilot suggested changeset available in the GitHub web UI.',
+        authorLogin: 'copilot-pull-request-reviewer[bot]',
+        suggestedDiffs: [
+          {
+            kind: 'changedLines',
+            source: 'githubWebAutomatedDiff',
+            confidence: 'medium',
+            path: 'src/changed.ts',
+            value: '-old();\n+new();',
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.ok(record);
+  assert.equal(
+    formatReviewThreadRecords([record]),
+    [
+      '---',
+      '(src/commented.ts) 10-10',
+      'Comment:',
+      'Copilot suggested changeset available in the GitHub web UI.',
+      'Suggested change (src/changed.ts):',
+      '-old();',
+      '+new();',
+      '---',
+    ].join('\n'),
+  );
 });
 
 test('keeps unavailable web-only suggestions as metadata without fake suggested-change text', () => {

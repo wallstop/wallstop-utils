@@ -147,6 +147,31 @@ surface for the same GitHub PR comment extraction contracts.
   unavailable. Keep record creation and text rendering on one shared renderable
   comment predicate so placeholder-only unavailable suggestions do not become
   `No review comments found.`.
+- Keep extension suggested-change acquisition ordered by trust: extract API
+  ` ```suggestion ` fences first as `source: apiMarkdownSuggestion`,
+  `confidence: high`; then enrich only `github.com` records from GitHub web PR
+  `/files` HTML, trying public HTML, sanitized-cookie HTML, and finally the
+  opt-in browser HTML provider. The browser provider is configured only through
+  the application-scoped user/global
+  `wallstopPrComments.browserWebSuggestionsCommand` setting
+  (`.inspect(...).globalValue`; ignore workspace values), receives the PR
+  `/files` URL, and must return an HTML string or `{ html: string }`.
+- Trust web/browser suggested diffs only when parsed from
+  `comment.automatedComment.suggestion.diffEntries`, keyed by comment
+  `databaseId` or discussion URL. Reject lookalike JSON embedded in
+  user-authored `body` fields and sibling `suggestion.diffEntries` without
+  `automatedComment` provenance; expose only `DELETION`/`ADDITION` lines,
+  prefix every physical line after CR/LF normalization, label cross-path diffs
+  as `Suggested change (<path>):`, and retain `source`/`confidence`
+  (`githubWebAutomatedDiff` or `browserDomAutomatedDiff`, `medium`).
+- Keep extension Cursor/Bugbot handling conservative: external fixes not exposed
+  by GitHub remain unavailable records (`unavailableSource:
+  externalBotUnavailable`, `unavailableConfidence: unavailable`) instead of fake
+  suggested diffs; embedded `LOCATIONS` are trusted only from normalized exact
+  bot logins `cursor[bot]`, `cursor-bugbot[bot]`, or `bugbot[bot]`. Same-path
+  embedded ranges may override file-anchored review ranges, mismatched embedded
+  paths must not override file-anchored threads, and conversation-level bot
+  comments may use the first embedded location.
 - Keep extension UI state resilient: persisted repository lists are untrusted
   input and must be shape-checked/sanitized on read, skipping invalid entries
   instead of throwing from tree/sidebar code.

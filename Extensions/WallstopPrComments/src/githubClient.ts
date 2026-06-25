@@ -9,17 +9,22 @@ import type {
   ReviewScope,
   ReviewThread,
   ReviewThreadResult,
-  SuggestedDiff,
+  WebSuggestedDiffResult,
 } from './types';
 
 interface GitHubClientOptions {
   getToken(host: string, createIfNone?: boolean): Promise<string | undefined>;
   getWebCookie?(host: string): Promise<string | undefined>;
+  browserWebHtmlProvider?(url: string): Promise<string | undefined>;
   fetch?: FetchLike;
 }
 
 interface AuthRequestOptions {
   promptForAuth?: boolean;
+}
+
+interface WebSuggestionRequestOptions {
+  allowBrowserFallback?: boolean;
 }
 
 interface GraphQLPageInfo {
@@ -29,7 +34,7 @@ interface GraphQLPageInfo {
 
 interface GraphQLCommentNode {
   id: string;
-  databaseId?: number;
+  databaseId?: number | string;
   body?: string;
   diffHunk?: string | null;
   path?: string | null;
@@ -222,26 +227,73 @@ export class GitHubClient {
     }
   }
 
-  async getWebSuggestedDiffs(repository: RepositoryRef, prNumber: number): Promise<Map<string, SuggestedDiff[]>> {
+  async getWebSuggestedDiffs(
+    repository: RepositoryRef,
+    prNumber: number,
+    options: WebSuggestionRequestOptions = {},
+  ): Promise<WebSuggestedDiffResult> {
     if (repository.host.toLowerCase() !== 'github.com') {
-      return new Map();
+      return { suggestions: new Map(), provenance: 'externalBotUnavailable' };
     }
 
-    const cookie = sanitizeHeaderValue(await this.options.getWebCookie?.(repository.host));
-    if (cookie === undefined) {
-      return new Map();
+    const url = `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/pull/${prNumber}/files`;
+    const publicHtml = await this.fetchGitHubWebHtml(url, undefined, false);
+    if (publicHtml !== undefined) {
+      const publicSuggestions = extractAutomatedSuggestedDiffsFromHtml(publicHtml, 'githubWebAutomatedDiff');
+      if (publicSuggestions.size > 0) {
+        return { suggestions: publicSuggestions, provenance: 'githubWebAutomatedDiff' };
+      }
     }
 
-    const response = await this.fetch(
-      `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/pull/${prNumber}/files`,
-      { headers: { Cookie: cookie } },
-    );
+    const safeCookie = sanitizeHeaderValue(await this.options.getWebCookie?.(repository.host));
+    let privateFetchError: unknown;
+    if (safeCookie !== undefined) {
+      try {
+        const privateHtml = await this.fetchGitHubWebHtml(url, { Cookie: safeCookie }, true);
+        if (privateHtml !== undefined) {
+          const privateSuggestions = extractAutomatedSuggestedDiffsFromHtml(privateHtml, 'githubWebAutomatedDiff');
+          if (privateSuggestions.size > 0) {
+            return { suggestions: privateSuggestions, provenance: 'githubWebAutomatedDiff' };
+          }
+        }
+      } catch (error) {
+        privateFetchError = error;
+      }
+    }
+
+    if (options.allowBrowserFallback === true && this.options.browserWebHtmlProvider !== undefined) {
+      const browserHtml = await this.options.browserWebHtmlProvider(url);
+      if (browserHtml !== undefined) {
+        const browserSuggestions = extractAutomatedSuggestedDiffsFromHtml(browserHtml, 'browserDomAutomatedDiff');
+        if (browserSuggestions.size > 0) {
+          return { suggestions: browserSuggestions, provenance: 'browserDomAutomatedDiff' };
+        }
+      }
+    }
+
+    if (privateFetchError !== undefined) {
+      throw privateFetchError;
+    }
+
+    return { suggestions: new Map(), provenance: 'externalBotUnavailable' };
+  }
+
+  private async fetchGitHubWebHtml(
+    url: string,
+    headers: Record<string, string> | undefined,
+    throwOnFailure: boolean,
+  ): Promise<string | undefined> {
+    const response = await this.fetch(url, headers === undefined ? undefined : { headers });
     const html = await response.text();
     if (!response.ok) {
-      throw new HttpError('Fetch GitHub web PR page failed.', response.status, html);
+      if (throwOnFailure) {
+        throw new HttpError('Fetch GitHub web PR page failed.', response.status, html);
+      }
+
+      return undefined;
     }
 
-    return extractAutomatedSuggestedDiffsFromHtml(html);
+    return html;
   }
 
   private async fetchGraphQLReviewThreads(repository: RepositoryRef, prNumber: number, token: string): Promise<ReviewThread[]> {
@@ -555,7 +607,8 @@ function mergeRestComments(threads: ReviewThread[], restComments: readonly RestR
 
   for (const thread of threads) {
     for (const comment of thread.comments) {
-      const rest = comment.databaseId === undefined ? undefined : byDatabaseId.get(comment.databaseId) ?? byNodeId.get(comment.id ?? '');
+      const restByDatabaseId = typeof comment.databaseId === 'number' ? byDatabaseId.get(comment.databaseId) : undefined;
+      const rest = restByDatabaseId ?? byNodeId.get(comment.id ?? '');
       if (rest === undefined) {
         continue;
       }
