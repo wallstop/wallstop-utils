@@ -365,3 +365,84 @@ test('does not fabricate a suggestion diff when a diff hunk has no resolvable li
   assert.match(output, /Suggested change:\ntweaked\(\);/u);
   assert.equal(output.includes('-addedLine'), false, 'must not fabricate deletions from unrelated hunk context');
 });
+
+test('reconstructs a suggestion diff from a truncated hunk whose header understates the commented line', () => {
+  // Real GitHub diff_hunks for comments on large hunks are truncated to their tail
+  // while keeping the original @@ header, so the header's absolute new-side numbering
+  // (here +10) never reaches the commented line (142). Forward-counting the before-
+  // context yields '' and the suggestion would render added-only; end-anchoring
+  // recovers the replaced line, so both the removed (-) and added (+) lines render.
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/big.ts',
+    isResolved: false,
+    isOutdated: false,
+    startLine: 142,
+    line: 142,
+    comments: [
+      {
+        id: 'comment-1',
+        body: ['Rename it.', '', '```suggestion', 'renamedCall();', '```'].join('\n'),
+        diffHunk: ['@@ -8,6 +10,6 @@ function run() {', ' ctx();', '-oldCall();', '+commentedCall();'].join('\n'),
+      },
+    ],
+  });
+
+  assert.ok(record);
+  const output = formatReviewThreadRecords([record]);
+
+  assert.match(output, /Suggested change:\n-commentedCall\(\);\n\+renamedCall\(\);/);
+  assert.doesNotMatch(output, /@@/);
+});
+
+test('reconstructs a multi-line suggestion diff anchored by a start_line..line range', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/multi.ts',
+    isResolved: false,
+    isOutdated: false,
+    startLine: 20,
+    line: 21,
+    comments: [
+      {
+        id: 'comment-1',
+        body: ['Fix both.', '', '```suggestion', 'first2();', 'second2();', '```'].join('\n'),
+        diffHunk: ['@@ -5,4 +5,4 @@', ' head();', '-first();', '-second();', '+first();', '+second();'].join('\n'),
+      },
+    ],
+  });
+
+  assert.ok(record);
+  const output = formatReviewThreadRecords([record]);
+
+  // before = the last 2 new-side lines (the additions the suggestion replaces).
+  assert.match(output, /Suggested change:\n-first\(\);\n-second\(\);\n\+first2\(\);\n\+second2\(\);/);
+});
+
+test('a content suggestion anchored to a known range always yields at least one deletion line', () => {
+  // Invariant: across header offsets, line drift past the header window, span clamping,
+  // and a trailing-deletion tail, whenever the hunk has a new-side line and the comment
+  // has a resolvable anchor, the reconstructed suggestion contains a '-' deletion line.
+  const cases = [
+    { startLine: 10, line: 10, diffHunk: '@@ -10,1 +10,1 @@\n-a();\n+a2();' },
+    { startLine: 300, line: 300, diffHunk: '@@ -1,2 +1,2 @@\n ctx();\n+anchor();' },
+    { startLine: 50, line: 52, diffHunk: '@@ -1,1 +1,1 @@\n+only();' },
+    { startLine: 12, line: 12, diffHunk: '@@ -8,4 +8,3 @@\n keep();\n anchor();\n-gone();' },
+  ];
+
+  for (const c of cases) {
+    const record = reviewThreadToRecord({
+      id: 'thread',
+      path: 'src/p.ts',
+      isResolved: false,
+      isOutdated: false,
+      startLine: c.startLine,
+      line: c.line,
+      comments: [{ id: 'c1', body: ['x', '', '```suggestion', 'NEW();', '```'].join('\n'), diffHunk: c.diffHunk }],
+    });
+
+    assert.ok(record);
+    const output = formatReviewThreadRecords([record]);
+    assert.match(output, /Suggested change:\n-/, `expected a deletion line for ${JSON.stringify(c)}`);
+  }
+});

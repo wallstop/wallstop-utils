@@ -150,3 +150,65 @@ test('trimDiffHunkToRange strips trailing phantom blanks while preserving a genu
 
   assert.equal(trimDiffHunkToRange(hunk, 1, 4), [' a', '-b', '+B', ' '].join('\n'));
 });
+
+// --- End-anchored before-context extraction (extractNewSideLinesInRange) ---
+// GitHub guarantees the commented line is the LAST new-side line of the diff_hunk
+// (the hunk is the diff up to and including the comment). So the before-context is
+// the last N new-side lines, where N is the anchored span — never the absolute
+// header number, which truncation and line drift corrupt. These cases pin that.
+
+test('extractNewSideLinesInRange end-anchors when a truncated header understates the commented line', () => {
+  // Header claims the new side starts at line 10, but the comment anchors at 142:
+  // GitHub truncated the hunk to its tail and kept the original @@ header. Forward-
+  // counting matches nothing (max computed new-side line is 11) and returns ''; the
+  // end-anchored scan takes the last new-side line — the commented line itself.
+  const hunk = ['@@ -8,6 +10,6 @@ function run() {', ' ctx();', '-oldCall();', '+commentedCall();'].join('\n');
+
+  assert.equal(extractNewSideLinesInRange(hunk, 142, 142), 'commentedCall();');
+});
+
+test('extractNewSideLinesInRange returns the last N new-side lines for a multi-line anchor', () => {
+  const hunk = ['@@ -1,5 +1,5 @@', ' a();', ' b();', ' c();'].join('\n');
+
+  // Anchor 200..201 (span N=2) is far past the header's absolute numbering, yet the
+  // last two new-side lines are the replaced region.
+  assert.equal(extractNewSideLinesInRange(hunk, 200, 201), ['b();', 'c();'].join('\n'));
+});
+
+test('extractNewSideLinesInRange clamps the span to the available new-side lines', () => {
+  // A span wider than the hunk shows (heavy truncation) takes every available new-side
+  // line — an honest shorter "before", never a fabricated one.
+  const hunk = ['@@ -1,2 +1,2 @@', '+a', '+b'].join('\n');
+
+  assert.equal(extractNewSideLinesInRange(hunk, 5, 12), ['a', 'b'].join('\n'));
+});
+
+test('extractNewSideLinesInRange anchors on the last real new-side line past a trailing deletion', () => {
+  // The commented new-side line is the last context/addition row; a trailing deletion
+  // run is not on the new side and must be skipped, not anchored to.
+  const hunk = ['@@ -10,3 +10,2 @@', ' keep();', ' anchor();', '-removed();'].join('\n');
+
+  assert.equal(extractNewSideLinesInRange(hunk, 11, 11), 'anchor();');
+});
+
+test('extractNewSideLinesInRange returns empty for a pure-deletion hunk with no new-side line', () => {
+  // No current file line survives at the anchor → no before-context to show. The
+  // caller renders the suggestion as raw text rather than fabricating deletions.
+  const hunk = ['@@ -10,2 +10,0 @@', '-x();', '-y();'].join('\n');
+
+  assert.equal(extractNewSideLinesInRange(hunk, 10, 10), '');
+});
+
+test('extractNewSideLinesInRange returns empty for a missing hunk or absent anchor', () => {
+  assert.equal(extractNewSideLinesInRange(undefined, 5, 5), '');
+  // No anchor at all must never fabricate deletions, even though an unbounded window
+  // would otherwise sweep the whole hunk.
+  assert.equal(extractNewSideLinesInRange('@@ -1,1 +1,1 @@\n+a', undefined, undefined), '');
+});
+
+test('extractNewSideLinesInRange uses a single-line span when only one bound is known', () => {
+  const hunk = ['@@ -1,2 +1,2 @@', ' a();', ' b();'].join('\n');
+
+  assert.equal(extractNewSideLinesInRange(hunk, 50, undefined), 'b();');
+  assert.equal(extractNewSideLinesInRange(hunk, undefined, 50), 'b();');
+});

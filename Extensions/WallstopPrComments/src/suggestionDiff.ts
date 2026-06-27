@@ -94,9 +94,24 @@ export function trimDiffHunkToRange(
 
 /**
  * Returns the current new-side file lines (context + additions, markers
- * stripped) of `diffHunk` that fall within `[start, end]` — i.e. the lines a
- * suggestion anchored to that range would replace. Used as the "before" side
- * when reconstructing a suggestion into a unified diff.
+ * stripped) that a suggestion anchored to `[start, end]` would replace — the
+ * "before" side when reconstructing a suggestion into a unified diff.
+ *
+ * GitHub guarantees the commented line is the *last* new-side line of the
+ * `diff_hunk` (the hunk is the diff up to and including the comment), so this
+ * anchors from the END: it returns the last `N` new-side lines, where `N` is the
+ * anchored span (`end - start + 1`, or `1` when only one bound is known), clamped
+ * to the available new-side lines. Anchoring on that structural guarantee and a
+ * *relative* span — never the absolute header line number — is what makes it
+ * robust to two real-world hazards that the forward-counting approach silently
+ * failed on: GitHub truncating a long hunk to its tail while keeping the original
+ * `@@` header, and the thread `line` drifting past the hunk window after later
+ * commits. Both leave the header numbering unable to reach the anchor, which
+ * previously yielded an empty before-context and a deletion-less suggestion.
+ *
+ * Returns `''` (so the caller renders the suggestion as raw text rather than
+ * fabricating deletions) when the hunk is missing, exposes no new-side line
+ * (pure deletion), or no anchor is supplied.
  */
 export function extractNewSideLinesInRange(
   diffHunk: string | undefined,
@@ -107,30 +122,39 @@ export function extractNewSideLinesInRange(
     return '';
   }
 
+  // No anchor at all: the replaced range is unknowable, so never fabricate a
+  // before-context. (Guards the function in isolation; records.ts also gates the
+  // call on a resolvable anchor.)
+  if (start === undefined && end === undefined) {
+    return '';
+  }
+
   const lines = normalizeLineEndings(diffHunk).split('\n');
   const headerIndex = lines.findIndex((line) => HUNK_HEADER.test(line));
   const body = dropTrailingEmptyLine(headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines);
-  const headerMatch = headerIndex >= 0 ? HUNK_HEADER.exec(lines[headerIndex]) : null;
-  let newLine = headerMatch?.groups?.newStart !== undefined ? Number.parseInt(headerMatch.groups.newStart, 10) : 1;
-  const rangeStart = start ?? end ?? Number.NEGATIVE_INFINITY;
-  const rangeEnd = end ?? start ?? Number.POSITIVE_INFINITY;
 
-  const kept: string[] = [];
+  // The new-side file lines (context + additions, markers stripped), in order.
+  // Deletions are not on the new side and are skipped — including a trailing
+  // deletion run, so the last entry stays the commented line.
+  const newSide: string[] = [];
   for (const line of body) {
     const marker = line[0];
     if (marker === '-') {
       continue;
     }
 
-    if (marker === '+' || marker === ' ' || marker === undefined) {
-      if (newLine >= rangeStart && newLine <= rangeEnd) {
-        kept.push(line.length > 0 && (marker === '+' || marker === ' ') ? line.slice(1) : line);
-      }
-      newLine += 1;
-    }
+    // marker === undefined is an interior blank body line that survived
+    // dropTrailingEmptyLine: a genuine, empty new-side line. Keep it as ''.
+    newSide.push(marker === '+' || marker === ' ' ? line.slice(1) : line);
   }
 
-  return kept.join('\n');
+  if (newSide.length === 0) {
+    return '';
+  }
+
+  const span = start !== undefined && end !== undefined ? end - start + 1 : 1;
+  const take = Math.min(Math.max(span, 1), newSide.length);
+  return newSide.slice(newSide.length - take).join('\n');
 }
 
 /**

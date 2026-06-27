@@ -1340,6 +1340,138 @@ function Get-ReviewCommentDiffHunk {
     return ($diffHunk -replace "`r`n", "`n" -replace "`r", "`n")
 }
 
+function Get-NewSideLinesInRange {
+    # Returns the current new-side file lines (context + additions, markers stripped) that a
+    # suggestion anchored to [Start, End] would replace -- the "before" side when reconstructing a
+    # suggestion into a unified diff. GitHub guarantees the commented line is the LAST new-side line
+    # of the diff_hunk (the hunk is the diff up to and including the comment), so this anchors from
+    # the END: it returns the last N new-side lines, where N is the anchored span (End - Start + 1,
+    # or 1 when only one bound is known), clamped to the available new-side lines. Anchoring on that
+    # structural guarantee and a RELATIVE span -- never the absolute header line number -- is what
+    # makes it robust to two real-world hazards the forward-counting approach silently failed on:
+    # GitHub truncating a long hunk to its tail while keeping the original @@ header, and the thread
+    # line drifting past the hunk window after later commits. Both leave the header numbering unable
+    # to reach the anchor, which previously yielded an empty before-context and a deletion-less
+    # suggestion. Returns "" (so the caller renders the suggestion verbatim rather than fabricating
+    # deletions) when the hunk is missing, exposes no new-side line (pure deletion), or no anchor
+    # is supplied.
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$DiffHunk,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Start,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $End
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DiffHunk)) {
+        return ""
+    }
+    # No anchor at all: the replaced range is unknowable, so never fabricate a before-context.
+    if ($null -eq $Start -and $null -eq $End) {
+        return ""
+    }
+
+    $normalized = $DiffHunk -replace "`r`n", "`n" -replace "`r", "`n"
+    $lines = $normalized -split "`n"
+
+    $headerIndex = -1
+    for ($i = 0; $i -lt $lines.Length; $i++) {
+        if ($lines[$i] -match '^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@') {
+            $headerIndex = $i
+            break
+        }
+    }
+
+    $bodyStart = if ($headerIndex -ge 0) { $headerIndex + 1 } else { 0 }
+    $body = New-Object System.Collections.Generic.List[string]
+    for ($i = $bodyStart; $i -lt $lines.Length; $i++) {
+        $body.Add([string]$lines[$i]) | Out-Null
+    }
+    # Drop every trailing empty body line: a diff_hunk terminated by a trailing newline splits into a
+    # phantom empty element that must not surface as a spurious new-side line.
+    while ($body.Count -gt 0 -and $body[$body.Count - 1] -eq "") {
+        $body.RemoveAt($body.Count - 1)
+    }
+
+    # New-side lines (context + additions, markers stripped). Deletions are not on the new side --
+    # including a trailing deletion run -- so the last kept entry stays the commented line.
+    $newSide = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $body) {
+        $marker = if ($line.Length -gt 0) { $line.Substring(0, 1) } else { "" }
+        if ($marker -eq "-") {
+            continue
+        }
+        if ($marker -eq "+" -or $marker -eq " ") {
+            $newSide.Add($line.Substring(1)) | Out-Null
+        }
+        else {
+            # An interior blank body line ("" with no marker): a genuine, empty new-side line.
+            $newSide.Add($line) | Out-Null
+        }
+    }
+
+    if ($newSide.Count -eq 0) {
+        return ""
+    }
+
+    $span = if ($null -ne $Start -and $null -ne $End) { [int]$End - [int]$Start + 1 } else { 1 }
+    if ($span -lt 1) {
+        $span = 1
+    }
+    $take = [Math]::Min($span, $newSide.Count)
+    $selected = $newSide.GetRange($newSide.Count - $take, $take)
+    return [string]::Join("`n", $selected)
+}
+
+function ConvertTo-ReconstructedSuggestionDiff {
+    # Builds a GitHub-style unified diff from the lines a "```suggestion" block replaces (Before, the
+    # current new-side content recovered from the diff_hunk) and the suggested replacement (After):
+    # every original line becomes a "-" deletion and every suggested line a "+" addition, the same
+    # transformation GitHub renders for a suggested change. Returns "" when there is no Before context
+    # (a pure addition is just the suggestion text and adds no diff value); an empty After yields a
+    # pure-deletion diff.
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Before,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$After
+    )
+
+    if ([string]::IsNullOrEmpty($Before)) {
+        return ""
+    }
+
+    $beforeLines = ($Before -replace "`r`n", "`n" -replace "`r", "`n") -split "`n"
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($beforeLine in $beforeLines) {
+        $lines.Add("-$beforeLine") | Out-Null
+    }
+    if (-not [string]::IsNullOrEmpty($After)) {
+        $afterLines = ($After -replace "`r`n", "`n" -replace "`r", "`n") -split "`n"
+        foreach ($afterLine in $afterLines) {
+            $lines.Add("+$afterLine") | Out-Null
+        }
+    }
+
+    return [string]::Join("`n", $lines)
+}
+
 function New-CommentRecommendationRecord {
     [OutputType([object])]
     [CmdletBinding()]
@@ -3777,6 +3909,29 @@ function Convert-ReviewThreadToOutputRecord {
         if (-not $KeepMarkup.IsPresent) {
             $commentSuggestionRecords = @(Get-CommentSuggestionBlocks -Text $commentBody -AuthorLogin $commentAuthorLogin -CommentIndex $commentIndex -Url $commentUrl)
         }
+
+        # Reconstruct each suggestion into a -/+ unified diff using the comment's diff_hunk as the
+        # "before" (recovered end-anchored, so a truncated hunk or a drifted line still resolves) and
+        # the suggestion code as the "after", so the rendered change shows both the removed and added
+        # lines instead of new code only. The diff is attached as an internal `diff` field consumed by
+        # the text renderer; the public JSON serializer reads `code`, so JSON stays verbatim.
+        if ((Get-SafeCount -InputObject $commentSuggestionRecords) -gt 0) {
+            $beforeContext = Get-NewSideLinesInRange -DiffHunk $commentDiffHunk -Start $lineStart -End $lineEnd
+            if (-not [string]::IsNullOrEmpty($beforeContext)) {
+                foreach ($suggestionRecord in $commentSuggestionRecords) {
+                    if ($null -eq $suggestionRecord) {
+                        continue
+                    }
+
+                    $suggestionAfter = Get-ObjectPropertyValue -InputObject $suggestionRecord -Name "code"
+                    $reconstructedDiff = ConvertTo-ReconstructedSuggestionDiff -Before $beforeContext -After ([string]$suggestionAfter)
+                    if (-not [string]::IsNullOrEmpty($reconstructedDiff)) {
+                        $suggestionRecord | Add-Member -NotePropertyName "diff" -NotePropertyValue $reconstructedDiff -Force
+                    }
+                }
+            }
+        }
+
         $suggestedDiffsUnavailableReason = Get-SuggestedDiffsUnavailableReason -AuthorLogin $commentAuthorLogin -Body $commentBody -SuggestedChangeCount (Get-SafeCount -InputObject $commentSuggestionRecords)
 
         # Create a comments[] record when the comment is renderable now, OR when it is a candidate for
@@ -3969,6 +4124,20 @@ function Add-SuggestionRenderLines {
 
     foreach ($suggestion in @($Suggestions)) {
         if ($null -eq $suggestion) {
+            continue
+        }
+
+        # A reconstructed -/+ unified diff (the removed lines recovered from the comment's diff_hunk
+        # plus the suggested additions) is preferred over the verbatim code so the rendered change
+        # reads as a real diff with both red and green lines. The verbatim code remains the public
+        # JSON value, which stays copy-paste accurate.
+        $diff = Get-ObjectPropertyValue -InputObject $suggestion -Name "diff"
+        $diffText = if ($null -eq $diff) { "" } else { [string]$diff }
+        if (-not [string]::IsNullOrEmpty($diffText)) {
+            $Lines.Add("Suggested change:") | Out-Null
+            foreach ($diffLine in ($diffText -split "`n")) {
+                $Lines.Add($diffLine) | Out-Null
+            }
             continue
         }
 

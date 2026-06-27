@@ -5951,3 +5951,175 @@ Describe "Strict-mode collection shape safety" {
         (@($null)).Count | Should -Be 1
     }
 }
+
+Describe "Suggestion diff reconstruction (end-anchored before-context)" {
+    Context "Get-NewSideLinesInRange" {
+        It "end-anchors when a truncated header understates the commented line" {
+            # Header claims the new side starts at 10, but the comment anchors at 142:
+            # GitHub truncated the hunk to its tail and kept the original @@ header.
+            $hunk = "@@ -8,6 +10,6 @@ function run() {`n ctx();`n-oldCall();`n+commentedCall();"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 142 -End 142 | Should -BeExactly "commentedCall();"
+        }
+
+        It "returns the last N new-side lines for a multi-line anchor" {
+            $hunk = "@@ -1,5 +1,5 @@`n a();`n b();`n c();"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 200 -End 201 | Should -BeExactly "b();`nc();"
+        }
+
+        It "clamps the span to the available new-side lines" {
+            $hunk = "@@ -1,2 +1,2 @@`n+a`n+b"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 5 -End 12 | Should -BeExactly "a`nb"
+        }
+
+        It "anchors on the last real new-side line past a trailing deletion" {
+            $hunk = "@@ -10,3 +10,2 @@`n keep();`n anchor();`n-removed();"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 11 -End 11 | Should -BeExactly "anchor();"
+        }
+
+        It "returns empty for a pure-deletion hunk with no new-side line" {
+            $hunk = "@@ -10,2 +10,0 @@`n-x();`n-y();"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 10 -End 10 | Should -BeExactly ""
+        }
+
+        It "returns empty for a missing hunk or absent anchor" {
+            Get-NewSideLinesInRange -DiffHunk $null -Start 5 -End 5 | Should -BeExactly ""
+            Get-NewSideLinesInRange -DiffHunk "@@ -1,1 +1,1 @@`n+a" -Start $null -End $null | Should -BeExactly ""
+        }
+    }
+
+    Context "ConvertTo-ReconstructedSuggestionDiff" {
+        It "emits removed lines then added lines" {
+            ConvertTo-ReconstructedSuggestionDiff -Before "document.getElementById(id)," -After "element.ownerDocument.getElementById(id)," |
+                Should -BeExactly "-document.getElementById(id),`n+element.ownerDocument.getElementById(id),"
+        }
+
+        It "renders an empty suggestion as a pure deletion and renders no before as empty" {
+            ConvertTo-ReconstructedSuggestionDiff -Before "drop();" -After "" | Should -BeExactly "-drop();"
+            ConvertTo-ReconstructedSuggestionDiff -Before "" -After "added();" | Should -BeExactly ""
+        }
+    }
+
+    Context "Convert-ReviewThreadToOutputRecord end-to-end" {
+        It "reconstructs a -/+ suggestion diff from a truncated hunk" {
+            $body = @'
+Rename it.
+
+```suggestion
+renamedCall();
+```
+'@
+            $thread = [pscustomobject]@{
+                id         = "THREAD_TRUNC"
+                isResolved = $false
+                isOutdated = $false
+                path       = "src/big.ts"
+                startLine  = 142
+                line       = 142
+                comments   = [pscustomobject]@{
+                    nodes = @([pscustomobject]@{
+                            body      = $body
+                            diff_hunk = "@@ -8,6 +10,6 @@ function run() {`n ctx();`n-oldCall();`n+commentedCall();"
+                        })
+                }
+            }
+
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+            $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+            $text | Should -Match "Suggested change:"
+            $text | Should -Match ([regex]::Escape("-commentedCall();"))
+            $text | Should -Match ([regex]::Escape("+renamedCall();"))
+        }
+
+        It "reconstructs both removed lines for a multi-line suggestion" {
+            $body = @'
+Fix both.
+
+```suggestion
+first2();
+second2();
+```
+'@
+            $thread = [pscustomobject]@{
+                id         = "THREAD_MULTI"
+                isResolved = $false
+                isOutdated = $false
+                path       = "src/multi.ts"
+                startLine  = 20
+                line       = 21
+                comments   = [pscustomobject]@{
+                    nodes = @([pscustomobject]@{
+                            body      = $body
+                            diff_hunk = "@@ -5,4 +5,4 @@`n head();`n-first();`n-second();`n+first();`n+second();"
+                        })
+                }
+            }
+
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+            $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+            $text | Should -Match ([regex]::Escape("-first();"))
+            $text | Should -Match ([regex]::Escape("-second();"))
+            $text | Should -Match ([regex]::Escape("+first2();"))
+            $text | Should -Match ([regex]::Escape("+second2();"))
+        }
+
+        It "keeps JSON suggestedChanges verbatim (added-only value), not the reconstructed diff" {
+            $body = @'
+Rename it.
+
+```suggestion
+renamedCall();
+```
+'@
+            $thread = [pscustomobject]@{
+                id         = "THREAD_JSON"
+                isResolved = $false
+                isOutdated = $false
+                path       = "src/big.ts"
+                startLine  = 142
+                line       = 142
+                comments   = [pscustomobject]@{
+                    nodes = @([pscustomobject]@{
+                            body      = $body
+                            diff_hunk = "@@ -8,6 +10,6 @@ function run() {`n ctx();`n-oldCall();`n+commentedCall();"
+                        })
+                }
+            }
+
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+            $parsed = (Format-UnresolvedThreadsAsJson -Records @($record)) | ConvertFrom-Json
+
+            $parsed[0].comments[0].suggestedChanges[0].kind | Should -Be "suggestion"
+            $parsed[0].comments[0].suggestedChanges[0].value | Should -BeExactly "renamedCall();"
+        }
+
+        It "does not fabricate a deletion when the comment has no diff hunk" {
+            $body = @'
+Tweak it.
+
+```suggestion
+tweaked();
+```
+'@
+            $thread = [pscustomobject]@{
+                id         = "THREAD_NOHUNK"
+                isResolved = $false
+                isOutdated = $false
+                path       = "src/main.ts"
+                startLine  = 5
+                line       = 5
+                comments   = [pscustomobject]@{
+                    nodes = @([pscustomobject]@{ body = $body })
+                }
+            }
+
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+            $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+            $text | Should -Match "Suggested change:"
+            $text | Should -Match "(?m)^tweaked\(\);$"
+            $text | Should -Not -Match "(?m)^\+tweaked"
+        }
+    }
+}

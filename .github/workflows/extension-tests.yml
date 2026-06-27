@@ -1,0 +1,52 @@
+name: WallstopPrComments Extension Tests
+
+on:
+  pull_request:
+    paths:
+      - "Extensions/WallstopPrComments/**"
+      - ".github/workflows/extension-tests.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "Extensions/WallstopPrComments/**"
+      - ".github/workflows/extension-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Compile the TypeScript extension and run its node:test suite. This is the
+  # gate that keeps the suggestion-diff invariant (a content suggestion anchored
+  # to a known range renders both removed (-) and added (+) lines) from
+  # regressing, alongside the rest of the extension's behavioral coverage.
+  # ---------------------------------------------------------------------------
+  extension-test:
+    name: Compile and test (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: Extensions/WallstopPrComments
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: Extensions/WallstopPrComments/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile and run tests
+        run: npm test
