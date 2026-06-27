@@ -40,6 +40,7 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
   private readonly pullRequestCache = new Map<string, PullRequestSummary[]>();
   private readonly errorCache = new Map<string, string>();
   private readonly inFlightLoads = new Map<string, { generation: number; promise: Promise<void> }>();
+  private readonly repositoryNodes = new Map<string, RepositoryNode>();
   private loadGeneration = 0;
 
   constructor(
@@ -47,12 +48,34 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
     private readonly client: GitHubClient,
   ) {}
 
-  refresh(): void {
+  refresh(repository?: RepositoryRef): void {
+    if (repository !== undefined) {
+      this.refreshRepository(repository);
+      return;
+    }
+
     this.loadGeneration += 1;
     this.pullRequestCache.clear();
     this.errorCache.clear();
     this.inFlightLoads.clear();
+    this.repositoryNodes.clear();
     this.onDidChangeTreeDataEmitter.fire(undefined);
+  }
+
+  private refreshRepository(repository: RepositoryRef): void {
+    const key = repositoryKey(repository);
+    this.pullRequestCache.delete(key);
+    this.errorCache.delete(key);
+    this.inFlightLoads.delete(key);
+
+    const node = this.repositoryNodes.get(key);
+    if (node === undefined) {
+      // No memoized node means VS Code has never rendered this repo's subtree, so a
+      // targeted fire would be a no-op anyway. Nothing to refresh.
+      return;
+    }
+
+    this.onDidChangeTreeDataEmitter.fire(node);
   }
 
   async getChildren(element?: TreeNode): Promise<TreeNode[]> {
@@ -60,7 +83,7 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
       const repositories = this.repositories.list();
       return repositories.length === 0
         ? [{ kind: 'empty', label: 'No repositories pinned' }]
-        : repositories.map((repository) => ({ kind: 'repository', repository }));
+        : repositories.map((repository) => this.repositoryNode(repository));
     }
 
     if (element.kind === 'repository') {
@@ -91,6 +114,18 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
       case 'empty':
         return new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
     }
+  }
+
+  private repositoryNode(repository: RepositoryRef): RepositoryNode {
+    const key = repositoryKey(repository);
+    const existing = this.repositoryNodes.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const node: RepositoryNode = { kind: 'repository', repository };
+    this.repositoryNodes.set(key, node);
+    return node;
   }
 
   private async getRepositoryChildren(repository: RepositoryRef): Promise<TreeNode[]> {

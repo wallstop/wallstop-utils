@@ -1,8 +1,10 @@
 import { sanitizeHeaderValue } from './auth';
-import { extractAutomatedSuggestedDiffsFromHtml } from './webSuggestions';
+import { extractAutomatedSuggestedDiffsFromHtml, htmlHasSuggestionMarkers } from './webSuggestions';
 import { HttpError, isAuthFailure, readJsonResponse, type FetchLike } from './http';
 import { assertSafeGitHubHost } from './repositoryStore';
+import { createResilientFetch, type RetryInfo } from './resilientFetch';
 import type {
+  AccessibleRepository,
   PullRequestSummary,
   RepositoryRef,
   ReviewComment,
@@ -17,6 +19,14 @@ interface GitHubClientOptions {
   getWebCookie?(host: string): Promise<string | undefined>;
   browserWebHtmlProvider?(url: string): Promise<string | undefined>;
   fetch?: FetchLike;
+  /** Injected for instant, deterministic retry/backoff tests; defaults to real timers. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Injected clock for Retry-After/rate-limit math; defaults to {@link Date.now}. */
+  now?: () => number;
+  /** Maximum retry attempts for transient HTTP and GraphQL rate-limit failures. */
+  maxRetries?: number;
+  /** Optional sink for diagnostic messages (e.g. transient retries), surfaced via an output channel. */
+  log?: (message: string) => void;
 }
 
 interface AuthRequestOptions {
@@ -158,11 +168,27 @@ query ReviewThreadCommentsPage($threadId: ID!, $commentsCursor: String) {
   }
 }`;
 
+const GRAPHQL_MAX_RETRIES = 3;
+
+/** Page cap for `GET /user/repos` (100 per page) so very large accounts stay bounded. */
+const MAX_REPOSITORY_PAGES = 20;
+
 export class GitHubClient {
   private readonly fetch: FetchLike;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly now: () => number;
+  private readonly maxRetries: number;
 
   constructor(private readonly options: GitHubClientOptions) {
-    this.fetch = options.fetch ?? fetch;
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.now = options.now ?? Date.now;
+    this.maxRetries = options.maxRetries ?? GRAPHQL_MAX_RETRIES;
+    this.fetch = createResilientFetch(options.fetch ?? fetch, {
+      sleep: this.sleep,
+      now: this.now,
+      maxRetries: this.maxRetries,
+      onRetry: options.log === undefined ? undefined : (info) => options.log?.(formatRetryLog(info)),
+    });
   }
 
   async listPullRequests(repository: RepositoryRef, options: AuthRequestOptions = {}): Promise<PullRequestSummary[]> {
@@ -185,6 +211,34 @@ export class GitHubClient {
     }));
   }
 
+  async listAccessibleRepositories(host: string, options: AuthRequestOptions = {}): Promise<AccessibleRepository[]> {
+    const token = await this.options.getToken(host, options.promptForAuth === true);
+    if (token === undefined) {
+      throw new Error(`Authentication is required to list repositories for ${host}.`);
+    }
+
+    const repositories: AccessibleRepository[] = [];
+    for (let page = 1; page <= MAX_REPOSITORY_PAGES; page++) {
+      const response = await this.fetch(
+        `${restBaseUrl(host)}/user/repos?per_page=100&page=${page}&sort=pushed&affiliation=owner,collaborator,organization_member`,
+        { headers: this.restHeaders(token) },
+      );
+      const pageRepositories = await readJsonResponse<unknown[]>(response, 'List accessible repositories');
+      for (const value of pageRepositories) {
+        const mapped = mapAccessibleRepository(host, value);
+        if (mapped !== undefined) {
+          repositories.push(mapped);
+        }
+      }
+
+      if (pageRepositories.length < 100) {
+        break;
+      }
+    }
+
+    return repositories;
+  }
+
   async getReviewThreads(
     repository: RepositoryRef,
     prNumber: number,
@@ -197,16 +251,18 @@ export class GitHubClient {
     }
 
     if (token === undefined) {
-      return {
-        threads: await this.fetchRestReviewThreads(repository, prNumber, undefined),
-        warnings: ['GraphQL authentication unavailable; copied all review comments from REST with unknown resolved state.'],
-      };
+      const warnings = ['GraphQL authentication unavailable; copied all review comments from REST with unknown resolved state.'];
+      const threads = await this.fetchRestReviewThreads(repository, prNumber, undefined, warnings);
+      return { threads, warnings };
     }
 
     try {
       const warnings: string[] = [];
-      const threads = await this.fetchGraphQLReviewThreads(repository, prNumber, token);
+      const threads = await this.fetchGraphQLReviewThreads(repository, prNumber, token, warnings);
       try {
+        // Best-effort enrichment of GraphQL bodies; intentionally not given the `warnings` sink, so a
+        // partial REST page here does not raise a misleading "incomplete" alarm over data GraphQL
+        // already supplies in full. A first-page failure still throws and is reported just below.
         const restComments = await this.fetchRestReviewComments(repository, prNumber, token);
         mergeRestComments(threads, restComments);
       } catch (error) {
@@ -237,12 +293,14 @@ export class GitHubClient {
     }
 
     const url = `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/pull/${prNumber}/files`;
+    let sawSuggestionMarkers = false;
     const publicHtml = await this.fetchGitHubWebHtml(url, undefined, false);
     if (publicHtml !== undefined) {
       const publicSuggestions = extractAutomatedSuggestedDiffsFromHtml(publicHtml, 'githubWebAutomatedDiff');
       if (publicSuggestions.size > 0) {
         return { suggestions: publicSuggestions, provenance: 'githubWebAutomatedDiff' };
       }
+      sawSuggestionMarkers ||= htmlHasSuggestionMarkers(publicHtml);
     }
 
     const safeCookie = sanitizeHeaderValue(await this.options.getWebCookie?.(repository.host));
@@ -255,6 +313,7 @@ export class GitHubClient {
           if (privateSuggestions.size > 0) {
             return { suggestions: privateSuggestions, provenance: 'githubWebAutomatedDiff' };
           }
+          sawSuggestionMarkers ||= htmlHasSuggestionMarkers(privateHtml);
         }
       } catch (error) {
         privateFetchError = error;
@@ -268,6 +327,7 @@ export class GitHubClient {
         if (browserSuggestions.size > 0) {
           return { suggestions: browserSuggestions, provenance: 'browserDomAutomatedDiff' };
         }
+        sawSuggestionMarkers ||= htmlHasSuggestionMarkers(browserHtml);
       }
     }
 
@@ -275,7 +335,10 @@ export class GitHubClient {
       throw privateFetchError;
     }
 
-    return { suggestions: new Map(), provenance: 'webOnlyUnavailable' };
+    return {
+      suggestions: new Map(),
+      provenance: sawSuggestionMarkers ? 'webSuggestionMarkersUnparseable' : 'webOnlyUnavailable',
+    };
   }
 
   private async fetchGitHubWebHtml(
@@ -296,28 +359,45 @@ export class GitHubClient {
     return html;
   }
 
-  private async fetchGraphQLReviewThreads(repository: RepositoryRef, prNumber: number, token: string): Promise<ReviewThread[]> {
+  private async fetchGraphQLReviewThreads(
+    repository: RepositoryRef,
+    prNumber: number,
+    token: string,
+    warnings: string[],
+  ): Promise<ReviewThread[]> {
     const threads: ReviewThread[] = [];
     let threadsCursor: string | null = null;
     do {
-      const data: ReviewThreadsPageData = await this.graphql<ReviewThreadsPageData>(repository.host, token, REVIEW_THREADS_QUERY, {
-        owner: repository.owner,
-        repo: repository.repo,
-        prNumber,
-        threadsCursor,
-      }, 'ReviewThreadsPage');
-      const page = data.repository?.pullRequest?.reviewThreads;
-      if (page === undefined) {
-        throw new Error('Pull request reviewThreads were not present in the GraphQL response.');
-      }
+      try {
+        const data: ReviewThreadsPageData = await this.graphql<ReviewThreadsPageData>(repository.host, token, REVIEW_THREADS_QUERY, {
+          owner: repository.owner,
+          repo: repository.repo,
+          prNumber,
+          threadsCursor,
+        }, 'ReviewThreadsPage', warnings);
+        const page = data.repository?.pullRequest?.reviewThreads;
+        if (page === undefined) {
+          throw new Error('Pull request reviewThreads were not present in the GraphQL response.');
+        }
 
-      for (const node of page.nodes) {
-        const thread = mapGraphQLThread(node);
-        await this.fetchRemainingGraphQLComments(repository.host, token, thread, node.comments.pageInfo);
-        threads.push(thread);
-      }
+        for (const node of page.nodes) {
+          const thread = mapGraphQLThread(node);
+          await this.fetchRemainingGraphQLComments(repository.host, token, thread, node.comments.pageInfo, warnings);
+          threads.push(thread);
+        }
 
-      threadsCursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+        threadsCursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+      } catch (error) {
+        // Preserve threads already gathered: a transient failure on a later page must not discard
+        // the whole pull request. A first-page failure still throws so getReviewThreads can fall
+        // back to REST for all-scope copies.
+        if (threads.length === 0) {
+          throw error;
+        }
+
+        warnings.push(`Stopped paginating review threads after a failed page; results may be incomplete. ${error instanceof Error ? error.message : String(error)}`);
+        break;
+      }
     } while (threadsCursor !== null);
 
     return threads;
@@ -328,20 +408,28 @@ export class GitHubClient {
     token: string,
     thread: ReviewThread,
     pageInfo: GraphQLPageInfo,
+    warnings: string[],
   ): Promise<void> {
     let commentsCursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
     while (commentsCursor !== null) {
-      const data: ReviewThreadCommentsPageData = await this.graphql<ReviewThreadCommentsPageData>(host, token, THREAD_COMMENTS_QUERY, {
-        threadId: thread.id,
-        commentsCursor,
-      }, 'ReviewThreadCommentsPage');
-      const comments = data.node?.comments;
-      if (comments === undefined) {
-        throw new Error(`Review thread comments were not present for ${thread.id}.`);
-      }
+      try {
+        const data: ReviewThreadCommentsPageData = await this.graphql<ReviewThreadCommentsPageData>(host, token, THREAD_COMMENTS_QUERY, {
+          threadId: thread.id,
+          commentsCursor,
+        }, 'ReviewThreadCommentsPage', warnings);
+        const comments = data.node?.comments;
+        if (comments === undefined) {
+          throw new Error(`Review thread comments were not present for ${thread.id}.`);
+        }
 
-      thread.comments.push(...comments.nodes.map(mapGraphQLComment));
-      commentsCursor = comments.pageInfo.hasNextPage ? comments.pageInfo.endCursor : null;
+        thread.comments.push(...comments.nodes.map(mapGraphQLComment));
+        commentsCursor = comments.pageInfo.hasNextPage ? comments.pageInfo.endCursor : null;
+      } catch (error) {
+        // The thread already holds its first comment page from the parent query, so keep what we
+        // have and let the caller continue with other threads rather than failing the whole copy.
+        warnings.push(`Stopped paginating comments for review thread ${thread.id}; results may be incomplete. ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
     }
   }
 
@@ -351,30 +439,48 @@ export class GitHubClient {
     query: string,
     variables: Record<string, unknown>,
     operationName: string,
+    warnings?: string[],
   ): Promise<T> {
     assertGraphQLVariableMap(query, variables);
-    const response = await this.fetch(graphqlEndpoint(host), {
-      method: 'POST',
-      headers: {
-        ...this.restHeaders(token),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query, variables, operationName }),
-    });
-    const payload = await readJsonResponse<{ data?: T; errors?: unknown[] }>(response, operationName);
-    if (payload.errors !== undefined && payload.errors.length > 0) {
-      throw new GraphQLErrorsError(operationName, payload.errors);
-    }
 
-    if (payload.data === undefined) {
+    for (let attempt = 0; ; attempt++) {
+      const response = await this.fetch(graphqlEndpoint(host), {
+        method: 'POST',
+        headers: {
+          ...this.restHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query, variables, operationName }),
+      });
+      const payload = await readJsonResponse<{ data?: T | null; errors?: unknown[] }>(response, operationName);
+      const errors = payload.errors !== undefined && payload.errors.length > 0 ? payload.errors : undefined;
+
+      // GraphQL rate limits surface as HTTP 200 with `data:null` + a RATE_LIMITED error,
+      // invisible to the HTTP layer. Back off and retry while we still have data null/absent.
+      if (payload.data == null && errors !== undefined && isGraphQLRateLimited(errors) && attempt < this.maxRetries) {
+        await this.sleep(graphqlBackoffDelay(attempt));
+        continue;
+      }
+
+      // Gate on `!= null` (not `!== undefined`) so an explicit `data:null` still throws and
+      // preserves the GraphQL-errors -> REST all-scope fallback.
+      if (payload.data != null) {
+        if (errors !== undefined) {
+          warnings?.push(`${operationName} returned partial GraphQL data with errors: ${summarizeGraphQLErrors(errors)}`);
+        }
+        return payload.data;
+      }
+
+      if (errors !== undefined) {
+        throw new GraphQLErrorsError(operationName, errors);
+      }
+
       throw new Error(`${operationName} returned no data.`);
     }
-
-    return payload.data;
   }
 
-  private async fetchRestReviewThreads(repository: RepositoryRef, prNumber: number, token: string | undefined): Promise<ReviewThread[]> {
-    return restCommentsToThreads(await this.fetchRestReviewComments(repository, prNumber, token));
+  private async fetchRestReviewThreads(repository: RepositoryRef, prNumber: number, token: string | undefined, warnings?: string[]): Promise<ReviewThread[]> {
+    return restCommentsToThreads(await this.fetchRestReviewComments(repository, prNumber, token, warnings));
   }
 
   private async fetchRestReviewThreadsAfterGraphQLFallback(
@@ -386,7 +492,7 @@ export class GitHubClient {
     const warnings = [`${reason}; copied all review comments from REST with unknown resolved state.`];
     try {
       return {
-        threads: await this.fetchRestReviewThreads(repository, prNumber, token),
+        threads: await this.fetchRestReviewThreads(repository, prNumber, token, warnings),
         warnings,
       };
     } catch (error) {
@@ -394,24 +500,42 @@ export class GitHubClient {
         throw error;
       }
 
+      const fallbackWarnings = [
+        ...warnings,
+        'Authenticated REST fallback failed; retried unauthenticated REST for public review comments.',
+      ];
       return {
-        threads: await this.fetchRestReviewThreads(repository, prNumber, undefined),
-        warnings: [
-          ...warnings,
-          'Authenticated REST fallback failed; retried unauthenticated REST for public review comments.',
-        ],
+        threads: await this.fetchRestReviewThreads(repository, prNumber, undefined, fallbackWarnings),
+        warnings: fallbackWarnings,
       };
     }
   }
 
-  private async fetchRestReviewComments(repository: RepositoryRef, prNumber: number, token: string | undefined): Promise<RestReviewComment[]> {
+  private async fetchRestReviewComments(
+    repository: RepositoryRef,
+    prNumber: number,
+    token: string | undefined,
+    warnings?: string[],
+  ): Promise<RestReviewComment[]> {
     const comments: RestReviewComment[] = [];
     for (let page = 1; page <= 100; page++) {
-      const response = await this.fetch(
-        `${restBaseUrl(repository.host)}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/pulls/${prNumber}/comments?per_page=100&page=${page}`,
-        { headers: this.restHeaders(token) },
-      );
-      const pageComments = await readJsonResponse<RestReviewComment[]>(response, 'List review comments');
+      let pageComments: RestReviewComment[];
+      try {
+        const response = await this.fetch(
+          `${restBaseUrl(repository.host)}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/pulls/${prNumber}/comments?per_page=100&page=${page}`,
+          { headers: this.restHeaders(token) },
+        );
+        pageComments = await readJsonResponse<RestReviewComment[]>(response, 'List review comments');
+      } catch (error) {
+        // Keep comments already gathered when a later page fails; a first-page failure still throws
+        // so the unauthenticated / all-scope REST paths surface (and can fall back on) the error.
+        if (comments.length === 0) {
+          throw error;
+        }
+
+        warnings?.push(`Stopped paginating REST review comments after a failed page; results may be incomplete. ${error instanceof Error ? error.message : String(error)}`);
+        break;
+      }
       comments.push(...pageComments);
       if (pageComments.length < 100) {
         break;
@@ -450,6 +574,28 @@ function shouldFallbackToRestForAllScope(error: unknown): boolean {
 
 function allScopeFallbackReason(error: unknown): string {
   return error instanceof GraphQLErrorsError ? 'GraphQL returned errors' : 'GraphQL authentication failed';
+}
+
+function isGraphQLRateLimited(errors: readonly unknown[]): boolean {
+  return errors.some((error) => isRecord(error) && readString(error.type)?.toUpperCase() === 'RATE_LIMITED');
+}
+
+function graphqlBackoffDelay(attempt: number): number {
+  // Bounded exponential backoff (1s, 2s, 4s, ... capped) for GraphQL rate-limit retries.
+  return Math.min(1000 * 2 ** attempt, 30_000);
+}
+
+function summarizeGraphQLErrors(errors: readonly unknown[]): string {
+  return errors
+    .map((error) => {
+      if (!isRecord(error)) {
+        return String(error);
+      }
+      const type = readString(error.type);
+      const message = readString(error.message);
+      return [type, message].filter((part) => part !== undefined && part !== '').join(': ') || JSON.stringify(error);
+    })
+    .join('; ');
 }
 
 export function assertGraphQLVariableMap(query: string, variables: Record<string, unknown>): void {
@@ -622,6 +768,47 @@ function mergeRestComments(threads: ReviewThread[], restComments: readonly RestR
       comment.originalStartLine = rest.original_start_line ?? comment.originalStartLine;
     }
   }
+}
+
+function formatRetryLog(info: RetryInfo): string {
+  const target = info.status !== undefined ? `HTTP ${info.status}` : 'a network error';
+  const reason = info.rateLimited ? 'a rate limit' : 'a transient failure';
+  return `Retrying after ${reason} (${target}); waiting ${info.waitMs}ms before attempt ${info.attempt + 2}.`;
+}
+
+function mapAccessibleRepository(host: string, value: unknown): AccessibleRepository | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const fullName = readString(value.full_name);
+  const fromFullName = fullName !== undefined ? splitFullName(fullName) : undefined;
+  const owner = (isRecord(value.owner) ? readString(value.owner.login) : undefined) ?? fromFullName?.owner;
+  const repo = readString(value.name) ?? fromFullName?.repo;
+  if (owner === undefined || owner === '' || repo === undefined || repo === '') {
+    return undefined;
+  }
+
+  return {
+    host,
+    owner,
+    repo,
+    fullName: fullName ?? `${owner}/${repo}`,
+    private: readBoolean(value.private) ?? false,
+    archived: readBoolean(value.archived) ?? false,
+    fork: readBoolean(value.fork) ?? false,
+    pushedAt: readString(value.pushed_at),
+    description: readString(value.description) ?? undefined,
+  };
+}
+
+function splitFullName(fullName: string): { owner: string; repo: string } | undefined {
+  const slash = fullName.indexOf('/');
+  if (slash <= 0 || slash >= fullName.length - 1) {
+    return undefined;
+  }
+
+  return { owner: fullName.slice(0, slash), repo: fullName.slice(slash + 1) };
 }
 
 function readString(value: unknown): string | undefined {

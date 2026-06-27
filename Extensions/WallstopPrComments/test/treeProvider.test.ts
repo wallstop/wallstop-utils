@@ -23,7 +23,10 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+const firedEvents: Array<TreeNode | undefined> = [];
+
 function loadTreeProvider(): { PrCommentsTreeProvider: typeof PrCommentsTreeProviderClass } {
+  firedEvents.length = 0;
   const moduleLoader = Module as unknown as {
     _load: (request: string, parent: NodeModule | null, isMain: boolean) => unknown;
   };
@@ -33,7 +36,9 @@ function loadTreeProvider(): { PrCommentsTreeProvider: typeof PrCommentsTreeProv
       return {
         EventEmitter: class {
           readonly event = () => ({ dispose: () => undefined });
-          fire(): void {}
+          fire(value: TreeNode | undefined): void {
+            firedEvents.push(value);
+          }
         },
         ThemeIcon: class {
           constructor(readonly id: string) {}
@@ -129,6 +134,125 @@ test('ignores stale repository loads that resolve after refresh', async () => {
   if (freshChildren[0].kind === 'group') {
     assert.deepEqual(freshChildren[0].pullRequests, [pullRequest]);
   }
+});
+
+const repositoryB: RepositoryRef = { host: 'github.com', owner: 'wallstop', repo: 'other' };
+
+test('getChildren(undefined) returns a stable memoized repository node per repo', async () => {
+  const { PrCommentsTreeProvider } = loadTreeProvider();
+  const client = { listPullRequests: async () => [] } as unknown as GitHubClient;
+  const provider = new PrCommentsTreeProvider({ list: () => [repository, repositoryB] }, client);
+
+  const first = await provider.getChildren(undefined);
+  const second = await provider.getChildren(undefined);
+
+  assert.equal(first.length, 2);
+  assert.equal(first[0].kind, 'repository');
+  assert.equal(first[1].kind, 'repository');
+  assert.equal(first[0], second[0], 'first repository node reference must be stable across getChildren calls');
+  assert.equal(first[1], second[1], 'second repository node reference must be stable across getChildren calls');
+});
+
+test('refresh(repository) fires only the memoized node for that repo and reloads only its cache', async () => {
+  const { PrCommentsTreeProvider } = loadTreeProvider();
+  const loadsByRepo = new Map<string, number>();
+  const client = {
+    listPullRequests: async (target: RepositoryRef) => {
+      loadsByRepo.set(target.repo, (loadsByRepo.get(target.repo) ?? 0) + 1);
+      return [pullRequest];
+    },
+  } as unknown as GitHubClient;
+  const provider = new PrCommentsTreeProvider({ list: () => [repository, repositoryB] }, client);
+
+  const roots = await provider.getChildren(undefined);
+  const nodeA = roots[0];
+  const nodeB = roots[1];
+  assert.equal(nodeA.kind, 'repository');
+  assert.equal(nodeB.kind, 'repository');
+
+  // Prime both repository caches.
+  await provider.getChildren(nodeA);
+  await provider.getChildren(nodeB);
+  assert.equal(loadsByRepo.get('utils'), 1);
+  assert.equal(loadsByRepo.get('other'), 1);
+
+  firedEvents.length = 0;
+  provider.refresh(repository);
+
+  assert.deepEqual(firedEvents, [nodeA], 'refresh(repository) must fire exactly the memoized node for that repo');
+
+  // Re-reading children reloads only the evicted repo.
+  await provider.getChildren(nodeA);
+  await provider.getChildren(nodeB);
+  assert.equal(loadsByRepo.get('utils'), 2, 'refreshed repo A reloads');
+  assert.equal(loadsByRepo.get('other'), 1, 'untouched repo B does not reload');
+});
+
+test('refresh(repository) fires the same memoized instance getChildren(undefined) returns', async () => {
+  const { PrCommentsTreeProvider } = loadTreeProvider();
+  const client = { listPullRequests: async () => [pullRequest] } as unknown as GitHubClient;
+  const provider = new PrCommentsTreeProvider({ list: () => [repository] }, client);
+
+  const roots = await provider.getChildren(undefined);
+  const nodeA = roots[0];
+
+  firedEvents.length = 0;
+  provider.refresh(repository);
+
+  assert.equal(firedEvents.length, 1);
+  assert.equal(firedEvents[0], nodeA, 'fired node must be the identical instance returned by getChildren(undefined)');
+});
+
+test('no-arg refresh() fires undefined and reloads every repository', async () => {
+  const { PrCommentsTreeProvider } = loadTreeProvider();
+  const loadsByRepo = new Map<string, number>();
+  const client = {
+    listPullRequests: async (target: RepositoryRef) => {
+      loadsByRepo.set(target.repo, (loadsByRepo.get(target.repo) ?? 0) + 1);
+      return [pullRequest];
+    },
+  } as unknown as GitHubClient;
+  const provider = new PrCommentsTreeProvider({ list: () => [repository, repositoryB] }, client);
+
+  const roots = await provider.getChildren(undefined);
+  await provider.getChildren(roots[0]);
+  await provider.getChildren(roots[1]);
+  assert.equal(loadsByRepo.get('utils'), 1);
+  assert.equal(loadsByRepo.get('other'), 1);
+
+  firedEvents.length = 0;
+  provider.refresh();
+
+  assert.deepEqual(firedEvents, [undefined], 'no-arg refresh() must fire undefined');
+
+  const refreshedRoots = await provider.getChildren(undefined);
+  await provider.getChildren(refreshedRoots[0]);
+  await provider.getChildren(refreshedRoots[1]);
+  assert.equal(loadsByRepo.get('utils'), 2, 'repo A reloads after global refresh');
+  assert.equal(loadsByRepo.get('other'), 2, 'repo B reloads after global refresh');
+});
+
+test('refresh(repository) for an unknown repo fires nothing and leaves caches intact', async () => {
+  const { PrCommentsTreeProvider } = loadTreeProvider();
+  const loadsByRepo = new Map<string, number>();
+  const client = {
+    listPullRequests: async (target: RepositoryRef) => {
+      loadsByRepo.set(target.repo, (loadsByRepo.get(target.repo) ?? 0) + 1);
+      return [pullRequest];
+    },
+  } as unknown as GitHubClient;
+  const provider = new PrCommentsTreeProvider({ list: () => [repository] }, client);
+
+  const roots = await provider.getChildren(undefined);
+  await provider.getChildren(roots[0]);
+  assert.equal(loadsByRepo.get('utils'), 1);
+
+  firedEvents.length = 0;
+  provider.refresh(repositoryB);
+
+  assert.deepEqual(firedEvents, [], 'refreshing a repo with no memoized node fires nothing');
+  await provider.getChildren(roots[0]);
+  assert.equal(loadsByRepo.get('utils'), 1, 'unrelated repo cache is untouched');
 });
 
 test('uses merged icon for merged pull request summaries even with stale open state', () => {

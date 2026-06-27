@@ -60,6 +60,115 @@ test('never renders diffHunk as a suggested change', () => {
   assert.doesNotMatch(output, /\+new/);
 });
 
+test('renders the in-range diff hunk under a Diff context label when enabled and no suggestion exists', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/context.ts',
+    isResolved: false,
+    isOutdated: false,
+    startLine: 11,
+    line: 11,
+    comments: [
+      {
+        id: 'comment-1',
+        body: 'This is wrong.',
+        diffHunk: ['@@ -10,3 +10,3 @@', ' const before = 1;', '-const middle = 2;', '+const middle = two;', ' const after = 3;'].join('\n'),
+      },
+    ],
+  });
+
+  assert.ok(record);
+  const output = formatReviewThreadRecords([record]);
+
+  assert.match(output, /Comment:\nThis is wrong\./);
+  assert.match(output, /Diff context:\n-const middle = 2;\n\+const middle = two;/);
+  assert.doesNotMatch(output, /const before = 1;/);
+  assert.doesNotMatch(output, /Suggested change:/);
+});
+
+test('renders a symmetric Diff context block for a single-line range over a multi-line replacement hunk', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/replace.ts',
+    isResolved: false,
+    isOutdated: false,
+    startLine: 10,
+    line: 10,
+    comments: [
+      {
+        id: 'comment-1',
+        body: 'This line is wrong.',
+        diffHunk: ['@@ -10,4 +10,4 @@ function run() {', '-const c = 3;', '-const d = 4;', '+const c = 30;', '+const d = 40;'].join('\n'),
+      },
+    ],
+  });
+
+  assert.ok(record);
+  const output = formatReviewThreadRecords([record]);
+
+  // The anchored single-line range must not produce a lopsided 2-deletions /
+  // 1-addition block; deletions are clamped to the paired addition window.
+  assert.match(output, /Diff context:\n-const c = 3;\n\+const c = 30;/);
+  assert.doesNotMatch(output, /-const d = 4;/);
+  assert.doesNotMatch(output, /Suggested change:/);
+});
+
+test('suppresses the diff hunk entirely when includeDiffHunks is disabled', () => {
+  const record = reviewThreadToRecord(
+    {
+      id: 'thread-1',
+      path: 'src/context.ts',
+      isResolved: false,
+      isOutdated: false,
+      startLine: 11,
+      line: 11,
+      comments: [
+        {
+          id: 'comment-1',
+          body: 'This is wrong.',
+          diffHunk: ['@@ -10,3 +10,3 @@', '-const middle = 2;', '+const middle = two;'].join('\n'),
+        },
+      ],
+    },
+    { includeDiffHunks: false },
+  );
+
+  assert.ok(record);
+  const output = formatReviewThreadRecords([record]);
+
+  assert.match(output, /Comment:\nThis is wrong\./);
+  assert.doesNotMatch(output, /Diff context:/);
+  assert.doesNotMatch(output, /const middle/);
+});
+
+test('reconstructs a suggestion fence into a -/+ unified diff using the diff hunk as the before', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/suggest.ts',
+    isResolved: false,
+    isOutdated: false,
+    startLine: 5,
+    line: 5,
+    comments: [
+      {
+        id: 'comment-1',
+        body: ['Use the owner document.', '', '```suggestion', 'element.ownerDocument.getElementById(id),', '```'].join('\n'),
+        diffHunk: ['@@ -4,2 +4,2 @@', ' keep();', '-document.getElementById(id),', '+document.getElementById(id),'].join('\n'),
+      },
+    ],
+  });
+
+  assert.ok(record);
+  const output = formatReviewThreadRecords([record]);
+
+  assert.match(
+    output,
+    /Suggested change:\n-document\.getElementById\(id\),\n\+element\.ownerDocument\.getElementById\(id\),/,
+  );
+  assert.doesNotMatch(output, /@@/);
+  assert.doesNotMatch(output, /Diff context:/);
+});
+
 test('renders multiple suggestions from multiple comments without dropping empty deletion suggestions', () => {
   const record = reviewThreadToRecord({
     id: 'thread-1',
@@ -190,11 +299,11 @@ test('keeps unavailable web-only suggestions as metadata without fake suggested-
   assert.ok(record);
   assert.equal(
     record.comments[0].unavailableReason,
-    'GitHub web-only suggested changeset could not be extracted from the public API.',
+    'GitHub web-only suggested changeset could not be extracted from the public API. Author: @copilot-pull-request-reviewer[bot].',
   );
   assert.equal(record.comments[0].unavailableSource, 'webOnlyUnavailable');
   assert.deepEqual(collectUnavailableSuggestionWarnings([record]), [
-    'src/copilot.ts:5: GitHub web-only suggested changeset could not be extracted from the public API.',
+    'src/copilot.ts:5: GitHub web-only suggested changeset could not be extracted from the public API. Author: @copilot-pull-request-reviewer[bot].',
   ]);
 
   const output = formatReviewThreadRecords([record]);
@@ -228,8 +337,31 @@ test('renders placeholder-only unavailable web suggestions instead of reporting 
       '---',
       '(src/placeholder.ts) 9-9',
       'Suggestion unavailable:',
-      'GitHub web-only suggested changeset could not be extracted from the public API.',
+      'GitHub web-only suggested changeset could not be extracted from the public API. Author: @copilot-pull-request-reviewer[bot].',
       '---',
     ].join('\n'),
   );
+});
+
+test('does not fabricate a suggestion diff when a diff hunk has no resolvable line anchor', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/main.ts',
+    isResolved: false,
+    isOutdated: false,
+    // No line/startLine/originalLine/originalStartLine: the replacement range is unknowable, so the
+    // suggestion must render as raw text rather than a diff fabricated against the whole hunk body.
+    comments: [
+      {
+        id: 'comment-1',
+        diffHunk: '@@ -1,2 +1,2 @@\n context\n+addedLine',
+        body: ['Tweak it.', '', '```suggestion', 'tweaked();', '```'].join('\n'),
+      },
+    ],
+  });
+
+  assert.ok(record);
+  const output = formatReviewThreadRecords([record]);
+  assert.match(output, /Suggested change:\ntweaked\(\);/u);
+  assert.equal(output.includes('-addedLine'), false, 'must not fabricate deletions from unrelated hunk context');
 });

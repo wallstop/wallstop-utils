@@ -1,4 +1,4 @@
-import type { PullRequestSummary, RepositoryRef } from './types';
+import type { AccessibleRepository, PullRequestSummary, RepositoryRef } from './types';
 
 export interface MementoLike {
   get<T>(key: string, fallback: T): T;
@@ -66,6 +66,111 @@ export function groupPullRequests(pullRequests: readonly PullRequestSummary[]): 
 
 export function isOpenPullRequest(pullRequest: PullRequestSummary): boolean {
   return pullRequest.state === 'OPEN' && !pullRequest.merged;
+}
+
+/** A QuickPick item for the "Add Repository" picker; structurally a `vscode.QuickPickItem`. */
+export interface AddRepoQuickPickItem {
+  label: string;
+  description?: string;
+  detail?: string;
+  alwaysShow?: boolean;
+  repository?: RepositoryRef;
+  manualEntry?: boolean;
+}
+
+/**
+ * The "filtered intelligently" step for the Add Repository picker: drops archived repos and any
+ * already pinned (compared by {@link repositoryKey}), de-duplicates, and orders most-recently-pushed
+ * first (repos without a push timestamp sort last, preserving input order among themselves).
+ */
+export function selectableRepositories(
+  accessible: readonly AccessibleRepository[],
+  alreadyAdded: readonly RepositoryRef[],
+): AccessibleRepository[] {
+  const addedKeys = new Set(alreadyAdded.map(repositoryKey));
+  const seen = new Set<string>();
+  const result: AccessibleRepository[] = [];
+  for (const repository of accessible) {
+    if (repository.archived) {
+      continue;
+    }
+
+    const key = repositoryKey(repository);
+    if (addedKeys.has(key) || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(repository);
+  }
+
+  return result.sort((left, right) => comparePushedAtDescending(left.pushedAt, right.pushedAt));
+}
+
+/** Shapes accessible repositories into picker items, with a manual-entry escape hatch pinned first. */
+export function buildAddRepoQuickPickItems(repositories: readonly AccessibleRepository[]): AddRepoQuickPickItem[] {
+  const manualEntry: AddRepoQuickPickItem = {
+    label: '$(edit) Enter owner/repo or URL…',
+    alwaysShow: true,
+    manualEntry: true,
+  };
+  const items = repositories.map(
+    (repository) =>
+      ({
+        label: `${repository.owner}/${repository.repo}`,
+        description: describeAccessibleRepository(repository),
+        detail: repository.description,
+        repository: { host: repository.host, owner: repository.owner, repo: repository.repo },
+      }) satisfies AddRepoQuickPickItem,
+  );
+
+  return [manualEntry, ...items];
+}
+
+/** github.com is always enumerated; any additional host already pinned is included too (lowercased). */
+export function enumerationHosts(repositories: readonly RepositoryRef[]): string[] {
+  const hosts = new Set<string>(['github.com']);
+  for (const repository of repositories) {
+    hosts.add(repository.host.toLowerCase());
+  }
+
+  return [...hosts];
+}
+
+function describeAccessibleRepository(repository: AccessibleRepository): string {
+  const parts = [repository.host, repository.private ? 'private' : 'public'];
+  if (repository.pushedAt !== undefined) {
+    parts.push(`pushed ${repository.pushedAt.slice(0, 10)}`);
+  }
+
+  return parts.join(' · ');
+}
+
+function comparePushedAtDescending(left: string | undefined, right: string | undefined): number {
+  const leftTime = parseTimestamp(left);
+  const rightTime = parseTimestamp(right);
+  if (leftTime !== undefined && rightTime !== undefined) {
+    return rightTime - leftTime;
+  }
+
+  if (leftTime !== undefined) {
+    return -1;
+  }
+
+  if (rightTime !== undefined) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function parseTimestamp(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 export function parseRepositoryInput(input: string): RepositoryRef {

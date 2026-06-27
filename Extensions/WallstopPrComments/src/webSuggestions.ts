@@ -11,7 +11,215 @@ export function extractAutomatedSuggestedDiffsFromHtml(
     }
   }
 
+  if (suggestionsByCommentId.size === 0) {
+    return extractDomSuggestedChangesFromHtml(html, source);
+  }
+
   return suggestionsByCommentId;
+}
+
+/** Comment anchors GitHub renders on a review comment / suggested-change blob. */
+const COMMENT_ANCHOR_REGEX = /(?:id="(?<discussion>discussion_r\d+)"|data-comment-id="(?<commentId>[^"]+)")/giu;
+/** A rendered diff code cell: `blob-code-deletion` (old) or `blob-code-addition` (new). */
+const DIFF_LINE_REGEX = /<td\b[^>]*class="[^"]*\bblob-code-(?<kind>deletion|addition)\b[^"]*"[^>]*>(?<cell>[\s\S]*?)<\/td>/giu;
+/**
+ * Structural markers proving a *suggested change* is on the page even if its diff
+ * table cannot be parsed. Deliberately limited to suggestion-specific GitHub DOM
+ * hooks — NOT generic `blob-code-deletion`/`blob-code-addition` cells, which appear
+ * in every ordinary main-file diff on a PR /files page. Flagging those would make
+ * every diffed PR (with no suggested change at all) report "markers present but
+ * unparseable", defeating the honest "no suggestion" vs "unparseable" distinction.
+ */
+const SUGGESTION_MARKER_REGEX = /js-suggested-changes-blob|js-suggested-change-(?:blob|line)|js-apply-suggestion|data-(?:test-selector|target)="[^"]*suggested-change/iu;
+
+/**
+ * Parses GitHub's *rendered* suggested-change markup (the suggestion diff `<table>`
+ * rows: `blob-code-deletion` / `blob-code-addition` blob lines) into a `-`/`+`
+ * unified diff per comment, keyed by the comment anchor whose element subtree
+ * *contains* the diff rows (`id="discussion_r<id>"` or `data-comment-id="<id>"`).
+ *
+ * Attribution is by DOM containment, not document order: a diff row is only
+ * attributed to a comment when it lies inside that comment element's open/close
+ * span. This prevents fabricating a suggested change from an *unrelated* main-file
+ * diff table that merely follows a prose-only review comment in document order —
+ * such rows are siblings, not children, so they are dropped instead of attached.
+ *
+ * This is the route the browser/webview provider exercises: it returns live DOM
+ * where the SPA's suggestion data is present, whereas the static `embeddedData`
+ * JSON the legacy path reads is typically absent from the server-rendered page.
+ */
+export function extractDomSuggestedChangesFromHtml(
+  html: string,
+  source: AutomatedSuggestionSource = 'githubWebAutomatedDiff',
+): Map<string, SuggestedDiff[]> {
+  const suggestionsByCommentId = new Map<string, SuggestedDiff[]>();
+  const anchors = collectCommentAnchorSpans(html);
+  if (anchors.length === 0) {
+    return suggestionsByCommentId;
+  }
+
+  const linesByCommentId = new Map<string, string[]>();
+  for (const line of html.matchAll(DIFF_LINE_REGEX)) {
+    const commentId = containingAnchorId(anchors, line.index ?? 0);
+    if (commentId === undefined) {
+      continue;
+    }
+
+    const prefix = line.groups?.kind === 'deletion' ? '-' : '+';
+    const bucket = linesByCommentId.get(commentId) ?? [];
+    for (const textLine of cellToText(line.groups?.cell ?? '').split('\n')) {
+      bucket.push(`${prefix}${textLine}`);
+    }
+    linesByCommentId.set(commentId, bucket);
+  }
+
+  for (const [commentId, lines] of linesByCommentId) {
+    if (lines.length === 0) {
+      continue;
+    }
+
+    suggestionsByCommentId.set(commentId, [
+      {
+        kind: 'changedLines',
+        path: undefined,
+        source,
+        confidence: 'medium',
+        value: lines.join('\n'),
+      },
+    ]);
+  }
+
+  return suggestionsByCommentId;
+}
+
+interface CommentAnchorSpan {
+  id: string;
+  /** Index of the comment element's opening `<tag …>`. */
+  start: number;
+  /** Index one past the element's matching close tag (or end of input). */
+  end: number;
+}
+
+/**
+ * Locates each comment anchor (`id="discussion_r…"` / `data-comment-id="…"`) and
+ * computes the `[start, end)` span of the element that carries it, so diff rows
+ * can be attributed by containment rather than by mere document position.
+ */
+function collectCommentAnchorSpans(html: string): CommentAnchorSpan[] {
+  const spans: CommentAnchorSpan[] = [];
+  for (const match of html.matchAll(COMMENT_ANCHOR_REGEX)) {
+    const id = match.groups?.discussion ?? match.groups?.commentId ?? '';
+    if (id === '') {
+      continue;
+    }
+
+    const attributeIndex = match.index ?? 0;
+    const tagStart = html.lastIndexOf('<', attributeIndex);
+    if (tagStart < 0) {
+      continue;
+    }
+
+    const tagName = readTagName(html, tagStart);
+    if (tagName === undefined) {
+      continue;
+    }
+
+    spans.push({ id, start: tagStart, end: elementEndIndex(html, tagStart, tagName) });
+  }
+
+  return spans;
+}
+
+/** Reads the lowercased element name from an opening tag at `tagStart` (a `<`). */
+function readTagName(html: string, tagStart: number): string | undefined {
+  const match = /^<([a-z][a-z0-9-]*)/iu.exec(html.slice(tagStart, tagStart + 64));
+  return match === null ? undefined : match[1].toLowerCase();
+}
+
+/**
+ * Computes the index one past the matching close tag for the element opened at
+ * `tagStart`, tracking nesting depth of same-named tags. A self-closing opening
+ * tag (`<div … />` or `<div …></div>` with nothing between) yields a span ending
+ * at that tag's `>`, so following siblings are never treated as descendants.
+ */
+function elementEndIndex(html: string, tagStart: number, tagName: string): number {
+  const openCloseRegex = new RegExp(`<(/?)${escapeRegExp(tagName)}\\b[^>]*?(/?)>`, 'giu');
+  openCloseRegex.lastIndex = tagStart;
+  let depth = 0;
+  let match: RegExpExecArray | null;
+  while ((match = openCloseRegex.exec(html)) !== null) {
+    const isClose = match[1] === '/';
+    const isSelfClosing = match[2] === '/';
+    if (isClose) {
+      depth -= 1;
+      if (depth <= 0) {
+        return match.index + match[0].length;
+      }
+    } else if (!isSelfClosing) {
+      depth += 1;
+    } else if (depth === 0) {
+      // The anchor element itself is self-closing — its subtree is empty.
+      return match.index + match[0].length;
+    }
+  }
+
+  return html.length;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+/**
+ * Reports whether `html` carries any GitHub suggested-change marker. Used to
+ * distinguish "no suggestion on this page" from "a suggestion is present but the
+ * markup changed and could not be parsed", so the caller can warn honestly.
+ */
+export function htmlHasSuggestionMarkers(html: string): boolean {
+  return SUGGESTION_MARKER_REGEX.test(html);
+}
+
+/**
+ * Returns the id of the *innermost* comment element whose `[start, end)` span
+ * contains `position`, or `undefined` when the position is not inside any comment
+ * (e.g. an unrelated main-file diff row). "Innermost" = smallest containing span,
+ * so a diff row inside a nested suggestion blob is attributed to the comment that
+ * encloses it rather than an outer ancestor.
+ */
+function containingAnchorId(anchors: readonly CommentAnchorSpan[], position: number): string | undefined {
+  let best: CommentAnchorSpan | undefined;
+  for (const anchor of anchors) {
+    if (position < anchor.start || position >= anchor.end) {
+      continue;
+    }
+    if (best === undefined || anchor.end - anchor.start < best.end - best.start) {
+      best = anchor;
+    }
+  }
+
+  return best?.id;
+}
+
+function cellToText(cell: string): string {
+  const inner = /<span\b[^>]*class="[^"]*\bblob-code-inner\b[^"]*"[^>]*>(?<text>[\s\S]*?)<\/span>/iu.exec(cell);
+  if (inner?.groups?.text !== undefined) {
+    // The blob-code-inner span holds the exact code text — preserve its leading
+    // indentation (significant in a diff); only nested formatting tags are stripped.
+    return normalizeCellLineEndings(decodeHtmlEntities(inner.groups.text.replace(/<[^>]+>/gu, '')));
+  }
+
+  // No inner span: fall back to the whole cell and trim the HTML formatting
+  // whitespace GitHub adds around the code.
+  return normalizeCellLineEndings(decodeHtmlEntities(cell.replace(/<[^>]+>/gu, '')).trim());
+}
+
+/**
+ * Normalizes CRLF/CR to LF so a `\r\n` embedded in a rendered code line never
+ * survives into a joined diff value — parity with the JSON path's
+ * {@link normalizeDiffLineText}.
+ */
+function normalizeCellLineEndings(text: string): string {
+  return text.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n');
 }
 
 export function attachWebSuggestedDiffs(
@@ -245,8 +453,16 @@ function commentKeyCandidates(comment: RenderableComment): string[] {
     candidates.push(databaseId);
     const discussionMatch = /^discussion_r(?<id>\d+)$/iu.exec(databaseId);
     if (discussionMatch?.groups?.id !== undefined) {
+      // Already a `discussion_r<id>` string — its bare numeric form covers the
+      // alternate id; prefixing again would yield a junk `discussion_rdiscussion_r<id>`.
       candidates.push(discussionMatch.groups.id);
+    } else {
+      candidates.push(`discussion_r${databaseId}`);
     }
+  }
+
+  if (comment.nodeId !== undefined && comment.nodeId.trim() !== '') {
+    candidates.push(comment.nodeId.trim());
   }
 
   const urlId = readDiscussionIdFromUrl(comment.url);
@@ -255,7 +471,31 @@ function commentKeyCandidates(comment: RenderableComment): string[] {
     candidates.push(`discussion_r${urlId}`);
   }
 
-  return [...new Set(candidates)];
+  return [...new Set(candidates.filter((candidate) => candidate !== ''))];
+}
+
+/**
+ * Returns the suggestion keys that no comment's id forms matched. Used to surface
+ * a precise diagnostic when web suggested-change diffs were extracted
+ * (`size > 0`) yet none attached to a review comment (`attached === 0`), instead
+ * of silently dropping them.
+ */
+export function unmatchedSuggestionKeys(
+  records: readonly ReviewThreadRecord[],
+  suggestionsByCommentId: ReadonlyMap<string, SuggestedDiff[]>,
+): string[] {
+  const matchedKeys = new Set<string>();
+  for (const record of records) {
+    for (const comment of record.comments) {
+      for (const key of commentKeyCandidates(comment)) {
+        if (suggestionsByCommentId.has(key)) {
+          matchedKeys.add(key);
+        }
+      }
+    }
+  }
+
+  return [...suggestionsByCommentId.keys()].filter((key) => !matchedKeys.has(key));
 }
 
 function readCommentKey(value: Record<string, unknown>): string | undefined {

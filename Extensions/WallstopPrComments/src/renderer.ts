@@ -26,11 +26,15 @@ export function formatReviewThreadRecords(records: readonly ReviewThreadRecord[]
       }
 
       for (const suggestion of comment.suggestedChanges) {
-        addSuggestedChange(lines, suggestion.value);
+        addSuggestedChange(lines, suggestion.diff ?? suggestion.value);
       }
 
       for (const diff of comment.suggestedDiffs) {
         addSuggestedChange(lines, diff.value, suggestedDiffLabel(record.path, diff.path));
+      }
+
+      if (comment.diffHunk !== undefined && comment.diffHunk !== '') {
+        addSuggestedChange(lines, comment.diffHunk, 'Diff context:');
       }
 
       if (!hasPublicText(comment) && comment.unavailableReason !== undefined) {
@@ -50,7 +54,12 @@ function addSuggestedChange(lines: string[], value: string, label = 'Suggested c
 }
 
 function hasPublicText(comment: RenderableComment): boolean {
-  return comment.body !== '' || comment.suggestedChanges.length > 0 || comment.suggestedDiffs.length > 0;
+  return (
+    comment.body !== '' ||
+    comment.suggestedChanges.length > 0 ||
+    comment.suggestedDiffs.length > 0 ||
+    (comment.diffHunk !== undefined && comment.diffHunk !== '')
+  );
 }
 
 function suggestedDiffLabel(recordPath: string, diffPath: string | undefined): string {

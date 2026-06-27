@@ -7,7 +7,7 @@ import {
   extractSuggestionBlocks,
   isLikelyWebOnlySuggestedChangeset,
 } from '../src/markdownSuggestions';
-import { reviewThreadToRecord } from '../src/records';
+import { collectUnavailableSuggestionWarnings, reviewThreadToRecord } from '../src/records';
 
 test('extracts a single suggestion fence verbatim', () => {
   const body = [
@@ -148,6 +148,46 @@ test('does not mark trusted bot prose as unavailable without a generated suggest
     assert.equal(record.comments[0].unavailableReason, undefined);
     assert.equal(record.comments[0].unavailableSource, undefined);
   }
+});
+
+test('carries the comment author onto the renderable comment for diagnostics', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/author.ts',
+    isResolved: false,
+    line: 3,
+    comments: [
+      {
+        id: 'comment-1',
+        authorLogin: 'cursor[bot]',
+        body: 'Finding text.',
+      },
+    ],
+  });
+
+  assert.ok(record);
+  assert.equal(record.comments[0].authorLogin, 'cursor[bot]');
+});
+
+test('keeps a diff-hunk-only comment renderable when the hunk overlaps the comment range', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/hunk-only.ts',
+    isResolved: false,
+    startLine: 7,
+    line: 7,
+    comments: [
+      {
+        id: 'comment-1',
+        body: '',
+        diffHunk: ['@@ -7,1 +7,1 @@', '-was();', '+is();'].join('\n'),
+      },
+    ],
+  });
+
+  assert.ok(record);
+  assert.equal(record.comments.length, 1);
+  assert.equal(record.comments[0].diffHunk, ['-was();', '+is();'].join('\n'));
 });
 
 test('strips Cursor and Bugbot chrome while preserving prose', () => {
@@ -382,6 +422,7 @@ test('marks Cursor and Bugbot external fixes unavailable without fabricating a d
       {
         id: 'comment-1',
         authorLogin: 'cursor[bot]',
+        url: 'https://github.com/org/repo/pull/30#discussion_r1',
         body: 'Suggested changeset is available through <a href="https://cursor.com/open?link=abc">Fix in Cursor</a>.',
         diffHunk: '@@ -1 +1 @@\n-old\n+new',
       },
@@ -389,8 +430,36 @@ test('marks Cursor and Bugbot external fixes unavailable without fabricating a d
   });
 
   assert.ok(record);
-  assert.equal(record.comments[0].unavailableReason, 'External bot suggested fix was not exposed by the GitHub API.');
+  assert.match(
+    record.comments[0].unavailableReason ?? '',
+    /^External bot suggested fix was not exposed by the GitHub API\./,
+  );
+  assert.match(record.comments[0].unavailableReason ?? '', /https:\/\/cursor\.com\/open\?link=abc/);
   assert.equal(record.comments[0].unavailableSource, 'externalBotUnavailable');
   assert.equal(record.comments[0].unavailableConfidence, 'unavailable');
   assert.deepEqual(record.comments[0].suggestedDiffs, []);
+});
+
+test('surfaces the actionable Cursor fix URL and author in a located unavailable warning', () => {
+  const record = reviewThreadToRecord({
+    id: 'thread-1',
+    path: 'src/cursor.ts',
+    isResolved: false,
+    line: 42,
+    comments: [
+      {
+        id: 'comment-1',
+        authorLogin: 'cursor[bot]',
+        url: 'https://github.com/org/repo/pull/30#discussion_r999',
+        body: 'Finding text. <a href="https://cursor.com/open?link=xyz">Fix in Cursor</a>',
+      },
+    ],
+  });
+
+  assert.ok(record);
+  const warnings = collectUnavailableSuggestionWarnings([record]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^src\/cursor\.ts:42:/);
+  assert.match(warnings[0], /cursor\[bot\]/);
+  assert.match(warnings[0], /https:\/\/cursor\.com\/open\?link=xyz/);
 });
