@@ -37,12 +37,36 @@ test('reconstructs a unified -/+ diff from before lines and a suggestion block',
   );
 });
 
-test('reconstructs a multi-line suggestion diff and renders an empty suggestion as a pure deletion', () => {
+test('reconstructs a multi-line suggestion diff keeping the unchanged line as context', () => {
+  // `a();` is unchanged, so a real line diff keeps it as a single ` ` context row instead
+  // of re-emitting it as a spurious -/+ pair. Only `b();` -> `b2();` is an actual change.
   assert.equal(
     reconstructSuggestionDiff('a();\nb();', 'a();\nb2();'),
-    ['-a();', '-b();', '+a();', '+b2();'].join('\n'),
+    [' a();', '-b();', '+b2();'].join('\n'),
   );
   assert.equal(reconstructSuggestionDiff('drop();', ''), '-drop();');
+});
+
+test('renders a middle-line removal as a single deletion surrounded by context', () => {
+  // The bug this fixes: a suggestion that REMOVES the middle line of a block must read as
+  // one `-` between two ` ` context rows, not as a wall of `+` re-adding the kept lines.
+  assert.equal(
+    reconstructSuggestionDiff('parse(input);\nvalidate(input);\nstore(input);', 'parse(input);\nstore(input);'),
+    [' parse(input);', '-validate(input);', ' store(input);'].join('\n'),
+  );
+});
+
+test('renders an added line within a block as a single addition surrounded by context', () => {
+  assert.equal(
+    reconstructSuggestionDiff('a();\nc();', 'a();\nb();\nc();'),
+    [' a();', '+b();', ' c();'].join('\n'),
+  );
+});
+
+test('returns undefined when the suggestion is identical to the before context', () => {
+  // A no-op suggestion produces only context rows; emitting a changeless block adds no
+  // value, so the caller falls back to rendering the suggestion verbatim.
+  assert.equal(reconstructSuggestionDiff('a();', 'a();'), undefined);
 });
 
 test('returns undefined when there is no before context to diff against', () => {

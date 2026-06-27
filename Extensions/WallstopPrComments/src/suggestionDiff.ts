@@ -159,12 +159,16 @@ export function extractNewSideLinesInRange(
 
 /**
  * Builds a GitHub-style unified diff from the lines a `\`\`\`suggestion` block
- * replaces (`before`) and the suggested replacement (`after`): every original
- * line is emitted as a `-` deletion and every suggested line as a `+` addition,
- * the same transformation GitHub renders for a suggested change.
+ * replaces (`before`) and the suggested replacement (`after`). A real line-level
+ * diff (`lineDiff`) matches the lines common to both sides and emits them once as
+ * `" "` context, surfacing only the genuinely removed lines as `-` and added lines
+ * as `+`. This is what makes a removal read as a removal: a suggestion that drops
+ * one line of a block no longer re-emits every unchanged line as a spurious `+`.
  *
- * Returns `undefined` when there is no `before` context to diff against, since a
- * pure addition is just the suggestion text and adds no diff value.
+ * Returns `undefined` when there is no `before` context to diff against (a pure
+ * addition is just the suggestion text), or when the suggestion is identical to
+ * the before-context (a changeless, context-only block adds no diff value) — in
+ * both cases the caller renders the suggestion verbatim instead.
  */
 export function reconstructSuggestionDiff(before: string, after: string): string | undefined {
   const beforeLines = splitPreservingDeletion(before);
@@ -173,11 +177,65 @@ export function reconstructSuggestionDiff(before: string, after: string): string
   }
 
   const afterLines = after === '' ? [] : normalizeLineEndings(after).split('\n');
-  const lines = [
-    ...beforeLines.map((line) => `-${line}`),
-    ...afterLines.map((line) => `+${line}`),
-  ];
-  return lines.join('\n');
+  const diff = lineDiff(beforeLines, afterLines);
+  if (!diff.some((line) => line.startsWith('-') || line.startsWith('+'))) {
+    return undefined;
+  }
+
+  return diff.join('\n');
+}
+
+/**
+ * Computes a minimal line-level unified diff between two line arrays via the
+ * classic longest-common-subsequence dynamic-programming table: lines common to
+ * both sides are matched and emitted once as `" "` context, removed lines as `-`,
+ * added lines as `+`. `dp[i][j]` holds the LCS length of the `before[i..]` /
+ * `after[j..]` suffixes, so a single forward walk reconstructs the diff in order.
+ *
+ * The `dp[i + 1][j] >= dp[i][j + 1]` tie-break (prefer a deletion before an
+ * addition when the LCS is equal either way) pins the unified-diff ordering so the
+ * output is deterministic and matches the PowerShell port (`Get-UnifiedLineDiff`)
+ * byte-for-byte. LCS is the standard basis for unified-diff output; the block a
+ * suggestion replaces is small, so the O(m·n) table is never a concern.
+ */
+function lineDiff(before: readonly string[], after: readonly string[]): string[] {
+  const m = before.length;
+  const n = after.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i -= 1) {
+    for (let j = n - 1; j >= 0; j -= 1) {
+      dp[i][j] = before[i] === after[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (before[i] === after[j]) {
+      out.push(` ${before[i]}`);
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      out.push(`-${before[i]}`);
+      i += 1;
+    } else {
+      out.push(`+${after[j]}`);
+      j += 1;
+    }
+  }
+
+  while (i < m) {
+    out.push(`-${before[i]}`);
+    i += 1;
+  }
+
+  while (j < n) {
+    out.push(`+${after[j]}`);
+    j += 1;
+  }
+
+  return out;
 }
 
 /**

@@ -1432,13 +1432,95 @@ function Get-NewSideLinesInRange {
     return [string]::Join("`n", $selected)
 }
 
+function Get-UnifiedLineDiff {
+    # Computes a minimal line-level unified diff between two line arrays via the classic
+    # longest-common-subsequence dynamic-programming table: lines common to both sides are matched
+    # and emitted once as " " context, removed lines as "-", added lines as "+". dp[i,j] holds the
+    # LCS length of the Before[i..] / After[j..] suffixes, so a single forward walk reconstructs the
+    # diff in order. The dp[i+1,j] -ge dp[i,j+1] tie-break (prefer a deletion before an addition when
+    # the LCS is equal either way) pins the unified-diff ordering so the output is deterministic and
+    # matches the TypeScript port (lineDiff) byte-for-byte. Lines are compared with Ordinal equality
+    # to mirror JavaScript's === exactly. The replaced block is small, so the O(m*n) table is fine.
+    [OutputType([string[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [string[]]$Before,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [string[]]$After
+    )
+
+    # PowerShell binds an empty-array argument (@()) as $null, so normalize both sides before
+    # measuring -- a pure-deletion suggestion legitimately has no After lines (n = 0).
+    if ($null -eq $Before) { $Before = @() }
+    if ($null -eq $After) { $After = @() }
+
+    $m = $Before.Length
+    $n = $After.Length
+    # dp[i][j] = LCS length of Before[i..] and After[j..]. A jagged int[][] (not a rectangular
+    # int[,]) is used deliberately: it indexes one dimension at a time, so an arithmetic subscript
+    # like dp[$i + 1][$j + 1] is unambiguous -- a rectangular dp[$i + 1, $j + 1] is parsed as a
+    # multi-element (Object[]) index instead of a 2-D lookup.
+    $dp = New-Object 'System.Int32[][]' ($m + 1)
+    for ($r = 0; $r -le $m; $r++) {
+        $dp[$r] = New-Object 'System.Int32[]' ($n + 1)
+    }
+    for ($i = $m - 1; $i -ge 0; $i--) {
+        for ($j = $n - 1; $j -ge 0; $j--) {
+            if ([string]::Equals($Before[$i], $After[$j], [System.StringComparison]::Ordinal)) {
+                $dp[$i][$j] = $dp[$i + 1][$j + 1] + 1
+            }
+            else {
+                $dp[$i][$j] = [Math]::Max($dp[$i + 1][$j], $dp[$i][$j + 1])
+            }
+        }
+    }
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $i = 0
+    $j = 0
+    while ($i -lt $m -and $j -lt $n) {
+        if ([string]::Equals($Before[$i], $After[$j], [System.StringComparison]::Ordinal)) {
+            $out.Add(" " + $Before[$i]) | Out-Null
+            $i++
+            $j++
+        }
+        elseif ($dp[$i + 1][$j] -ge $dp[$i][$j + 1]) {
+            $out.Add("-" + $Before[$i]) | Out-Null
+            $i++
+        }
+        else {
+            $out.Add("+" + $After[$j]) | Out-Null
+            $j++
+        }
+    }
+    while ($i -lt $m) {
+        $out.Add("-" + $Before[$i]) | Out-Null
+        $i++
+    }
+    while ($j -lt $n) {
+        $out.Add("+" + $After[$j]) | Out-Null
+        $j++
+    }
+
+    return $out.ToArray()
+}
+
 function ConvertTo-ReconstructedSuggestionDiff {
     # Builds a GitHub-style unified diff from the lines a "```suggestion" block replaces (Before, the
-    # current new-side content recovered from the diff_hunk) and the suggested replacement (After):
-    # every original line becomes a "-" deletion and every suggested line a "+" addition, the same
-    # transformation GitHub renders for a suggested change. Returns "" when there is no Before context
-    # (a pure addition is just the suggestion text and adds no diff value); an empty After yields a
-    # pure-deletion diff.
+    # current new-side content recovered from the diff_hunk) and the suggested replacement (After). A
+    # real line-level diff (Get-UnifiedLineDiff) matches the lines common to both sides and emits them
+    # once as " " context, surfacing only the genuinely removed lines as "-" and added lines as "+".
+    # This is what makes a removal read as a removal: a suggestion that drops one line of a block no
+    # longer re-emits every unchanged line as a spurious "+". Returns "" when there is no Before
+    # context (a pure addition is just the suggestion text) or when the suggestion is identical to the
+    # Before context (a changeless, context-only block adds no diff value); the caller then renders the
+    # suggestion verbatim.
     [OutputType([string])]
     [CmdletBinding()]
     param(
@@ -1457,19 +1539,27 @@ function ConvertTo-ReconstructedSuggestionDiff {
         return ""
     }
 
-    $beforeLines = ($Before -replace "`r`n", "`n" -replace "`r", "`n") -split "`n"
-    $lines = New-Object System.Collections.Generic.List[string]
-    foreach ($beforeLine in $beforeLines) {
-        $lines.Add("-$beforeLine") | Out-Null
+    $beforeLines = @(($Before -replace "`r`n", "`n" -replace "`r", "`n") -split "`n")
+    $afterLines = if ([string]::IsNullOrEmpty($After)) {
+        @()
     }
-    if (-not [string]::IsNullOrEmpty($After)) {
-        $afterLines = ($After -replace "`r`n", "`n" -replace "`r", "`n") -split "`n"
-        foreach ($afterLine in $afterLines) {
-            $lines.Add("+$afterLine") | Out-Null
-        }
+    else {
+        @(($After -replace "`r`n", "`n" -replace "`r", "`n") -split "`n")
     }
 
-    return [string]::Join("`n", $lines)
+    $diff = @(Get-UnifiedLineDiff -Before $beforeLines -After $afterLines)
+    $hasChange = $false
+    foreach ($line in $diff) {
+        if ($line.StartsWith("-", [System.StringComparison]::Ordinal) -or $line.StartsWith("+", [System.StringComparison]::Ordinal)) {
+            $hasChange = $true
+            break
+        }
+    }
+    if (-not $hasChange) {
+        return ""
+    }
+
+    return [string]::Join("`n", $diff)
 }
 
 function New-CommentRecommendationRecord {

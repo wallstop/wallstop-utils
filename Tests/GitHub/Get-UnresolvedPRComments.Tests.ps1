@@ -5997,6 +5997,31 @@ Describe "Suggestion diff reconstruction (end-anchored before-context)" {
             ConvertTo-ReconstructedSuggestionDiff -Before "drop();" -After "" | Should -BeExactly "-drop();"
             ConvertTo-ReconstructedSuggestionDiff -Before "" -After "added();" | Should -BeExactly ""
         }
+
+        It "keeps an unchanged line as context instead of a spurious -/+ pair" {
+            # `a();` is unchanged, so a real line diff keeps it as a single " " context row
+            # rather than re-emitting it as both a deletion and an addition.
+            ConvertTo-ReconstructedSuggestionDiff -Before "a();`nb();" -After "a();`nb2();" |
+                Should -BeExactly " a();`n-b();`n+b2();"
+        }
+
+        It "renders a middle-line removal as a single deletion surrounded by context" {
+            # The bug this fixes: a suggestion that REMOVES the middle line of a block must read
+            # as one "-" between two " " context rows, not a wall of "+" re-adding the kept lines.
+            ConvertTo-ReconstructedSuggestionDiff -Before "parse(input);`nvalidate(input);`nstore(input);" -After "parse(input);`nstore(input);" |
+                Should -BeExactly " parse(input);`n-validate(input);`n store(input);"
+        }
+
+        It "renders an added line within a block as a single addition surrounded by context" {
+            ConvertTo-ReconstructedSuggestionDiff -Before "a();`nc();" -After "a();`nb();`nc();" |
+                Should -BeExactly " a();`n+b();`n c();"
+        }
+
+        It "returns empty when the suggestion is identical to the before context" {
+            # A no-op suggestion produces only context rows; emitting a changeless block adds no
+            # value, so the caller falls back to rendering the suggestion verbatim.
+            ConvertTo-ReconstructedSuggestionDiff -Before "a();" -After "a();" | Should -BeExactly ""
+        }
     }
 
     Context "Convert-ReviewThreadToOutputRecord end-to-end" {
