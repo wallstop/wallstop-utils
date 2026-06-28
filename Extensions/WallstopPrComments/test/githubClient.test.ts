@@ -1392,6 +1392,40 @@ test('preserves earlier accessible repository pages when a later page keeps fail
   assert.equal(logs.some((message) => /\*\*\*REDACTED\*\*\*/u.test(message)), true);
 });
 
+test('reports when accessible repository pagination reaches the safety cap', async () => {
+  const logs: string[] = [];
+  const warnings: string[] = [];
+  const urls: string[] = [];
+  const fetch: FetchLike = async (url) => {
+    urls.push(String(url));
+    const page = Number(new URL(String(url)).searchParams.get('page') ?? '0');
+    return jsonResponse(Array.from({ length: 100 }, (_unused, index) => ({
+      full_name: `wallstop/repo-${page}-${index + 1}`,
+      name: `repo-${page}-${index + 1}`,
+      owner: { login: 'wallstop' },
+      private: false,
+      archived: false,
+      fork: false,
+    })));
+  };
+  const client = new GitHubClient({
+    getToken: async () => 'token',
+    fetch,
+    log: (message) => logs.push(message),
+  });
+
+  const repositories = await client.listAccessibleRepositories('github.com', { warnings });
+
+  assert.equal(urls.length, 20, 'repository enumeration must stop at the configured page cap');
+  assert.equal(repositories.length, 2000);
+  assert.deepEqual(logs, warnings);
+  assert.equal(
+    warnings.some((message) => /after 20 pages; results may be incomplete/u.test(message)),
+    true,
+    'hitting the repository page cap must be surfaced as an incompleteness diagnostic',
+  );
+});
+
 test('propagates a first-page accessible repository failure instead of silently returning empty results', async () => {
   const logs: string[] = [];
   const fetch: FetchLike = async () => new Response('repository page exploded', { status: 500 });

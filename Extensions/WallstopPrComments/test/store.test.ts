@@ -113,6 +113,19 @@ test('rejects URL-reinterpretable IPv4 host aliases before request URL construct
   }
 });
 
+test('normalizes IPv6 hosts to bracketed URL-safe form', () => {
+  assert.equal(assertSafeGitHubHost('2001:4860:4860::8888'), '[2001:4860:4860::8888]');
+  assert.equal(assertSafeGitHubHost('[2001:4860:4860::8888]'), '[2001:4860:4860::8888]');
+  assert.deepEqual(parseRepositoryInput('https://[2001:4860:4860::8888]/org/repo'), {
+    host: '[2001:4860:4860::8888]',
+    owner: 'org',
+    repo: 'repo',
+  });
+
+  assert.throws(() => assertSafeGitHubHost('abc:def'), /Invalid GitHub host/u);
+  assert.throws(() => assertSafeGitHubHost('[2001:4860:4860::8888'), /Invalid GitHub host/u);
+});
+
 test('groups open pull requests first and closed or merged pull requests separately', () => {
   const prs: PullRequestSummary[] = [
     {

@@ -31,6 +31,7 @@ interface GitHubClientOptions {
 
 interface AuthRequestOptions {
   promptForAuth?: boolean;
+  warnings?: string[];
 }
 
 interface WebSuggestionRequestOptions {
@@ -245,16 +246,31 @@ export class GitHubClient {
           throw error;
         }
 
-        this.options.log?.(`Stopped paginating accessible repositories for ${safeHost} after a failed page; results may be incomplete. ${formatSafeErrorMessage(error)}`);
+        this.recordWarning(
+          options,
+          `Stopped paginating accessible repositories for ${safeHost} after a failed page; results may be incomplete. ${formatSafeErrorMessage(error)}`,
+        );
         break;
       }
 
       if (pageRepositories.length < 100) {
         break;
       }
+
+      if (page === MAX_REPOSITORY_PAGES) {
+        this.recordWarning(
+          options,
+          `Stopped paginating accessible repositories for ${safeHost} after ${MAX_REPOSITORY_PAGES} pages; results may be incomplete.`,
+        );
+      }
     }
 
     return repositories;
+  }
+
+  private recordWarning(options: AuthRequestOptions, message: string): void {
+    options.warnings?.push(message);
+    this.options.log?.(message);
   }
 
   async getReviewThreads(

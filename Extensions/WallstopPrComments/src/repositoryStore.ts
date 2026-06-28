@@ -221,8 +221,7 @@ export function assertSafeGitHubHost(host: string): string {
   }
 
   if (normalized.includes(':')) {
-    assertAllowedIPv6Host(normalized);
-    return normalized;
+    return normalizeIPv6Host(normalized);
   }
 
   const ipv4Parts = parseIPv4(normalized);
@@ -401,6 +400,28 @@ function assertAllowedIPv6Host(host: string): void {
   if (!/^[0-9a-f:.]+$/iu.test(normalized)) {
     throw new Error(`Invalid GitHub host '${host}'.`);
   }
+
+  try {
+    new URL(`https://[${normalized}]/`);
+  } catch {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+}
+
+function normalizeIPv6Host(host: string): string {
+  const hasOpeningBracket = host.startsWith('[');
+  const hasClosingBracket = host.endsWith(']');
+  if (hasOpeningBracket !== hasClosingBracket) {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+
+  const normalized = hasOpeningBracket ? host.slice(1, -1) : host;
+  if (normalized.includes('[') || normalized.includes(']')) {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+
+  assertAllowedIPv6Host(normalized);
+  return `[${normalized}]`;
 }
 
 function isIPv6LinkLocal(host: string): boolean {

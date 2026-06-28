@@ -37,7 +37,7 @@ function loadExtensionWithVscodeStub(options: {
   workspaceCommand?: string;
   executeCommand?: (command: string, url: string) => Promise<unknown>;
   listPullRequests?: (repository: RepositoryRef) => Promise<PullRequestSummary[]>;
-  listAccessibleRepositories?: (host: string) => Promise<AccessibleRepository[]>;
+  listAccessibleRepositories?: (host: string, options?: { warnings?: string[] }) => Promise<AccessibleRepository[]>;
   getWebSuggestedDiffs?: () => Promise<WebSuggestedDiffResult>;
   showQuickPick?: (items: unknown[], options: { title?: string }) => Promise<unknown>;
 }): ExtensionHarness {
@@ -127,8 +127,8 @@ function loadExtensionWithVscodeStub(options: {
             return options.listPullRequests?.(repository) ?? [];
           }
 
-          async listAccessibleRepositories(host: string): Promise<AccessibleRepository[]> {
-            return options.listAccessibleRepositories?.(host) ?? [];
+          async listAccessibleRepositories(host: string, requestOptions?: { warnings?: string[] }): Promise<AccessibleRepository[]> {
+            return options.listAccessibleRepositories?.(host, requestOptions) ?? [];
           }
 
           async getReviewThreads(): Promise<{ threads: []; warnings: [] }> {
@@ -165,14 +165,17 @@ function loadExtensionWithVscodeStub(options: {
   }
 }
 
-function createExtensionContext(repositories: readonly RepositoryRef[]): unknown {
+function createExtensionContext(
+  repositories: readonly RepositoryRef[],
+  options: { update?: (key: string, value: unknown) => Promise<void> } = {},
+): unknown {
   const state = new Map<string, unknown>([['wallstopPrComments.repositories', [...repositories]]]);
   return {
     globalState: {
       get: (key: string, fallback?: unknown) => state.get(key) ?? fallback,
-      update: async (key: string, value: unknown) => {
+      update: options.update ?? (async (key: string, value: unknown) => {
         state.set(key, value);
-      },
+      }),
     },
     secrets: {
       get: async () => undefined,
@@ -570,4 +573,86 @@ test('addRepo warns when repository enumeration only partially succeeds', async 
   assert.match(extension.warningMessages[0], /Loaded repositories from 1 of 2 host\(s\)/u);
   assert.match(extension.warningMessages[0], /token \*\*\*REDACTED\*\*\* failed/u);
   assert.equal(extension.errorMessages.length, 0);
+});
+
+test('addRepo keeps the picker when one host succeeds with no repositories and another host fails', async () => {
+  const selectedPickerTitles: string[] = [];
+  const extension = loadExtensionWithVscodeStub({
+    command: undefined,
+    listAccessibleRepositories: async (host) => {
+      if (host === 'github.example.com') {
+        throw fakeTokenFailure();
+      }
+
+      return [];
+    },
+    showQuickPick: async (_items, options) => {
+      selectedPickerTitles.push(options.title ?? '');
+      return [];
+    },
+  });
+  extension.activate(
+    createExtensionContext([{ host: 'github.example.com', owner: 'existing', repo: 'repo' }]),
+  );
+
+  await extension.commands.get('wallstopPrComments.addRepo')?.();
+
+  assert.deepEqual(selectedPickerTitles, ['Add Repositories']);
+  assert.equal(extension.errorMessages.length, 0);
+  assert.equal(extension.warningMessages.length, 1);
+  assert.match(extension.warningMessages[0], /Loaded repositories from 1 of 2 host\(s\)/u);
+  assert.match(extension.warningMessages[0], /token \*\*\*REDACTED\*\*\* failed/u);
+});
+
+test('addRepo surfaces repository listing diagnostics before showing the picker', async () => {
+  const selectedPickerTitles: string[] = [];
+  const extension = loadExtensionWithVscodeStub({
+    command: undefined,
+    listAccessibleRepositories: async (_host, options) => {
+      options?.warnings?.push('Stopped paginating accessible repositories for github.com after 20 pages; results may be incomplete.');
+      return [];
+    },
+    showQuickPick: async (_items, options) => {
+      selectedPickerTitles.push(options.title ?? '');
+      return [];
+    },
+  });
+  extension.activate(createExtensionContext([]));
+
+  await extension.commands.get('wallstopPrComments.addRepo')?.();
+
+  assert.deepEqual(selectedPickerTitles, ['Add Repositories']);
+  assert.equal(extension.errorMessages.length, 0);
+  assert.equal(extension.warningMessages.length, 1);
+  assert.match(extension.warningMessages[0], /after 20 pages; results may be incomplete/u);
+});
+
+test('addRepo command redacts unexpected repository add failures', async () => {
+  const repository: AccessibleRepository = {
+    host: 'github.com',
+    owner: 'wallstop',
+    repo: 'utils',
+    fullName: 'wallstop/utils',
+    private: false,
+    archived: false,
+    fork: false,
+  };
+  const extension = loadExtensionWithVscodeStub({
+    command: undefined,
+    listAccessibleRepositories: async () => [repository],
+    showQuickPick: async (items) => [items[1]],
+  });
+  extension.activate(
+    createExtensionContext([], {
+      update: async () => {
+        throw fakeTokenFailure();
+      },
+    }),
+  );
+
+  await extension.commands.get('wallstopPrComments.addRepo')?.();
+
+  assert.equal(extension.errorMessages.length, 1);
+  assert.match(extension.errorMessages[0], /token \*\*\*REDACTED\*\*\* failed/u);
+  assert.equal(extension.errorMessages[0].includes(fakeGitHubToken()), false);
 });

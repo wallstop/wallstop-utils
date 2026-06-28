@@ -65,9 +65,13 @@ export function activate(context: vscode.ExtensionContext): void {
         provider.refresh(repository);
       }
     }),
-    vscode.commands.registerCommand('wallstopPrComments.addRepo', () =>
-      addRepositoriesInteractively(store, client, provider),
-    ),
+    vscode.commands.registerCommand('wallstopPrComments.addRepo', async () => {
+      try {
+        await addRepositoriesInteractively(store, client, provider);
+      } catch (error) {
+        await showError(error);
+      }
+    }),
     vscode.commands.registerCommand('wallstopPrComments.removeRepo', async (node?: RepositoryNode) => {
       const repository = node?.repository ?? (await pickRepository(store.list()));
       if (repository === undefined) {
@@ -241,19 +245,23 @@ async function addRepositoriesInteractively(
   const hosts = enumerationHosts(store.list());
   let accessible: AccessibleRepository[];
   let listingFailures: unknown[] = [];
+  const listingWarnings: string[] = [];
   try {
     accessible = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'Loading accessible repositories…' },
       async () => {
         const settled = await Promise.allSettled(
-          hosts.map((host) => client.listAccessibleRepositories(host, { promptForAuth: true })),
+          hosts.map((host) => client.listAccessibleRepositories(host, {
+            promptForAuth: true,
+            warnings: listingWarnings,
+          })),
         );
         const repositories = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
         const failures = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
         listingFailures = failures.map((failure) => failure.reason);
         // Only treat listing as failed when nothing came back at all; a single bad host (e.g. a GHES
         // host without a token) should not block repos that loaded from another host.
-        if (repositories.length === 0 && failures[0] !== undefined) {
+        if (repositories.length === 0 && failures.length === settled.length && failures[0] !== undefined) {
           throw failures[0].reason;
         }
 
@@ -266,13 +274,17 @@ async function addRepositoriesInteractively(
     return;
   }
 
+  const warnings: string[] = [];
   if (listingFailures.length > 0) {
     const firstFailure = formatErrorMessage(listingFailures[0]);
-    await vscode.window.showWarningMessage(
-      redactSecrets(
-        `Loaded repositories from ${hosts.length - listingFailures.length} of ${hosts.length} host(s); ${listingFailures.length} host(s) failed: ${firstFailure}`,
-      ),
+    warnings.push(
+      `Loaded repositories from ${hosts.length - listingFailures.length} of ${hosts.length} host(s); ${listingFailures.length} host(s) failed: ${firstFailure}`,
     );
+  }
+
+  warnings.push(...listingWarnings);
+  if (warnings.length > 0) {
+    await vscode.window.showWarningMessage(redactSecrets(warnings.join(' ')));
   }
 
   const items = buildAddRepoQuickPickItems(selectableRepositories(accessible, store.list()));
