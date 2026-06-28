@@ -27,6 +27,12 @@ test('keeps the whole hunk body when no range is supplied', () => {
   assert.equal(trimDiffHunkToRange(hunk, undefined, undefined), ['-old', '+new'].join('\n'));
 });
 
+test('drops unified-diff no-newline metadata when keeping the whole hunk body', () => {
+  const hunk = ['@@ -1,1 +1,1 @@', '-old', '+new', '\\ No newline at end of file'].join('\n');
+
+  assert.equal(trimDiffHunkToRange(hunk, undefined, undefined), ['-old', '+new'].join('\n'));
+});
+
 test('keeps interior empty hunk body lines when no range is supplied', () => {
   const hunk = ['@@ -1,3 +1,3 @@', ' before();', '', '+after();', ''].join('\n');
 
@@ -223,6 +229,17 @@ test('extractNewSideLinesInRange anchors on the last real new-side line past a t
   // The commented new-side line is the last context/addition row; a trailing deletion
   // run is not on the new side and must be skipped, not anchored to.
   const hunk = ['@@ -10,3 +10,2 @@', ' keep();', ' anchor();', '-removed();'].join('\n');
+
+  assert.equal(extractNewSideLinesInRange(hunk, 11, 11), 'anchor();');
+});
+
+test('extractNewSideLinesInRange ignores unified-diff no-newline sentinel rows', () => {
+  const hunk = [
+    '@@ -10,3 +10,2 @@',
+    ' keep();',
+    ' anchor();',
+    '\\ No newline at end of file',
+  ].join('\n');
 
   assert.equal(extractNewSideLinesInRange(hunk, 11, 11), 'anchor();');
 });

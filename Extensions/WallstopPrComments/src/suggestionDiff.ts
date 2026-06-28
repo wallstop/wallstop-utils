@@ -1,3 +1,5 @@
+import { dropUnifiedDiffMetadataLines } from './diffMetadata';
+
 const HUNK_HEADER = /^@@\s+-\d+(?:,\d+)?\s+\+(?<newStart>\d+)(?:,\d+)?\s+@@/u;
 
 /**
@@ -27,7 +29,7 @@ export function trimDiffHunkToRange(
 
   const lines = normalizeLineEndings(diffHunk).split('\n');
   const headerIndex = lines.findIndex((line) => HUNK_HEADER.test(line));
-  const body = dropTrailingEmptyLine(headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines);
+  const body = dropUnifiedDiffMetadataLines(dropTrailingEmptyLine(headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines));
 
   if (start === undefined && end === undefined) {
     return body.join('\n');
@@ -131,7 +133,7 @@ export function extractNewSideLinesInRange(
 
   const lines = normalizeLineEndings(diffHunk).split('\n');
   const headerIndex = lines.findIndex((line) => HUNK_HEADER.test(line));
-  const body = dropTrailingEmptyLine(headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines);
+  const body = dropUnifiedDiffMetadataLines(dropTrailingEmptyLine(headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines));
 
   // The new-side file lines (context + additions, markers stripped), in order.
   // Deletions are not on the new side and are skipped — including a trailing

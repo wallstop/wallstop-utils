@@ -12,7 +12,7 @@ import {
   selectableRepositories,
 } from './repositoryStore';
 import { collectUnavailableSuggestionWarnings, reviewThreadToRecord } from './records';
-import { PrCommentsTreeProvider, type PullRequestNode, type RepositoryNode, type TreeNode } from './treeProvider';
+import { PrCommentsTreeProvider, type PullRequestNode, type TreeNode } from './treeProvider';
 import { AutoRefreshScheduler, type AutoRefreshConfig } from './autoRefresh';
 import type { AccessibleRepository, RepositoryRef, ReviewScope, ReviewThreadRecord, WebSuggestedDiffResult } from './types';
 
@@ -59,9 +59,12 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.commands.registerCommand('wallstopPrComments.refresh', () => provider.refresh()),
-    vscode.commands.registerCommand('wallstopPrComments.refreshRepo', (node?: RepositoryNode) =>
-      provider.refresh(node?.repository),
-    ),
+    vscode.commands.registerCommand('wallstopPrComments.refreshRepo', async (node?: TreeNode) => {
+      const repository = findRepository(node) ?? (await pickRepository(store.list()));
+      if (repository !== undefined) {
+        provider.refresh(repository);
+      }
+    }),
     vscode.commands.registerCommand('wallstopPrComments.addRepo', () =>
       addRepositoriesInteractively(store, client, provider),
     ),
@@ -96,8 +99,13 @@ export function activate(context: vscode.ExtensionContext): void {
       await copyReviewComments(context, client, target.repository, target.pullRequest.number);
     }),
     vscode.commands.registerCommand('wallstopPrComments.openInBrowser', async (node?: PullRequestNode) => {
-      if (node?.pullRequest.url !== undefined && node.pullRequest.url !== '') {
-        await vscode.env.openExternal(vscode.Uri.parse(node.pullRequest.url));
+      try {
+        const target = node ?? (await pickPullRequest(store.list(), client));
+        if (target?.pullRequest.url !== undefined && target.pullRequest.url !== '') {
+          await vscode.env.openExternal(vscode.Uri.parse(target.pullRequest.url));
+        }
+      } catch (error) {
+        await showError(error);
       }
     }),
     vscode.commands.registerCommand('wallstopPrComments.setToken', async (node?: TreeNode) => {

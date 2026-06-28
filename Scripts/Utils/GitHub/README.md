@@ -105,8 +105,9 @@ Suggested change:
   entry as `suggestedChanges`. `-KeepMarkup` keeps the raw block inline instead.
 - GitHub web-exposed automated changesets are parsed from the PR page when GitHub serves
   `automatedComment.suggestion.diffEntries`; only `DELETION`/`ADDITION` lines are rendered as the
-  suggested change, never the surrounding review context. Private or otherwise inaccessible web
-  pages simply leave `suggestedChanges` empty unless `-GitHubWebCookie` (or
+  suggested change, never the surrounding review context or unified-diff metadata such as
+  `\ No newline at end of file`. Private or otherwise inaccessible web pages simply leave
+  `suggestedChanges` empty unless `-GitHubWebCookie` (or
   `WALLSTOP_GITHUB_WEB_COOKIE` / `GITHUB_WEB_COOKIE`) supplies a browser/session cookie for the
   GitHub web UI request.
 - GitHub Copilot/Cursor web-only changesets that are not exposed as markdown `suggestion` fences or

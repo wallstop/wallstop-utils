@@ -2210,6 +2210,13 @@ Describe "Convert-ReviewThreadToOutputRecord diffHunk-only inclusion" {
         @($parsed[0].comments).Count | Should -Be 0 -Because "JSON omits a comment whose only diff has no change lines"
     }
 
+    It "drops raw unified-diff no-newline metadata while preserving marker-prefixed real source lines" {
+        $diff = "@@ -1,2 +1,2 @@`n-old();`n\ No newline at end of file`n+\ No newline at end of file"
+
+        Convert-SuggestedDiffTextToPublicChangeOnlyDiff -Diff $diff |
+            Should -BeExactly "-old();`n+\ No newline at end of file"
+    }
+
     It "still creates a record (and keeps the internal diffHunk) when the comment has prose" {
         $thread = [pscustomobject]@{
             id         = "THREAD_PROSE_PLUS_DIFFHUNK"
@@ -2380,6 +2387,18 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $suggestionsByCommentId["3424230049"][0].path | Should -Be "web/src/test/dom-assertions.ts"
         $suggestionsByCommentId["3424230049"][0].diff | Should -BeExactly "-          document.getElementById(id),`n+          element.ownerDocument.getElementById(id),"
         $suggestionsByCommentId["3424230049"][0].diff | Should -Not -Match "@@|expect\(|not\.toBeNull"
+    }
+
+    It "drops unified-diff no-newline metadata from GitHub web automated changed lines" {
+        $html = @'
+<script type="application/json" data-target="react-partial.embeddedData">{"props":{"comment":{"databaseId":42,"automatedComment":{"suggestion":{"diffEntries":[{"path":"src/file.ts","diffLines":[{"type":"DELETION","text":"old();\n\\ No newline at end of file"},{"type":"ADDITION","text":"new();\n\\ No newline at end of file"}]}]}}}}}</script>
+'@
+
+        $suggestionsByCommentId = Get-GitHubWebAutomatedSuggestedDiffsByCommentIdFromHtml -Html $html
+
+        $suggestionsByCommentId.ContainsKey("42") | Should -BeTrue
+        $suggestionsByCommentId["42"][0].diff | Should -BeExactly "-old();`n+new();"
+        $suggestionsByCommentId["42"][0].diff | Should -Not -Match "No newline at end of file"
     }
 
     It "prefers explicit GitHub web cookie over environment fallback" {
@@ -6309,6 +6328,11 @@ Describe "Suggestion diff reconstruction (end-anchored before-context)" {
 
         It "anchors on the last real new-side line past a trailing deletion" {
             $hunk = "@@ -10,3 +10,2 @@`n keep();`n anchor();`n-removed();"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 11 -End 11 | Should -BeExactly "anchor();"
+        }
+
+        It "ignores unified-diff no-newline sentinel rows" {
+            $hunk = "@@ -10,3 +10,2 @@`n keep();`n anchor();`n\ No newline at end of file"
             Get-NewSideLinesInRange -DiffHunk $hunk -Start 11 -End 11 | Should -BeExactly "anchor();"
         }
 

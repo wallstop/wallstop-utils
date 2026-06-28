@@ -1,3 +1,4 @@
+import { isUnifiedDiffNoNewlineSentinel } from './diffMetadata';
 import type { AutomatedSuggestionSource, RenderableComment, ReviewThreadRecord, SuggestedDiff } from './types';
 
 export function extractAutomatedSuggestedDiffsFromHtml(
@@ -86,6 +87,10 @@ function extractDomSuggestedChangesFromHtmlCore(
       const prefix = line.groups?.kind === 'deletion' ? '-' : '+';
       const bucket = linesByCommentId.get(commentId) ?? [];
       for (const textLine of cellToText(line.groups?.cell ?? '').split('\n')) {
+        if (isUnifiedDiffNoNewlineSentinel(textLine)) {
+          continue;
+        }
+
         bucket.push(`${prefix}${textLine}`);
       }
       linesByCommentId.set(commentId, bucket);
@@ -436,6 +441,10 @@ function toSuggestedDiff(entry: unknown, source: AutomatedSuggestionSource): Sug
     const text = typeof line.text === 'string' ? line.text : '';
     const prefix = type === 'DELETION' ? '-' : '+';
     for (const textLine of normalizeDiffLineText(text)) {
+      if (isUnifiedDiffNoNewlineSentinel(textLine)) {
+        continue;
+      }
+
       changedLines.push(`${prefix}${textLine}`);
     }
   }

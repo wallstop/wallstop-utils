@@ -1340,6 +1340,18 @@ function Get-ReviewCommentDiffHunk {
     return ($diffHunk -replace "`r`n", "`n" -replace "`r", "`n")
 }
 
+function Test-IsUnifiedDiffNoNewlineSentinel {
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Line
+    )
+
+    return [string]::Equals($Line, '\ No newline at end of file', [System.StringComparison]::Ordinal)
+}
+
 function Get-NewSideLinesInRange {
     # Returns the current new-side file lines (context + additions, markers stripped) that a
     # suggestion anchored to [Start, End] would replace -- the "before" side when reconstructing a
@@ -1406,6 +1418,10 @@ function Get-NewSideLinesInRange {
     # including a trailing deletion run -- so the last kept entry stays the commented line.
     $newSide = New-Object System.Collections.Generic.List[string]
     foreach ($line in $body) {
+        if (Test-IsUnifiedDiffNoNewlineSentinel -Line $line) {
+            continue
+        }
+
         $marker = if ($line.Length -gt 0) { $line.Substring(0, 1) } else { "" }
         if ($marker -eq "-") {
             continue
@@ -1806,10 +1822,22 @@ function Convert-GitHubWebAutomatedDiffEntriesToSuggestedDiffs {
             $textValue = Get-ObjectPropertyValue -InputObject $diffLine -Name "text"
             $text = if ($null -eq $textValue) { "" } else { [string]$textValue }
             if ($lineType.Equals("DELETION", [System.StringComparison]::OrdinalIgnoreCase)) {
-                $changedLines.Add("-$text") | Out-Null
+                foreach ($textLine in (($text -replace "`r`n", "`n" -replace "`r", "`n") -split "`n")) {
+                    if (Test-IsUnifiedDiffNoNewlineSentinel -Line $textLine) {
+                        continue
+                    }
+
+                    $changedLines.Add("-$textLine") | Out-Null
+                }
             }
             elseif ($lineType.Equals("ADDITION", [System.StringComparison]::OrdinalIgnoreCase)) {
-                $changedLines.Add("+$text") | Out-Null
+                foreach ($textLine in (($text -replace "`r`n", "`n" -replace "`r", "`n") -split "`n")) {
+                    if (Test-IsUnifiedDiffNoNewlineSentinel -Line $textLine) {
+                        continue
+                    }
+
+                    $changedLines.Add("+$textLine") | Out-Null
+                }
             }
         }
 
@@ -4273,7 +4301,7 @@ function Convert-SuggestedDiffTextToPublicChangeOnlyDiff {
             continue
         }
 
-        if ($line -match '^\\ No newline at end of file$') {
+        if (Test-IsUnifiedDiffNoNewlineSentinel -Line $line) {
             continue
         }
 

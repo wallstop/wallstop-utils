@@ -181,6 +181,36 @@ test('prefixes every public diff line even when source line text contains newlin
   }
 });
 
+test('drops unified-diff no-newline metadata from automated web changed lines', () => {
+  const html = [
+    '<script type="application/json">',
+    JSON.stringify({
+      props: {
+        comment: {
+          databaseId: 42,
+          automatedComment: {
+            suggestion: {
+              diffEntries: [
+                {
+                  diffLines: [
+                    { type: 'DELETION', text: 'old();\n\\ No newline at end of file' },
+                    { type: 'ADDITION', text: 'new();\n\\ No newline at end of file' },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    }),
+    '</script>',
+  ].join('');
+
+  const value = extractAutomatedSuggestedDiffsFromHtml(html).get('42')?.[0].value;
+
+  assert.equal(value, '-old();\n+new();');
+});
+
 test('uses discussion URL as a fallback id and deduplicates repeated changed-line bodies', () => {
   const html = [
     '<script type="application/json">',
@@ -388,6 +418,43 @@ test('extracts a rendered suggested-change diff table keyed by its comment ancho
   assert.deepEqual(suggestions.get('discussion_r3424230049'), [
     changedLines('-          document.getElementById(id),\n+          element.ownerDocument.getElementById(id),'),
   ]);
+});
+
+test('drops unified-diff no-newline metadata from rendered suggested-change diff rows', () => {
+  const html = [
+    '<div class="js-comment" id="discussion_r42">',
+    '  <div class="js-suggested-changes-blob">',
+    '    <table class="diff-table js-diff-table">',
+    '      <tbody>',
+    '        <tr>',
+    '          <td class="blob-code blob-code-deletion">',
+    '            <span class="blob-code-inner blob-code-marker">old();</span>',
+    '          </td>',
+    '        </tr>',
+    '        <tr>',
+    '          <td class="blob-code blob-code-deletion">',
+    '            <span class="blob-code-inner blob-code-marker">\\ No newline at end of file</span>',
+    '          </td>',
+    '        </tr>',
+    '        <tr>',
+    '          <td class="blob-code blob-code-addition">',
+    '            <span class="blob-code-inner blob-code-marker">new();</span>',
+    '          </td>',
+    '        </tr>',
+    '        <tr>',
+    '          <td class="blob-code blob-code-addition">',
+    '            <span class="blob-code-inner blob-code-marker">\\ No newline at end of file</span>',
+    '          </td>',
+    '        </tr>',
+    '      </tbody>',
+    '    </table>',
+    '  </div>',
+    '</div>',
+  ].join('\n');
+
+  const suggestions = extractDomSuggestedChangesFromHtml(html);
+
+  assert.equal(suggestions.get('discussion_r42')?.[0].value, '-old();\n+new();');
 });
 
 test('decodes HTML entities and strips inline markup from rendered suggestion code lines', () => {
