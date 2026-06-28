@@ -4317,6 +4317,48 @@ function Convert-SuggestedDiffTextToPublicChangeOnlyDiff {
     return ($changedLines.ToArray() -join "`n")
 }
 
+function Normalize-RenderedSuggestedDiffPath {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    return (($Path -replace '\\', '/') -replace "[`r`n]+", " ").Trim()
+}
+
+function Get-SuggestedDiffRenderLabel {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$RecordPath,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$DiffPath
+    )
+
+    $normalizedDiffPath = Normalize-RenderedSuggestedDiffPath -Path $DiffPath
+    if ([string]::IsNullOrWhiteSpace($normalizedDiffPath)) {
+        return "Suggested change:"
+    }
+
+    $normalizedRecordPath = Normalize-RenderedSuggestedDiffPath -Path $RecordPath
+    if (-not [string]::IsNullOrWhiteSpace($normalizedRecordPath) -and $normalizedDiffPath.Equals($normalizedRecordPath, [System.StringComparison]::Ordinal)) {
+        return "Suggested change:"
+    }
+
+    return "Suggested change ($normalizedDiffPath):"
+}
+
 function Add-CommentRecommendationRenderLines {
     [CmdletBinding()]
     param(
@@ -4347,7 +4389,11 @@ function Add-ThreadCommentRenderLines {
 
         [Parameter(Mandatory = $false)]
         [AllowNull()]
-        $Comments
+        $Comments,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$RecordPath
     )
 
     if ($null -eq $Comments) {
@@ -4421,7 +4467,8 @@ function Add-ThreadCommentRenderLines {
                     continue
                 }
 
-                $Lines.Add("Suggested change:") | Out-Null
+                $diffPath = Get-ObjectPropertyValue -InputObject $suggestedDiff -Name "path"
+                $Lines.Add((Get-SuggestedDiffRenderLabel -RecordPath $RecordPath -DiffPath ([string]$diffPath))) | Out-Null
                 $Lines.Add('```diff') | Out-Null
                 foreach ($diffLine in ($publicDiffText -split "`n")) {
                     $Lines.Add($diffLine) | Out-Null
@@ -4466,7 +4513,7 @@ function Format-UnresolvedThreadsAsText {
             }
         }
         if ($renderableCommentCount -gt 0) {
-            Add-ThreadCommentRenderLines -Lines $lines -Comments $commentRecords
+            Add-ThreadCommentRenderLines -Lines $lines -Comments $commentRecords -RecordPath ([string]$record.path)
         }
         else {
             $topLevelRecommendation = $null

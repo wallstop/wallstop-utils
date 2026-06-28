@@ -2854,6 +2854,46 @@ Comment B
         $actualNormalized | Should -BeExactly $expectedNormalized
     }
 
+    It "labels web suggested diffs that target a different file" {
+        $records = @(
+            [pscustomobject]@{
+                path      = "src/commented.ts"
+                lineStart = 10
+                lineEnd   = 10
+                comments  = @(
+                    [pscustomobject]@{
+                        body           = ""
+                        suggestedChanges = @()
+                        suggestedDiffs = @(
+                            [pscustomobject]@{
+                                kind = "changedLines"
+                                path = "src/changed.ts"
+                                diff = "-old();`n+new();"
+                            }
+                        )
+                    }
+                )
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $expected = @'
+---
+(src/commented.ts) 10-10
+Suggested change (src/changed.ts):
+```diff
+-old();
++new();
+```
+---
+'@
+
+        $actualNormalized = $text -replace "`r`n", "`n"
+        $expectedNormalized = $expected.TrimEnd("`r", "`n") -replace "`r`n", "`n"
+
+        $actualNormalized | Should -BeExactly $expectedNormalized
+    }
+
     It "never emits two adjacent delimiter lines between blocks" {
         $records = @(
             [pscustomobject]@{
