@@ -78,8 +78,10 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
 
     const node = this.repositoryNodes.get(key);
     if (node === undefined) {
-      // No memoized node means VS Code has never rendered this repo's subtree, so a
-      // targeted fire would be a no-op anyway. Nothing to refresh.
+      if (this.repositories.list().some((candidate) => repositoryKey(candidate) === key)) {
+        this.onDidChangeTreeDataEmitter.fire(undefined);
+      }
+
       return;
     }
 

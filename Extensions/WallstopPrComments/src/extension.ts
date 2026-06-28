@@ -91,12 +91,16 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.commands.registerCommand('wallstopPrComments.copyComments', async (node?: PullRequestNode) => {
-      const target = node ?? (await pickPullRequest(store.list(), client));
-      if (target === undefined) {
-        return;
-      }
+      try {
+        const target = node ?? (await pickPullRequest(store.list(), client));
+        if (target === undefined) {
+          return;
+        }
 
-      await copyReviewComments(context, client, target.repository, target.pullRequest.number);
+        await copyReviewComments(context, client, target.repository, target.pullRequest.number);
+      } catch (error) {
+        await showError(error);
+      }
     }),
     vscode.commands.registerCommand('wallstopPrComments.openInBrowser', async (node?: PullRequestNode) => {
       try {
@@ -241,6 +245,7 @@ async function addRepositoriesInteractively(
 ): Promise<void> {
   const hosts = enumerationHosts(store.list());
   let accessible: AccessibleRepository[];
+  let listingFailures: unknown[] = [];
   try {
     accessible = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'Loading accessible repositories…' },
@@ -249,11 +254,12 @@ async function addRepositoriesInteractively(
           hosts.map((host) => client.listAccessibleRepositories(host, { promptForAuth: true })),
         );
         const repositories = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
-        const firstFailure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+        const failures = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+        listingFailures = failures.map((failure) => failure.reason);
         // Only treat listing as failed when nothing came back at all; a single bad host (e.g. a GHES
         // host without a token) should not block repos that loaded from another host.
-        if (repositories.length === 0 && firstFailure !== undefined) {
-          throw firstFailure.reason;
+        if (repositories.length === 0 && failures[0] !== undefined) {
+          throw failures[0].reason;
         }
 
         return repositories;
@@ -263,6 +269,15 @@ async function addRepositoriesInteractively(
     await showError(error);
     await addRepositoryManually(store, provider);
     return;
+  }
+
+  if (listingFailures.length > 0) {
+    const firstFailure = formatErrorMessage(listingFailures[0]);
+    await vscode.window.showWarningMessage(
+      redactSecrets(
+        `Loaded repositories from ${hosts.length - listingFailures.length} of ${hosts.length} host(s); ${listingFailures.length} host(s) failed: ${firstFailure}`,
+      ),
+    );
   }
 
   const items = buildAddRepoQuickPickItems(selectableRepositories(accessible, store.list()));
@@ -415,8 +430,11 @@ function findRepository(node: TreeNode | undefined): RepositoryRef | undefined {
 }
 
 async function showError(error: unknown): Promise<void> {
-  const message = error instanceof Error ? error.message : String(error);
-  await vscode.window.showErrorMessage(redactSecrets(message));
+  await vscode.window.showErrorMessage(redactSecrets(formatErrorMessage(error)));
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function isReviewThreadRecord(record: ReviewThreadRecord | undefined): record is ReviewThreadRecord {

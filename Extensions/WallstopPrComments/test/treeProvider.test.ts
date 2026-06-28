@@ -288,6 +288,38 @@ test('refresh(repository) fires the same memoized instance getChildren(undefined
   assert.equal(firedEvents[0], nodeA, 'fired node must be the identical instance returned by getChildren(undefined)');
 });
 
+const missingMemoizedNodeRefreshScenarios: Array<{
+  readonly name: string;
+  readonly arrange: (provider: PrCommentsTreeProviderClass) => Promise<void>;
+}> = [
+  {
+    name: 'the repository root has not rendered yet',
+    arrange: async () => undefined,
+  },
+  {
+    name: 'a no-arg refresh cleared the memoized roots',
+    arrange: async (provider) => {
+      await provider.getChildren(undefined);
+      firedEvents.length = 0;
+      provider.refresh();
+      firedEvents.length = 0;
+    },
+  },
+];
+
+for (const scenario of missingMemoizedNodeRefreshScenarios) {
+  test(`refresh(repository) fires a full refresh when ${scenario.name}`, async () => {
+    const { PrCommentsTreeProvider } = loadTreeProvider();
+    const client = { listPullRequests: async () => [pullRequest] } as unknown as GitHubClient;
+    const provider = new PrCommentsTreeProvider({ list: () => [repository] }, client);
+
+    await scenario.arrange(provider);
+    provider.refresh(repository);
+
+    assert.deepEqual(firedEvents, [undefined]);
+  });
+}
+
 test('no-arg refresh() fires undefined and reloads every repository', async () => {
   const { PrCommentsTreeProvider } = loadTreeProvider();
   const loadsByRepo = new Map<string, number>();

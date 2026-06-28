@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import Module from 'node:module';
 import test from 'node:test';
 
-import type { PullRequestSummary, RepositoryRef, ReviewThreadRecord, WebSuggestedDiffResult } from '../src/types';
+import type {
+  AccessibleRepository,
+  PullRequestSummary,
+  RepositoryRef,
+  ReviewThreadRecord,
+  WebSuggestedDiffResult,
+} from '../src/types';
 
 interface ExtensionTestExports {
   activate(context: unknown): void;
@@ -20,6 +26,7 @@ interface ExtensionHarness extends ExtensionTestExports {
   errorMessages: string[];
   firedTreeEvents: unknown[];
   openedUrls: string[];
+  warningMessages: string[];
   treeProvider?: {
     getChildren(element?: unknown): Promise<unknown[]>;
   };
@@ -30,12 +37,14 @@ function loadExtensionWithVscodeStub(options: {
   workspaceCommand?: string;
   executeCommand?: (command: string, url: string) => Promise<unknown>;
   listPullRequests?: (repository: RepositoryRef) => Promise<PullRequestSummary[]>;
+  listAccessibleRepositories?: (host: string) => Promise<AccessibleRepository[]>;
   showQuickPick?: (items: unknown[], options: { title?: string }) => Promise<unknown>;
 }): ExtensionHarness {
   const commands = new Map<string, CommandHandler>();
   const errorMessages: string[] = [];
   const firedTreeEvents: unknown[] = [];
   const openedUrls: string[] = [];
+  const warningMessages: string[] = [];
   let treeProvider: ExtensionHarness['treeProvider'];
   const moduleLoader = Module as unknown as {
     _load: (request: string, parent: NodeModule | null, isMain: boolean) => unknown;
@@ -93,7 +102,9 @@ function loadExtensionWithVscodeStub(options: {
           showInputBox: async () => undefined,
           showQuickPick: async (items: unknown[], quickPickOptions: { title?: string }) =>
             options.showQuickPick?.(items, quickPickOptions),
-          showWarningMessage: async () => undefined,
+          showWarningMessage: async (message: string) => {
+            warningMessages.push(message);
+          },
           withProgress: async (_options: unknown, task: () => Promise<unknown>) => task(),
         },
         workspace: {
@@ -115,8 +126,8 @@ function loadExtensionWithVscodeStub(options: {
             return options.listPullRequests?.(repository) ?? [];
           }
 
-          async listAccessibleRepositories(): Promise<[]> {
-            return [];
+          async listAccessibleRepositories(host: string): Promise<AccessibleRepository[]> {
+            return options.listAccessibleRepositories?.(host) ?? [];
           }
 
           async getReviewThreads(): Promise<{ threads: []; warnings: [] }> {
@@ -142,6 +153,7 @@ function loadExtensionWithVscodeStub(options: {
       errorMessages,
       firedTreeEvents,
       openedUrls,
+      warningMessages,
     });
     Object.defineProperty(harness, 'treeProvider', {
       get: () => treeProvider,
@@ -168,6 +180,10 @@ function createExtensionContext(repositories: readonly RepositoryRef[]): unknown
     },
     subscriptions: [],
   };
+}
+
+function fakeTokenFailure(): Error {
+  return new Error(`token ${'ghp_'}${'12345678901234567890'} failed`);
 }
 
 test('browser web suggestions provider invokes configured VS Code command with PR files URL', async () => {
@@ -403,7 +419,7 @@ test('openInBrowser command surfaces picker load failures instead of throwing ra
   const extension = loadExtensionWithVscodeStub({
     command: undefined,
     listPullRequests: async () => {
-      throw new Error('token ghp_12345678901234567890 failed');
+      throw fakeTokenFailure();
     },
     showQuickPick: async (items, options) => {
       assert.equal(options.title, 'Repository');
@@ -417,4 +433,67 @@ test('openInBrowser command surfaces picker load failures instead of throwing ra
   assert.deepEqual(extension.openedUrls, []);
   assert.equal(extension.errorMessages.length, 1);
   assert.match(extension.errorMessages[0], /token \*\*\*REDACTED\*\*\* failed/u);
+});
+
+test('copyComments command surfaces picker load failures instead of throwing raw command errors', async () => {
+  const repository: RepositoryRef = { host: 'github.com', owner: 'wallstop', repo: 'utils' };
+  const extension = loadExtensionWithVscodeStub({
+    command: undefined,
+    listPullRequests: async () => {
+      throw fakeTokenFailure();
+    },
+    showQuickPick: async (items, options) => {
+      assert.equal(options.title, 'Repository');
+      return items[0];
+    },
+  });
+  extension.activate(createExtensionContext([repository]));
+
+  await assert.doesNotReject(() => extension.commands.get('wallstopPrComments.copyComments')?.() as Promise<unknown>);
+
+  assert.equal(extension.errorMessages.length, 1);
+  assert.match(extension.errorMessages[0], /token \*\*\*REDACTED\*\*\* failed/u);
+});
+
+test('addRepo warns when repository enumeration only partially succeeds', async () => {
+  const hosts: string[] = [];
+  const selectedPickerTitles: string[] = [];
+  const extension = loadExtensionWithVscodeStub({
+    command: undefined,
+    listAccessibleRepositories: async (host) => {
+      hosts.push(host);
+      if (host === 'github.example.com') {
+        throw fakeTokenFailure();
+      }
+
+      return [
+        {
+          host,
+          owner: 'wallstop',
+          repo: 'utils',
+          fullName: 'wallstop/utils',
+          private: false,
+          archived: false,
+          fork: false,
+          pushedAt: '2026-06-24T00:00:00Z',
+        },
+      ];
+    },
+    showQuickPick: async (_items, options) => {
+      selectedPickerTitles.push(options.title ?? '');
+      return [];
+    },
+  });
+  extension.activate(
+    createExtensionContext([{ host: 'github.example.com', owner: 'existing', repo: 'repo' }]),
+  );
+
+  await extension.commands.get('wallstopPrComments.addRepo')?.();
+
+  assert.deepEqual(hosts, ['github.com', 'github.example.com']);
+  assert.deepEqual(selectedPickerTitles, ['Add Repositories']);
+  assert.equal(extension.warningMessages.length, 1);
+  assert.match(extension.warningMessages[0], /Loaded repositories from 1 of 2 host\(s\)/u);
+  assert.match(extension.warningMessages[0], /token \*\*\*REDACTED\*\*\* failed/u);
+  assert.equal(extension.errorMessages.length, 0);
 });
