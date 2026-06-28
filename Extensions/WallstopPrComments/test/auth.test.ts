@@ -123,3 +123,31 @@ test('uses manual PAT fallback for GHES hosts', async () => {
   assert.equal(await service.getToken('ghes.example.com'), 'manual-token');
   assert.deepEqual(calls, ['secret']);
 });
+
+test('normalizes and validates auth secret hosts before lookup', async () => {
+  const secretKeys: string[] = [];
+  const service = new AuthService({
+    getGitHubSession: async () => undefined,
+    getSecret: async (key) => {
+      secretKeys.push(key);
+      return 'manual-token';
+    },
+  });
+
+  assert.equal(await service.getToken(' GitHub.COM '), 'manual-token');
+  assert.deepEqual(secretKeys, ['wallstopPrComments.token.github.com']);
+});
+
+test('rejects unsafe auth hosts before secret access', async () => {
+  let secretCalled = false;
+  const service = new AuthService({
+    getGitHubSession: async () => undefined,
+    getSecret: async () => {
+      secretCalled = true;
+      return 'manual-token';
+    },
+  });
+
+  await assert.rejects(() => service.getToken('localhost'), /Localhost GitHub hosts are not allowed/u);
+  assert.equal(secretCalled, false);
+});

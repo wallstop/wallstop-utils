@@ -996,6 +996,17 @@ Describe "Scope safety conventions" {
         $content | Should -Match 'function\s+Convert-SuggestedChangeForPublicOutput[\s\S]*Convert-SuggestedDiffTextToPublicChangeOnlyDiff'
         $content | Should -Match 'changedLines'
 
+        # Unified-diff no-newline sentinel rows are metadata. They must never become before-context
+        # source lines or public +/- changed lines, regardless of whether they arrive from review
+        # diff_hunk reconstruction, structured GitHub web suggestions, or raw suggested-diff text.
+        $content | Should -Match 'function\s+Test-IsUnifiedDiffNoNewlineSentinel'
+        $newSideLines = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Get-NewSideLinesInRange" -Context "diff_hunk no-newline sentinel filtering"
+        $newSideLines.Body.Extent.Text | Should -Match 'Test-IsUnifiedDiffNoNewlineSentinel'
+        $webAutomatedDiffEntries = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Convert-GitHubWebAutomatedDiffEntriesToSuggestedDiffs" -Context "web automated no-newline sentinel filtering"
+        $webAutomatedDiffEntries.Body.Extent.Text | Should -Match 'Test-IsUnifiedDiffNoNewlineSentinel'
+        $rawSuggestedDiffText = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "Convert-SuggestedDiffTextToPublicChangeOnlyDiff" -Context "raw suggested diff no-newline sentinel filtering"
+        $rawSuggestedDiffText.Body.Extent.Text | Should -Match 'Test-IsUnifiedDiffNoNewlineSentinel'
+
         $headerValueSanitizer = Get-RequiredFunctionDefinitionAst -Ast $ast -Name "ConvertTo-SafeHttpHeaderValue" -Context "GitHub header-value sanitization"
         # Strip the whole C0 control range plus DEL (which includes CR/LF, the response-splitting
         # injection vector), not only CR/LF: no control character is ever valid in a token/cookie value.
@@ -1046,6 +1057,9 @@ Describe "Scope safety conventions" {
         $testsContent | Should -Match 'renders per-comment suggestion without the referenced diff hunk'
         $testsContent | Should -Match 'annotates fenced suggestions with their source comment author'
         $testsContent | Should -Match 'extracts GitHub web automated suggestions without review context lines'
+        $testsContent | Should -Match 'drops unified-diff no-newline metadata from GitHub web automated changed lines'
+        $testsContent | Should -Match 'ignores unified-diff no-newline sentinel rows'
+        $testsContent | Should -Match 'drops raw unified-diff no-newline metadata while preserving marker-prefixed real source lines'
         $testsContent | Should -Match 'merges GitHub web automated suggestions into matching comment records'
         $testsContent | Should -Match 'does not render placeholder prose for suggestion-only comments'
         $testsContent | Should -Match 'Should -Not -Match "@@"'

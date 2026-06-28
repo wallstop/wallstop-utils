@@ -1,8 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { attachWebSuggestedDiffs, extractAutomatedSuggestedDiffsFromHtml } from '../src/webSuggestions';
-import type { ReviewThreadRecord } from '../src/types';
+import {
+  attachWebSuggestedDiffs,
+  extractAutomatedSuggestedDiffsFromHtml,
+  extractDomSuggestedChangesFromHtml,
+  htmlHasSuggestionMarkers,
+  unmatchedSuggestionKeys,
+} from '../src/webSuggestions';
+import { formatReviewThreadRecords } from '../src/renderer';
+import type { ReviewThreadRecord, SuggestedDiff } from '../src/types';
+
+function changedLines(value: string, path?: string): SuggestedDiff {
+  return {
+    kind: 'changedLines',
+    path,
+    source: 'browserDomAutomatedDiff',
+    confidence: 'medium',
+    value,
+  };
+}
 
 test('extracts GitHub web automated suggestions without review context lines', () => {
   const html = [
@@ -164,6 +181,36 @@ test('prefixes every public diff line even when source line text contains newlin
   }
 });
 
+test('drops unified-diff no-newline metadata from automated web changed lines', () => {
+  const html = [
+    '<script type="application/json">',
+    JSON.stringify({
+      props: {
+        comment: {
+          databaseId: 42,
+          automatedComment: {
+            suggestion: {
+              diffEntries: [
+                {
+                  diffLines: [
+                    { type: 'DELETION', text: 'old();\n\\ No newline at end of file' },
+                    { type: 'ADDITION', text: 'new();\n\\ No newline at end of file' },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    }),
+    '</script>',
+  ].join('');
+
+  const value = extractAutomatedSuggestedDiffsFromHtml(html).get('42')?.[0].value;
+
+  assert.equal(value, '-old();\n+new();');
+});
+
 test('uses discussion URL as a fallback id and deduplicates repeated changed-line bodies', () => {
   const html = [
     '<script type="application/json">',
@@ -298,6 +345,274 @@ test('attaches web suggestions by URL fallback when database id is missing', () 
   assert.equal(records[0].comments[0].suggestedDiffs[0].value, '-old();\n+new();');
 });
 
+test('web enrichment replaces stale diff context with the attached suggested diff', () => {
+  const records: ReviewThreadRecord[] = [
+    {
+      path: 'src/fallback.ts',
+      lineStart: 4,
+      lineEnd: 4,
+      comments: [
+        {
+          databaseId: 123,
+          body: 'Copilot suggested changeset available in the GitHub web UI.',
+          suggestedChanges: [],
+          suggestedDiffs: [],
+          diffHunk: '-old context();\n+new context();',
+          unavailableReason: 'GitHub web-only suggested changeset could not be extracted from the public API.',
+          unavailableSource: 'webOnlyUnavailable',
+          unavailableConfidence: 'unavailable',
+        },
+      ],
+    },
+  ];
+  const suggestions = new Map([
+    [
+      '123',
+      [
+        {
+          kind: 'changedLines' as const,
+          source: 'githubWebAutomatedDiff' as const,
+          confidence: 'medium' as const,
+          value: '-old();\n+new();',
+        },
+      ],
+    ],
+  ]);
+
+  const attached = attachWebSuggestedDiffs(records, suggestions);
+  const output = formatReviewThreadRecords(records);
+
+  assert.equal(attached, 1);
+  assert.equal(records[0].comments[0].diffHunk, undefined);
+  assert.match(output, /Suggested change:\n-old\(\);\n\+new\(\);/);
+  assert.doesNotMatch(output, /Diff context:/);
+  assert.doesNotMatch(output, /old context/);
+});
+
+test('extracts a rendered suggested-change diff table keyed by its comment anchor id', () => {
+  const html = [
+    '<div class="js-comment" id="discussion_r3424230049">',
+    '  <div class="js-suggested-changes-blob">',
+    '    <table class="diff-table js-diff-table">',
+    '      <tbody>',
+    '        <tr class="blob-expanded">',
+    '          <td class="blob-num blob-num-deletion"></td>',
+    '          <td class="blob-code blob-code-deletion">',
+    '            <span class="blob-code-inner blob-code-marker">          document.getElementById(id),</span>',
+    '          </td>',
+    '        </tr>',
+    '        <tr class="blob-expanded">',
+    '          <td class="blob-num blob-num-addition"></td>',
+    '          <td class="blob-code blob-code-addition">',
+    '            <span class="blob-code-inner blob-code-marker">          element.ownerDocument.getElementById(id),</span>',
+    '          </td>',
+    '        </tr>',
+    '      </tbody>',
+    '    </table>',
+    '  </div>',
+    '</div>',
+  ].join('\n');
+
+  const suggestions = extractDomSuggestedChangesFromHtml(html, 'browserDomAutomatedDiff');
+
+  assert.deepEqual(suggestions.get('discussion_r3424230049'), [
+    changedLines('-          document.getElementById(id),\n+          element.ownerDocument.getElementById(id),'),
+  ]);
+});
+
+test('drops unified-diff no-newline metadata from rendered suggested-change diff rows', () => {
+  const html = [
+    '<div class="js-comment" id="discussion_r42">',
+    '  <div class="js-suggested-changes-blob">',
+    '    <table class="diff-table js-diff-table">',
+    '      <tbody>',
+    '        <tr>',
+    '          <td class="blob-code blob-code-deletion">',
+    '            <span class="blob-code-inner blob-code-marker">old();</span>',
+    '          </td>',
+    '        </tr>',
+    '        <tr>',
+    '          <td class="blob-code blob-code-deletion">',
+    '            <span class="blob-code-inner blob-code-marker">\\ No newline at end of file</span>',
+    '          </td>',
+    '        </tr>',
+    '        <tr>',
+    '          <td class="blob-code blob-code-addition">',
+    '            <span class="blob-code-inner blob-code-marker">new();</span>',
+    '          </td>',
+    '        </tr>',
+    '        <tr>',
+    '          <td class="blob-code blob-code-addition">',
+    '            <span class="blob-code-inner blob-code-marker">\\ No newline at end of file</span>',
+    '          </td>',
+    '        </tr>',
+    '      </tbody>',
+    '    </table>',
+    '  </div>',
+    '</div>',
+  ].join('\n');
+
+  const suggestions = extractDomSuggestedChangesFromHtml(html);
+
+  assert.equal(suggestions.get('discussion_r42')?.[0].value, '-old();\n+new();');
+});
+
+test('decodes HTML entities and strips inline markup from rendered suggestion code lines', () => {
+  const html = [
+    '<div data-comment-id="555">',
+    '  <div class="js-suggested-changes-blob">',
+    '  <table class="diff-table">',
+    '    <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">if (a &amp;&amp; b &lt; c) {</span></td></tr>',
+    '    <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">if (a &amp;&amp; b &lt;= <em>c</em>) {</span></td></tr>',
+    '  </table>',
+    '  </div>',
+    '</div>',
+  ].join('\n');
+
+  const suggestions = extractDomSuggestedChangesFromHtml(html);
+
+  assert.equal(suggestions.get('555')?.[0].value, '-if (a && b < c) {\n+if (a && b <= c) {');
+});
+
+test('falls back to the rendered DOM suggestion table when no embedded JSON is present', () => {
+  const html = [
+    '<div class="js-comment" id="discussion_r777">',
+    '  <div class="js-suggested-changes-blob">',
+    '  <table class="diff-table">',
+    '    <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">old();</span></td></tr>',
+    '    <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">new();</span></td></tr>',
+    '  </table>',
+    '  </div>',
+    '</div>',
+  ].join('\n');
+
+  const suggestions = extractAutomatedSuggestedDiffsFromHtml(html, 'browserDomAutomatedDiff');
+
+  assert.equal(suggestions.get('discussion_r777')?.[0].value, '-old();\n+new();');
+  assert.equal(suggestions.get('discussion_r777')?.[0].source, 'browserDomAutomatedDiff');
+});
+
+test('short-circuits rendered DOM extraction when HTML has no suggested-change markers', () => {
+  const html = [
+    '<div class="js-comment" id="discussion_r1">',
+    '  <p>Plain review comment next to an ordinary file diff.</p>',
+    '  <table class="diff-table js-file-content">',
+    '    <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">mainFileOld();</span></td></tr>',
+    '    <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">mainFileNew();</span></td></tr>',
+    '  </table>',
+    '</div>',
+  ].join('\n');
+
+  assert.equal(htmlHasSuggestionMarkers(html), false);
+  assert.equal(extractAutomatedSuggestedDiffsFromHtml(html).size, 0);
+});
+
+test('extracts only marker-scoped rendered suggestions on a page with many ordinary diff rows', () => {
+  const ordinaryDiffRows = Array.from(
+    { length: 500 },
+    (_value, index) => [
+      `<tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">old${index}();</span></td></tr>`,
+      `<tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">new${index}();</span></td></tr>`,
+    ].join('\n'),
+  ).join('\n');
+  const html = [
+    '<table class="diff-table js-file-content">',
+    ordinaryDiffRows,
+    '</table>',
+    '<div class="js-comment" id="discussion_r901">',
+    '  <p>Plain prose beside the main file diff.</p>',
+    '</div>',
+    '<div class="js-comment" id="discussion_r902">',
+    '  <div class="js-suggested-changes-blob">',
+    '    <table class="diff-table">',
+    '      <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">oldSuggestion();</span></td></tr>',
+    '      <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">newSuggestion();</span></td></tr>',
+    '    </table>',
+    '  </div>',
+    '</div>',
+    '<table class="diff-table js-file-content">',
+    ordinaryDiffRows,
+    '</table>',
+  ].join('\n');
+
+  const suggestions = extractAutomatedSuggestedDiffsFromHtml(html);
+
+  assert.deepEqual([...suggestions.keys()], ['discussion_r902']);
+  assert.equal(suggestions.get('discussion_r902')?.[0].value, '-oldSuggestion();\n+newSuggestion();');
+});
+
+test('detects suggestion markers in rendered HTML even when no diff table can be parsed', () => {
+  const unparseable = [
+    '<div class="js-comment" id="discussion_r888">',
+    '  <div class="js-suggested-changes-blob">',
+    '    <!-- the diff table moved to a format this extractor does not understand -->',
+    '  </div>',
+    '</div>',
+  ].join('\n');
+
+  assert.equal(htmlHasSuggestionMarkers(unparseable), true);
+  assert.equal(extractDomSuggestedChangesFromHtml(unparseable).size, 0);
+  assert.equal(htmlHasSuggestionMarkers('<html><body>just a page</body></html>'), false);
+  assert.equal(
+    htmlHasSuggestionMarkers('<div class="comment-body">Here is a suggestion: rename the field.</div>'),
+    false,
+  );
+});
+
+test('reports unmatched suggestion keys when no comment id form matches', () => {
+  const records: ReviewThreadRecord[] = [
+    {
+      path: 'src/file.ts',
+      lineStart: 1,
+      lineEnd: 1,
+      comments: [
+        {
+          databaseId: 11,
+          body: 'Comment',
+          url: 'https://github.com/org/repo/pull/1#discussion_r11',
+          suggestedChanges: [],
+          suggestedDiffs: [],
+        },
+      ],
+    },
+  ];
+  const suggestions = new Map<string, SuggestedDiff[]>([
+    ['discussion_r999', [changedLines('-old();\n+new();')]],
+  ]);
+
+  const attached = attachWebSuggestedDiffs(records, suggestions);
+
+  assert.equal(attached, 0);
+  assert.deepEqual(unmatchedSuggestionKeys(records, suggestions), ['discussion_r999']);
+});
+
+test('matches a web suggestion by the comment node id when no database id is present', () => {
+  const records: ReviewThreadRecord[] = [
+    {
+      path: 'src/file.ts',
+      lineStart: 1,
+      lineEnd: 1,
+      comments: [
+        {
+          nodeId: 'PRRC_kwDONODE',
+          body: 'Comment',
+          suggestedChanges: [],
+          suggestedDiffs: [],
+        },
+      ],
+    },
+  ];
+  const suggestions = new Map<string, SuggestedDiff[]>([
+    ['PRRC_kwDONODE', [changedLines('-old();\n+new();')]],
+  ]);
+
+  const attached = attachWebSuggestedDiffs(records, suggestions);
+
+  assert.equal(attached, 1);
+  assert.deepEqual(unmatchedSuggestionKeys(records, suggestions), []);
+  assert.equal(records[0].comments[0].suggestedDiffs[0].value, '-old();\n+new();');
+});
+
 test('attaches identical changed-line bodies when suggested diffs target different paths', () => {
   const records: ReviewThreadRecord[] = [
     {
@@ -343,4 +658,111 @@ test('attaches identical changed-line bodies when suggested diffs target differe
     'src/one.ts',
     'src/two.ts',
   ]);
+});
+
+test('does not fabricate a suggested change from a sibling file diff after a prose-only comment', () => {
+  // A prose-only review comment (no suggestion) whose anchor element closes
+  // immediately, followed in document order by an UNRELATED file's main diff
+  // rows. The diff rows are NOT contained in the comment's subtree, so they must
+  // not be attributed to it.
+  const html = [
+    '<div id="discussion_r1">prose</div>',
+    '<table class="diff-table js-file-content">',
+    '  <tbody>',
+    '    <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">unrelatedOld();</span></td></tr>',
+    '    <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">unrelatedNew();</span></td></tr>',
+    '  </tbody>',
+    '</table>',
+  ].join('\n');
+
+  const suggestions = extractDomSuggestedChangesFromHtml(html);
+
+  assert.equal(suggestions.has('discussion_r1'), false);
+  assert.equal(suggestions.size, 0);
+});
+
+test('attributes only the diff rows contained in each comment subtree, not a later comment\'s diff', () => {
+  // Two adjacent comments: the first is prose-only (its <div> closes before any
+  // diff rows), the second carries the real suggested change. The real diff must
+  // attach to the SECOND comment only — never bleed onto the first.
+  const html = [
+    '<div class="js-comment" id="discussion_r10">prose only, no suggestion</div>',
+    '<div class="js-comment" id="discussion_r20">',
+    '  <div class="js-suggested-changes-blob">',
+    '    <table class="diff-table">',
+    '      <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">realOld();</span></td></tr>',
+    '      <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">realNew();</span></td></tr>',
+    '    </table>',
+    '  </div>',
+    '</div>',
+  ].join('\n');
+
+  const suggestions = extractDomSuggestedChangesFromHtml(html);
+
+  assert.equal(suggestions.has('discussion_r10'), false);
+  assert.equal(suggestions.get('discussion_r20')?.[0].value, '-realOld();\n+realNew();');
+});
+
+test('does not treat a generic main-file diff cell as a suggestion marker', () => {
+  // A plain main-file diff cell (present on every PR /files page that has any
+  // change) must NOT be reported as a suggestion marker, otherwise every diffed
+  // PR is wrongly flagged "markers present but unparseable".
+  assert.equal(htmlHasSuggestionMarkers('<td class="blob-code blob-code-deletion">x</td>'), false);
+  assert.equal(
+    htmlHasSuggestionMarkers([
+      '<table class="diff-table js-file-content">',
+      '  <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">added();</span></td></tr>',
+      '</table>',
+    ].join('\n')),
+    false,
+  );
+  // Genuine suggestion hooks must still be detected.
+  assert.equal(htmlHasSuggestionMarkers('<div class="js-suggested-changes-blob"></div>'), true);
+  assert.equal(htmlHasSuggestionMarkers('<button class="js-apply-suggestion">Apply</button>'), true);
+});
+
+test('normalizes CRLF inside a rendered suggestion code line', () => {
+  const html = [
+    '<div id="discussion_r5">',
+    '  <div class="js-suggested-changes-blob">',
+    '    <table class="diff-table">',
+    '      <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">line1\r\nline2</span></td></tr>',
+    '    </table>',
+    '  </div>',
+    '</div>',
+  ].join('\n');
+
+  const value = extractDomSuggestedChangesFromHtml(html).get('discussion_r5')?.[0].value;
+
+  assert.equal(value, '+line1\n+line2');
+  assert.doesNotMatch(value ?? '', /\r/u);
+});
+
+test('does not build a junk candidate when the database id is already a discussion_r string', () => {
+  // databaseId === 'discussion_r42' must NOT yield a 'discussion_rdiscussion_r42'
+  // candidate; matching still works via the parsed-numeric branch.
+  const records: ReviewThreadRecord[] = [
+    {
+      path: 'src/file.ts',
+      lineStart: 1,
+      lineEnd: 1,
+      comments: [
+        {
+          databaseId: 'discussion_r42',
+          body: 'Comment',
+          suggestedChanges: [],
+          suggestedDiffs: [],
+        },
+      ],
+    },
+  ];
+  const junk = new Map<string, SuggestedDiff[]>([
+    ['discussion_rdiscussion_r42', [changedLines('-old();\n+new();')]],
+  ]);
+  assert.equal(attachWebSuggestedDiffs(records, junk), 0);
+
+  // The real id forms still match.
+  const real = new Map<string, SuggestedDiff[]>([['42', [changedLines('-old();\n+new();')]]]);
+  assert.equal(attachWebSuggestedDiffs(records, real), 1);
+  assert.equal(records[0].comments[0].suggestedDiffs[0].value, '-old();\n+new();');
 });

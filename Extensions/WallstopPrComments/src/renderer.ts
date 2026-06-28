@@ -1,5 +1,5 @@
-import type { RenderableComment, ReviewThreadRecord } from './types';
-import { hasRenderableCommentContent } from './records';
+import type { ReviewThreadRecord } from './types';
+import { hasPublicCommentText, hasRenderableCommentContent } from './records';
 
 export function formatReviewThreadRecords(records: readonly ReviewThreadRecord[]): string {
   const renderableRecords = records
@@ -26,14 +26,20 @@ export function formatReviewThreadRecords(records: readonly ReviewThreadRecord[]
       }
 
       for (const suggestion of comment.suggestedChanges) {
-        addSuggestedChange(lines, suggestion.value);
+        addSuggestedChange(lines, suggestion.diff ?? suggestion.value);
       }
 
       for (const diff of comment.suggestedDiffs) {
         addSuggestedChange(lines, diff.value, suggestedDiffLabel(record.path, diff.path));
       }
 
-      if (!hasPublicText(comment) && comment.unavailableReason !== undefined) {
+      const hasPublicText = hasPublicCommentText(comment);
+      const hasSuggestedOutput = comment.suggestedChanges.length > 0 || comment.suggestedDiffs.length > 0;
+      if (comment.diffHunk !== undefined && comment.diffHunk !== '' && !hasSuggestedOutput && comment.unavailableReason === undefined) {
+        addSuggestedChange(lines, comment.diffHunk, 'Diff context:');
+      }
+
+      if (!hasPublicText && comment.unavailableReason !== undefined) {
         lines.push('Suggestion unavailable:');
         lines.push(comment.unavailableReason);
       }
@@ -47,10 +53,6 @@ export function formatReviewThreadRecords(records: readonly ReviewThreadRecord[]
 function addSuggestedChange(lines: string[], value: string, label = 'Suggested change:'): void {
   lines.push(label);
   lines.push(...value.split('\n'));
-}
-
-function hasPublicText(comment: RenderableComment): boolean {
-  return comment.body !== '' || comment.suggestedChanges.length > 0 || comment.suggestedDiffs.length > 0;
 }
 
 function suggestedDiffLabel(recordPath: string, diffPath: string | undefined): string {

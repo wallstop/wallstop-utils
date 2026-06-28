@@ -141,6 +141,7 @@ export interface SuggestedDiffUnavailable {
 export function suggestedDiffUnavailable(input: {
   authorLogin?: string;
   body?: string;
+  url?: string;
   suggestionCount: number;
 }): SuggestedDiffUnavailable | undefined {
   if (input.suggestionCount > 0) {
@@ -151,7 +152,7 @@ export function suggestedDiffUnavailable(input: {
   const author = input.authorLogin ?? '';
   if (isCursorBugbotAuthor(author) && hasCursorBugbotExternalFixMarker(body)) {
     return {
-      reason: externalBotUnavailableReason(),
+      reason: enrichUnavailableReason(externalBotUnavailableReason(), input.authorLogin, body, input.url),
       source: 'externalBotUnavailable',
       confidence: 'unavailable',
     };
@@ -159,13 +160,66 @@ export function suggestedDiffUnavailable(input: {
 
   if (isCopilotPullRequestReviewerAuthor(author) && hasCopilotWebOnlySuggestionMarker(body)) {
     return {
-      reason: webOnlyUnavailableReason(),
+      reason: enrichUnavailableReason(webOnlyUnavailableReason(), input.authorLogin, body, input.url),
       source: 'webOnlyUnavailable',
       confidence: 'unavailable',
     };
   }
 
   return undefined;
+}
+
+/**
+ * Extracts the actionable "fix" URL a suggesting bot points at when GitHub's API
+ * does not expose the diff itself: Cursor's `cursor.com/open` / `cursor.com/agents`
+ * link, or a GitHub PR comment permalink embedded in the body.
+ */
+export function extractExternalFixUrl(body: string | undefined): string | undefined {
+  if (body === undefined || body === '') {
+    return undefined;
+  }
+
+  const cursor = /https?:\/\/(?:www\.)?cursor\.com\/(?:open|agents)[^\s"'<>)]*/iu.exec(body);
+  if (cursor !== null) {
+    return trimTrailingUrlPunctuation(cursor[0]);
+  }
+
+  const github = /https?:\/\/github\.com\/[^\s"'<>)]*#(?:discussion_r|issuecomment-|pullrequestreview-)[^\s"'<>)]*/iu.exec(
+    body,
+  );
+  return github === null ? undefined : trimTrailingUrlPunctuation(github[0]);
+}
+
+/**
+ * Drops trailing sentence punctuation (`. , ; : ! ?`) the body's prose leaves
+ * glued to a bare URL, so the actionable link in a human-readable diagnostic is
+ * clean. At the HTML-body call sites a `"`/`<` already terminates the match, so
+ * this only affects prose-embedded URLs.
+ */
+function trimTrailingUrlPunctuation(url: string): string {
+  return url.replace(/[.,;:!?]+$/u, '');
+}
+
+function enrichUnavailableReason(
+  base: string,
+  authorLogin: string | undefined,
+  body: string,
+  commentUrl: string | undefined,
+): string {
+  const parts = [base];
+  const author = authorLogin?.trim();
+  if (author !== undefined && author !== '') {
+    parts.push(`Author: @${author}.`);
+  }
+
+  const fixUrl = extractExternalFixUrl(body);
+  if (fixUrl !== undefined) {
+    parts.push(`Fix available at ${fixUrl}.`);
+  } else if (commentUrl !== undefined && commentUrl.trim() !== '') {
+    parts.push(`See ${commentUrl.trim()}.`);
+  }
+
+  return parts.join(' ');
 }
 
 function hasCursorBugbotExternalFixMarker(body: string): boolean {

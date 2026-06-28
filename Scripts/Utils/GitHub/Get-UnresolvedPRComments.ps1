@@ -1340,6 +1340,244 @@ function Get-ReviewCommentDiffHunk {
     return ($diffHunk -replace "`r`n", "`n" -replace "`r", "`n")
 }
 
+function Test-IsUnifiedDiffNoNewlineSentinel {
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Line
+    )
+
+    return [string]::Equals($Line, '\ No newline at end of file', [System.StringComparison]::Ordinal)
+}
+
+function Get-NewSideLinesInRange {
+    # Returns the current new-side file lines (context + additions, markers stripped) that a
+    # suggestion anchored to [Start, End] would replace -- the "before" side when reconstructing a
+    # suggestion into a unified diff. GitHub guarantees the commented line is the LAST new-side line
+    # of the diff_hunk (the hunk is the diff up to and including the comment), so this anchors from
+    # the END: it returns the last N new-side lines, where N is the anchored span (End - Start + 1,
+    # or 1 when only one bound is known), clamped to the available new-side lines. Anchoring on that
+    # structural guarantee and a RELATIVE span -- never the absolute header line number -- is what
+    # makes it robust to two real-world hazards the forward-counting approach silently failed on:
+    # GitHub truncating a long hunk to its tail while keeping the original @@ header, and the thread
+    # line drifting past the hunk window after later commits. Both leave the header numbering unable
+    # to reach the anchor, which previously yielded an empty before-context and a deletion-less
+    # suggestion. Returns "" (so the caller renders the suggestion verbatim rather than fabricating
+    # deletions) when the hunk is missing, exposes no new-side line (pure deletion), or no anchor
+    # is supplied.
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$DiffHunk,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $Start,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        $End
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DiffHunk)) {
+        return ""
+    }
+    # No anchor at all: the replaced range is unknowable, so never fabricate a before-context.
+    if ($null -eq $Start -and $null -eq $End) {
+        return ""
+    }
+
+    $normalized = $DiffHunk -replace "`r`n", "`n" -replace "`r", "`n"
+    $lines = $normalized -split "`n"
+
+    $headerIndex = -1
+    for ($i = 0; $i -lt $lines.Length; $i++) {
+        if ($lines[$i] -match '^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@') {
+            $headerIndex = $i
+            break
+        }
+    }
+
+    $bodyStart = if ($headerIndex -ge 0) { $headerIndex + 1 } else { 0 }
+    $body = New-Object System.Collections.Generic.List[string]
+    for ($i = $bodyStart; $i -lt $lines.Length; $i++) {
+        $body.Add([string]$lines[$i]) | Out-Null
+    }
+    # Drop every trailing empty body line: a diff_hunk terminated by a trailing newline splits into a
+    # phantom empty element that must not surface as a spurious new-side line.
+    while ($body.Count -gt 0 -and $body[$body.Count - 1] -eq "") {
+        $body.RemoveAt($body.Count - 1)
+    }
+
+    # New-side lines (context + additions, markers stripped). Deletions are not on the new side --
+    # including a trailing deletion run -- so the last kept entry stays the commented line.
+    $newSide = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $body) {
+        if (Test-IsUnifiedDiffNoNewlineSentinel -Line $line) {
+            continue
+        }
+
+        $marker = if ($line.Length -gt 0) { $line.Substring(0, 1) } else { "" }
+        if ($marker -eq "-") {
+            continue
+        }
+        if ($marker -eq "+" -or $marker -eq " ") {
+            $newSide.Add($line.Substring(1)) | Out-Null
+        }
+        else {
+            # An interior blank body line ("" with no marker): a genuine, empty new-side line.
+            $newSide.Add($line) | Out-Null
+        }
+    }
+
+    if ($newSide.Count -eq 0) {
+        return ""
+    }
+
+    $span = if ($null -ne $Start -and $null -ne $End) { [int]$End - [int]$Start + 1 } else { 1 }
+    if ($span -lt 1) {
+        $span = 1
+    }
+    $take = [Math]::Min($span, $newSide.Count)
+    $selected = $newSide.GetRange($newSide.Count - $take, $take)
+    return [string]::Join("`n", $selected)
+}
+
+function Get-UnifiedLineDiff {
+    # Computes a minimal line-level unified diff between two line arrays via the classic
+    # longest-common-subsequence dynamic-programming table: lines common to both sides are matched
+    # and emitted once as " " context, removed lines as "-", added lines as "+". dp[i,j] holds the
+    # LCS length of the Before[i..] / After[j..] suffixes, so a single forward walk reconstructs the
+    # diff in order. The dp[i+1,j] -ge dp[i,j+1] tie-break (prefer a deletion before an addition when
+    # the LCS is equal either way) pins the unified-diff ordering so the output is deterministic and
+    # matches the TypeScript port (lineDiff) byte-for-byte. Lines are compared with Ordinal equality
+    # to mirror JavaScript's === exactly. The replaced block is small, so the O(m*n) table is fine.
+    [OutputType([string[]])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [string[]]$Before,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [string[]]$After
+    )
+
+    # PowerShell binds an empty-array argument (@()) as $null, so normalize both sides before
+    # measuring -- a pure-deletion suggestion legitimately has no After lines (n = 0).
+    if ($null -eq $Before) { $Before = @() }
+    if ($null -eq $After) { $After = @() }
+
+    $m = $Before.Length
+    $n = $After.Length
+    # dp[i][j] = LCS length of Before[i..] and After[j..]. A jagged int[][] (not a rectangular
+    # int[,]) is used deliberately: it indexes one dimension at a time, so an arithmetic subscript
+    # like dp[$i + 1][$j + 1] is unambiguous -- a rectangular dp[$i + 1, $j + 1] is parsed as a
+    # multi-element (Object[]) index instead of a 2-D lookup.
+    $dp = New-Object 'System.Int32[][]' ($m + 1)
+    for ($r = 0; $r -le $m; $r++) {
+        $dp[$r] = New-Object 'System.Int32[]' ($n + 1)
+    }
+    for ($i = $m - 1; $i -ge 0; $i--) {
+        for ($j = $n - 1; $j -ge 0; $j--) {
+            if ([string]::Equals($Before[$i], $After[$j], [System.StringComparison]::Ordinal)) {
+                $dp[$i][$j] = $dp[$i + 1][$j + 1] + 1
+            }
+            else {
+                $dp[$i][$j] = [Math]::Max($dp[$i + 1][$j], $dp[$i][$j + 1])
+            }
+        }
+    }
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $i = 0
+    $j = 0
+    while ($i -lt $m -and $j -lt $n) {
+        if ([string]::Equals($Before[$i], $After[$j], [System.StringComparison]::Ordinal)) {
+            $out.Add(" " + $Before[$i]) | Out-Null
+            $i++
+            $j++
+        }
+        elseif ($dp[$i + 1][$j] -ge $dp[$i][$j + 1]) {
+            $out.Add("-" + $Before[$i]) | Out-Null
+            $i++
+        }
+        else {
+            $out.Add("+" + $After[$j]) | Out-Null
+            $j++
+        }
+    }
+    while ($i -lt $m) {
+        $out.Add("-" + $Before[$i]) | Out-Null
+        $i++
+    }
+    while ($j -lt $n) {
+        $out.Add("+" + $After[$j]) | Out-Null
+        $j++
+    }
+
+    return $out.ToArray()
+}
+
+function ConvertTo-ReconstructedSuggestionDiff {
+    # Builds a GitHub-style unified diff from the lines a "```suggestion" block replaces (Before, the
+    # current new-side content recovered from the diff_hunk) and the suggested replacement (After). A
+    # real line-level diff (Get-UnifiedLineDiff) matches the lines common to both sides and emits them
+    # once as " " context, surfacing only the genuinely removed lines as "-" and added lines as "+".
+    # This is what makes a removal read as a removal: a suggestion that drops one line of a block no
+    # longer re-emits every unchanged line as a spurious "+". Returns "" when there is no Before
+    # context (a pure addition is just the suggestion text) or when the suggestion is identical to the
+    # Before context (a changeless, context-only block adds no diff value); the caller then renders the
+    # suggestion verbatim.
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Before,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$After
+    )
+
+    if ([string]::IsNullOrEmpty($Before)) {
+        return ""
+    }
+
+    $beforeLines = @(($Before -replace "`r`n", "`n" -replace "`r", "`n") -split "`n")
+    $afterLines = if ([string]::IsNullOrEmpty($After)) {
+        @()
+    }
+    else {
+        @(($After -replace "`r`n", "`n" -replace "`r", "`n") -split "`n")
+    }
+
+    $diff = @(Get-UnifiedLineDiff -Before $beforeLines -After $afterLines)
+    $hasChange = $false
+    foreach ($line in $diff) {
+        if ($line.StartsWith("-", [System.StringComparison]::Ordinal) -or $line.StartsWith("+", [System.StringComparison]::Ordinal)) {
+            $hasChange = $true
+            break
+        }
+    }
+    if (-not $hasChange) {
+        return ""
+    }
+
+    return [string]::Join("`n", $diff)
+}
+
 function New-CommentRecommendationRecord {
     [OutputType([object])]
     [CmdletBinding()]
@@ -1584,10 +1822,22 @@ function Convert-GitHubWebAutomatedDiffEntriesToSuggestedDiffs {
             $textValue = Get-ObjectPropertyValue -InputObject $diffLine -Name "text"
             $text = if ($null -eq $textValue) { "" } else { [string]$textValue }
             if ($lineType.Equals("DELETION", [System.StringComparison]::OrdinalIgnoreCase)) {
-                $changedLines.Add("-$text") | Out-Null
+                foreach ($textLine in (($text -replace "`r`n", "`n" -replace "`r", "`n") -split "`n")) {
+                    if (Test-IsUnifiedDiffNoNewlineSentinel -Line $textLine) {
+                        continue
+                    }
+
+                    $changedLines.Add("-$textLine") | Out-Null
+                }
             }
             elseif ($lineType.Equals("ADDITION", [System.StringComparison]::OrdinalIgnoreCase)) {
-                $changedLines.Add("+$text") | Out-Null
+                foreach ($textLine in (($text -replace "`r`n", "`n" -replace "`r", "`n") -split "`n")) {
+                    if (Test-IsUnifiedDiffNoNewlineSentinel -Line $textLine) {
+                        continue
+                    }
+
+                    $changedLines.Add("+$textLine") | Out-Null
+                }
             }
         }
 
@@ -3777,6 +4027,29 @@ function Convert-ReviewThreadToOutputRecord {
         if (-not $KeepMarkup.IsPresent) {
             $commentSuggestionRecords = @(Get-CommentSuggestionBlocks -Text $commentBody -AuthorLogin $commentAuthorLogin -CommentIndex $commentIndex -Url $commentUrl)
         }
+
+        # Reconstruct each suggestion into a -/+ unified diff using the comment's diff_hunk as the
+        # "before" (recovered end-anchored, so a truncated hunk or a drifted line still resolves) and
+        # the suggestion code as the "after", so the rendered change shows both the removed and added
+        # lines instead of new code only. The diff is attached as an internal `diff` field consumed by
+        # the text renderer; the public JSON serializer reads `code`, so JSON stays verbatim.
+        if ((Get-SafeCount -InputObject $commentSuggestionRecords) -gt 0) {
+            $beforeContext = Get-NewSideLinesInRange -DiffHunk $commentDiffHunk -Start $lineStart -End $lineEnd
+            if (-not [string]::IsNullOrEmpty($beforeContext)) {
+                foreach ($suggestionRecord in $commentSuggestionRecords) {
+                    if ($null -eq $suggestionRecord) {
+                        continue
+                    }
+
+                    $suggestionAfter = Get-ObjectPropertyValue -InputObject $suggestionRecord -Name "code"
+                    $reconstructedDiff = ConvertTo-ReconstructedSuggestionDiff -Before $beforeContext -After ([string]$suggestionAfter)
+                    if (-not [string]::IsNullOrEmpty($reconstructedDiff)) {
+                        $suggestionRecord | Add-Member -NotePropertyName "diff" -NotePropertyValue $reconstructedDiff -Force
+                    }
+                }
+            }
+        }
+
         $suggestedDiffsUnavailableReason = Get-SuggestedDiffsUnavailableReason -AuthorLogin $commentAuthorLogin -Body $commentBody -SuggestedChangeCount (Get-SafeCount -InputObject $commentSuggestionRecords)
 
         # Create a comments[] record when the comment is renderable now, OR when it is a candidate for
@@ -3972,6 +4245,20 @@ function Add-SuggestionRenderLines {
             continue
         }
 
+        # A reconstructed -/+ unified diff (the removed lines recovered from the comment's diff_hunk
+        # plus the suggested additions) is preferred over the verbatim code so the rendered change
+        # reads as a real diff with both red and green lines. The verbatim code remains the public
+        # JSON value, which stays copy-paste accurate.
+        $diff = Get-ObjectPropertyValue -InputObject $suggestion -Name "diff"
+        $diffText = if ($null -eq $diff) { "" } else { [string]$diff }
+        if (-not [string]::IsNullOrEmpty($diffText)) {
+            $Lines.Add("Suggested change:") | Out-Null
+            foreach ($diffLine in ($diffText -split "`n")) {
+                $Lines.Add($diffLine) | Out-Null
+            }
+            continue
+        }
+
         $code = Get-ObjectPropertyValue -InputObject $suggestion -Name "code"
         $codeText = if ($null -eq $code) { "" } else { [string]$code }
 
@@ -4014,7 +4301,7 @@ function Convert-SuggestedDiffTextToPublicChangeOnlyDiff {
             continue
         }
 
-        if ($line -match '^\\ No newline at end of file$') {
+        if (Test-IsUnifiedDiffNoNewlineSentinel -Line $line) {
             continue
         }
 
@@ -4028,6 +4315,48 @@ function Convert-SuggestedDiffTextToPublicChangeOnlyDiff {
     }
 
     return ($changedLines.ToArray() -join "`n")
+}
+
+function Normalize-RenderedSuggestedDiffPath {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    return (($Path -replace '\\', '/') -replace "[`r`n]+", " ").Trim()
+}
+
+function Get-SuggestedDiffRenderLabel {
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$RecordPath,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$DiffPath
+    )
+
+    $normalizedDiffPath = Normalize-RenderedSuggestedDiffPath -Path $DiffPath
+    if ([string]::IsNullOrWhiteSpace($normalizedDiffPath)) {
+        return "Suggested change:"
+    }
+
+    $normalizedRecordPath = Normalize-RenderedSuggestedDiffPath -Path $RecordPath
+    if (-not [string]::IsNullOrWhiteSpace($normalizedRecordPath) -and $normalizedDiffPath.Equals($normalizedRecordPath, [System.StringComparison]::Ordinal)) {
+        return "Suggested change:"
+    }
+
+    return "Suggested change ($normalizedDiffPath):"
 }
 
 function Add-CommentRecommendationRenderLines {
@@ -4060,7 +4389,11 @@ function Add-ThreadCommentRenderLines {
 
         [Parameter(Mandatory = $false)]
         [AllowNull()]
-        $Comments
+        $Comments,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string]$RecordPath
     )
 
     if ($null -eq $Comments) {
@@ -4134,7 +4467,8 @@ function Add-ThreadCommentRenderLines {
                     continue
                 }
 
-                $Lines.Add("Suggested change:") | Out-Null
+                $diffPath = Get-ObjectPropertyValue -InputObject $suggestedDiff -Name "path"
+                $Lines.Add((Get-SuggestedDiffRenderLabel -RecordPath $RecordPath -DiffPath ([string]$diffPath))) | Out-Null
                 $Lines.Add('```diff') | Out-Null
                 foreach ($diffLine in ($publicDiffText -split "`n")) {
                     $Lines.Add($diffLine) | Out-Null
@@ -4179,7 +4513,7 @@ function Format-UnresolvedThreadsAsText {
             }
         }
         if ($renderableCommentCount -gt 0) {
-            Add-ThreadCommentRenderLines -Lines $lines -Comments $commentRecords
+            Add-ThreadCommentRenderLines -Lines $lines -Comments $commentRecords -RecordPath ([string]$record.path)
         }
         else {
             $topLevelRecommendation = $null
@@ -4587,140 +4921,155 @@ query GetReviewThreads(
             variables = $variables
         }
 
-        $response = Invoke-GitHubRequestWithRetry -Method POST -Uri $Endpoint -Headers $Headers -Body $body -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
+        try {
+            $response = Invoke-GitHubRequestWithRetry -Method POST -Uri $Endpoint -Headers $Headers -Body $body -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
 
-        $errors = $null
-        if ($response -is [System.Collections.IDictionary]) {
-            if ($response.Contains("errors")) {
-                $errors = $response["errors"]
+            $errors = $null
+            if ($response -is [System.Collections.IDictionary]) {
+                if ($response.Contains("errors")) {
+                    $errors = $response["errors"]
+                }
             }
-        }
-        elseif ($response.PSObject.Properties.Name -contains "errors") {
-            $errors = $response.errors
-        }
+            elseif ($response.PSObject.Properties.Name -contains "errors") {
+                $errors = $response.errors
+            }
 
-        $errorCount = Get-SafeCount -InputObject $errors
-        if ($null -ne $errors -and $errorCount -gt 0) {
-            $firstError = @($errors)[0]
-            $message = "GraphQL returned an error payload without a message field."
-            if ($null -ne $firstError) {
-                if ($firstError -is [System.Collections.IDictionary]) {
-                    if ($firstError.Contains("message")) {
-                        $messageValue = Get-FirstNonEmptyStringValue -Value $firstError["message"]
+            $errorCount = Get-SafeCount -InputObject $errors
+            if ($null -ne $errors -and $errorCount -gt 0) {
+                $firstError = @($errors)[0]
+                $message = "GraphQL returned an error payload without a message field."
+                if ($null -ne $firstError) {
+                    if ($firstError -is [System.Collections.IDictionary]) {
+                        if ($firstError.Contains("message")) {
+                            $messageValue = Get-FirstNonEmptyStringValue -Value $firstError["message"]
+                            if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
+                                $message = $messageValue
+                            }
+                        }
+                    }
+                    elseif ($firstError.PSObject.Properties.Name -contains "message") {
+                        $messageValue = Get-FirstNonEmptyStringValue -Value $firstError.Message
                         if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
                             $message = $messageValue
                         }
                     }
                 }
-                elseif ($firstError.PSObject.Properties.Name -contains "message") {
-                    $messageValue = Get-FirstNonEmptyStringValue -Value $firstError.Message
-                    if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
-                        $message = $messageValue
-                    }
+                $safeMessage = Redact-SensitiveText -Text $message -SensitiveTokens $SensitiveTokens
+                throw "E_GRAPHQL_ERROR: $safeMessage"
+            }
+
+            if ($null -eq $response.data) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data in GraphQL response."
+            }
+
+            if ($null -eq $response.data.repository) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository in GraphQL response."
+            }
+
+            if ($null -eq $response.data.repository.pullRequest) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest in GraphQL response."
+            }
+
+            $threadsNode = Get-ObjectPropertyValue -InputObject $response.data.repository.pullRequest -Name "reviewThreads"
+            if ($null -eq $threadsNode) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads in GraphQL response."
+            }
+
+            if ($null -eq $threadsNode.nodes) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.nodes in GraphQL response."
+            }
+
+            if ($threadsNode.nodes -isnot [System.Array]) {
+                $nodesType = $threadsNode.nodes.GetType().FullName
+                throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.nodes must be an array (received '$nodesType')."
+            }
+
+            $threads = $threadsNode.nodes
+            foreach ($thread in $threads) {
+                if ($null -eq $thread.id) {
+                    continue
+                }
+
+                if ($seenThreadIds.Contains([string]$thread.id)) {
+                    continue
+                }
+
+                $seenThreadIds.Add([string]$thread.id) | Out-Null
+                $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost -Truncate:$Truncate -KeepMarkup:$KeepMarkup
+                if ($null -ne $record) {
+                    $allRecords.Add($record)
                 }
             }
-            $safeMessage = Redact-SensitiveText -Text $message -SensitiveTokens $SensitiveTokens
-            throw "E_GRAPHQL_ERROR: $safeMessage"
-        }
 
-        if ($null -eq $response.data) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data in GraphQL response."
-        }
+            if ($null -eq $threadsNode.pageInfo) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo in GraphQL response."
+            }
 
-        if ($null -eq $response.data.repository) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository in GraphQL response."
-        }
+            $pageInfo = $threadsNode.pageInfo
+            $hasHasNextPageField = $false
+            $hasEndCursorField = $false
+            $hasNextValue = $null
+            $nextCursor = $null
 
-        if ($null -eq $response.data.repository.pullRequest) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest in GraphQL response."
-        }
+            if ($pageInfo -is [System.Collections.IDictionary]) {
+                $hasHasNextPageField = $pageInfo.Contains("hasNextPage")
+                $hasEndCursorField = $pageInfo.Contains("endCursor")
+                if ($hasHasNextPageField) {
+                    $hasNextValue = $pageInfo["hasNextPage"]
+                }
+                if ($hasEndCursorField) {
+                    $nextCursor = $pageInfo["endCursor"]
+                }
+            }
+            else {
+                $hasHasNextPageField = $pageInfo.PSObject.Properties.Name -contains "hasNextPage"
+                $hasEndCursorField = $pageInfo.PSObject.Properties.Name -contains "endCursor"
+                if ($hasHasNextPageField) {
+                    $hasNextValue = $pageInfo.hasNextPage
+                }
+                if ($hasEndCursorField) {
+                    $nextCursor = $pageInfo.endCursor
+                }
+            }
 
-        $threadsNode = $response.data.repository.pullRequest.reviewThreads
-        if ($null -eq $threadsNode -or $null -eq $threadsNode.nodes) {
+            if (-not $hasHasNextPageField) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage in GraphQL response."
+            }
+
+            if (-not $hasEndCursorField) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor in GraphQL response."
+            }
+
+            $hasNext = [bool]$hasNextValue
+
+            if ($null -ne $nextCursor -and $nextCursor -isnot [string]) {
+                $cursorType = $nextCursor.GetType().FullName
+                throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be a string or null (received '$cursorType')."
+            }
+
+            if ($hasNext -and [string]::IsNullOrWhiteSpace([string]$nextCursor)) {
+                throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be non-empty when hasNextPage is true."
+            }
+
+            if (-not $hasNext) {
+                break
+            }
+
+            if ($cursor -eq $nextCursor) {
+                throw "E_PAGINATION_LOOP: Cursor did not advance."
+            }
+
+            $cursor = [string]$nextCursor
+        }
+        catch {
+            if ($page -eq 1) {
+                throw
+            }
+
+            $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+            Write-Warning ("W_PARTIAL_GITHUB_REVIEW_THREAD_PAGINATION: Stopped paginating review threads after page {0}; results may be incomplete. {1}" -f ($page - 1), $safeMessage)
             break
         }
-
-        if ($threadsNode.nodes -isnot [System.Array]) {
-            $nodesType = $threadsNode.nodes.GetType().FullName
-            throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.nodes must be an array (received '$nodesType')."
-        }
-
-        $threads = $threadsNode.nodes
-        foreach ($thread in $threads) {
-            if ($null -eq $thread.id) {
-                continue
-            }
-
-            if ($seenThreadIds.Contains([string]$thread.id)) {
-                continue
-            }
-
-            $seenThreadIds.Add([string]$thread.id) | Out-Null
-            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost -Truncate:$Truncate -KeepMarkup:$KeepMarkup
-            if ($null -ne $record) {
-                $allRecords.Add($record)
-            }
-        }
-
-        if ($null -eq $threadsNode.pageInfo) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo in GraphQL response."
-        }
-
-        $pageInfo = $threadsNode.pageInfo
-        $hasHasNextPageField = $false
-        $hasEndCursorField = $false
-        $hasNextValue = $null
-        $nextCursor = $null
-
-        if ($pageInfo -is [System.Collections.IDictionary]) {
-            $hasHasNextPageField = $pageInfo.Contains("hasNextPage")
-            $hasEndCursorField = $pageInfo.Contains("endCursor")
-            if ($hasHasNextPageField) {
-                $hasNextValue = $pageInfo["hasNextPage"]
-            }
-            if ($hasEndCursorField) {
-                $nextCursor = $pageInfo["endCursor"]
-            }
-        }
-        else {
-            $hasHasNextPageField = $pageInfo.PSObject.Properties.Name -contains "hasNextPage"
-            $hasEndCursorField = $pageInfo.PSObject.Properties.Name -contains "endCursor"
-            if ($hasHasNextPageField) {
-                $hasNextValue = $pageInfo.hasNextPage
-            }
-            if ($hasEndCursorField) {
-                $nextCursor = $pageInfo.endCursor
-            }
-        }
-
-        if (-not $hasHasNextPageField) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage in GraphQL response."
-        }
-
-        if (-not $hasEndCursorField) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor in GraphQL response."
-        }
-
-        $hasNext = [bool]$hasNextValue
-
-        if ($null -ne $nextCursor -and $nextCursor -isnot [string]) {
-            $cursorType = $nextCursor.GetType().FullName
-            throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be a string or null (received '$cursorType')."
-        }
-
-        if ($hasNext -and [string]::IsNullOrWhiteSpace([string]$nextCursor)) {
-            throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be non-empty when hasNextPage is true."
-        }
-
-        if (-not $hasNext) {
-            break
-        }
-
-        if ($cursor -eq $nextCursor) {
-            throw "E_PAGINATION_LOOP: Cursor did not advance."
-        }
-
-        $cursor = [string]$nextCursor
     }
 
     return $allRecords.ToArray()
@@ -4777,22 +5126,35 @@ function Get-PublicPullRequestReviewCommentsFallback {
 
     for ($page = 1; $page -le $MaxPages; $page++) {
         $uri = "$base/repos/$Owner/$Repo/pulls/$PrNumber/comments?per_page=$PerPage&page=$page&sort=created&direction=asc"
-        $response = Invoke-GitHubRequestWithRetry -Method GET -Uri $uri -Headers $headers -Body $null -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
+        try {
+            $response = Invoke-GitHubRequestWithRetry -Method GET -Uri $uri -Headers $headers -Body $null -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
 
-        if ($null -eq $response) {
-            break
+            if ($null -eq $response) {
+                throw "E_MALFORMED_RESPONSE: REST review comments page $page returned null instead of an array."
+            }
+
+            $comments = @($response)
+            if ((Get-SafeCount -InputObject $comments) -eq 0) {
+                break
+            }
+
+            Assert-RestReviewCommentsPageShape -Comments $comments -Page $page
+
+            foreach ($comment in $comments) {
+                $allComments.Add($comment) | Out-Null
+            }
+
+            if ((Get-SafeCount -InputObject $comments) -lt $PerPage) {
+                break
+            }
         }
+        catch {
+            if ($page -eq 1) {
+                throw
+            }
 
-        $comments = @($response)
-        if ((Get-SafeCount -InputObject $comments) -eq 0) {
-            break
-        }
-
-        foreach ($comment in $comments) {
-            $allComments.Add($comment) | Out-Null
-        }
-
-        if ((Get-SafeCount -InputObject $comments) -lt $PerPage) {
+            $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+            Write-Warning ("W_PARTIAL_GITHUB_REST_REVIEW_COMMENT_PAGINATION: Stopped paginating public REST review comments after page {0}; results may be incomplete. {1}" -f ($page - 1), $safeMessage)
             break
         }
     }
@@ -4808,6 +5170,26 @@ function Get-PublicPullRequestReviewCommentsFallback {
 
     Write-Warning "W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN: Public REST fallback cannot determine review-thread resolution state; returned records use resolutionState='unknown'."
     return $records.ToArray()
+}
+
+function Assert-RestReviewCommentsPageShape {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$Comments,
+
+        [Parameter(Mandatory = $true)]
+        [int]$Page
+    )
+
+    foreach ($comment in $Comments) {
+        $id = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $comment -Name "id")
+        if ([string]::IsNullOrWhiteSpace($id)) {
+            $commentType = if ($null -eq $comment) { "<null>" } else { $comment.GetType().FullName }
+            throw "E_MALFORMED_RESPONSE: REST review comments page $Page contained an item without an id (received '$commentType')."
+        }
+    }
 }
 
 function Resolve-PullRequestTarget {

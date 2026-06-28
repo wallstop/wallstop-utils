@@ -11,6 +11,14 @@ Validate host and owner/repo parameters before any network calls.
 ## Retry-Safe GitHub Request Flow
 
 Keep HTTP calls inside approved wrappers and preserve retry behavior for transient status codes.
+Preserve caller cancellation in retry wrappers: a caller `AbortSignal` must
+prevent a first attempt when already aborted, stop retries during backoff, and
+remain combined with per-attempt timeouts even when `AbortSignal.any` is
+unavailable.
+For accumulated pagination, preserve already-collected records when a later page
+fails or returns a malformed payload and emit an explicit incomplete-results
+diagnostic; first-page failures must still fail hard so auth/config problems are
+not hidden as empty results.
 
 ## Actionable Diagnostics And Resilience Tests
 
@@ -48,9 +56,10 @@ Rendered output is a verbatim, copy-safe artifact. Keep these contracts with beh
 
 - GitHub/Copilot/Cursor suggested-change fences (` ```suggestion `) are extracted verbatim into a `suggestions` record field and rendered under a `Suggested change:` label with original indentation/line breaks intact. Empty suggestion blocks denote deletions. Extraction scans every comment in the thread (top comment and replies, in order), because reviewers and bots frequently attach the suggestion on a follow-up reply.
 - GitHub web-exposed Copilot automated changesets may appear only in PR-page React JSON as `automatedComment.suggestion.diffEntries`, keyed by review comment `databaseId`; parse those best-effort for `github.com` only, send `-GitHubWebCookie` / `WALLSTOP_GITHUB_WEB_COOKIE` / `GITHUB_WEB_COOKIE` only to that web-page request when private HTML access is intentionally needed, and convert only `DELETION`/`ADDITION` lines into `suggestedDiffs` so output never includes the referenced context hunk.
+- Unified-diff `\ No newline at end of file` sentinel rows are metadata, never source/context/add/delete content. Filter them through shared helpers in both the PowerShell utility and VS Code companion before reconstructing suggestion before-context or publishing web/DOM changed-line diffs, with behavioral plus policy coverage.
 - Normalize any user/env-derived `Cookie` or bearer-token value at the final HTTP header construction boundary via `ConvertTo-SafeHttpHeaderValue`: strip the whole C0 control range plus DEL (`[\x00-\x1F\x7F]`, which includes CR/LF, the response-splitting injection vector) then trim, returning `$null` when nothing survives. Strip the full control class, not just CR/LF, because no control character is ever valid in a token/cookie value. This is a whole-file invariant, not a per-function rule: every dynamic request-header value must be a string literal or a sanitized value, and the sanitized form is named with a `$safe*` prefix by convention (for example `$safeAuthToken`, `$safeGitHubWebCookie`). A class-level policy guard in `ScriptSafetyConventions.Tests.ps1` ("sanitizes every request-header value in the GitHub utility, not only the known sites") parses the script AST and flags any index (`$x["Cookie"] = ...`) or member (`$x.Cookie = ...`) assignment whose target is a header map (variable name ending in `headers`, so `$headers`/`$tempHeaders`/`$requestHeaders` all qualify) or whose key is a sensitive header (`Authorization`/`Cookie`/`Proxy-Authorization`/`Set-Cookie`), any hashtable pair keyed by a sensitive header anywhere in the file, and any dictionary-style `.Add("<sensitive header>", value)` method call, whose value is not a literal, not an inline `ConvertTo-SafeHttpHeaderValue` call, and not a sanitized variable (named `$safe*` or assigned from the sanitizer). It is a static convention guard, not a formal taint proof, but it catches the realistic regression -- a brand-new header site forwarding a raw token/cookie/env value -- even when that site is added outside the three functions that build headers today, including the dotted-member form and renamed header variables that a per-function check would miss. Keep behavioral plus policy coverage so alternate call paths cannot bypass sanitization.
-- GitHub review comments often have an attached review context hunk even when they do not contain a fenced `suggestion` block. Preserve GraphQL `diffHunk` and REST `diff_hunk` internally only for anchor/range handling and diagnostics; public text and JSON output must not emit the hunk because it is context, not the suggested change.
-- One shared predicate, `Test-ThreadCommentHasRenderableContent` (renderable = non-empty prose that is not `(none)`, or `suggestedChanges`, or attached `suggestedDiffs`), decides whether a thread comment is worth a `comments[]` record, and it is used at BOTH record creation (`Convert-ReviewThreadToOutputRecord`) and render time: `Convert-ReviewThreadToOutputRecord` and `Add-ThreadCommentRenderLines` call the base predicate directly, while `Format-UnresolvedThreadsAsText`'s comments-vs-fallback branch uses the object wrapper `Test-ThreadCommentRecordIsRenderable` (which additionally counts only `suggestedDiffs` that survive `Convert-SuggestedDiffTextToPublicChangeOnlyDiff` to non-empty public output, keeping the text and JSON paths consistent by construction). `diffHunk` and `suggestedDiffsUnavailableReason` are internal-only and must NEVER drive inclusion or rendering: a comment whose only signal is a `diffHunk` is dropped (keeping it emits an empty thread block and suppresses the `topLevelComment`/`suggestions` fallback). The lone exception is record creation, which also keeps a comment when `suggestedDiffsUnavailableReason` is set so it survives as a web suggested-diff enrichment placeholder (diffs attach later by `databaseId`); if enrichment attaches nothing it stays non-renderable and the text formatter takes the fallback path. Keep behavioral plus policy coverage that creation and render share the predicate.
+- GitHub review comments often have an attached review context hunk even when they do not contain a fenced `suggestion` block. Preserve GraphQL `diffHunk` and REST `diff_hunk` as review context, not suggested changes: never serialize them to public JSON or render them as `Suggested change:`, but allow trimmed TEXT-only `Diff context:` output when explicitly enabled and no higher-confidence suggestion/web diff is present.
+- In the PowerShell unresolved-comments utility, one shared predicate, `Test-ThreadCommentHasRenderableContent` (renderable = non-empty prose that is not `(none)`, or `suggestedChanges`, or attached `suggestedDiffs`), decides whether a thread comment is worth a `comments[]` record, and it is used at BOTH record creation (`Convert-ReviewThreadToOutputRecord`) and render time: `Convert-ReviewThreadToOutputRecord` and `Add-ThreadCommentRenderLines` call the base predicate directly, while `Format-UnresolvedThreadsAsText`'s comments-vs-fallback branch uses the object wrapper `Test-ThreadCommentRecordIsRenderable` (which additionally counts only `suggestedDiffs` that survive `Convert-SuggestedDiffTextToPublicChangeOnlyDiff` to non-empty public output, keeping the text and JSON paths consistent by construction). In that PowerShell JSON/text path, `diffHunk` and `suggestedDiffsUnavailableReason` are internal-only and must NEVER drive inclusion or rendering: a comment whose only signal is a `diffHunk` is dropped (keeping it emits an empty thread block and suppresses the `topLevelComment`/`suggestions` fallback). The lone exception is record creation, which also keeps a comment when `suggestedDiffsUnavailableReason` is set so it survives as a web suggested-diff enrichment placeholder (diffs attach later by `databaseId`); if enrichment attaches nothing it stays non-renderable and the text formatter takes the fallback path. Keep behavioral plus policy coverage that creation and render share the predicate. The VS Code extension companion has a separate `hasRenderableCommentContent` predicate that may keep a diff-hunk-only comment for optional TEXT-only `Diff context:` output.
 - Prose-only bot comments from Copilot/Cursor/Bugbot are not fenced suggestions, but they still need machine-readable content. Text output should emphasize the file/range, `Suggestion:`, and real fenced `Suggested change:` content when present; public JSON should project only `path`, `lineStart`, `lineEnd`, and `comments[]` entries with `suggestion` plus normalized `suggestedChanges[]`.
 - When multiple prose comment bodies render for one thread, number `Suggestion N:` labels from rendered bodies only; comments skipped because their cleaned body is empty/`(none)` or because they only carry suggested-change payloads must not advance the ordinal, so the first visible numbered body is `Suggestion 1:`.
 - A single shared fence regex (`Get-SuggestionFenceRegex`) is the source of truth used by both `Get-CommentSuggestionBlocks` (extraction) and `Remove-MarkupFromCommentText` (prose stripping) so the two never drift; suggestion code must not be whitespace-collapsed into prose.
@@ -108,8 +117,11 @@ surface for the same GitHub PR comment extraction contracts.
 
 - Keep `package.json` `main` aligned with the compiled entrypoint and keep a
   manifest test that proves the compiled target exists after `npm run compile`.
-- Keep `npm test` cross-platform: invoke Node's test runner on a directory
-  (`node --test out/test`) rather than shell-expanded globs.
+- Keep `npm test` cross-platform and aligned with the VS Code extension-host
+  runtime: test on the Node major implied by `engines.vscode` and route test
+  discovery through `scripts/run-tests.js` so the runner passes explicit
+  compiled `.test.js` files instead of relying on shell globs or newer
+  Node-only test glob handling.
 - Preserve the local install artifact chain: `npm run install:local` restores
   dependencies through an extension-local `.npm-cache` unless the caller already
   configured an npm cache, runs `npm test` by default, packages the same VSIX
@@ -141,12 +153,16 @@ surface for the same GitHub PR comment extraction contracts.
 - Preserve the shared PR-comment data contracts: assert GraphQL variable maps
   before requests; REST fallback threads map `outdated` comments to original line
   ranges and bucket replies by walking to the top-level REST review-comment root;
-  `diffHunk`/`diff_hunk` stays internal; web-only Copilot suggested changes are
-  best-effort `github.com` HTML enrichment only, with sanitized cookies, public
-  changed lines only, and warnings instead of fabricated suggestions when
-  unavailable. Keep record creation and text rendering on one shared renderable
-  comment predicate so placeholder-only unavailable suggestions do not become
-  `No review comments found.`.
+  `diffHunk`/`diff_hunk` is context, not a suggested change, and remains
+  JSON-internal except for optional TEXT-only `Diff context:` output; web-only
+  Copilot suggested changes are best-effort `github.com` HTML enrichment only,
+  with sanitized cookies, public changed lines only, and warnings instead of
+  fabricated suggestions when unavailable. Keep record creation and text rendering
+  on one shared renderable comment predicate so placeholder-only unavailable
+  suggestions do not become `No review comments found.`. Unavailable-suggestion
+  diagnostics must outrank optional diff context when cleaned prose is empty, and
+  web enrichment that attaches real suggested diffs must clear or suppress stale
+  `diffHunk` context so copied output shows the highest-confidence fix only.
 - Keep extension suggested-change acquisition ordered by trust: extract API
   ` ```suggestion ` fences first as `source: apiMarkdownSuggestion`,
   `confidence: high`; then enrich only `github.com` records from GitHub web PR
@@ -158,13 +174,16 @@ surface for the same GitHub PR comment extraction contracts.
   `/files` URL, and must return an HTML string or `{ html: string }`.
 - Trust web/browser suggested diffs only when parsed from
   `comment.automatedComment.suggestion.diffEntries`, keyed by comment
-  `databaseId` or discussion URL. Reject lookalike JSON embedded in
-  user-authored `body` fields and sibling `suggestion.diffEntries` without
-  `automatedComment` provenance; expose only `DELETION`/`ADDITION` lines,
-  prefix every physical line after CR/LF normalization, label cross-path diffs
-  as `Suggested change (<path>):`, deduplicate by normalized path plus public
-  changed-line text, and retain `source`/`confidence` (`githubWebAutomatedDiff`
-  or `browserDomAutomatedDiff`, `medium`).
+  `databaseId` or discussion URL, or from rendered DOM diff tables inside the
+  owning comment anchor that also contains GitHub suggested-change markers
+  (`js-suggested-changes-blob` / `js-suggested-change-*`). Reject ordinary PR
+  file diff rows, lookalike JSON embedded in user-authored `body` fields, and
+  sibling `suggestion.diffEntries` without `automatedComment` provenance;
+  expose only `DELETION`/`ADDITION` lines, prefix every physical line after
+  CR/LF normalization, label cross-path diffs as `Suggested change (<path>):`,
+  deduplicate by normalized path plus public changed-line text, and retain
+  `source`/`confidence` (`githubWebAutomatedDiff` or
+  `browserDomAutomatedDiff`, `medium`).
 - Keep extension Cursor/Bugbot handling conservative: external fixes not exposed
   by GitHub remain unavailable records (`unavailableSource:
   externalBotUnavailable`, `unavailableConfidence: unavailable`) instead of fake
@@ -194,6 +213,16 @@ surface for the same GitHub PR comment extraction contracts.
   localhost/`.localhost`, private/local/link-local IP hosts, IPv4 multicast, IPv6
   multicast, IPv6 ULA, and IPv6-mapped private/local addresses before URL
   construction.
+- Normalize and validate every extension repository host with
+  `assertSafeGitHubHost` at auth, secret-storage, repository-key, enumeration,
+  REST/GraphQL, and web URL boundaries; do not replace this with ad hoc
+  `trim().toLowerCase()`, because persisted refs and caller-provided hosts can
+  bypass initial repository parsing.
+- Preserve web suggested-change diagnostic provenance: if any public, private,
+  or browser HTML source contains trusted suggested-change markers but no
+  parseable diff, surface `webSuggestionMarkersUnparseable` instead of a later
+  optional cookie or browser-fetch failure. When parsed web diffs partially
+  attach, report both the attached count and unmatched comment ids.
 
 ## Workflow
 

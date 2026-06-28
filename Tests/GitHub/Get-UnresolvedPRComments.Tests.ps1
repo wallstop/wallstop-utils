@@ -2210,6 +2210,13 @@ Describe "Convert-ReviewThreadToOutputRecord diffHunk-only inclusion" {
         @($parsed[0].comments).Count | Should -Be 0 -Because "JSON omits a comment whose only diff has no change lines"
     }
 
+    It "drops raw unified-diff no-newline metadata while preserving marker-prefixed real source lines" {
+        $diff = "@@ -1,2 +1,2 @@`n-old();`n\ No newline at end of file`n+\ No newline at end of file"
+
+        Convert-SuggestedDiffTextToPublicChangeOnlyDiff -Diff $diff |
+            Should -BeExactly "-old();`n+\ No newline at end of file"
+    }
+
     It "still creates a record (and keeps the internal diffHunk) when the comment has prose" {
         $thread = [pscustomobject]@{
             id         = "THREAD_PROSE_PLUS_DIFFHUNK"
@@ -2380,6 +2387,18 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $suggestionsByCommentId["3424230049"][0].path | Should -Be "web/src/test/dom-assertions.ts"
         $suggestionsByCommentId["3424230049"][0].diff | Should -BeExactly "-          document.getElementById(id),`n+          element.ownerDocument.getElementById(id),"
         $suggestionsByCommentId["3424230049"][0].diff | Should -Not -Match "@@|expect\(|not\.toBeNull"
+    }
+
+    It "drops unified-diff no-newline metadata from GitHub web automated changed lines" {
+        $html = @'
+<script type="application/json" data-target="react-partial.embeddedData">{"props":{"comment":{"databaseId":42,"automatedComment":{"suggestion":{"diffEntries":[{"path":"src/file.ts","diffLines":[{"type":"DELETION","text":"old();\n\\ No newline at end of file"},{"type":"ADDITION","text":"new();\n\\ No newline at end of file"}]}]}}}}}</script>
+'@
+
+        $suggestionsByCommentId = Get-GitHubWebAutomatedSuggestedDiffsByCommentIdFromHtml -Html $html
+
+        $suggestionsByCommentId.ContainsKey("42") | Should -BeTrue
+        $suggestionsByCommentId["42"][0].diff | Should -BeExactly "-old();`n+new();"
+        $suggestionsByCommentId["42"][0].diff | Should -Not -Match "No newline at end of file"
     }
 
     It "prefers explicit GitHub web cookie over environment fallback" {
@@ -2828,6 +2847,46 @@ Comment A
 Comment B
 ---
 "@
+
+        $actualNormalized = $text -replace "`r`n", "`n"
+        $expectedNormalized = $expected.TrimEnd("`r", "`n") -replace "`r`n", "`n"
+
+        $actualNormalized | Should -BeExactly $expectedNormalized
+    }
+
+    It "labels web suggested diffs that target a different file" {
+        $records = @(
+            [pscustomobject]@{
+                path      = "src/commented.ts"
+                lineStart = 10
+                lineEnd   = 10
+                comments  = @(
+                    [pscustomobject]@{
+                        body           = ""
+                        suggestedChanges = @()
+                        suggestedDiffs = @(
+                            [pscustomobject]@{
+                                kind = "changedLines"
+                                path = "src/changed.ts"
+                                diff = "-old();`n+new();"
+                            }
+                        )
+                    }
+                )
+            }
+        )
+
+        $text = Format-UnresolvedThreadsAsText -Records $records
+        $expected = @'
+---
+(src/commented.ts) 10-10
+Suggested change (src/changed.ts):
+```diff
+-old();
++new();
+```
+---
+'@
 
         $actualNormalized = $text -replace "`r`n", "`n"
         $expectedNormalized = $expected.TrimEnd("`r", "`n") -replace "`r`n", "`n"
@@ -3882,6 +3941,130 @@ Describe "Get-UnresolvedReviewThreads" {
         ($records | Select-Object -ExpandProperty threadId) | Should -Not -Contain "T2"
     }
 
+    It "preserves earlier GraphQL pages and warns when a later review-thread page fails" {
+        $secret = "secret-token-12345"
+        $script:pageCall = 0
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            $script:pageCall++
+            if ($script:pageCall -eq 1) {
+                return @{
+                    data = @{
+                        repository = @{
+                            pullRequest = @{
+                                reviewThreads = @{
+                                    pageInfo = @{ hasNextPage = $true; endCursor = "CURSOR_1" }
+                                    nodes    = @(
+                                        @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @(@{ body = "A" }) } }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            throw "E_NETWORK_ERROR: failed with $secret"
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 100 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -SensitiveTokens @($secret))
+
+        $records.Count | Should -Be 1
+        $records[0].threadId | Should -Be "T1"
+        $script:warningMessages.Count | Should -Be 1
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REVIEW_THREAD_PAGINATION"
+        $script:warningMessages[0] | Should -Match "results may be incomplete"
+        $script:warningMessages[0] | Should -Not -Match [regex]::Escape($secret)
+    }
+
+    It "preserves earlier GraphQL pages and warns when a later review-thread page is malformed" {
+        $script:pageCall = 0
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            $script:pageCall++
+            if ($script:pageCall -eq 1) {
+                return @{
+                    data = @{
+                        repository = @{
+                            pullRequest = @{
+                                reviewThreads = @{
+                                    pageInfo = @{ hasNextPage = $true; endCursor = "CURSOR_1" }
+                                    nodes    = @(
+                                        @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @(@{ body = "A" }) } }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{}
+                    }
+                }
+            }
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 100 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+
+        $records.Count | Should -Be 1
+        $records[0].threadId | Should -Be "T1"
+        $script:warningMessages.Count | Should -Be 1
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REVIEW_THREAD_PAGINATION"
+        $script:warningMessages[0] | Should -Match "E_MALFORMED_RESPONSE"
+    }
+
+    It "propagates a first-page GraphQL request failure instead of returning partial results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            throw "E_NETWORK_ERROR: first page failed"
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_NETWORK_ERROR*first page failed*"
+
+        $script:warningMessages.Count | Should -Be 0
+    }
+
+    It "propagates a first-page malformed GraphQL response instead of returning empty results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{}
+                    }
+                }
+            }
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*reviewThreads*"
+
+        $script:warningMessages.Count | Should -Be 0
+    }
+
     It "sends lowercase GraphQL variable keys expected by the query" {
         $script:capturedGraphQLBodyJson = $null
 
@@ -4237,6 +4420,218 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
         $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
         @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "resolutionState"
         @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "authSource"
+    }
+
+    It "preserves earlier REST pages and warns when a later public review-comment page fails" {
+        $secret = "secret-token-12345"
+        $script:restUris = @()
+        $script:warningMessages = @()
+
+        Mock Invoke-GitHubRequestWithRetry {
+            param(
+                [string]$Uri
+            )
+
+            $script:restUris += $Uri
+            if ($Uri -match "page=1") {
+                return @(
+                    [pscustomobject]@{
+                        id         = 101
+                        path       = "src/a.ts"
+                        line       = 6
+                        body       = "Top A"
+                        created_at = "2026-01-01T00:00:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r101"
+                        user       = [pscustomobject]@{ login = "reviewer-a" }
+                    },
+                    [pscustomobject]@{
+                        id         = 201
+                        path       = "src/b.ts"
+                        line       = 12
+                        body       = "Top B"
+                        created_at = "2026-01-01T00:02:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r201"
+                        user       = [pscustomobject]@{ login = "reviewer-b" }
+                    }
+                )
+            }
+
+            throw "E_NETWORK_ERROR: failed with $secret"
+        }
+
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -SensitiveTokens @($secret))
+
+        $records.Count | Should -Be 2
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:101"
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:201"
+        $script:restUris.Count | Should -Be 2
+        $script:warningMessages.Count | Should -Be 2
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REST_REVIEW_COMMENT_PAGINATION"
+        $script:warningMessages[0] | Should -Match "results may be incomplete"
+        $script:warningMessages[0] | Should -Not -Match [regex]::Escape($secret)
+        $script:warningMessages[1] | Should -Match "W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN"
+    }
+
+    It "preserves earlier REST pages and warns when a later public review-comment page is malformed" {
+        $script:restUris = @()
+        $script:warningMessages = @()
+
+        Mock Invoke-GitHubRequestWithRetry {
+            param(
+                [string]$Uri
+            )
+
+            $script:restUris += $Uri
+            if ($Uri -match "page=1") {
+                return @(
+                    [pscustomobject]@{
+                        id         = 101
+                        path       = "src/a.ts"
+                        line       = 6
+                        body       = "Top A"
+                        created_at = "2026-01-01T00:00:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r101"
+                        user       = [pscustomobject]@{ login = "reviewer-a" }
+                    },
+                    [pscustomobject]@{
+                        id         = 201
+                        path       = "src/b.ts"
+                        line       = 12
+                        body       = "Top B"
+                        created_at = "2026-01-01T00:02:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r201"
+                        user       = [pscustomobject]@{ login = "reviewer-b" }
+                    }
+                )
+            }
+
+            return [pscustomobject]@{ message = "not a review-comment array" }
+        }
+
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+
+        $records.Count | Should -Be 2
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:101"
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:201"
+        $script:restUris.Count | Should -Be 2
+        $script:warningMessages.Count | Should -Be 2
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REST_REVIEW_COMMENT_PAGINATION"
+        $script:warningMessages[0] | Should -Match "E_MALFORMED_RESPONSE"
+        $script:warningMessages[1] | Should -Match "W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN"
+    }
+
+    It "preserves earlier REST pages and warns when a later public review-comment page is null" {
+        $script:restUris = @()
+        $script:warningMessages = @()
+
+        Mock Invoke-GitHubRequestWithRetry {
+            param(
+                [string]$Uri
+            )
+
+            $script:restUris += $Uri
+            if ($Uri -match "page=1") {
+                return @(
+                    [pscustomobject]@{
+                        id         = 101
+                        path       = "src/a.ts"
+                        line       = 6
+                        body       = "Top A"
+                        created_at = "2026-01-01T00:00:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r101"
+                        user       = [pscustomobject]@{ login = "reviewer-a" }
+                    },
+                    [pscustomobject]@{
+                        id         = 201
+                        path       = "src/b.ts"
+                        line       = 12
+                        body       = "Top B"
+                        created_at = "2026-01-01T00:02:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r201"
+                        user       = [pscustomobject]@{ login = "reviewer-b" }
+                    }
+                )
+            }
+
+            return $null
+        }
+
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+
+        $records.Count | Should -Be 2
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:101"
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:201"
+        $script:restUris.Count | Should -Be 2
+        $script:warningMessages.Count | Should -Be 2
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REST_REVIEW_COMMENT_PAGINATION"
+        $script:warningMessages[0] | Should -Match "returned null"
+        $script:warningMessages[1] | Should -Match "W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN"
+    }
+
+    It "propagates a first-page public REST request failure instead of returning empty fallback results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            throw "E_NETWORK_ERROR: first page failed"
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_NETWORK_ERROR*first page failed*"
+
+        $script:warningMessages.Count | Should -Be 0
+    }
+
+    It "propagates a first-page null public REST page instead of returning empty fallback results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            return $null
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*returned null*"
+
+        $script:warningMessages.Count | Should -Be 0
+    }
+
+    It "propagates a first-page malformed public REST page instead of returning empty fallback results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            return [pscustomobject]@{ message = "not a review-comment array" }
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*without an id*"
+
+        $script:warningMessages.Count | Should -Be 0
     }
 
     It "uses current anchors for REST comments without an outdated flag" {
@@ -5949,5 +6344,207 @@ Describe "Strict-mode collection shape safety" {
 
     It "documents the @($null) Count pitfall" {
         (@($null)).Count | Should -Be 1
+    }
+}
+
+Describe "Suggestion diff reconstruction (end-anchored before-context)" {
+    Context "Get-NewSideLinesInRange" {
+        It "end-anchors when a truncated header understates the commented line" {
+            # Header claims the new side starts at 10, but the comment anchors at 142:
+            # GitHub truncated the hunk to its tail and kept the original @@ header.
+            $hunk = "@@ -8,6 +10,6 @@ function run() {`n ctx();`n-oldCall();`n+commentedCall();"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 142 -End 142 | Should -BeExactly "commentedCall();"
+        }
+
+        It "returns the last N new-side lines for a multi-line anchor" {
+            $hunk = "@@ -1,5 +1,5 @@`n a();`n b();`n c();"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 200 -End 201 | Should -BeExactly "b();`nc();"
+        }
+
+        It "clamps the span to the available new-side lines" {
+            $hunk = "@@ -1,2 +1,2 @@`n+a`n+b"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 5 -End 12 | Should -BeExactly "a`nb"
+        }
+
+        It "anchors on the last real new-side line past a trailing deletion" {
+            $hunk = "@@ -10,3 +10,2 @@`n keep();`n anchor();`n-removed();"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 11 -End 11 | Should -BeExactly "anchor();"
+        }
+
+        It "ignores unified-diff no-newline sentinel rows" {
+            $hunk = "@@ -10,3 +10,2 @@`n keep();`n anchor();`n\ No newline at end of file"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 11 -End 11 | Should -BeExactly "anchor();"
+        }
+
+        It "returns empty for a pure-deletion hunk with no new-side line" {
+            $hunk = "@@ -10,2 +10,0 @@`n-x();`n-y();"
+            Get-NewSideLinesInRange -DiffHunk $hunk -Start 10 -End 10 | Should -BeExactly ""
+        }
+
+        It "returns empty for a missing hunk or absent anchor" {
+            Get-NewSideLinesInRange -DiffHunk $null -Start 5 -End 5 | Should -BeExactly ""
+            Get-NewSideLinesInRange -DiffHunk "@@ -1,1 +1,1 @@`n+a" -Start $null -End $null | Should -BeExactly ""
+        }
+    }
+
+    Context "ConvertTo-ReconstructedSuggestionDiff" {
+        It "emits removed lines then added lines" {
+            ConvertTo-ReconstructedSuggestionDiff -Before "document.getElementById(id)," -After "element.ownerDocument.getElementById(id)," |
+                Should -BeExactly "-document.getElementById(id),`n+element.ownerDocument.getElementById(id),"
+        }
+
+        It "renders an empty suggestion as a pure deletion and renders no before as empty" {
+            ConvertTo-ReconstructedSuggestionDiff -Before "drop();" -After "" | Should -BeExactly "-drop();"
+            ConvertTo-ReconstructedSuggestionDiff -Before "" -After "added();" | Should -BeExactly ""
+        }
+
+        It "keeps an unchanged line as context instead of a spurious -/+ pair" {
+            # `a();` is unchanged, so a real line diff keeps it as a single " " context row
+            # rather than re-emitting it as both a deletion and an addition.
+            ConvertTo-ReconstructedSuggestionDiff -Before "a();`nb();" -After "a();`nb2();" |
+                Should -BeExactly " a();`n-b();`n+b2();"
+        }
+
+        It "renders a middle-line removal as a single deletion surrounded by context" {
+            # The bug this fixes: a suggestion that REMOVES the middle line of a block must read
+            # as one "-" between two " " context rows, not a wall of "+" re-adding the kept lines.
+            ConvertTo-ReconstructedSuggestionDiff -Before "parse(input);`nvalidate(input);`nstore(input);" -After "parse(input);`nstore(input);" |
+                Should -BeExactly " parse(input);`n-validate(input);`n store(input);"
+        }
+
+        It "renders an added line within a block as a single addition surrounded by context" {
+            ConvertTo-ReconstructedSuggestionDiff -Before "a();`nc();" -After "a();`nb();`nc();" |
+                Should -BeExactly " a();`n+b();`n c();"
+        }
+
+        It "returns empty when the suggestion is identical to the before context" {
+            # A no-op suggestion produces only context rows; emitting a changeless block adds no
+            # value, so the caller falls back to rendering the suggestion verbatim.
+            ConvertTo-ReconstructedSuggestionDiff -Before "a();" -After "a();" | Should -BeExactly ""
+        }
+    }
+
+    Context "Convert-ReviewThreadToOutputRecord end-to-end" {
+        It "reconstructs a -/+ suggestion diff from a truncated hunk" {
+            $body = @'
+Rename it.
+
+```suggestion
+renamedCall();
+```
+'@
+            $thread = [pscustomobject]@{
+                id         = "THREAD_TRUNC"
+                isResolved = $false
+                isOutdated = $false
+                path       = "src/big.ts"
+                startLine  = 142
+                line       = 142
+                comments   = [pscustomobject]@{
+                    nodes = @([pscustomobject]@{
+                            body      = $body
+                            diff_hunk = "@@ -8,6 +10,6 @@ function run() {`n ctx();`n-oldCall();`n+commentedCall();"
+                        })
+                }
+            }
+
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+            $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+            $text | Should -Match "Suggested change:"
+            $text | Should -Match ([regex]::Escape("-commentedCall();"))
+            $text | Should -Match ([regex]::Escape("+renamedCall();"))
+        }
+
+        It "reconstructs both removed lines for a multi-line suggestion" {
+            $body = @'
+Fix both.
+
+```suggestion
+first2();
+second2();
+```
+'@
+            $thread = [pscustomobject]@{
+                id         = "THREAD_MULTI"
+                isResolved = $false
+                isOutdated = $false
+                path       = "src/multi.ts"
+                startLine  = 20
+                line       = 21
+                comments   = [pscustomobject]@{
+                    nodes = @([pscustomobject]@{
+                            body      = $body
+                            diff_hunk = "@@ -5,4 +5,4 @@`n head();`n-first();`n-second();`n+first();`n+second();"
+                        })
+                }
+            }
+
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+            $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+            $text | Should -Match ([regex]::Escape("-first();"))
+            $text | Should -Match ([regex]::Escape("-second();"))
+            $text | Should -Match ([regex]::Escape("+first2();"))
+            $text | Should -Match ([regex]::Escape("+second2();"))
+        }
+
+        It "keeps JSON suggestedChanges verbatim (added-only value), not the reconstructed diff" {
+            $body = @'
+Rename it.
+
+```suggestion
+renamedCall();
+```
+'@
+            $thread = [pscustomobject]@{
+                id         = "THREAD_JSON"
+                isResolved = $false
+                isOutdated = $false
+                path       = "src/big.ts"
+                startLine  = 142
+                line       = 142
+                comments   = [pscustomobject]@{
+                    nodes = @([pscustomobject]@{
+                            body      = $body
+                            diff_hunk = "@@ -8,6 +10,6 @@ function run() {`n ctx();`n-oldCall();`n+commentedCall();"
+                        })
+                }
+            }
+
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+            $parsed = (Format-UnresolvedThreadsAsJson -Records @($record)) | ConvertFrom-Json
+
+            $parsed[0].comments[0].suggestedChanges[0].kind | Should -Be "suggestion"
+            $parsed[0].comments[0].suggestedChanges[0].value | Should -BeExactly "renamedCall();"
+        }
+
+        It "does not fabricate a deletion when the comment has no diff hunk" {
+            $body = @'
+Tweak it.
+
+```suggestion
+tweaked();
+```
+'@
+            $thread = [pscustomobject]@{
+                id         = "THREAD_NOHUNK"
+                isResolved = $false
+                isOutdated = $false
+                path       = "src/main.ts"
+                startLine  = 5
+                line       = 5
+                comments   = [pscustomobject]@{
+                    nodes = @([pscustomobject]@{ body = $body })
+                }
+            }
+
+            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner "o" -Repo "r" -PrNumber 9 -GitHubHost "github.com"
+            $text = (Format-UnresolvedThreadsAsText -Records @($record)) -replace "`r`n", "`n"
+
+            $text | Should -Match "Suggested change:"
+            $text | Should -Match "(?m)^tweaked\(\);$"
+            $text | Should -Not -Match "(?m)^\+tweaked"
+        }
     }
 }

@@ -1,4 +1,4 @@
-import type { PullRequestSummary, RepositoryRef } from './types';
+import type { AccessibleRepository, PullRequestSummary, RepositoryRef } from './types';
 
 export interface MementoLike {
   get<T>(key: string, fallback: T): T;
@@ -68,9 +68,115 @@ export function isOpenPullRequest(pullRequest: PullRequestSummary): boolean {
   return pullRequest.state === 'OPEN' && !pullRequest.merged;
 }
 
+/** A QuickPick item for the "Add Repository" picker; structurally a `vscode.QuickPickItem`. */
+export interface AddRepoQuickPickItem {
+  label: string;
+  description?: string;
+  detail?: string;
+  alwaysShow?: boolean;
+  repository?: RepositoryRef;
+  manualEntry?: boolean;
+}
+
+/**
+ * The "filtered intelligently" step for the Add Repository picker: drops archived repos and any
+ * already pinned (compared by {@link repositoryKey}), de-duplicates, and orders most-recently-pushed
+ * first (repos without a push timestamp sort last, preserving input order among themselves).
+ */
+export function selectableRepositories(
+  accessible: readonly AccessibleRepository[],
+  alreadyAdded: readonly RepositoryRef[],
+): AccessibleRepository[] {
+  const addedKeys = new Set(alreadyAdded.map(repositoryKey));
+  const seen = new Set<string>();
+  const result: AccessibleRepository[] = [];
+  for (const repository of accessible) {
+    if (repository.archived) {
+      continue;
+    }
+
+    const key = repositoryKey(repository);
+    if (addedKeys.has(key) || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(repository);
+  }
+
+  return result.sort((left, right) => comparePushedAtDescending(left.pushedAt, right.pushedAt));
+}
+
+/** Shapes accessible repositories into picker items, with a manual-entry escape hatch pinned first. */
+export function buildAddRepoQuickPickItems(repositories: readonly AccessibleRepository[]): AddRepoQuickPickItem[] {
+  const manualEntry: AddRepoQuickPickItem = {
+    label: '$(edit) Enter owner/repo or URL…',
+    alwaysShow: true,
+    manualEntry: true,
+  };
+  const items = repositories.map(
+    (repository) =>
+      ({
+        label: `${repository.owner}/${repository.repo}`,
+        description: describeAccessibleRepository(repository),
+        detail: repository.description,
+        repository: { host: repository.host, owner: repository.owner, repo: repository.repo },
+      }) satisfies AddRepoQuickPickItem,
+  );
+
+  return [manualEntry, ...items];
+}
+
+/** github.com is always enumerated; any additional host already pinned is included too (lowercased). */
+export function enumerationHosts(repositories: readonly RepositoryRef[]): string[] {
+  const hosts = new Set<string>(['github.com']);
+  for (const repository of repositories) {
+    hosts.add(assertSafeGitHubHost(repository.host));
+  }
+
+  return [...hosts];
+}
+
+function describeAccessibleRepository(repository: AccessibleRepository): string {
+  const parts = [repository.host, repository.private ? 'private' : 'public'];
+  if (repository.pushedAt !== undefined) {
+    parts.push(`pushed ${repository.pushedAt.slice(0, 10)}`);
+  }
+
+  return parts.join(' · ');
+}
+
+function comparePushedAtDescending(left: string | undefined, right: string | undefined): number {
+  const leftTime = parseTimestamp(left);
+  const rightTime = parseTimestamp(right);
+  if (leftTime !== undefined && rightTime !== undefined) {
+    return rightTime - leftTime;
+  }
+
+  if (leftTime !== undefined) {
+    return -1;
+  }
+
+  if (rightTime !== undefined) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function parseTimestamp(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export function parseRepositoryInput(input: string): RepositoryRef {
   const trimmed = input.trim();
   if (/^https:\/\//iu.test(trimmed)) {
+    const rawHost = readRawHttpsUrlHost(trimmed);
     const url = new URL(trimmed);
     if (url.username !== '' || url.password !== '' || url.port !== '') {
       throw new Error('Repository URLs must not include user info or a port.');
@@ -82,7 +188,7 @@ export function parseRepositoryInput(input: string): RepositoryRef {
     }
 
     return normalizeRepositoryHost({
-      host: url.hostname,
+      host: rawHost,
       owner: segments[0],
       repo: segments[1].replace(/\.git$/iu, ''),
     });
@@ -101,7 +207,7 @@ export function parseRepositoryInput(input: string): RepositoryRef {
 }
 
 export function repositoryKey(repository: RepositoryRef): string {
-  return `${repository.host.toLowerCase()}/${repository.owner.toLowerCase()}/${repository.repo.toLowerCase()}`;
+  return `${assertSafeGitHubHost(repository.host)}/${repository.owner.toLowerCase()}/${repository.repo.toLowerCase()}`;
 }
 
 export function assertSafeGitHubHost(host: string): string {
@@ -115,8 +221,7 @@ export function assertSafeGitHubHost(host: string): string {
   }
 
   if (normalized.includes(':')) {
-    assertAllowedIPv6Host(normalized);
-    return normalized;
+    return normalizeIPv6Host(normalized);
   }
 
   const ipv4Parts = parseIPv4(normalized);
@@ -126,6 +231,7 @@ export function assertSafeGitHubHost(host: string): string {
   }
 
   assertDnsHostFormat(normalized);
+  assertNoUrlHostnameReinterpretation(normalized);
   return normalized;
 }
 
@@ -168,6 +274,27 @@ function readRepositorySegment(value: unknown): string | undefined {
   return trimmed === '' || /[\/\s]/u.test(trimmed) ? undefined : trimmed;
 }
 
+function readRawHttpsUrlHost(input: string): string {
+  const match = /^https:\/\/(?<authority>[^/?#]*)/iu.exec(input);
+  const authority = match?.groups?.authority ?? '';
+  if (authority === '') {
+    throw new Error('Repository URLs must include a GitHub host.');
+  }
+
+  const withoutUserInfo = authority.includes('@') ? authority.slice(authority.lastIndexOf('@') + 1) : authority;
+  if (withoutUserInfo.startsWith('[')) {
+    const end = withoutUserInfo.indexOf(']');
+    if (end < 0) {
+      throw new Error(`Invalid GitHub host '${withoutUserInfo}'.`);
+    }
+
+    return withoutUserInfo.slice(0, end + 1);
+  }
+
+  const colon = withoutUserInfo.indexOf(':');
+  return colon < 0 ? withoutUserInfo : withoutUserInfo.slice(0, colon);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -191,10 +318,27 @@ function assertDnsHostFormat(host: string): void {
   }
 }
 
+function assertNoUrlHostnameReinterpretation(host: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(`https://${host}/`);
+  } catch {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+
+  if (parsed.hostname !== host) {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+}
+
 function parseIPv4(host: string): [number, number, number, number] | undefined {
   const parts = host.split('.');
   if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/u.test(part))) {
     return undefined;
+  }
+
+  if (parts.some((part) => part.length > 1 && part.startsWith('0'))) {
+    throw new Error(`Invalid GitHub host '${host}'.`);
   }
 
   const numbers = parts.map((part) => Number(part));
@@ -256,6 +400,28 @@ function assertAllowedIPv6Host(host: string): void {
   if (!/^[0-9a-f:.]+$/iu.test(normalized)) {
     throw new Error(`Invalid GitHub host '${host}'.`);
   }
+
+  try {
+    new URL(`https://[${normalized}]/`);
+  } catch {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+}
+
+function normalizeIPv6Host(host: string): string {
+  const hasOpeningBracket = host.startsWith('[');
+  const hasClosingBracket = host.endsWith(']');
+  if (hasOpeningBracket !== hasClosingBracket) {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+
+  const normalized = hasOpeningBracket ? host.slice(1, -1) : host;
+  if (normalized.includes('[') || normalized.includes(']')) {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+
+  assertAllowedIPv6Host(normalized);
+  return `[${normalized}]`;
 }
 
 function isIPv6LinkLocal(host: string): boolean {

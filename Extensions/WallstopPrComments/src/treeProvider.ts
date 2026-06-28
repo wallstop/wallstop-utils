@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 
+import { redactSecrets } from './auth';
 import { groupPullRequests, isOpenPullRequest, repositoryKey } from './repositoryStore';
 import type { GitHubClient } from './githubClient';
 import type { PullRequestSummary, RepositoryRef } from './types';
@@ -30,6 +31,11 @@ interface EmptyNode {
   label: string;
 }
 
+interface LoadGeneration {
+  global: number;
+  repository: number;
+}
+
 export interface RepositorySource {
   list(): RepositoryRef[];
 }
@@ -39,7 +45,9 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
   readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
   private readonly pullRequestCache = new Map<string, PullRequestSummary[]>();
   private readonly errorCache = new Map<string, string>();
-  private readonly inFlightLoads = new Map<string, { generation: number; promise: Promise<void> }>();
+  private readonly inFlightLoads = new Map<string, { generation: LoadGeneration; promise: Promise<void> }>();
+  private readonly repositoryNodes = new Map<string, RepositoryNode>();
+  private readonly repositoryGenerations = new Map<string, number>();
   private loadGeneration = 0;
 
   constructor(
@@ -47,12 +55,38 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
     private readonly client: GitHubClient,
   ) {}
 
-  refresh(): void {
+  refresh(repository?: RepositoryRef): void {
+    if (repository !== undefined) {
+      this.refreshRepository(repository);
+      return;
+    }
+
     this.loadGeneration += 1;
     this.pullRequestCache.clear();
     this.errorCache.clear();
     this.inFlightLoads.clear();
+    this.repositoryNodes.clear();
+    this.repositoryGenerations.clear();
     this.onDidChangeTreeDataEmitter.fire(undefined);
+  }
+
+  private refreshRepository(repository: RepositoryRef): void {
+    const key = repositoryKey(repository);
+    this.repositoryGenerations.set(key, this.repositoryGeneration(key) + 1);
+    this.pullRequestCache.delete(key);
+    this.errorCache.delete(key);
+    this.inFlightLoads.delete(key);
+
+    const node = this.repositoryNodes.get(key);
+    if (node === undefined) {
+      if (this.repositories.list().some((candidate) => repositoryKey(candidate) === key)) {
+        this.onDidChangeTreeDataEmitter.fire(undefined);
+      }
+
+      return;
+    }
+
+    this.onDidChangeTreeDataEmitter.fire(node);
   }
 
   async getChildren(element?: TreeNode): Promise<TreeNode[]> {
@@ -60,7 +94,7 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
       const repositories = this.repositories.list();
       return repositories.length === 0
         ? [{ kind: 'empty', label: 'No repositories pinned' }]
-        : repositories.map((repository) => ({ kind: 'repository', repository }));
+        : repositories.map((repository) => this.repositoryNode(repository));
     }
 
     if (element.kind === 'repository') {
@@ -93,6 +127,18 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
     }
   }
 
+  private repositoryNode(repository: RepositoryRef): RepositoryNode {
+    const key = repositoryKey(repository);
+    const existing = this.repositoryNodes.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const node: RepositoryNode = { kind: 'repository', repository };
+    this.repositoryNodes.set(key, node);
+    return node;
+  }
+
   private async getRepositoryChildren(repository: RepositoryRef): Promise<TreeNode[]> {
     const key = repositoryKey(repository);
     if (!this.pullRequestCache.has(key) && !this.errorCache.has(key)) {
@@ -113,17 +159,18 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
   }
 
   private async ensurePullRequestsLoaded(repository: RepositoryRef, key: string): Promise<void> {
+    const currentGeneration = this.currentLoadGeneration(key);
     const existing = this.inFlightLoads.get(key);
-    if (existing !== undefined && existing.generation === this.loadGeneration) {
+    if (existing !== undefined && sameLoadGeneration(existing.generation, currentGeneration)) {
       await existing.promise;
       return;
     }
 
-    const generation = this.loadGeneration;
+    const generation = currentGeneration;
     let loadPromise!: Promise<void>;
     loadPromise = this.client.listPullRequests(repository, { promptForAuth: true })
       .then((pullRequests) => {
-        if (this.loadGeneration !== generation) {
+        if (!sameLoadGeneration(this.currentLoadGeneration(key), generation)) {
           return;
         }
 
@@ -131,13 +178,13 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
         this.pullRequestCache.set(key, pullRequests);
       })
       .catch((error: unknown) => {
-        if (this.loadGeneration !== generation || this.pullRequestCache.has(key)) {
+        if (!sameLoadGeneration(this.currentLoadGeneration(key), generation) || this.pullRequestCache.has(key)) {
           return;
         }
 
         const message = error instanceof Error ? error.message : String(error);
         this.pullRequestCache.delete(key);
-        this.errorCache.set(key, message);
+        this.errorCache.set(key, redactSecrets(message));
       })
       .finally(() => {
         const current = this.inFlightLoads.get(key);
@@ -148,6 +195,17 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
 
     this.inFlightLoads.set(key, { generation, promise: loadPromise });
     await loadPromise;
+  }
+
+  private currentLoadGeneration(key: string): LoadGeneration {
+    return {
+      global: this.loadGeneration,
+      repository: this.repositoryGeneration(key),
+    };
+  }
+
+  private repositoryGeneration(key: string): number {
+    return this.repositoryGenerations.get(key) ?? 0;
   }
 
   private createPullRequestGroups(repository: RepositoryRef, pullRequests: readonly PullRequestSummary[]): TreeNode[] {
@@ -206,6 +264,10 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
     };
     return item;
   }
+}
+
+function sameLoadGeneration(left: LoadGeneration, right: LoadGeneration): boolean {
+  return left.global === right.global && left.repository === right.repository;
 }
 
 function formatRelativeTime(isoDate: string): string {

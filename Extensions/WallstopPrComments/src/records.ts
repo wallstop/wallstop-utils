@@ -4,10 +4,18 @@ import {
   extractSuggestionBlocks,
   suggestedDiffUnavailable,
 } from './markdownSuggestions';
+import { extractNewSideLinesInRange, reconstructSuggestionDiff, trimDiffHunkToRange } from './suggestionDiff';
 import { isCursorBugbotAuthor } from './botAuthors';
 import type { EmbeddedLocation, RenderableComment, ReviewComment, ReviewThread, ReviewThreadRecord } from './types';
 
-export function reviewThreadToRecord(thread: ReviewThread): ReviewThreadRecord | undefined {
+export interface ReviewThreadToRecordOptions {
+  includeDiffHunks?: boolean;
+}
+
+export function reviewThreadToRecord(
+  thread: ReviewThread,
+  options: ReviewThreadToRecordOptions = {},
+): ReviewThreadRecord | undefined {
   const githubPath = normalizePath(thread.path);
   const githubRange = resolveLineRange(thread);
   const topComment = thread.comments[0];
@@ -15,7 +23,16 @@ export function reviewThreadToRecord(thread: ReviewThread): ReviewThreadRecord |
     ? extractEmbeddedCommentLocations(topComment?.body)
     : [];
   const outputLocation = resolveOutputLocation(githubPath, githubRange, embeddedLocations);
-  const comments = thread.comments.map(toRenderableComment).filter((comment) => hasRenderableCommentContent(comment));
+  const includeDiffHunks = options.includeDiffHunks ?? true;
+  const comments = thread.comments
+    .map((comment, commentIndex) =>
+      toRenderableComment(comment, commentIndex, {
+        lineStart: githubRange.start,
+        lineEnd: githubRange.end,
+        includeDiffHunks,
+      }),
+    )
+    .filter((comment) => hasRenderableCommentContent(comment));
   if (comments.length === 0) {
     return undefined;
   }
@@ -35,10 +52,17 @@ export function reviewThreadToRecord(thread: ReviewThread): ReviewThreadRecord |
 
 export function hasRenderableCommentContent(comment: RenderableComment): boolean {
   return (
+    hasPublicCommentText(comment) ||
+    (comment.diffHunk !== undefined && comment.diffHunk !== '') ||
+    comment.unavailableReason !== undefined
+  );
+}
+
+export function hasPublicCommentText(comment: RenderableComment): boolean {
+  return (
     comment.body !== '' ||
     comment.suggestedChanges.length > 0 ||
-    comment.suggestedDiffs.length > 0 ||
-    comment.unavailableReason !== undefined
+    comment.suggestedDiffs.length > 0
   );
 }
 
@@ -70,11 +94,31 @@ export function collectUnavailableSuggestionWarnings(records: readonly ReviewThr
   return warnings;
 }
 
-function toRenderableComment(comment: ReviewComment, commentIndex: number): RenderableComment {
+interface RenderContext {
+  lineStart?: number;
+  lineEnd?: number;
+  includeDiffHunks: boolean;
+}
+
+function toRenderableComment(
+  comment: ReviewComment,
+  commentIndex: number,
+  context: RenderContext,
+): RenderableComment {
+  // Only reconstruct a suggestion into a diff when the comment has a resolvable line anchor; without
+  // one, the lines the suggestion replaces are unknowable and a diff against the whole hunk would
+  // fabricate unrelated deletions, so the suggestion renders as raw text instead.
+  const hasAnchorRange = context.lineStart !== undefined || context.lineEnd !== undefined;
+  const beforeContext = hasAnchorRange
+    ? extractNewSideLinesInRange(comment.diffHunk, context.lineStart, context.lineEnd)
+    : '';
   const suggestedChanges = extractSuggestionBlocks(comment.body, {
     authorLogin: comment.authorLogin,
     commentIndex,
     url: comment.url,
+  }).map((change) => {
+    const diff = beforeContext === '' ? undefined : reconstructSuggestionDiff(beforeContext, change.value);
+    return diff === undefined ? change : { ...change, diff };
   });
   const body = cleanCommentText(comment.body);
   const suggestedDiffs = [...(comment.suggestedDiffs ?? [])];
@@ -82,16 +126,24 @@ function toRenderableComment(comment: ReviewComment, commentIndex: number): Rend
     ? suggestedDiffUnavailable({
         authorLogin: comment.authorLogin,
         body: comment.body,
+        url: comment.url,
         suggestionCount: suggestedChanges.length,
       })
     : undefined;
+  const hasHigherConfidence = suggestedChanges.length > 0 || suggestedDiffs.length > 0;
+  const diffHunk = context.includeDiffHunks && !hasHigherConfidence && unavailable === undefined
+    ? trimDiffHunkToRange(comment.diffHunk, context.lineStart, context.lineEnd)
+    : '';
 
   return {
     databaseId: comment.databaseId,
+    nodeId: comment.nodeId ?? comment.id,
     url: comment.url,
+    authorLogin: comment.authorLogin,
     body,
     suggestedChanges,
     suggestedDiffs,
+    diffHunk: diffHunk === '' ? undefined : diffHunk,
     unavailableReason: unavailable?.reason,
     unavailableSource: unavailable?.source,
     unavailableConfidence: unavailable?.confidence,

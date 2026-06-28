@@ -3,11 +3,18 @@ import * as vscode from 'vscode';
 import { AuthService, redactSecrets } from './auth';
 import { GitHubClient } from './githubClient';
 import { formatReviewThreadRecords } from './renderer';
-import { attachWebSuggestedDiffs } from './webSuggestions';
-import { parseRepositoryInput, RepositoryStore } from './repositoryStore';
+import { attachWebSuggestedDiffs, unmatchedSuggestionKeys } from './webSuggestions';
+import {
+  buildAddRepoQuickPickItems,
+  enumerationHosts,
+  parseRepositoryInput,
+  RepositoryStore,
+  selectableRepositories,
+} from './repositoryStore';
 import { collectUnavailableSuggestionWarnings, reviewThreadToRecord } from './records';
 import { PrCommentsTreeProvider, type PullRequestNode, type RepositoryNode, type TreeNode } from './treeProvider';
-import type { RepositoryRef, ReviewScope, ReviewThreadRecord } from './types';
+import { AutoRefreshScheduler, type AutoRefreshConfig } from './autoRefresh';
+import type { AccessibleRepository, RepositoryRef, ReviewScope, ReviewThreadRecord, WebSuggestedDiffResult } from './types';
 
 const SCOPE_KEY = 'wallstopPrComments.scope';
 
@@ -26,29 +33,41 @@ export function activate(context: vscode.ExtensionContext): void {
     storeSecret: async (key, value) => context.secrets.store(key, value),
     deleteSecret: async (key) => context.secrets.delete(key),
   });
+  const output = vscode.window.createOutputChannel('Wallstop PR Comments');
   const client = new GitHubClient({
     getToken: (host, createIfNone) => auth.getToken(host, createIfNone),
     getWebCookie: (host) => auth.getWebCookie(host),
     browserWebHtmlProvider: (url) => getBrowserWebSuggestionsHtml(url),
+    log: (message) => output.appendLine(`[${new Date().toISOString()}] ${message}`),
   });
   const provider = new PrCommentsTreeProvider(store, client);
+  const autoRefresh = new AutoRefreshScheduler({
+    refresh: () => provider.refresh(),
+    getConfig: () => readAutoRefreshConfig(),
+    setInterval: (handler, ms) => setInterval(handler, ms),
+    clearInterval: (handle) => clearInterval(handle),
+  });
+  autoRefresh.reconfigure();
 
   context.subscriptions.push(
+    output,
     vscode.window.registerTreeDataProvider('wallstopPrComments.repos', provider),
-    vscode.commands.registerCommand('wallstopPrComments.refresh', () => provider.refresh()),
-    vscode.commands.registerCommand('wallstopPrComments.addRepo', async () => {
-      const input = await vscode.window.showInputBox({
-        title: 'Add GitHub Repository',
-        prompt: 'Enter owner/repo or a GitHub HTTPS repository URL.',
-        ignoreFocusOut: true,
-      });
-      if (input === undefined) {
-        return;
+    { dispose: () => autoRefresh.dispose() },
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('wallstopPrComments.autoRefresh')) {
+        autoRefresh.reconfigure();
       }
-
+    }),
+    vscode.commands.registerCommand('wallstopPrComments.refresh', () => provider.refresh()),
+    vscode.commands.registerCommand('wallstopPrComments.refreshRepo', async (node?: TreeNode) => {
+      const repository = findRepository(node) ?? (await pickRepository(store.list()));
+      if (repository !== undefined) {
+        provider.refresh(repository);
+      }
+    }),
+    vscode.commands.registerCommand('wallstopPrComments.addRepo', async () => {
       try {
-        await store.add(parseRepositoryInput(input));
-        provider.refresh();
+        await addRepositoriesInteractively(store, client, provider);
       } catch (error) {
         await showError(error);
       }
@@ -76,16 +95,25 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.commands.registerCommand('wallstopPrComments.copyComments', async (node?: PullRequestNode) => {
-      const target = node ?? (await pickPullRequest(store.list(), client));
-      if (target === undefined) {
-        return;
-      }
+      try {
+        const target = node ?? (await pickPullRequest(store.list(), client));
+        if (target === undefined) {
+          return;
+        }
 
-      await copyReviewComments(context, client, target.repository, target.pullRequest.number);
+        await copyReviewComments(context, client, target.repository, target.pullRequest.number);
+      } catch (error) {
+        await showError(error);
+      }
     }),
     vscode.commands.registerCommand('wallstopPrComments.openInBrowser', async (node?: PullRequestNode) => {
-      if (node?.pullRequest.url !== undefined && node.pullRequest.url !== '') {
-        await vscode.env.openExternal(vscode.Uri.parse(node.pullRequest.url));
+      try {
+        const target = node ?? (await pickPullRequest(store.list(), client));
+        if (target?.pullRequest.url !== undefined && target.pullRequest.url !== '') {
+          await vscode.env.openExternal(vscode.Uri.parse(target.pullRequest.url));
+        }
+      } catch (error) {
+        await showError(error);
       }
     }),
     vscode.commands.registerCommand('wallstopPrComments.setToken', async (node?: TreeNode) => {
@@ -155,20 +183,17 @@ async function copyReviewComments(
       async () => client.getReviewThreads(repository, prNumber, scope, { promptForAuth: true }),
     );
 
-    const records = result.threads.map(reviewThreadToRecord).filter(isReviewThreadRecord);
+    const includeDiffHunks = getIncludeDiffHunks();
+    const records = result.threads
+      .map((thread) => reviewThreadToRecord(thread, { includeDiffHunks }))
+      .filter(isReviewThreadRecord);
     try {
       const webDiffs = await client.getWebSuggestedDiffs(repository, prNumber, {
         allowBrowserFallback: getBrowserWebSuggestionsCommand() !== undefined,
       });
-      if (webDiffs.suggestions.size > 0) {
-        const attached = attachWebSuggestedDiffs(records, webDiffs.suggestions);
-        if (attached > 0) {
-          result.warnings.push(`Attached ${attached} suggested change diff(s) from ${webDiffs.provenance}.`);
-        }
-      }
+      result.warnings.push(...attachWebSuggestedDiffsAndCollectWarnings(records, webDiffs));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      result.warnings.push(`Optional GitHub web suggested-change enrichment failed: ${message}`);
+      result.warnings.push(`Optional GitHub web suggested-change enrichment failed: ${redactSecrets(formatErrorMessage(error))}`);
     }
     result.warnings.push(...collectUnavailableSuggestionWarnings(records));
 
@@ -179,6 +204,135 @@ async function copyReviewComments(
     } else {
       await vscode.window.showInformationMessage(`Copied PR #${prNumber} review comments.`);
     }
+  } catch (error) {
+    await showError(error);
+  }
+}
+
+export function attachWebSuggestedDiffsAndCollectWarnings(
+  records: ReviewThreadRecord[],
+  webDiffs: WebSuggestedDiffResult,
+): string[] {
+  if (webDiffs.suggestions.size === 0) {
+    return webDiffs.provenance === 'webSuggestionMarkersUnparseable'
+      ? [
+          'Detected a GitHub suggested change on the PR files page but could not parse its diff (the rendered format may have changed); open the PR on GitHub to view it.',
+        ]
+      : [];
+  }
+
+  const warnings: string[] = [];
+  const attached = attachWebSuggestedDiffs(records, webDiffs.suggestions);
+  const unmatched = unmatchedSuggestionKeys(records, webDiffs.suggestions);
+  if (attached > 0) {
+    warnings.push(`Attached ${attached} suggested change diff(s) from ${webDiffs.provenance}.`);
+  }
+
+  if (unmatched.length > 0) {
+    warnings.push(
+      `Extracted web suggested changes for ${webDiffs.suggestions.size} comment id(s) from ${webDiffs.provenance}, but ${unmatched.length} did not match copied review comments (unmatched comment ids: ${unmatched.join(', ')}).`,
+    );
+  }
+
+  return warnings;
+}
+
+async function addRepositoriesInteractively(
+  store: RepositoryStore,
+  client: GitHubClient,
+  provider: PrCommentsTreeProvider,
+): Promise<void> {
+  const hosts = enumerationHosts(store.list());
+  let accessible: AccessibleRepository[];
+  let listingFailures: unknown[] = [];
+  const listingWarnings: string[] = [];
+  try {
+    accessible = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Loading accessible repositories…' },
+      async () => {
+        const settled = await Promise.allSettled(
+          hosts.map((host) => client.listAccessibleRepositories(host, {
+            promptForAuth: true,
+            warnings: listingWarnings,
+          })),
+        );
+        const repositories = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
+        const failures = settled.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+        listingFailures = failures.map((failure) => failure.reason);
+        // Only treat listing as failed when nothing came back at all; a single bad host (e.g. a GHES
+        // host without a token) should not block repos that loaded from another host.
+        if (repositories.length === 0 && failures.length === settled.length && failures[0] !== undefined) {
+          throw failures[0].reason;
+        }
+
+        return repositories;
+      },
+    );
+  } catch (error) {
+    await showError(error);
+    await addRepositoryManually(store, provider);
+    return;
+  }
+
+  const warnings: string[] = [];
+  if (listingFailures.length > 0) {
+    const firstFailure = formatErrorMessage(listingFailures[0]);
+    warnings.push(
+      `Loaded repositories from ${hosts.length - listingFailures.length} of ${hosts.length} host(s); ${listingFailures.length} host(s) failed: ${firstFailure}`,
+    );
+  }
+
+  warnings.push(...listingWarnings);
+  if (warnings.length > 0) {
+    await vscode.window.showWarningMessage(redactSecrets(warnings.join(' ')));
+  }
+
+  const items = buildAddRepoQuickPickItems(selectableRepositories(accessible, store.list()));
+  const picks = await vscode.window.showQuickPick(items, {
+    title: 'Add Repositories',
+    placeHolder: 'Select repositories to add (type to filter), or choose manual entry',
+    canPickMany: true,
+    matchOnDescription: true,
+    matchOnDetail: true,
+    ignoreFocusOut: true,
+  });
+  if (picks === undefined || picks.length === 0) {
+    return;
+  }
+
+  let added = false;
+  let manualRequested = false;
+  for (const pick of picks) {
+    if (pick.manualEntry === true) {
+      manualRequested = true;
+    } else if (pick.repository !== undefined) {
+      await store.add(pick.repository);
+      added = true;
+    }
+  }
+
+  if (added) {
+    provider.refresh();
+  }
+
+  if (manualRequested) {
+    await addRepositoryManually(store, provider);
+  }
+}
+
+async function addRepositoryManually(store: RepositoryStore, provider: PrCommentsTreeProvider): Promise<void> {
+  const input = await vscode.window.showInputBox({
+    title: 'Add GitHub Repository',
+    prompt: 'Enter owner/repo or a GitHub HTTPS repository URL.',
+    ignoreFocusOut: true,
+  });
+  if (input === undefined) {
+    return;
+  }
+
+  try {
+    await store.add(parseRepositoryInput(input));
+    provider.refresh();
   } catch (error) {
     await showError(error);
   }
@@ -200,6 +354,19 @@ export async function getBrowserWebSuggestionsHtml(url: string): Promise<string 
   }
 
   throw new Error(`Browser web suggestions command '${command}' must return an HTML string or { html: string }.`);
+}
+
+function getIncludeDiffHunks(): boolean {
+  const configured = vscode.workspace.getConfiguration('wallstopPrComments').get<boolean>('includeDiffHunks');
+  return configured !== false;
+}
+
+function readAutoRefreshConfig(): AutoRefreshConfig {
+  const config = vscode.workspace.getConfiguration('wallstopPrComments');
+  return {
+    enabled: config.get<boolean>('autoRefresh.enabled') !== false,
+    intervalMinutes: config.get<number>('autoRefresh.intervalMinutes') ?? 10,
+  };
 }
 
 function getBrowserWebSuggestionsCommand(): string | undefined {
@@ -270,8 +437,11 @@ function findRepository(node: TreeNode | undefined): RepositoryRef | undefined {
 }
 
 async function showError(error: unknown): Promise<void> {
-  const message = error instanceof Error ? error.message : String(error);
-  await vscode.window.showErrorMessage(redactSecrets(message));
+  await vscode.window.showErrorMessage(redactSecrets(formatErrorMessage(error)));
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function isReviewThreadRecord(record: ReviewThreadRecord | undefined): record is ReviewThreadRecord {

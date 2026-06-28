@@ -26,6 +26,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "wallstopPrComments.refreshRepo",
+        "title": "Refresh Repository",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "wallstopPrComments.addRepo",
         "title": "Add Repository",
         "icon": "$(add)"
@@ -114,9 +119,14 @@
           "group": "inline"
         },
         {
+          "command": "wallstopPrComments.refreshRepo",
+          "when": "view == wallstopPrComments.repos && viewItem == repository",
+          "group": "inline@1"
+        },
+        {
           "command": "wallstopPrComments.removeRepo",
           "when": "view == wallstopPrComments.repos && viewItem == repository",
-          "group": "inline"
+          "group": "inline@2"
         }
       ]
     },
@@ -133,6 +143,22 @@
           "default": "unresolved",
           "description": "Default review-comment scope used when copying PR comments."
         },
+        "wallstopPrComments.includeDiffHunks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include each review comment's diff context (its anchored diff hunk, trimmed to the comment's line range) in the copied output when no higher-confidence suggested change or diff is available."
+        },
+        "wallstopPrComments.autoRefresh.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Periodically refresh pinned repositories' pull request lists in the background. On by default; set to false to refresh only manually."
+        },
+        "wallstopPrComments.autoRefresh.intervalMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "description": "Minutes between background auto-refreshes when wallstopPrComments.autoRefresh.enabled is on."
+        },
         "wallstopPrComments.browserWebSuggestionsCommand": {
           "type": "string",
           "scope": "application",
@@ -147,7 +173,7 @@
     "setup": "node scripts/install-local.js --setup-only",
     "install:local": "node scripts/install-local.js",
     "package:vsix": "npm run compile && node scripts/package-vsix.js",
-    "test": "npm run compile && node --test out/test"
+    "test": "npm run compile && node scripts/run-tests.js"
   },
   "dependencies": {
     "markdown-it": "^14.1.0"
