@@ -749,10 +749,12 @@ test('extracts rendered DOM suggestion tables from the public web page', async (
     getWebCookie: async () => undefined,
     fetch: async () => new Response([
       '<div class="js-comment" id="discussion_r42">',
+      '  <div class="js-suggested-changes-blob">',
       '  <table class="diff-table">',
       '    <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">old();</span></td></tr>',
       '    <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">new();</span></td></tr>',
       '  </table>',
+      '  </div>',
       '</div>',
     ].join('')),
   });

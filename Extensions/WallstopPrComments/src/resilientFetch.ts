@@ -21,7 +21,7 @@ export interface ResilientFetchOptions {
   maxDelayMs?: number;
   /** Upper bound for a single rate-limit (`Retry-After`/`x-ratelimit-reset`) wait. Default 60_000. */
   maxRateLimitWaitMs?: number;
-  /** Per-attempt timeout in milliseconds; `0`/undefined disables the abort timer. Default 30_000. */
+  /** Per-attempt timeout in milliseconds; `0` disables the abort timer, undefined uses the 30s default. */
   perAttemptTimeoutMs?: number;
   /** Injected sleep so tests resolve instantly; defaults to a real `setTimeout` delay. */
   sleep?: (ms: number) => Promise<void>;
@@ -51,11 +51,10 @@ interface RetryPlan {
  * Wraps a {@link FetchLike} with retry, exponential backoff + jitter, `Retry-After`
  * and GitHub primary/secondary rate-limit handling, and a per-attempt abort timeout.
  *
- * Body-read-once safety: a response is classified from its status + headers only.
- * A non-retryable response is returned untouched (the caller still owns its body).
- * When the final retry is exhausted on a retryable status whose body had to be read
- * for classification (secondary rate-limit detection), the body is reconstructed via
- * `new Response(text, { status, headers })` so the caller can still read it.
+ * Body-read-once safety: most responses are classified from status + headers only.
+ * The 403 secondary-rate-limit branch reads the body, so any response whose body was
+ * consumed during classification is reconstructed via
+ * `new Response(text, { status, headers })` before being returned to the caller.
  *
  * Plain `401`/`403` auth failures are intentionally NOT retried (a bare 403 without a
  * rate-limit signal is treated as authorization, preserving the GraphQL-auth -> REST
@@ -73,21 +72,26 @@ export function createResilientFetch(fetch: FetchLike, options: ResilientFetchOp
   const onRetry = options.onRetry;
 
   return async (input, init) => {
+    const callerSignal = init?.signal ?? undefined;
     let attempt = 0;
     for (;;) {
+      throwIfAborted(callerSignal);
       const isLastAttempt = attempt >= maxRetries;
 
       let response: Response;
       try {
         response = await fetch(input, withTimeoutSignal(init, perAttemptTimeoutMs));
       } catch (error) {
+        if (callerSignal?.aborted === true) {
+          throw abortReason(callerSignal);
+        }
         if (isLastAttempt || !isRetryableNetworkError(error)) {
           throw error;
         }
 
         const waitMs = backoffDelay(attempt, baseDelayMs, maxDelayMs, random);
         onRetry?.({ attempt, status: undefined, waitMs, rateLimited: false });
-        await sleep(waitMs);
+        await sleepWithSignal(sleep, waitMs, callerSignal);
         attempt += 1;
         continue;
       }
@@ -112,7 +116,7 @@ export function createResilientFetch(fetch: FetchLike, options: ResilientFetchOp
       }
 
       onRetry?.({ attempt, status: response.status, waitMs: plan.waitMs, rateLimited: plan.rateLimited });
-      await sleep(plan.waitMs);
+      await sleepWithSignal(sleep, plan.waitMs, callerSignal);
       attempt += 1;
     }
   };
@@ -255,6 +259,40 @@ function isRetryableNetworkError(error: unknown): boolean {
   return error instanceof Error;
 }
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) {
+    throw abortReason(signal);
+  }
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+}
+
+async function sleepWithSignal(
+  sleep: (ms: number) => Promise<void>,
+  waitMs: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (signal === undefined) {
+    await sleep(waitMs);
+    return;
+  }
+
+  throwIfAborted(signal);
+  let abort!: () => void;
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    abort = (): void => reject(abortReason(signal));
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  try {
+    await Promise.race([sleep(waitMs), abortPromise]);
+  } finally {
+    signal.removeEventListener('abort', abort);
+  }
+  throwIfAborted(signal);
+}
+
 /**
  * Builds a fresh `RequestInit` that attaches a per-attempt timeout `AbortSignal`,
  * combined with any caller-supplied signal so either source can abort the attempt.
@@ -270,13 +308,40 @@ function withTimeoutSignal(init: RequestInit | undefined, perAttemptTimeoutMs: n
   return { ...(init ?? {}), signal };
 }
 
-/** Combines abort signals; falls back to the timeout signal if `AbortSignal.any` is unavailable. */
+/** Combines abort signals so either source can abort the attempt. */
 function anySignal(signals: AbortSignal[]): AbortSignal {
   const combiner = (AbortSignal as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
   if (typeof combiner === 'function') {
     return combiner(signals);
   }
-  return signals[signals.length - 1];
+
+  const controller = new AbortController();
+  const abort = (signal: AbortSignal): void => {
+    cleanup();
+    controller.abort(abortReason(signal));
+  };
+  const listeners = signals.map((signal) => {
+    const listener = (): void => abort(signal);
+    return { signal, listener };
+  });
+  function cleanup(): void {
+    for (const listener of listeners) {
+      listener.signal.removeEventListener('abort', listener.listener);
+    }
+  }
+
+  for (const signal of signals) {
+    if (signal.aborted) {
+      abort(signal);
+      return controller.signal;
+    }
+  }
+
+  for (const listener of listeners) {
+    listener.signal.addEventListener('abort', listener.listener, { once: true });
+  }
+
+  return controller.signal;
 }
 
 // Cache of bodies consumed during classification, keyed by the original Response.

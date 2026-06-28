@@ -11,6 +11,10 @@ Validate host and owner/repo parameters before any network calls.
 ## Retry-Safe GitHub Request Flow
 
 Keep HTTP calls inside approved wrappers and preserve retry behavior for transient status codes.
+Preserve caller cancellation in retry wrappers: a caller `AbortSignal` must
+prevent a first attempt when already aborted, stop retries during backoff, and
+remain combined with per-attempt timeouts even when `AbortSignal.any` is
+unavailable.
 
 ## Actionable Diagnostics And Resilience Tests
 
@@ -108,8 +112,11 @@ surface for the same GitHub PR comment extraction contracts.
 
 - Keep `package.json` `main` aligned with the compiled entrypoint and keep a
   manifest test that proves the compiled target exists after `npm run compile`.
-- Keep `npm test` cross-platform: invoke Node's test runner on a directory
-  (`node --test out/test`) rather than shell-expanded globs.
+- Keep `npm test` cross-platform and aligned with the VS Code extension-host
+  runtime: test on the Node major implied by `engines.vscode` and route test
+  discovery through `scripts/run-tests.js` so the runner passes explicit
+  compiled `.test.js` files instead of relying on shell globs or newer
+  Node-only test glob handling.
 - Preserve the local install artifact chain: `npm run install:local` restores
   dependencies through an extension-local `.npm-cache` unless the caller already
   configured an npm cache, runs `npm test` by default, packages the same VSIX
@@ -158,13 +165,16 @@ surface for the same GitHub PR comment extraction contracts.
   `/files` URL, and must return an HTML string or `{ html: string }`.
 - Trust web/browser suggested diffs only when parsed from
   `comment.automatedComment.suggestion.diffEntries`, keyed by comment
-  `databaseId` or discussion URL. Reject lookalike JSON embedded in
-  user-authored `body` fields and sibling `suggestion.diffEntries` without
-  `automatedComment` provenance; expose only `DELETION`/`ADDITION` lines,
-  prefix every physical line after CR/LF normalization, label cross-path diffs
-  as `Suggested change (<path>):`, deduplicate by normalized path plus public
-  changed-line text, and retain `source`/`confidence` (`githubWebAutomatedDiff`
-  or `browserDomAutomatedDiff`, `medium`).
+  `databaseId` or discussion URL, or from rendered DOM diff tables inside the
+  owning comment anchor that also contains GitHub suggested-change markers
+  (`js-suggested-changes-blob` / `js-suggested-change-*`). Reject ordinary PR
+  file diff rows, lookalike JSON embedded in user-authored `body` fields, and
+  sibling `suggestion.diffEntries` without `automatedComment` provenance;
+  expose only `DELETION`/`ADDITION` lines, prefix every physical line after
+  CR/LF normalization, label cross-path diffs as `Suggested change (<path>):`,
+  deduplicate by normalized path plus public changed-line text, and retain
+  `source`/`confidence` (`githubWebAutomatedDiff` or
+  `browserDomAutomatedDiff`, `medium`).
 - Keep extension Cursor/Bugbot handling conservative: external fixes not exposed
   by GitHub remain unavailable records (`unavailableSource:
   externalBotUnavailable`, `unavailableConfidence: unavailable`) instead of fake

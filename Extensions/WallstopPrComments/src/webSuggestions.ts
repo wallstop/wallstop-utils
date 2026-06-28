@@ -12,7 +12,11 @@ export function extractAutomatedSuggestedDiffsFromHtml(
   }
 
   if (suggestionsByCommentId.size === 0) {
-    return extractDomSuggestedChangesFromHtml(html, source);
+    if (!htmlHasSuggestionMarkers(html)) {
+      return suggestionsByCommentId;
+    }
+
+    return extractDomSuggestedChangesFromHtmlCore(html, source, true);
   }
 
   return suggestionsByCommentId;
@@ -52,6 +56,14 @@ export function extractDomSuggestedChangesFromHtml(
   html: string,
   source: AutomatedSuggestionSource = 'githubWebAutomatedDiff',
 ): Map<string, SuggestedDiff[]> {
+  return extractDomSuggestedChangesFromHtmlCore(html, source, false);
+}
+
+function extractDomSuggestedChangesFromHtmlCore(
+  html: string,
+  source: AutomatedSuggestionSource,
+  markerScoped: boolean,
+): Map<string, SuggestedDiff[]> {
   const suggestionsByCommentId = new Map<string, SuggestedDiff[]>();
   const anchors = collectCommentAnchorSpans(html);
   if (anchors.length === 0) {
@@ -59,18 +71,25 @@ export function extractDomSuggestedChangesFromHtml(
   }
 
   const linesByCommentId = new Map<string, string[]>();
-  for (const line of html.matchAll(DIFF_LINE_REGEX)) {
-    const commentId = containingAnchorId(anchors, line.index ?? 0);
-    if (commentId === undefined) {
-      continue;
-    }
+  const anchorsToScan = markerScoped
+    ? anchors.filter((anchor) => htmlHasSuggestionMarkers(html.slice(anchor.start, anchor.end)))
+    : anchors;
+  for (const anchor of anchorsToScan) {
+    const anchorHtml = html.slice(anchor.start, anchor.end);
+    for (const line of anchorHtml.matchAll(DIFF_LINE_REGEX)) {
+      const absoluteIndex = anchor.start + (line.index ?? 0);
+      const commentId = containingAnchorId(anchors, absoluteIndex);
+      if (commentId !== anchor.id) {
+        continue;
+      }
 
-    const prefix = line.groups?.kind === 'deletion' ? '-' : '+';
-    const bucket = linesByCommentId.get(commentId) ?? [];
-    for (const textLine of cellToText(line.groups?.cell ?? '').split('\n')) {
-      bucket.push(`${prefix}${textLine}`);
+      const prefix = line.groups?.kind === 'deletion' ? '-' : '+';
+      const bucket = linesByCommentId.get(commentId) ?? [];
+      for (const textLine of cellToText(line.groups?.cell ?? '').split('\n')) {
+        bucket.push(`${prefix}${textLine}`);
+      }
+      linesByCommentId.set(commentId, bucket);
     }
-    linesByCommentId.set(commentId, bucket);
   }
 
   for (const [commentId, lines] of linesByCommentId) {
@@ -138,9 +157,10 @@ function readTagName(html: string, tagStart: number): string | undefined {
 
 /**
  * Computes the index one past the matching close tag for the element opened at
- * `tagStart`, tracking nesting depth of same-named tags. A self-closing opening
- * tag (`<div … />` or `<div …></div>` with nothing between) yields a span ending
- * at that tag's `>`, so following siblings are never treated as descendants.
+ * `tagStart`, tracking nesting depth of same-named tags. An explicit
+ * self-closing opening tag (`<div … />`) yields a span ending at that tag's `>`,
+ * so following siblings are never treated as descendants; paired empty elements
+ * still end after their matching close tag.
  */
 function elementEndIndex(html: string, tagStart: number, tagName: string): number {
   const openCloseRegex = new RegExp(`<(/?)${escapeRegExp(tagName)}\\b[^>]*?(/?)>`, 'giu');

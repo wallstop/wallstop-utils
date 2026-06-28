@@ -207,6 +207,62 @@ test('retries on a thrown network error and then succeeds', async () => {
   assert.equal(durations.length, 1);
 });
 
+test('does not start a request when the caller signal is already aborted', async () => {
+  let attempts = 0;
+  const fetch: FetchLike = async () => {
+    attempts += 1;
+    return new Response('unexpected', { status: 200 });
+  };
+  const controller = new AbortController();
+  controller.abort(new Error('pre-aborted by caller'));
+  const { sleep, durations } = fakeSleep();
+  const resilient = createResilientFetch(fetch, { sleep, now: () => 0, random: () => 0, maxRetries: 3 });
+
+  await assert.rejects(() => resilient('https://api.github.com/x', { signal: controller.signal }), /pre-aborted by caller/);
+  assert.equal(attempts, 0);
+  assert.deepEqual(durations, []);
+});
+
+test('does not retry a thrown request failure after the caller aborts', async () => {
+  let attempts = 0;
+  const controller = new AbortController();
+  const fetch: FetchLike = async () => {
+    attempts += 1;
+    controller.abort(new Error('aborted by caller'));
+    throw new TypeError('fetch failed');
+  };
+  const { sleep, durations } = fakeSleep();
+  const resilient = createResilientFetch(fetch, { sleep, now: () => 0, random: () => 0, maxRetries: 3 });
+
+  await assert.rejects(() => resilient('https://api.github.com/x', { signal: controller.signal }), /aborted by caller/);
+  assert.equal(attempts, 1, 'caller abort must stop retries after the in-flight attempt rejects');
+  assert.deepEqual(durations, [], 'caller abort must not schedule retry backoff');
+});
+
+test('stops retrying when the caller aborts during backoff', async () => {
+  let attempts = 0;
+  const controller = new AbortController();
+  const fetch: FetchLike = async () => {
+    attempts += 1;
+    throw new TypeError('fetch failed');
+  };
+  const durations: number[] = [];
+  const resilient = createResilientFetch(fetch, {
+    sleep: async (ms) => {
+      durations.push(ms);
+      controller.abort(new Error('aborted during backoff'));
+      return new Promise(() => undefined);
+    },
+    now: () => 0,
+    random: () => 0,
+    maxRetries: 3,
+  });
+
+  await assert.rejects(() => resilient('https://api.github.com/x', { signal: controller.signal }), /aborted during backoff/);
+  assert.equal(attempts, 1, 'caller abort during backoff must prevent the next attempt');
+  assert.equal(durations.length, 1);
+});
+
 test('re-throws a network error after exhausting all retries', async () => {
   let attempts = 0;
   const fetch: FetchLike = async () => {
@@ -277,6 +333,84 @@ test('passes a per-attempt AbortSignal to the underlying fetch', async () => {
   await resilient('https://api.github.com/x');
 
   assert.equal(sawSignal, true, 'each attempt must carry an AbortSignal so a hung request times out');
+});
+
+test('uses the default per-attempt timeout when perAttemptTimeoutMs is omitted', async () => {
+  let sawSignal = false;
+  const fetch: FetchLike = async (_input, init) => {
+    sawSignal = init?.signal instanceof AbortSignal;
+    return new Response('ok', { status: 200 });
+  };
+  const { sleep } = fakeSleep();
+  const resilient = createResilientFetch(fetch, { sleep, now: () => 0, random: () => 0 });
+
+  await resilient('https://api.github.com/x');
+
+  assert.equal(sawSignal, true, 'omitting perAttemptTimeoutMs must keep the default timeout signal');
+});
+
+test('does not add a timeout AbortSignal when perAttemptTimeoutMs is 0', async () => {
+  let sawSignal = false;
+  const fetch: FetchLike = async (_input, init) => {
+    sawSignal = init?.signal instanceof AbortSignal;
+    return new Response('ok', { status: 200 });
+  };
+  const { sleep } = fakeSleep();
+  const resilient = createResilientFetch(fetch, { sleep, now: () => 0, random: () => 0, perAttemptTimeoutMs: 0 });
+
+  await resilient('https://api.github.com/x');
+
+  assert.equal(sawSignal, false, 'perAttemptTimeoutMs=0 disables only the internally-created timeout signal');
+});
+
+test('fallback AbortSignal combiner aborts when either caller or timeout signal aborts', async () => {
+  const originalAny = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+  const originalTimeout = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+  try {
+    Object.defineProperty(AbortSignal, 'any', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+
+    for (const source of ['caller', 'timeout'] as const) {
+      const caller = new AbortController();
+      const timeout = new AbortController();
+      let capturedSignal: AbortSignal | undefined;
+      Object.defineProperty(AbortSignal, 'timeout', {
+        configurable: true,
+        writable: true,
+        value: () => timeout.signal,
+      });
+      const fetch: FetchLike = async (_input, init) => {
+        capturedSignal = init?.signal ?? undefined;
+        return new Response('ok', { status: 200 });
+      };
+      const { sleep } = fakeSleep();
+      const resilient = createResilientFetch(fetch, { sleep, now: () => 0, random: () => 0, perAttemptTimeoutMs: 5000 });
+
+      await resilient('https://api.github.com/x', { signal: caller.signal });
+
+      const signal = capturedSignal;
+      assert.ok(signal instanceof AbortSignal, 'the request must receive a combined AbortSignal');
+      assert.equal(signal.aborted, false);
+      const reason = new Error(`${source} abort`);
+      if (source === 'caller') {
+        caller.abort(reason);
+      } else {
+        timeout.abort(reason);
+      }
+      assert.equal(signal.aborted, true, `${source} abort must abort the combined signal`);
+      assert.equal(signal.reason, reason);
+    }
+  } finally {
+    if (originalAny !== undefined) {
+      Object.defineProperty(AbortSignal, 'any', originalAny);
+    }
+    if (originalTimeout !== undefined) {
+      Object.defineProperty(AbortSignal, 'timeout', originalTimeout);
+    }
+  }
 });
 
 test('does not retry a non-retryable 404 and returns the original response object', async () => {

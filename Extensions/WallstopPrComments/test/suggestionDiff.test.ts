@@ -27,6 +27,12 @@ test('keeps the whole hunk body when no range is supplied', () => {
   assert.equal(trimDiffHunkToRange(hunk, undefined, undefined), ['-old', '+new'].join('\n'));
 });
 
+test('keeps interior empty hunk body lines when no range is supplied', () => {
+  const hunk = ['@@ -1,3 +1,3 @@', ' before();', '', '+after();', ''].join('\n');
+
+  assert.equal(trimDiffHunkToRange(hunk, undefined, undefined), [' before();', '', '+after();'].join('\n'));
+});
+
 test('reconstructs a unified -/+ diff from before lines and a suggestion block', () => {
   const before = 'document.getElementById(id),';
   const suggestion = 'element.ownerDocument.getElementById(id),';
@@ -61,6 +67,12 @@ test('renders an added line within a block as a single addition surrounded by co
     reconstructSuggestionDiff('a();\nc();', 'a();\nb();\nc();'),
     [' a();', '+b();', ' c();'].join('\n'),
   );
+});
+
+test('reconstructs diffs without trimming blank context, deletion, or addition lines', () => {
+  assert.equal(reconstructSuggestionDiff('a\n\nc', 'a\nb\nc'), [' a', '-', '+b', ' c'].join('\n'));
+  assert.equal(reconstructSuggestionDiff('a\nb\nc', 'a\n\nc'), [' a', '-b', '+', ' c'].join('\n'));
+  assert.equal(reconstructSuggestionDiff('a\n\nc', 'a\n\nc\nadded'), [' a', ' ', ' c', '+added'].join('\n'));
 });
 
 test('returns undefined when the suggestion is identical to the before context', () => {

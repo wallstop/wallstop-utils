@@ -26,6 +26,15 @@ test('package manifest declares the includeDiffHunks setting defaulting to true'
   assert.equal(property.default, true);
 });
 
+test('package manifest routes npm test through the cross-platform test runner', () => {
+  const extensionRoot = join(__dirname, '..', '..');
+  const manifest = JSON.parse(readFileSync(join(extensionRoot, 'package.json'), 'utf8')) as {
+    scripts?: { test?: string };
+  };
+
+  assert.equal(manifest.scripts?.test, 'npm run compile && node scripts/run-tests.js');
+});
+
 test('package manifest declares opt-out auto-refresh settings (enabled by default)', () => {
   const extensionRoot = join(__dirname, '..', '..');
   const manifest = JSON.parse(readFileSync(join(extensionRoot, 'package.json'), 'utf8')) as {
@@ -68,4 +77,29 @@ test('package manifest pins refreshRepo inline on repository tree items', () => 
   assert.ok(refreshRepoMenu, 'refreshRepo must appear in view/item/context');
   assert.match(refreshRepoMenu.when ?? '', /viewItem == repository/u);
   assert.match(refreshRepoMenu.group ?? '', /^inline(@\d+)?$/u, 'refreshRepo must render inline on the repository node');
+});
+
+test('extension CI runs on the VS Code 1.90 extension-host Node major', () => {
+  const extensionRoot = join(__dirname, '..', '..');
+  const repositoryRoot = join(extensionRoot, '..', '..');
+  const manifest = JSON.parse(readFileSync(join(extensionRoot, 'package.json'), 'utf8')) as {
+    engines?: { vscode?: string };
+  };
+  const workflow = readFileSync(join(repositoryRoot, '.github', 'workflows', 'extension-tests.yml'), 'utf8');
+
+  assert.equal(
+    manifest.engines?.vscode,
+    '^1.90.0',
+    'update this runtime-policy test when the extension VS Code engine floor changes',
+  );
+  assert.match(
+    workflow,
+    /uses:\s*actions\/setup-node@v6\.4\.0/u,
+    'extension CI must pin setup-node to an exact v6 release so Dependabot owns action updates',
+  );
+  assert.match(
+    workflow,
+    /node-version:\s*["']20["']/u,
+    'extension CI must include Node 20 so Node 24-only APIs do not pass the extension gate',
+  );
 });

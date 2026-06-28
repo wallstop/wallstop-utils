@@ -348,10 +348,12 @@ test('extracts a rendered suggested-change diff table keyed by its comment ancho
 test('decodes HTML entities and strips inline markup from rendered suggestion code lines', () => {
   const html = [
     '<div data-comment-id="555">',
+    '  <div class="js-suggested-changes-blob">',
     '  <table class="diff-table">',
     '    <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">if (a &amp;&amp; b &lt; c) {</span></td></tr>',
     '    <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">if (a &amp;&amp; b &lt;= <em>c</em>) {</span></td></tr>',
     '  </table>',
+    '  </div>',
     '</div>',
   ].join('\n');
 
@@ -363,10 +365,12 @@ test('decodes HTML entities and strips inline markup from rendered suggestion co
 test('falls back to the rendered DOM suggestion table when no embedded JSON is present', () => {
   const html = [
     '<div class="js-comment" id="discussion_r777">',
+    '  <div class="js-suggested-changes-blob">',
     '  <table class="diff-table">',
     '    <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">old();</span></td></tr>',
     '    <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">new();</span></td></tr>',
     '  </table>',
+    '  </div>',
     '</div>',
   ].join('\n');
 
@@ -374,6 +378,55 @@ test('falls back to the rendered DOM suggestion table when no embedded JSON is p
 
   assert.equal(suggestions.get('discussion_r777')?.[0].value, '-old();\n+new();');
   assert.equal(suggestions.get('discussion_r777')?.[0].source, 'browserDomAutomatedDiff');
+});
+
+test('short-circuits rendered DOM extraction when HTML has no suggested-change markers', () => {
+  const html = [
+    '<div class="js-comment" id="discussion_r1">',
+    '  <p>Plain review comment next to an ordinary file diff.</p>',
+    '  <table class="diff-table js-file-content">',
+    '    <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">mainFileOld();</span></td></tr>',
+    '    <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">mainFileNew();</span></td></tr>',
+    '  </table>',
+    '</div>',
+  ].join('\n');
+
+  assert.equal(htmlHasSuggestionMarkers(html), false);
+  assert.equal(extractAutomatedSuggestedDiffsFromHtml(html).size, 0);
+});
+
+test('extracts only marker-scoped rendered suggestions on a page with many ordinary diff rows', () => {
+  const ordinaryDiffRows = Array.from(
+    { length: 500 },
+    (_value, index) => [
+      `<tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">old${index}();</span></td></tr>`,
+      `<tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">new${index}();</span></td></tr>`,
+    ].join('\n'),
+  ).join('\n');
+  const html = [
+    '<table class="diff-table js-file-content">',
+    ordinaryDiffRows,
+    '</table>',
+    '<div class="js-comment" id="discussion_r901">',
+    '  <p>Plain prose beside the main file diff.</p>',
+    '</div>',
+    '<div class="js-comment" id="discussion_r902">',
+    '  <div class="js-suggested-changes-blob">',
+    '    <table class="diff-table">',
+    '      <tr><td class="blob-code blob-code-deletion"><span class="blob-code-inner">oldSuggestion();</span></td></tr>',
+    '      <tr><td class="blob-code blob-code-addition"><span class="blob-code-inner">newSuggestion();</span></td></tr>',
+    '    </table>',
+    '  </div>',
+    '</div>',
+    '<table class="diff-table js-file-content">',
+    ordinaryDiffRows,
+    '</table>',
+  ].join('\n');
+
+  const suggestions = extractAutomatedSuggestedDiffsFromHtml(html);
+
+  assert.deepEqual([...suggestions.keys()], ['discussion_r902']);
+  assert.equal(suggestions.get('discussion_r902')?.[0].value, '-oldSuggestion();\n+newSuggestion();');
 });
 
 test('detects suggestion markers in rendered HTML even when no diff table can be parsed', () => {

@@ -136,6 +136,91 @@ test('ignores stale repository loads that resolve after refresh', async () => {
   }
 });
 
+test('ignores stale repository loads that resolve after targeted repository refresh', async () => {
+  const { PrCommentsTreeProvider } = loadTreeProvider();
+  const loads: Deferred<PullRequestSummary[]>[] = [];
+  const client = {
+    listPullRequests: async () => {
+      const load = createDeferred<PullRequestSummary[]>();
+      loads.push(load);
+      return load.promise;
+    },
+  } as unknown as GitHubClient;
+  const provider = new PrCommentsTreeProvider({ list: () => [repository] }, client);
+  const [node] = await provider.getChildren(undefined);
+  assert.equal(node.kind, 'repository');
+
+  const staleLoad = provider.getChildren(node);
+  assert.equal(loads.length, 1);
+
+  provider.refresh(repository);
+  const freshPullRequest = { ...pullRequest, number: 43, title: 'Fresh PR' };
+  const freshLoad = provider.getChildren(node);
+  assert.equal(loads.length, 2);
+  loads[1].resolve([freshPullRequest]);
+
+  const freshChildren = await freshLoad;
+  assert.equal(freshChildren[0].kind, 'group');
+  if (freshChildren[0].kind === 'group') {
+    assert.deepEqual(freshChildren[0].pullRequests, [freshPullRequest]);
+  }
+
+  const stalePullRequest = { ...pullRequest, number: 41, title: 'Stale PR' };
+  loads[0].resolve([stalePullRequest]);
+  const staleChildren = await staleLoad;
+  assert.equal(staleChildren[0].kind, 'group');
+  if (staleChildren[0].kind === 'group') {
+    assert.deepEqual(staleChildren[0].pullRequests, [freshPullRequest]);
+  }
+
+  const cachedChildren = await provider.getChildren(node);
+  assert.equal(loads.length, 2, 'the stale completion must not evict or poison the fresh cache');
+  assert.equal(cachedChildren[0].kind, 'group');
+  if (cachedChildren[0].kind === 'group') {
+    assert.deepEqual(cachedChildren[0].pullRequests, [freshPullRequest]);
+  }
+});
+
+test('ignores stale repository load errors after targeted repository refresh', async () => {
+  const { PrCommentsTreeProvider } = loadTreeProvider();
+  const loads: Deferred<PullRequestSummary[]>[] = [];
+  const client = {
+    listPullRequests: async () => {
+      const load = createDeferred<PullRequestSummary[]>();
+      loads.push(load);
+      return load.promise;
+    },
+  } as unknown as GitHubClient;
+  const provider = new PrCommentsTreeProvider({ list: () => [repository] }, client);
+  const [node] = await provider.getChildren(undefined);
+  assert.equal(node.kind, 'repository');
+
+  const staleLoad = provider.getChildren(node);
+  assert.equal(loads.length, 1);
+
+  provider.refresh(repository);
+  const freshPullRequest = { ...pullRequest, number: 44, title: 'Fresh after stale error' };
+  const freshLoad = provider.getChildren(node);
+  assert.equal(loads.length, 2);
+  loads[1].resolve([freshPullRequest]);
+
+  await freshLoad;
+  loads[0].reject(new Error('stale failure'));
+  const staleChildren = await staleLoad;
+
+  assert.equal(staleChildren[0].kind, 'group');
+  if (staleChildren[0].kind === 'group') {
+    assert.deepEqual(staleChildren[0].pullRequests, [freshPullRequest]);
+  }
+
+  const cachedChildren = await provider.getChildren(node);
+  assert.equal(loads.length, 2, 'the stale error must not trigger another load or cache an error');
+  assert.equal(cachedChildren[0].kind, 'group');
+  if (cachedChildren[0].kind === 'group') {
+    assert.deepEqual(cachedChildren[0].pullRequests, [freshPullRequest]);
+  }
+});
+
 const repositoryB: RepositoryRef = { host: 'github.com', owner: 'wallstop', repo: 'other' };
 
 test('getChildren(undefined) returns a stable memoized repository node per repo', async () => {

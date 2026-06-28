@@ -173,7 +173,7 @@
     "setup": "node scripts/install-local.js --setup-only",
     "install:local": "node scripts/install-local.js",
     "package:vsix": "npm run compile && node scripts/package-vsix.js",
-    "test": "npm run compile && node --test \"out/test/**/*.test.js\""
+    "test": "npm run compile && node scripts/run-tests.js"
   },
   "dependencies": {
     "markdown-it": "^14.1.0"

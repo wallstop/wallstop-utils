@@ -30,7 +30,7 @@ export function trimDiffHunkToRange(
   const body = dropTrailingEmptyLine(headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines);
 
   if (start === undefined && end === undefined) {
-    return body.filter((line) => line !== '').join('\n');
+    return body.join('\n');
   }
 
   const rangeStart = start ?? end ?? Number.NEGATIVE_INFINITY;
