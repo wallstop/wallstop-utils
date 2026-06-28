@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 
+import { redactSecrets } from './auth';
 import { groupPullRequests, isOpenPullRequest, repositoryKey } from './repositoryStore';
 import type { GitHubClient } from './githubClient';
 import type { PullRequestSummary, RepositoryRef } from './types';
@@ -183,7 +184,7 @@ export class PrCommentsTreeProvider implements vscode.TreeDataProvider<TreeNode>
 
         const message = error instanceof Error ? error.message : String(error);
         this.pullRequestCache.delete(key);
-        this.errorCache.set(key, message);
+        this.errorCache.set(key, redactSecrets(message));
       })
       .finally(() => {
         const current = this.inFlightLoads.get(key);

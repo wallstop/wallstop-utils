@@ -38,6 +38,7 @@ function loadExtensionWithVscodeStub(options: {
   executeCommand?: (command: string, url: string) => Promise<unknown>;
   listPullRequests?: (repository: RepositoryRef) => Promise<PullRequestSummary[]>;
   listAccessibleRepositories?: (host: string) => Promise<AccessibleRepository[]>;
+  getWebSuggestedDiffs?: () => Promise<WebSuggestedDiffResult>;
   showQuickPick?: (items: unknown[], options: { title?: string }) => Promise<unknown>;
 }): ExtensionHarness {
   const commands = new Map<string, CommandHandler>();
@@ -135,7 +136,7 @@ function loadExtensionWithVscodeStub(options: {
           }
 
           async getWebSuggestedDiffs(): Promise<WebSuggestedDiffResult> {
-            return { provenance: 'githubWebAutomatedDiff', suggestions: new Map() };
+            return options.getWebSuggestedDiffs?.() ?? { provenance: 'githubWebAutomatedDiff', suggestions: new Map() };
           }
         },
       };
@@ -182,8 +183,12 @@ function createExtensionContext(repositories: readonly RepositoryRef[]): unknown
   };
 }
 
+function fakeGitHubToken(): string {
+  return `${'ghp_'}${'12345678901234567890'}`;
+}
+
 function fakeTokenFailure(): Error {
-  return new Error(`token ${'ghp_'}${'12345678901234567890'} failed`);
+  return new Error(`token ${fakeGitHubToken()} failed`);
 }
 
 test('browser web suggestions provider invokes configured VS Code command with PR files URL', async () => {
@@ -309,6 +314,42 @@ test('web suggestion warning helper reports unmatched ids even after partial att
   assert.equal(records[0].comments[0].suggestedDiffs[0].value, '-old();\n+new();');
   assert.equal(warnings.some((warning) => /Attached 1 suggested change diff/u.test(warning)), true);
   assert.equal(warnings.some((warning) => /unmatched comment ids: discussion_r999/u.test(warning)), true);
+});
+
+test('web suggestion warning helper stays quiet when matched diffs were already attached', () => {
+  const { attachWebSuggestedDiffsAndCollectWarnings } = loadExtensionWithVscodeStub({
+    command: undefined,
+    executeCommand: async () => undefined,
+  });
+  const existingDiff = {
+    kind: 'changedLines' as const,
+    source: 'githubWebAutomatedDiff' as const,
+    confidence: 'medium' as const,
+    value: '-old();\n+new();',
+  };
+  const records: ReviewThreadRecord[] = [
+    {
+      path: 'src/file.ts',
+      lineStart: 1,
+      lineEnd: 1,
+      comments: [
+        {
+          databaseId: 42,
+          body: 'Comment',
+          suggestedChanges: [],
+          suggestedDiffs: [existingDiff],
+        },
+      ],
+    },
+  ];
+
+  const warnings = attachWebSuggestedDiffsAndCollectWarnings(records, {
+    provenance: 'githubWebAutomatedDiff',
+    suggestions: new Map([['42', [existingDiff]]]),
+  });
+
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(records[0].comments[0].suggestedDiffs, [existingDiff]);
 });
 
 test('web suggestion warning helper surfaces unparseable marker provenance', () => {
@@ -453,6 +494,39 @@ test('copyComments command surfaces picker load failures instead of throwing raw
 
   assert.equal(extension.errorMessages.length, 1);
   assert.match(extension.errorMessages[0], /token \*\*\*REDACTED\*\*\* failed/u);
+});
+
+test('copyComments command redacts optional web enrichment failures before warning', async () => {
+  const repository: RepositoryRef = { host: 'github.com', owner: 'wallstop', repo: 'utils' };
+  const pullRequest: PullRequestSummary = {
+    number: 42,
+    title: 'Fix sidebar refresh',
+    state: 'OPEN',
+    isDraft: false,
+    merged: false,
+    author: 'octo',
+    headRefName: 'fix/sidebar-refresh',
+    updatedAt: '2026-06-24T00:00:00Z',
+    url: 'https://github.com/wallstop/utils/pull/42',
+  };
+  const extension = loadExtensionWithVscodeStub({
+    command: undefined,
+    getWebSuggestedDiffs: async () => {
+      throw fakeTokenFailure();
+    },
+  });
+  extension.activate(createExtensionContext([repository]));
+
+  await extension.commands.get('wallstopPrComments.copyComments')?.({
+    kind: 'pullRequest',
+    repository,
+    pullRequest,
+  });
+
+  assert.equal(extension.warningMessages.length, 1);
+  assert.match(extension.warningMessages[0], /Optional GitHub web suggested-change enrichment failed/u);
+  assert.match(extension.warningMessages[0], /token \*\*\*REDACTED\*\*\* failed/u);
+  assert.equal(extension.warningMessages[0].includes(fakeGitHubToken()), false);
 });
 
 test('addRepo warns when repository enumeration only partially succeeds', async () => {

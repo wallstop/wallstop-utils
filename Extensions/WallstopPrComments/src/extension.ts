@@ -189,8 +189,7 @@ async function copyReviewComments(
       });
       result.warnings.push(...attachWebSuggestedDiffsAndCollectWarnings(records, webDiffs));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      result.warnings.push(`Optional GitHub web suggested-change enrichment failed: ${message}`);
+      result.warnings.push(`Optional GitHub web suggested-change enrichment failed: ${redactSecrets(formatErrorMessage(error))}`);
     }
     result.warnings.push(...collectUnavailableSuggestionWarnings(records));
 
@@ -228,10 +227,6 @@ export function attachWebSuggestedDiffsAndCollectWarnings(
   if (unmatched.length > 0) {
     warnings.push(
       `Extracted web suggested changes for ${webDiffs.suggestions.size} comment id(s) from ${webDiffs.provenance}, but ${unmatched.length} did not match copied review comments (unmatched comment ids: ${unmatched.join(', ')}).`,
-    );
-  } else if (attached === 0) {
-    warnings.push(
-      `Extracted web suggested changes for ${webDiffs.suggestions.size} comment id(s) from ${webDiffs.provenance}, but no new diffs were attached to copied review comments.`,
     );
   }
 

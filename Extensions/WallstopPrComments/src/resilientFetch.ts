@@ -80,7 +80,12 @@ export function createResilientFetch(fetch: FetchLike, options: ResilientFetchOp
 
       let response: Response;
       try {
-        response = await fetch(input, withTimeoutSignal(init, perAttemptTimeoutMs));
+        const attempt = withTimeoutSignal(init, perAttemptTimeoutMs);
+        try {
+          response = await fetch(input, attempt.init);
+        } finally {
+          attempt.cleanup();
+        }
       } catch (error) {
         if (callerSignal?.aborted === true) {
           throw abortReason(callerSignal);
@@ -297,51 +302,36 @@ async function sleepWithSignal(
  * Builds a fresh `RequestInit` that attaches a per-attempt timeout `AbortSignal`,
  * combined with any caller-supplied signal so either source can abort the attempt.
  */
-function withTimeoutSignal(init: RequestInit | undefined, perAttemptTimeoutMs: number): RequestInit | undefined {
+function withTimeoutSignal(
+  init: RequestInit | undefined,
+  perAttemptTimeoutMs: number,
+): { init: RequestInit | undefined; cleanup: () => void } {
   if (perAttemptTimeoutMs <= 0) {
-    return init;
-  }
-
-  const timeoutSignal = AbortSignal.timeout(perAttemptTimeoutMs);
-  const callerSignal = init?.signal ?? undefined;
-  const signal = callerSignal === undefined ? timeoutSignal : anySignal([callerSignal, timeoutSignal]);
-  return { ...(init ?? {}), signal };
-}
-
-/** Combines abort signals so either source can abort the attempt. */
-function anySignal(signals: AbortSignal[]): AbortSignal {
-  const combiner = (AbortSignal as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
-  if (typeof combiner === 'function') {
-    return combiner(signals);
+    return { init, cleanup: () => undefined };
   }
 
   const controller = new AbortController();
-  const abort = (signal: AbortSignal): void => {
-    cleanup();
-    controller.abort(abortReason(signal));
-  };
-  const listeners = signals.map((signal) => {
-    const listener = (): void => abort(signal);
-    return { signal, listener };
-  });
+  const callerSignal = init?.signal ?? undefined;
+  const timeout = setTimeout(() => {
+    controller.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+  }, perAttemptTimeoutMs);
+  let callerAbortListener: (() => void) | undefined;
+
+  if (callerSignal?.aborted === true) {
+    controller.abort(abortReason(callerSignal));
+  } else if (callerSignal !== undefined) {
+    callerAbortListener = (): void => controller.abort(abortReason(callerSignal));
+    callerSignal.addEventListener('abort', callerAbortListener, { once: true });
+  }
+
   function cleanup(): void {
-    for (const listener of listeners) {
-      listener.signal.removeEventListener('abort', listener.listener);
+    clearTimeout(timeout);
+    if (callerSignal !== undefined && callerAbortListener !== undefined) {
+      callerSignal.removeEventListener('abort', callerAbortListener);
     }
   }
 
-  for (const signal of signals) {
-    if (signal.aborted) {
-      abort(signal);
-      return controller.signal;
-    }
-  }
-
-  for (const listener of listeners) {
-    listener.signal.addEventListener('abort', listener.listener, { once: true });
-  }
-
-  return controller.signal;
+  return { init: { ...(init ?? {}), signal: controller.signal }, cleanup };
 }
 
 // Cache of bodies consumed during classification, keyed by the original Response.

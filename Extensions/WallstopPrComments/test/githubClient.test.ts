@@ -12,6 +12,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function fakeGitHubToken(): string {
+  return `${'ghp_'}${'12345678901234567890'}`;
+}
+
 test('fails unresolved scope when authenticated GraphQL is unavailable', async () => {
   const client = new GitHubClient({
     getToken: async () => undefined,
@@ -585,7 +589,7 @@ test('keeps GraphQL results when REST cross-check fails', async () => {
       });
     }
 
-    return new Response('REST unavailable', { status: 503 });
+    throw new Error(`REST unavailable for ${fakeGitHubToken()}`);
   };
   // Inject an instant sleep so the resilient-fetch backoff on the 503 cross-check does not
   // spend real time; the assertion (cross-check fails, GraphQL body preserved) is unchanged.
@@ -596,6 +600,8 @@ test('keeps GraphQL results when REST cross-check fails', async () => {
   assert.equal(result.threads.length, 1);
   assert.equal(result.threads[0].comments[0].body, 'GraphQL body');
   assert.match(result.warnings[0], /REST review-comment cross-check failed/i);
+  assert.match(result.warnings[0], /\*\*\*REDACTED\*\*\*/u);
+  assert.equal(result.warnings[0].includes(fakeGitHubToken()), false);
 });
 
 test('fetches public GitHub web suggested diffs without a cookie first', async () => {
@@ -952,7 +958,7 @@ test('uses partial GraphQL data when errors accompany a non-null data payload an
 
     return jsonResponse({
       ...(singleThreadGraphQLPage('Partial body') as { data: unknown }),
-      errors: [{ type: 'SERVICE_UNAVAILABLE', message: 'Something failed for an adjacent field' }],
+      errors: [{ type: 'SERVICE_UNAVAILABLE', message: `Something failed for ${fakeGitHubToken()}` }],
     });
   };
   const client = new GitHubClient({
@@ -971,6 +977,8 @@ test('uses partial GraphQL data when errors accompany a non-null data payload an
     true,
     'partial GraphQL data must surface a warning so the user knows the result may be incomplete',
   );
+  assert.equal(result.warnings.some((warning) => warning.includes(fakeGitHubToken())), false);
+  assert.equal(result.warnings.some((warning) => /\*\*\*REDACTED\*\*\*/u.test(warning)), true);
 });
 
 test('getReviewThreads normalizes repository hosts before auth, GraphQL, and REST cross-check calls', async () => {
@@ -1066,7 +1074,7 @@ test('preserves earlier GraphQL review-thread pages when a later page keeps fail
       });
     }
 
-    return new Response('upstream exploded', { status: 500 });
+    throw new Error(`upstream exploded for ${fakeGitHubToken()}`);
   };
   const client = new GitHubClient({ getToken: async () => 'token', fetch, sleep: async () => undefined, maxRetries: 1 });
 
@@ -1080,6 +1088,8 @@ test('preserves earlier GraphQL review-thread pages when a later page keeps fail
     true,
     'a later-page failure must surface an incompleteness warning',
   );
+  assert.equal(result.warnings.some((warning) => warning.includes(fakeGitHubToken())), false);
+  assert.equal(result.warnings.some((warning) => /\*\*\*REDACTED\*\*\*/u.test(warning)), true);
 });
 
 test('preserves a review thread first comment page when its comment pagination keeps failing', async () => {
@@ -1090,7 +1100,7 @@ test('preserves a review thread first comment page when its comment pagination k
 
     const request = JSON.parse(String(init.body));
     if (request.operationName === 'ReviewThreadCommentsPage') {
-      return new Response('comment page exploded', { status: 500 });
+      throw new Error(`comment page exploded for ${fakeGitHubToken()}`);
     }
 
     return jsonResponse({
@@ -1175,6 +1185,8 @@ test('preserves a review thread first comment page when its comment pagination k
     true,
     'a failed comment page must surface an incompleteness warning',
   );
+  assert.equal(result.warnings.some((warning) => warning.includes(fakeGitHubToken())), false);
+  assert.equal(result.warnings.some((warning) => /\*\*\*REDACTED\*\*\*/u.test(warning)), true);
 });
 
 test('preserves earlier REST review-comment pages when a later page keeps failing', async () => {
@@ -1192,7 +1204,7 @@ test('preserves earlier REST review-comment pages when a later page keeps failin
       return jsonResponse(firstPage);
     }
 
-    return new Response('rest page exploded', { status: 500 });
+    throw new Error(`rest page exploded for ${fakeGitHubToken()}`);
   };
   const client = new GitHubClient({ getToken: async () => undefined, fetch, sleep: async () => undefined, maxRetries: 1 });
 
@@ -1205,6 +1217,8 @@ test('preserves earlier REST review-comment pages when a later page keeps failin
     true,
     'a failed REST page must surface an incompleteness warning',
   );
+  assert.equal(result.warnings.some((warning) => warning.includes(fakeGitHubToken())), false);
+  assert.equal(result.warnings.some((warning) => /\*\*\*REDACTED\*\*\*/u.test(warning)), true);
 });
 
 test('preserves earlier REST review-comment pages when a later page is malformed', async () => {
@@ -1356,7 +1370,7 @@ test('preserves earlier accessible repository pages when a later page keeps fail
       return jsonResponse(firstPage);
     }
 
-    return new Response('repository page exploded', { status: 500 });
+    throw new Error(`repository page exploded for ${fakeGitHubToken()}`);
   };
   const client = new GitHubClient({
     getToken: async () => 'token',
@@ -1374,6 +1388,8 @@ test('preserves earlier accessible repository pages when a later page keeps fail
     true,
     'a failed repository page must surface an incompleteness diagnostic',
   );
+  assert.equal(logs.some((message) => message.includes(fakeGitHubToken())), false);
+  assert.equal(logs.some((message) => /\*\*\*REDACTED\*\*\*/u.test(message)), true);
 });
 
 test('propagates a first-page accessible repository failure instead of silently returning empty results', async () => {

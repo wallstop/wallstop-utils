@@ -1,4 +1,4 @@
-import { sanitizeHeaderValue } from './auth';
+import { redactSecrets, sanitizeHeaderValue } from './auth';
 import { extractAutomatedSuggestedDiffsFromHtml, htmlHasSuggestionMarkers } from './webSuggestions';
 import { HttpError, isAuthFailure, readJsonResponse, type FetchLike } from './http';
 import { assertSafeGitHubHost } from './repositoryStore';
@@ -245,7 +245,7 @@ export class GitHubClient {
           throw error;
         }
 
-        this.options.log?.(`Stopped paginating accessible repositories for ${safeHost} after a failed page; results may be incomplete. ${error instanceof Error ? error.message : String(error)}`);
+        this.options.log?.(`Stopped paginating accessible repositories for ${safeHost} after a failed page; results may be incomplete. ${formatSafeErrorMessage(error)}`);
         break;
       }
 
@@ -285,8 +285,7 @@ export class GitHubClient {
         const restComments = await this.fetchRestReviewComments(normalizedRepository, prNumber, token);
         mergeRestComments(threads, restComments);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        warnings.push(`REST review-comment cross-check failed; using GraphQL comment bodies only. ${message}`);
+        warnings.push(`REST review-comment cross-check failed; using GraphQL comment bodies only. ${formatSafeErrorMessage(error)}`);
       }
 
       return {
@@ -428,7 +427,7 @@ export class GitHubClient {
           throw error;
         }
 
-        warnings.push(`Stopped paginating review threads after a failed page; results may be incomplete. ${error instanceof Error ? error.message : String(error)}`);
+        warnings.push(`Stopped paginating review threads after a failed page; results may be incomplete. ${formatSafeErrorMessage(error)}`);
         break;
       }
     } while (threadsCursor !== null);
@@ -460,7 +459,7 @@ export class GitHubClient {
       } catch (error) {
         // The thread already holds its first comment page from the parent query, so keep what we
         // have and let the caller continue with other threads rather than failing the whole copy.
-        warnings.push(`Stopped paginating comments for review thread ${thread.id}; results may be incomplete. ${error instanceof Error ? error.message : String(error)}`);
+        warnings.push(`Stopped paginating comments for review thread ${thread.id}; results may be incomplete. ${formatSafeErrorMessage(error)}`);
         return;
       }
     }
@@ -499,7 +498,7 @@ export class GitHubClient {
       // preserves the GraphQL-errors -> REST all-scope fallback.
       if (payload.data != null) {
         if (errors !== undefined) {
-          warnings?.push(`${operationName} returned partial GraphQL data with errors: ${summarizeGraphQLErrors(errors)}`);
+          warnings?.push(redactSecrets(`${operationName} returned partial GraphQL data with errors: ${summarizeGraphQLErrors(errors)}`));
         }
         return payload.data;
       }
@@ -573,7 +572,7 @@ export class GitHubClient {
           throw error;
         }
 
-        warnings?.push(`Stopped paginating REST review comments after a failed page; results may be incomplete. ${error instanceof Error ? error.message : String(error)}`);
+        warnings?.push(`Stopped paginating REST review comments after a failed page; results may be incomplete. ${formatSafeErrorMessage(error)}`);
         break;
       }
 
@@ -614,6 +613,10 @@ function shouldFallbackToRestForAllScope(error: unknown): boolean {
 
 function allScopeFallbackReason(error: unknown): string {
   return error instanceof GraphQLErrorsError ? 'GraphQL returned errors' : 'GraphQL authentication failed';
+}
+
+function formatSafeErrorMessage(error: unknown): string {
+  return redactSecrets(error instanceof Error ? error.message : String(error));
 }
 
 function isGraphQLRateLimited(errors: readonly unknown[]): boolean {

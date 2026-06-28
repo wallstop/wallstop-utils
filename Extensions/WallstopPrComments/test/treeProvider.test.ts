@@ -80,6 +80,10 @@ const pullRequest: PullRequestSummary = {
   url: 'https://github.com/wallstop/utils/pull/42',
 };
 
+function fakeGitHubToken(): string {
+  return `${'ghp_'}${'12345678901234567890'}`;
+}
+
 test('deduplicates concurrent repository pull request loads', async () => {
   const { PrCommentsTreeProvider } = loadTreeProvider();
   const load = createDeferred<PullRequestSummary[]>();
@@ -218,6 +222,26 @@ test('ignores stale repository load errors after targeted repository refresh', a
   assert.equal(cachedChildren[0].kind, 'group');
   if (cachedChildren[0].kind === 'group') {
     assert.deepEqual(cachedChildren[0].pullRequests, [freshPullRequest]);
+  }
+});
+
+test('redacts repository load failures before rendering tree error labels', async () => {
+  const { PrCommentsTreeProvider } = loadTreeProvider();
+  const client = {
+    listPullRequests: async () => {
+      throw new Error(`token ${fakeGitHubToken()} failed`);
+    },
+  } as unknown as GitHubClient;
+  const provider = new PrCommentsTreeProvider({ list: () => [repository] }, client);
+  const [node] = await provider.getChildren(undefined);
+
+  const children = await provider.getChildren(node);
+
+  assert.equal(children.length, 1);
+  assert.equal(children[0].kind, 'empty');
+  if (children[0].kind === 'empty') {
+    assert.match(children[0].label, /token \*\*\*REDACTED\*\*\* failed/u);
+    assert.equal(children[0].label.includes(fakeGitHubToken()), false);
   }
 });
 

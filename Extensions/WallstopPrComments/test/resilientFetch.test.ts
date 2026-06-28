@@ -363,53 +363,91 @@ test('does not add a timeout AbortSignal when perAttemptTimeoutMs is 0', async (
   assert.equal(sawSignal, false, 'perAttemptTimeoutMs=0 disables only the internally-created timeout signal');
 });
 
-test('fallback AbortSignal combiner aborts when either caller or timeout signal aborts', async () => {
-  const originalAny = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
-  const originalTimeout = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
+test('per-attempt AbortSignal aborts when the caller aborts while the request is in flight', async () => {
+  const caller = new AbortController();
+  let capturedSignal: AbortSignal | undefined;
+  const reason = new Error('caller abort');
+  const fetch: FetchLike = async (_input, init) => {
+    capturedSignal = init?.signal ?? undefined;
+    caller.abort(reason);
+    throw capturedSignal?.reason ?? new Error('request was not aborted');
+  };
+  const { sleep } = fakeSleep();
+  const resilient = createResilientFetch(fetch, { sleep, now: () => 0, random: () => 0, maxRetries: 0 });
+
+  await assert.rejects(() => resilient('https://api.github.com/x', { signal: caller.signal }), /caller abort/);
+
+  assert.ok(capturedSignal instanceof AbortSignal, 'the request must receive a combined AbortSignal');
+  assert.equal(capturedSignal.aborted, true);
+  assert.equal(capturedSignal.reason, reason);
+});
+
+test('cleans per-attempt abort listener and timeout after a successful request', async () => {
+  const originalAddEventListener = AbortSignal.prototype.addEventListener;
+  const originalRemoveEventListener = AbortSignal.prototype.removeEventListener;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const caller = new AbortController();
+  const timeoutHandle = {} as ReturnType<typeof setTimeout>;
+  let abortListenersAdded = 0;
+  let abortListenersRemoved = 0;
+  let scheduledMs: number | undefined;
+  let timeoutCleared = false;
+
   try {
-    Object.defineProperty(AbortSignal, 'any', {
-      configurable: true,
-      writable: true,
-      value: undefined,
+    AbortSignal.prototype.addEventListener = function addEventListener(
+      this: AbortSignal,
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: boolean | AddEventListenerOptions,
+    ): void {
+      if (this === caller.signal && type === 'abort') {
+        abortListenersAdded += 1;
+      }
+      originalAddEventListener.call(this, type, listener as EventListenerOrEventListenerObject, options);
+    };
+    AbortSignal.prototype.removeEventListener = function removeEventListener(
+      this: AbortSignal,
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: boolean | EventListenerOptions,
+    ): void {
+      if (this === caller.signal && type === 'abort') {
+        abortListenersRemoved += 1;
+      }
+      originalRemoveEventListener.call(this, type, listener as EventListenerOrEventListenerObject, options);
+    };
+    globalThis.setTimeout = ((handler: (...args: never[]) => void, timeout?: number) => {
+      assert.equal(typeof handler, 'function');
+      scheduledMs = timeout;
+      return timeoutHandle;
+    }) as unknown as typeof setTimeout;
+    globalThis.clearTimeout = ((handle?: ReturnType<typeof setTimeout>) => {
+      if (handle === timeoutHandle) {
+        timeoutCleared = true;
+      }
+    }) as typeof clearTimeout;
+
+    const { fetch } = queue(new Response('ok', { status: 200 }));
+    const { sleep } = fakeSleep();
+    const resilient = createResilientFetch(fetch, {
+      sleep,
+      now: () => 0,
+      random: () => 0,
+      perAttemptTimeoutMs: 5000,
     });
 
-    for (const source of ['caller', 'timeout'] as const) {
-      const caller = new AbortController();
-      const timeout = new AbortController();
-      let capturedSignal: AbortSignal | undefined;
-      Object.defineProperty(AbortSignal, 'timeout', {
-        configurable: true,
-        writable: true,
-        value: () => timeout.signal,
-      });
-      const fetch: FetchLike = async (_input, init) => {
-        capturedSignal = init?.signal ?? undefined;
-        return new Response('ok', { status: 200 });
-      };
-      const { sleep } = fakeSleep();
-      const resilient = createResilientFetch(fetch, { sleep, now: () => 0, random: () => 0, perAttemptTimeoutMs: 5000 });
+    await resilient('https://api.github.com/x', { signal: caller.signal });
 
-      await resilient('https://api.github.com/x', { signal: caller.signal });
-
-      const signal = capturedSignal;
-      assert.ok(signal instanceof AbortSignal, 'the request must receive a combined AbortSignal');
-      assert.equal(signal.aborted, false);
-      const reason = new Error(`${source} abort`);
-      if (source === 'caller') {
-        caller.abort(reason);
-      } else {
-        timeout.abort(reason);
-      }
-      assert.equal(signal.aborted, true, `${source} abort must abort the combined signal`);
-      assert.equal(signal.reason, reason);
-    }
+    assert.equal(scheduledMs, 5000);
+    assert.equal(timeoutCleared, true);
+    assert.equal(abortListenersAdded, 1);
+    assert.equal(abortListenersRemoved, 1);
   } finally {
-    if (originalAny !== undefined) {
-      Object.defineProperty(AbortSignal, 'any', originalAny);
-    }
-    if (originalTimeout !== undefined) {
-      Object.defineProperty(AbortSignal, 'timeout', originalTimeout);
-    }
+    AbortSignal.prototype.addEventListener = originalAddEventListener;
+    AbortSignal.prototype.removeEventListener = originalRemoveEventListener;
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
   }
 });
 
