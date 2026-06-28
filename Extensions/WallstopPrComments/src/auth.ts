@@ -1,3 +1,5 @@
+import { assertSafeGitHubHost } from './repositoryStore';
+
 export interface AuthDependencies {
   getGitHubSession(scopes: string[], createIfNone: boolean): PromiseLike<string | undefined>;
   getSecret(key: string): PromiseLike<string | undefined>;
@@ -90,7 +92,7 @@ export class AuthService {
 }
 
 function normalizeHost(host: string): string {
-  return host.trim().toLowerCase();
+  return assertSafeGitHubHost(host);
 }
 
 function tokenSecretKey(host: string): string {

@@ -307,6 +307,29 @@ test('maps merged pull requests from REST merged_at data', async () => {
   assert.equal(pullRequests[0].merged, true);
 });
 
+test('listPullRequests normalizes repository hosts before auth and REST calls', async () => {
+  const tokenHosts: string[] = [];
+  const urls: string[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    urls.push(String(url));
+    assert.equal((init?.headers as Record<string, string> | undefined)?.Authorization, 'Bearer token');
+    return jsonResponse([]);
+  };
+  const client = new GitHubClient({
+    getToken: async (host) => {
+      tokenHosts.push(host);
+      return 'token';
+    },
+    fetch,
+  });
+
+  const pullRequests = await client.listPullRequests({ host: ' GitHub.COM ', owner: 'org', repo: 'repo' });
+
+  assert.deepEqual(tokenHosts, ['github.com']);
+  assert.equal(pullRequests.length, 0);
+  assert.match(urls[0], /^https:\/\/api\.github\.com\/repos\/org\/repo\/pulls\?/u);
+});
+
 test('paginates review threads and nested thread comments through GraphQL', async () => {
   const seenOperations: string[] = [];
   const fetch: FetchLike = async (_url, init) => {
@@ -707,6 +730,56 @@ test('reports explicit web cookie failures when browser fallback cannot provide 
   );
 });
 
+test('preserves unparseable marker provenance instead of masking it with a later cookie failure', async () => {
+  const calls: Array<Record<string, string> | undefined> = [];
+  const client = new GitHubClient({
+    getToken: async () => 'api-token',
+    getWebCookie: async () => 'user_session=stale',
+    fetch: async (_url, init) => {
+      calls.push(init?.headers as Record<string, string> | undefined);
+      if (init?.headers !== undefined) {
+        return new Response('bad cookie', { status: 401 });
+      }
+
+      return new Response([
+        '<div class="js-comment" id="discussion_r42">',
+        '  <div class="js-suggested-changes-blob"><!-- marker present, parser cannot read this shape --></div>',
+        '</div>',
+      ].join(''));
+    },
+  });
+
+  const result = await client.getWebSuggestedDiffs({ host: 'github.com', owner: 'org', repo: 'repo' }, 10);
+
+  assert.equal(calls.length, 2);
+  assert.equal(result.suggestions.size, 0);
+  assert.equal(result.provenance, 'webSuggestionMarkersUnparseable');
+});
+
+test('preserves unparseable marker provenance instead of masking it with a later browser fallback failure', async () => {
+  const client = new GitHubClient({
+    getToken: async () => 'api-token',
+    getWebCookie: async () => undefined,
+    fetch: async () => new Response([
+      '<div class="js-comment" id="discussion_r42">',
+      '  <div class="js-suggested-changes-blob"><!-- marker present, parser cannot read this shape --></div>',
+      '</div>',
+    ].join('')),
+    browserWebHtmlProvider: async () => {
+      throw new Error('Browser command unavailable');
+    },
+  });
+
+  const result = await client.getWebSuggestedDiffs(
+    { host: 'github.com', owner: 'org', repo: 'repo' },
+    10,
+    { allowBrowserFallback: true },
+  );
+
+  assert.equal(result.suggestions.size, 0);
+  assert.equal(result.provenance, 'webSuggestionMarkersUnparseable');
+});
+
 test('does not use browser-backed extractor unless explicitly enabled', async () => {
   let browserCalled = false;
   const client = new GitHubClient({
@@ -723,6 +796,28 @@ test('does not use browser-backed extractor unless explicitly enabled', async ()
 
   assert.equal(browserCalled, false);
   assert.equal(result.suggestions.size, 0);
+  assert.equal(result.provenance, 'webOnlyUnavailable');
+});
+
+test('getWebSuggestedDiffs normalizes repository hosts before github.com eligibility and cookie lookup', async () => {
+  const cookieHosts: string[] = [];
+  const urls: string[] = [];
+  const client = new GitHubClient({
+    getToken: async () => 'api-token',
+    getWebCookie: async (host) => {
+      cookieHosts.push(host);
+      return undefined;
+    },
+    fetch: async (url) => {
+      urls.push(String(url));
+      return new Response('<html>No embedded suggestions</html>');
+    },
+  });
+
+  const result = await client.getWebSuggestedDiffs({ host: ' GitHub.COM ', owner: 'org', repo: 'repo' }, 10);
+
+  assert.deepEqual(cookieHosts, ['github.com']);
+  assert.deepEqual(urls, ['https://github.com/org/repo/pull/10/files']);
   assert.equal(result.provenance, 'webOnlyUnavailable');
 });
 
@@ -876,6 +971,48 @@ test('uses partial GraphQL data when errors accompany a non-null data payload an
     true,
     'partial GraphQL data must surface a warning so the user knows the result may be incomplete',
   );
+});
+
+test('getReviewThreads normalizes repository hosts before auth, GraphQL, and REST cross-check calls', async () => {
+  const tokenHosts: string[] = [];
+  const urls: string[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    urls.push(String(url));
+    if (init?.body !== undefined) {
+      return jsonResponse({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        },
+      });
+    }
+
+    return jsonResponse([]);
+  };
+  const client = new GitHubClient({
+    getToken: async (host) => {
+      tokenHosts.push(host);
+      return 'token';
+    },
+    fetch,
+  });
+
+  const result = await client.getReviewThreads(
+    { host: ' GitHub.COM ', owner: 'org', repo: 'repo' },
+    10,
+    'all',
+  );
+
+  assert.deepEqual(tokenHosts, ['github.com']);
+  assert.equal(result.threads.length, 0);
+  assert.equal(urls[0], 'https://api.github.com/graphql');
+  assert.match(urls[1], /^https:\/\/api\.github\.com\/repos\/org\/repo\/pulls\/10\/comments\?/u);
 });
 
 test('preserves earlier GraphQL review-thread pages when a later page keeps failing', async () => {
@@ -1122,6 +1259,70 @@ test('lists accessible repositories across paginated REST results and maps field
   assert.equal(repositories[100].archived, true);
   assert.equal(repositories[100].fork, true);
   assert.equal(repositories[100].description, 'cli');
+});
+
+test('listAccessibleRepositories normalizes hosts before auth, REST calls, and mapped identities', async () => {
+  const tokenHosts: string[] = [];
+  const urls: string[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    urls.push(String(url));
+    assert.equal((init?.headers as Record<string, string> | undefined)?.Authorization, 'Bearer token');
+    return jsonResponse([
+      {
+        full_name: 'wallstop/repo',
+        name: 'repo',
+        owner: { login: 'wallstop' },
+        private: false,
+        archived: false,
+        fork: false,
+      },
+    ]);
+  };
+  const client = new GitHubClient({
+    getToken: async (host) => {
+      tokenHosts.push(host);
+      return 'token';
+    },
+    fetch,
+  });
+
+  const repositories = await client.listAccessibleRepositories(' GitHub.COM ');
+
+  assert.deepEqual(tokenHosts, ['github.com']);
+  assert.match(urls[0], /^https:\/\/api\.github\.com\/user\/repos\?/u);
+  assert.equal(repositories[0].host, 'github.com');
+});
+
+test('listAccessibleRepositories rejects unsafe hosts before token lookup', async () => {
+  let tokenCalled = false;
+  const client = new GitHubClient({
+    getToken: async () => {
+      tokenCalled = true;
+      return 'token';
+    },
+    fetch: async () => {
+      throw new Error('fetch should not be called');
+    },
+  });
+
+  await assert.rejects(() => client.listAccessibleRepositories('localhost'), /Localhost GitHub hosts are not allowed/u);
+  assert.equal(tokenCalled, false);
+});
+
+test('listAccessibleRepositories rejects URL-reinterpretable IPv4 host aliases before token lookup', async () => {
+  let tokenCalled = false;
+  const client = new GitHubClient({
+    getToken: async () => {
+      tokenCalled = true;
+      return 'token';
+    },
+    fetch: async () => {
+      throw new Error('fetch should not be called');
+    },
+  });
+
+  await assert.rejects(() => client.listAccessibleRepositories('2130706433'), /Invalid GitHub host/u);
+  assert.equal(tokenCalled, false);
 });
 
 test('listAccessibleRepositories requires a token', async () => {

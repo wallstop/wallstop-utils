@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  assertSafeGitHubHost,
   buildAddRepoQuickPickItems,
   enumerationHosts,
   groupPullRequests,
@@ -102,6 +103,14 @@ test('rejects local, private, ported, and user-info repository URL hosts', () =>
   assert.throws(() => parseRepositoryInput('https://github.com:8443/org/repo'), /port/);
   assert.throws(() => parseRepositoryInput('https://token@github.com/org/repo'), /user info/);
   assert.throws(() => parseRepositoryInput('https://-github.com/org/repo'), /Invalid GitHub host/);
+  assert.throws(() => parseRepositoryInput('https://010.010.010.010/org/repo'), /Invalid GitHub host/);
+  assert.throws(() => parseRepositoryInput('https://0x8.0x8.0x8.0x8/org/repo'), /Invalid GitHub host/);
+});
+
+test('rejects URL-reinterpretable IPv4 host aliases before request URL construction', () => {
+  for (const host of ['2130706433', '0177.0.0.1', '0x7f.0.0.1', '127.1', '1.2.3.04', '008.008.008.008']) {
+    assert.throws(() => assertSafeGitHubHost(host), /Invalid GitHub host/u);
+  }
 });
 
 test('groups open pull requests first and closed or merged pull requests separately', () => {

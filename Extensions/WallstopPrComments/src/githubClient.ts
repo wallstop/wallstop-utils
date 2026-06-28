@@ -192,9 +192,10 @@ export class GitHubClient {
   }
 
   async listPullRequests(repository: RepositoryRef, options: AuthRequestOptions = {}): Promise<PullRequestSummary[]> {
-    const token = await this.options.getToken(repository.host, options.promptForAuth === true);
+    const normalizedRepository = normalizeRepositoryRef(repository);
+    const token = await this.options.getToken(normalizedRepository.host, options.promptForAuth === true);
     const response = await this.fetch(
-      `${restBaseUrl(repository.host)}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/pulls?state=all&per_page=50&sort=updated&direction=desc`,
+      `${restBaseUrl(normalizedRepository.host)}/repos/${encodeURIComponent(normalizedRepository.owner)}/${encodeURIComponent(normalizedRepository.repo)}/pulls?state=all&per_page=50&sort=updated&direction=desc`,
       { headers: this.restHeaders(token) },
     );
     const pullRequests = await readJsonResponse<unknown[]> (response, 'List pull requests');
@@ -212,20 +213,21 @@ export class GitHubClient {
   }
 
   async listAccessibleRepositories(host: string, options: AuthRequestOptions = {}): Promise<AccessibleRepository[]> {
-    const token = await this.options.getToken(host, options.promptForAuth === true);
+    const safeHost = assertSafeGitHubHost(host);
+    const token = await this.options.getToken(safeHost, options.promptForAuth === true);
     if (token === undefined) {
-      throw new Error(`Authentication is required to list repositories for ${host}.`);
+      throw new Error(`Authentication is required to list repositories for ${safeHost}.`);
     }
 
     const repositories: AccessibleRepository[] = [];
     for (let page = 1; page <= MAX_REPOSITORY_PAGES; page++) {
       const response = await this.fetch(
-        `${restBaseUrl(host)}/user/repos?per_page=100&page=${page}&sort=pushed&affiliation=owner,collaborator,organization_member`,
+        `${restBaseUrl(safeHost)}/user/repos?per_page=100&page=${page}&sort=pushed&affiliation=owner,collaborator,organization_member`,
         { headers: this.restHeaders(token) },
       );
       const pageRepositories = await readJsonResponse<unknown[]>(response, 'List accessible repositories');
       for (const value of pageRepositories) {
-        const mapped = mapAccessibleRepository(host, value);
+        const mapped = mapAccessibleRepository(safeHost, value);
         if (mapped !== undefined) {
           repositories.push(mapped);
         }
@@ -245,25 +247,26 @@ export class GitHubClient {
     scope: ReviewScope,
     options: AuthRequestOptions = {},
   ): Promise<ReviewThreadResult> {
-    const token = await this.options.getToken(repository.host, options.promptForAuth === true);
+    const normalizedRepository = normalizeRepositoryRef(repository);
+    const token = await this.options.getToken(normalizedRepository.host, options.promptForAuth === true);
     if (token === undefined && scope !== 'all') {
       throw new Error(`Authentication is required to copy ${scope} review threads because REST cannot expose resolved state.`);
     }
 
     if (token === undefined) {
       const warnings = ['GraphQL authentication unavailable; copied all review comments from REST with unknown resolved state.'];
-      const threads = await this.fetchRestReviewThreads(repository, prNumber, undefined, warnings);
+      const threads = await this.fetchRestReviewThreads(normalizedRepository, prNumber, undefined, warnings);
       return { threads, warnings };
     }
 
     try {
       const warnings: string[] = [];
-      const threads = await this.fetchGraphQLReviewThreads(repository, prNumber, token, warnings);
+      const threads = await this.fetchGraphQLReviewThreads(normalizedRepository, prNumber, token, warnings);
       try {
         // Best-effort enrichment of GraphQL bodies; intentionally not given the `warnings` sink, so a
         // partial REST page here does not raise a misleading "incomplete" alarm over data GraphQL
         // already supplies in full. A first-page failure still throws and is reported just below.
-        const restComments = await this.fetchRestReviewComments(repository, prNumber, token);
+        const restComments = await this.fetchRestReviewComments(normalizedRepository, prNumber, token);
         mergeRestComments(threads, restComments);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -276,7 +279,7 @@ export class GitHubClient {
       };
     } catch (error) {
       if (scope === 'all' && shouldFallbackToRestForAllScope(error)) {
-        return this.fetchRestReviewThreadsAfterGraphQLFallback(repository, prNumber, token, allScopeFallbackReason(error));
+        return this.fetchRestReviewThreadsAfterGraphQLFallback(normalizedRepository, prNumber, token, allScopeFallbackReason(error));
       }
 
       throw error;
@@ -288,11 +291,12 @@ export class GitHubClient {
     prNumber: number,
     options: WebSuggestionRequestOptions = {},
   ): Promise<WebSuggestedDiffResult> {
-    if (repository.host.toLowerCase() !== 'github.com') {
+    const normalizedRepository = normalizeRepositoryRef(repository);
+    if (normalizedRepository.host !== 'github.com') {
       return { suggestions: new Map(), provenance: 'webOnlyUnavailable' };
     }
 
-    const url = `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/pull/${prNumber}/files`;
+    const url = `https://github.com/${encodeURIComponent(normalizedRepository.owner)}/${encodeURIComponent(normalizedRepository.repo)}/pull/${prNumber}/files`;
     let sawSuggestionMarkers = false;
     const publicHtml = await this.fetchGitHubWebHtml(url, undefined, false);
     if (publicHtml !== undefined) {
@@ -303,7 +307,7 @@ export class GitHubClient {
       sawSuggestionMarkers ||= htmlHasSuggestionMarkers(publicHtml);
     }
 
-    const safeCookie = sanitizeHeaderValue(await this.options.getWebCookie?.(repository.host));
+    const safeCookie = sanitizeHeaderValue(await this.options.getWebCookie?.(normalizedRepository.host));
     let privateFetchError: unknown;
     if (safeCookie !== undefined) {
       try {
@@ -321,14 +325,27 @@ export class GitHubClient {
     }
 
     if (options.allowBrowserFallback === true && this.options.browserWebHtmlProvider !== undefined) {
-      const browserHtml = await this.options.browserWebHtmlProvider(url);
-      if (browserHtml !== undefined) {
-        const browserSuggestions = extractAutomatedSuggestedDiffsFromHtml(browserHtml, 'browserDomAutomatedDiff');
-        if (browserSuggestions.size > 0) {
-          return { suggestions: browserSuggestions, provenance: 'browserDomAutomatedDiff' };
+      try {
+        const browserHtml = await this.options.browserWebHtmlProvider(url);
+        if (browserHtml !== undefined) {
+          const browserSuggestions = extractAutomatedSuggestedDiffsFromHtml(browserHtml, 'browserDomAutomatedDiff');
+          if (browserSuggestions.size > 0) {
+            return { suggestions: browserSuggestions, provenance: 'browserDomAutomatedDiff' };
+          }
+          sawSuggestionMarkers ||= htmlHasSuggestionMarkers(browserHtml);
         }
-        sawSuggestionMarkers ||= htmlHasSuggestionMarkers(browserHtml);
+      } catch (error) {
+        if (!sawSuggestionMarkers) {
+          throw error;
+        }
       }
+    }
+
+    if (sawSuggestionMarkers) {
+      return {
+        suggestions: new Map(),
+        provenance: 'webSuggestionMarkersUnparseable',
+      };
     }
 
     if (privateFetchError !== undefined) {
@@ -337,7 +354,7 @@ export class GitHubClient {
 
     return {
       suggestions: new Map(),
-      provenance: sawSuggestionMarkers ? 'webSuggestionMarkersUnparseable' : 'webOnlyUnavailable',
+      provenance: 'webOnlyUnavailable',
     };
   }
 
@@ -617,6 +634,13 @@ function graphqlEndpoint(host: string): string {
 function restBaseUrl(host: string): string {
   const safeHost = assertSafeGitHubHost(host);
   return safeHost === 'github.com' ? 'https://api.github.com' : `https://${safeHost}/api/v3`;
+}
+
+function normalizeRepositoryRef(repository: RepositoryRef): RepositoryRef {
+  return {
+    ...repository,
+    host: assertSafeGitHubHost(repository.host),
+  };
 }
 
 function mapGraphQLThread(node: GraphQLThreadNode): ReviewThread {

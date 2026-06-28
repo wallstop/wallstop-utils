@@ -14,7 +14,7 @@ import {
 import { collectUnavailableSuggestionWarnings, reviewThreadToRecord } from './records';
 import { PrCommentsTreeProvider, type PullRequestNode, type RepositoryNode, type TreeNode } from './treeProvider';
 import { AutoRefreshScheduler, type AutoRefreshConfig } from './autoRefresh';
-import type { AccessibleRepository, RepositoryRef, ReviewScope, ReviewThreadRecord } from './types';
+import type { AccessibleRepository, RepositoryRef, ReviewScope, ReviewThreadRecord, WebSuggestedDiffResult } from './types';
 
 const SCOPE_KEY = 'wallstopPrComments.scope';
 
@@ -175,22 +175,7 @@ async function copyReviewComments(
       const webDiffs = await client.getWebSuggestedDiffs(repository, prNumber, {
         allowBrowserFallback: getBrowserWebSuggestionsCommand() !== undefined,
       });
-      if (webDiffs.suggestions.size > 0) {
-        const attached = attachWebSuggestedDiffs(records, webDiffs.suggestions);
-        if (attached > 0) {
-          result.warnings.push(`Attached ${attached} suggested change diff(s) from ${webDiffs.provenance}.`);
-        } else {
-          const unmatched = unmatchedSuggestionKeys(records, webDiffs.suggestions);
-          result.warnings.push(
-            `Extracted ${webDiffs.suggestions.size} web suggested-change diff(s) but none matched a review comment` +
-              (unmatched.length > 0 ? ` (unmatched comment ids: ${unmatched.join(', ')}).` : '.'),
-          );
-        }
-      } else if (webDiffs.provenance === 'webSuggestionMarkersUnparseable') {
-        result.warnings.push(
-          'Detected a GitHub suggested change on the PR files page but could not parse its diff (the rendered format may have changed); open the PR on GitHub to view it.',
-        );
-      }
+      result.warnings.push(...attachWebSuggestedDiffsAndCollectWarnings(records, webDiffs));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       result.warnings.push(`Optional GitHub web suggested-change enrichment failed: ${message}`);
@@ -207,6 +192,38 @@ async function copyReviewComments(
   } catch (error) {
     await showError(error);
   }
+}
+
+export function attachWebSuggestedDiffsAndCollectWarnings(
+  records: ReviewThreadRecord[],
+  webDiffs: WebSuggestedDiffResult,
+): string[] {
+  if (webDiffs.suggestions.size === 0) {
+    return webDiffs.provenance === 'webSuggestionMarkersUnparseable'
+      ? [
+          'Detected a GitHub suggested change on the PR files page but could not parse its diff (the rendered format may have changed); open the PR on GitHub to view it.',
+        ]
+      : [];
+  }
+
+  const warnings: string[] = [];
+  const attached = attachWebSuggestedDiffs(records, webDiffs.suggestions);
+  const unmatched = unmatchedSuggestionKeys(records, webDiffs.suggestions);
+  if (attached > 0) {
+    warnings.push(`Attached ${attached} suggested change diff(s) from ${webDiffs.provenance}.`);
+  }
+
+  if (unmatched.length > 0) {
+    warnings.push(
+      `Extracted web suggested changes for ${webDiffs.suggestions.size} comment id(s) from ${webDiffs.provenance}, but ${unmatched.length} did not match copied review comments (unmatched comment ids: ${unmatched.join(', ')}).`,
+    );
+  } else if (attached === 0) {
+    warnings.push(
+      `Extracted web suggested changes for ${webDiffs.suggestions.size} comment id(s) from ${webDiffs.provenance}, but no new diffs were attached to copied review comments.`,
+    );
+  }
+
+  return warnings;
 }
 
 async function addRepositoriesInteractively(

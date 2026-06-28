@@ -131,7 +131,7 @@ export function buildAddRepoQuickPickItems(repositories: readonly AccessibleRepo
 export function enumerationHosts(repositories: readonly RepositoryRef[]): string[] {
   const hosts = new Set<string>(['github.com']);
   for (const repository of repositories) {
-    hosts.add(repository.host.toLowerCase());
+    hosts.add(assertSafeGitHubHost(repository.host));
   }
 
   return [...hosts];
@@ -176,6 +176,7 @@ function parseTimestamp(value: string | undefined): number | undefined {
 export function parseRepositoryInput(input: string): RepositoryRef {
   const trimmed = input.trim();
   if (/^https:\/\//iu.test(trimmed)) {
+    const rawHost = readRawHttpsUrlHost(trimmed);
     const url = new URL(trimmed);
     if (url.username !== '' || url.password !== '' || url.port !== '') {
       throw new Error('Repository URLs must not include user info or a port.');
@@ -187,7 +188,7 @@ export function parseRepositoryInput(input: string): RepositoryRef {
     }
 
     return normalizeRepositoryHost({
-      host: url.hostname,
+      host: rawHost,
       owner: segments[0],
       repo: segments[1].replace(/\.git$/iu, ''),
     });
@@ -206,7 +207,7 @@ export function parseRepositoryInput(input: string): RepositoryRef {
 }
 
 export function repositoryKey(repository: RepositoryRef): string {
-  return `${repository.host.toLowerCase()}/${repository.owner.toLowerCase()}/${repository.repo.toLowerCase()}`;
+  return `${assertSafeGitHubHost(repository.host)}/${repository.owner.toLowerCase()}/${repository.repo.toLowerCase()}`;
 }
 
 export function assertSafeGitHubHost(host: string): string {
@@ -231,6 +232,7 @@ export function assertSafeGitHubHost(host: string): string {
   }
 
   assertDnsHostFormat(normalized);
+  assertNoUrlHostnameReinterpretation(normalized);
   return normalized;
 }
 
@@ -273,6 +275,27 @@ function readRepositorySegment(value: unknown): string | undefined {
   return trimmed === '' || /[\/\s]/u.test(trimmed) ? undefined : trimmed;
 }
 
+function readRawHttpsUrlHost(input: string): string {
+  const match = /^https:\/\/(?<authority>[^/?#]*)/iu.exec(input);
+  const authority = match?.groups?.authority ?? '';
+  if (authority === '') {
+    throw new Error('Repository URLs must include a GitHub host.');
+  }
+
+  const withoutUserInfo = authority.includes('@') ? authority.slice(authority.lastIndexOf('@') + 1) : authority;
+  if (withoutUserInfo.startsWith('[')) {
+    const end = withoutUserInfo.indexOf(']');
+    if (end < 0) {
+      throw new Error(`Invalid GitHub host '${withoutUserInfo}'.`);
+    }
+
+    return withoutUserInfo.slice(0, end + 1);
+  }
+
+  const colon = withoutUserInfo.indexOf(':');
+  return colon < 0 ? withoutUserInfo : withoutUserInfo.slice(0, colon);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -296,10 +319,27 @@ function assertDnsHostFormat(host: string): void {
   }
 }
 
+function assertNoUrlHostnameReinterpretation(host: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(`https://${host}/`);
+  } catch {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+
+  if (parsed.hostname !== host) {
+    throw new Error(`Invalid GitHub host '${host}'.`);
+  }
+}
+
 function parseIPv4(host: string): [number, number, number, number] | undefined {
   const parts = host.split('.');
   if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/u.test(part))) {
     return undefined;
+  }
+
+  if (parts.some((part) => part.length > 1 && part.startsWith('0'))) {
+    throw new Error(`Invalid GitHub host '${host}'.`);
   }
 
   const numbers = parts.map((part) => Number(part));

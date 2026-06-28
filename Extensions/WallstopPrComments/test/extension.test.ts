@@ -2,11 +2,21 @@ import assert from 'node:assert/strict';
 import Module from 'node:module';
 import test from 'node:test';
 
+import type { ReviewThreadRecord, WebSuggestedDiffResult } from '../src/types';
+
+interface ExtensionTestExports {
+  attachWebSuggestedDiffsAndCollectWarnings(
+    records: ReviewThreadRecord[],
+    webDiffs: WebSuggestedDiffResult,
+  ): string[];
+  getBrowserWebSuggestionsHtml(url: string): Promise<string | undefined>;
+}
+
 function loadExtensionWithVscodeStub(options: {
   command: string | undefined;
   workspaceCommand?: string;
   executeCommand: (command: string, url: string) => Promise<unknown>;
-}): { getBrowserWebSuggestionsHtml: (url: string) => Promise<string | undefined> } {
+}): ExtensionTestExports {
   const moduleLoader = Module as unknown as {
     _load: (request: string, parent: NodeModule | null, isMain: boolean) => unknown;
   };
@@ -49,7 +59,7 @@ function loadExtensionWithVscodeStub(options: {
 
   try {
     delete require.cache[require.resolve('../src/extension')];
-    return require('../src/extension') as { getBrowserWebSuggestionsHtml: (url: string) => Promise<string | undefined> };
+    return require('../src/extension') as ExtensionTestExports;
   } finally {
     moduleLoader._load = originalLoad;
   }
@@ -124,4 +134,73 @@ test('browser web suggestions provider ignores workspace-supplied command settin
 
   assert.equal(await getBrowserWebSuggestionsHtml('https://github.com/org/repo/pull/1/files'), undefined);
   assert.equal(called, false);
+});
+
+test('web suggestion warning helper reports unmatched ids even after partial attachment', () => {
+  const { attachWebSuggestedDiffsAndCollectWarnings } = loadExtensionWithVscodeStub({
+    command: undefined,
+    executeCommand: async () => undefined,
+  });
+  const records: ReviewThreadRecord[] = [
+    {
+      path: 'src/file.ts',
+      lineStart: 1,
+      lineEnd: 1,
+      comments: [
+        {
+          databaseId: 42,
+          body: 'Comment',
+          suggestedChanges: [],
+          suggestedDiffs: [],
+        },
+      ],
+    },
+  ];
+
+  const warnings = attachWebSuggestedDiffsAndCollectWarnings(records, {
+    provenance: 'githubWebAutomatedDiff',
+    suggestions: new Map([
+      [
+        '42',
+        [
+          {
+            kind: 'changedLines',
+            source: 'githubWebAutomatedDiff',
+            confidence: 'medium',
+            value: '-old();\n+new();',
+          },
+        ],
+      ],
+      [
+        'discussion_r999',
+        [
+          {
+            kind: 'changedLines',
+            source: 'githubWebAutomatedDiff',
+            confidence: 'medium',
+            value: '-otherOld();\n+otherNew();',
+          },
+        ],
+      ],
+    ]),
+  });
+
+  assert.equal(records[0].comments[0].suggestedDiffs[0].value, '-old();\n+new();');
+  assert.equal(warnings.some((warning) => /Attached 1 suggested change diff/u.test(warning)), true);
+  assert.equal(warnings.some((warning) => /unmatched comment ids: discussion_r999/u.test(warning)), true);
+});
+
+test('web suggestion warning helper surfaces unparseable marker provenance', () => {
+  const { attachWebSuggestedDiffsAndCollectWarnings } = loadExtensionWithVscodeStub({
+    command: undefined,
+    executeCommand: async () => undefined,
+  });
+
+  const warnings = attachWebSuggestedDiffsAndCollectWarnings([], {
+    provenance: 'webSuggestionMarkersUnparseable',
+    suggestions: new Map(),
+  });
+
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /rendered format may have changed/u);
 });
