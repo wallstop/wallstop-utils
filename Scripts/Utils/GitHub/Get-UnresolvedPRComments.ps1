@@ -4846,140 +4846,155 @@ query GetReviewThreads(
             variables = $variables
         }
 
-        $response = Invoke-GitHubRequestWithRetry -Method POST -Uri $Endpoint -Headers $Headers -Body $body -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
+        try {
+            $response = Invoke-GitHubRequestWithRetry -Method POST -Uri $Endpoint -Headers $Headers -Body $body -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
 
-        $errors = $null
-        if ($response -is [System.Collections.IDictionary]) {
-            if ($response.Contains("errors")) {
-                $errors = $response["errors"]
+            $errors = $null
+            if ($response -is [System.Collections.IDictionary]) {
+                if ($response.Contains("errors")) {
+                    $errors = $response["errors"]
+                }
             }
-        }
-        elseif ($response.PSObject.Properties.Name -contains "errors") {
-            $errors = $response.errors
-        }
+            elseif ($response.PSObject.Properties.Name -contains "errors") {
+                $errors = $response.errors
+            }
 
-        $errorCount = Get-SafeCount -InputObject $errors
-        if ($null -ne $errors -and $errorCount -gt 0) {
-            $firstError = @($errors)[0]
-            $message = "GraphQL returned an error payload without a message field."
-            if ($null -ne $firstError) {
-                if ($firstError -is [System.Collections.IDictionary]) {
-                    if ($firstError.Contains("message")) {
-                        $messageValue = Get-FirstNonEmptyStringValue -Value $firstError["message"]
+            $errorCount = Get-SafeCount -InputObject $errors
+            if ($null -ne $errors -and $errorCount -gt 0) {
+                $firstError = @($errors)[0]
+                $message = "GraphQL returned an error payload without a message field."
+                if ($null -ne $firstError) {
+                    if ($firstError -is [System.Collections.IDictionary]) {
+                        if ($firstError.Contains("message")) {
+                            $messageValue = Get-FirstNonEmptyStringValue -Value $firstError["message"]
+                            if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
+                                $message = $messageValue
+                            }
+                        }
+                    }
+                    elseif ($firstError.PSObject.Properties.Name -contains "message") {
+                        $messageValue = Get-FirstNonEmptyStringValue -Value $firstError.Message
                         if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
                             $message = $messageValue
                         }
                     }
                 }
-                elseif ($firstError.PSObject.Properties.Name -contains "message") {
-                    $messageValue = Get-FirstNonEmptyStringValue -Value $firstError.Message
-                    if (-not [string]::IsNullOrWhiteSpace($messageValue)) {
-                        $message = $messageValue
-                    }
+                $safeMessage = Redact-SensitiveText -Text $message -SensitiveTokens $SensitiveTokens
+                throw "E_GRAPHQL_ERROR: $safeMessage"
+            }
+
+            if ($null -eq $response.data) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data in GraphQL response."
+            }
+
+            if ($null -eq $response.data.repository) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository in GraphQL response."
+            }
+
+            if ($null -eq $response.data.repository.pullRequest) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest in GraphQL response."
+            }
+
+            $threadsNode = Get-ObjectPropertyValue -InputObject $response.data.repository.pullRequest -Name "reviewThreads"
+            if ($null -eq $threadsNode) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads in GraphQL response."
+            }
+
+            if ($null -eq $threadsNode.nodes) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.nodes in GraphQL response."
+            }
+
+            if ($threadsNode.nodes -isnot [System.Array]) {
+                $nodesType = $threadsNode.nodes.GetType().FullName
+                throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.nodes must be an array (received '$nodesType')."
+            }
+
+            $threads = $threadsNode.nodes
+            foreach ($thread in $threads) {
+                if ($null -eq $thread.id) {
+                    continue
+                }
+
+                if ($seenThreadIds.Contains([string]$thread.id)) {
+                    continue
+                }
+
+                $seenThreadIds.Add([string]$thread.id) | Out-Null
+                $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost -Truncate:$Truncate -KeepMarkup:$KeepMarkup
+                if ($null -ne $record) {
+                    $allRecords.Add($record)
                 }
             }
-            $safeMessage = Redact-SensitiveText -Text $message -SensitiveTokens $SensitiveTokens
-            throw "E_GRAPHQL_ERROR: $safeMessage"
-        }
 
-        if ($null -eq $response.data) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data in GraphQL response."
-        }
+            if ($null -eq $threadsNode.pageInfo) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo in GraphQL response."
+            }
 
-        if ($null -eq $response.data.repository) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository in GraphQL response."
-        }
+            $pageInfo = $threadsNode.pageInfo
+            $hasHasNextPageField = $false
+            $hasEndCursorField = $false
+            $hasNextValue = $null
+            $nextCursor = $null
 
-        if ($null -eq $response.data.repository.pullRequest) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest in GraphQL response."
-        }
+            if ($pageInfo -is [System.Collections.IDictionary]) {
+                $hasHasNextPageField = $pageInfo.Contains("hasNextPage")
+                $hasEndCursorField = $pageInfo.Contains("endCursor")
+                if ($hasHasNextPageField) {
+                    $hasNextValue = $pageInfo["hasNextPage"]
+                }
+                if ($hasEndCursorField) {
+                    $nextCursor = $pageInfo["endCursor"]
+                }
+            }
+            else {
+                $hasHasNextPageField = $pageInfo.PSObject.Properties.Name -contains "hasNextPage"
+                $hasEndCursorField = $pageInfo.PSObject.Properties.Name -contains "endCursor"
+                if ($hasHasNextPageField) {
+                    $hasNextValue = $pageInfo.hasNextPage
+                }
+                if ($hasEndCursorField) {
+                    $nextCursor = $pageInfo.endCursor
+                }
+            }
 
-        $threadsNode = $response.data.repository.pullRequest.reviewThreads
-        if ($null -eq $threadsNode -or $null -eq $threadsNode.nodes) {
+            if (-not $hasHasNextPageField) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage in GraphQL response."
+            }
+
+            if (-not $hasEndCursorField) {
+                throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor in GraphQL response."
+            }
+
+            $hasNext = [bool]$hasNextValue
+
+            if ($null -ne $nextCursor -and $nextCursor -isnot [string]) {
+                $cursorType = $nextCursor.GetType().FullName
+                throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be a string or null (received '$cursorType')."
+            }
+
+            if ($hasNext -and [string]::IsNullOrWhiteSpace([string]$nextCursor)) {
+                throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be non-empty when hasNextPage is true."
+            }
+
+            if (-not $hasNext) {
+                break
+            }
+
+            if ($cursor -eq $nextCursor) {
+                throw "E_PAGINATION_LOOP: Cursor did not advance."
+            }
+
+            $cursor = [string]$nextCursor
+        }
+        catch {
+            if ($page -eq 1) {
+                throw
+            }
+
+            $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+            Write-Warning ("W_PARTIAL_GITHUB_REVIEW_THREAD_PAGINATION: Stopped paginating review threads after page {0}; results may be incomplete. {1}" -f ($page - 1), $safeMessage)
             break
         }
-
-        if ($threadsNode.nodes -isnot [System.Array]) {
-            $nodesType = $threadsNode.nodes.GetType().FullName
-            throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.nodes must be an array (received '$nodesType')."
-        }
-
-        $threads = $threadsNode.nodes
-        foreach ($thread in $threads) {
-            if ($null -eq $thread.id) {
-                continue
-            }
-
-            if ($seenThreadIds.Contains([string]$thread.id)) {
-                continue
-            }
-
-            $seenThreadIds.Add([string]$thread.id) | Out-Null
-            $record = Convert-ReviewThreadToOutputRecord -Thread $thread -Owner $Owner -Repo $Repo -PrNumber $PrNumber -GitHubHost $GitHubHost -Truncate:$Truncate -KeepMarkup:$KeepMarkup
-            if ($null -ne $record) {
-                $allRecords.Add($record)
-            }
-        }
-
-        if ($null -eq $threadsNode.pageInfo) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo in GraphQL response."
-        }
-
-        $pageInfo = $threadsNode.pageInfo
-        $hasHasNextPageField = $false
-        $hasEndCursorField = $false
-        $hasNextValue = $null
-        $nextCursor = $null
-
-        if ($pageInfo -is [System.Collections.IDictionary]) {
-            $hasHasNextPageField = $pageInfo.Contains("hasNextPage")
-            $hasEndCursorField = $pageInfo.Contains("endCursor")
-            if ($hasHasNextPageField) {
-                $hasNextValue = $pageInfo["hasNextPage"]
-            }
-            if ($hasEndCursorField) {
-                $nextCursor = $pageInfo["endCursor"]
-            }
-        }
-        else {
-            $hasHasNextPageField = $pageInfo.PSObject.Properties.Name -contains "hasNextPage"
-            $hasEndCursorField = $pageInfo.PSObject.Properties.Name -contains "endCursor"
-            if ($hasHasNextPageField) {
-                $hasNextValue = $pageInfo.hasNextPage
-            }
-            if ($hasEndCursorField) {
-                $nextCursor = $pageInfo.endCursor
-            }
-        }
-
-        if (-not $hasHasNextPageField) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage in GraphQL response."
-        }
-
-        if (-not $hasEndCursorField) {
-            throw "E_MALFORMED_RESPONSE: Missing response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor in GraphQL response."
-        }
-
-        $hasNext = [bool]$hasNextValue
-
-        if ($null -ne $nextCursor -and $nextCursor -isnot [string]) {
-            $cursorType = $nextCursor.GetType().FullName
-            throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be a string or null (received '$cursorType')."
-        }
-
-        if ($hasNext -and [string]::IsNullOrWhiteSpace([string]$nextCursor)) {
-            throw "E_MALFORMED_RESPONSE: response.data.repository.pullRequest.reviewThreads.pageInfo.endCursor must be non-empty when hasNextPage is true."
-        }
-
-        if (-not $hasNext) {
-            break
-        }
-
-        if ($cursor -eq $nextCursor) {
-            throw "E_PAGINATION_LOOP: Cursor did not advance."
-        }
-
-        $cursor = [string]$nextCursor
     }
 
     return $allRecords.ToArray()
@@ -5036,22 +5051,35 @@ function Get-PublicPullRequestReviewCommentsFallback {
 
     for ($page = 1; $page -le $MaxPages; $page++) {
         $uri = "$base/repos/$Owner/$Repo/pulls/$PrNumber/comments?per_page=$PerPage&page=$page&sort=created&direction=asc"
-        $response = Invoke-GitHubRequestWithRetry -Method GET -Uri $uri -Headers $headers -Body $null -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
+        try {
+            $response = Invoke-GitHubRequestWithRetry -Method GET -Uri $uri -Headers $headers -Body $null -RequestTimeoutSeconds $RequestTimeoutSeconds -MaxRetries 3 -OverallDeadlineUtc $OverallDeadlineUtc -WaitOnRateLimit:$WaitOnRateLimit -AllowedGitHubHostsNormalized $AllowedGitHubHostsNormalized -SensitiveTokens $SensitiveTokens
 
-        if ($null -eq $response) {
-            break
+            if ($null -eq $response) {
+                throw "E_MALFORMED_RESPONSE: REST review comments page $page returned null instead of an array."
+            }
+
+            $comments = @($response)
+            if ((Get-SafeCount -InputObject $comments) -eq 0) {
+                break
+            }
+
+            Assert-RestReviewCommentsPageShape -Comments $comments -Page $page
+
+            foreach ($comment in $comments) {
+                $allComments.Add($comment) | Out-Null
+            }
+
+            if ((Get-SafeCount -InputObject $comments) -lt $PerPage) {
+                break
+            }
         }
+        catch {
+            if ($page -eq 1) {
+                throw
+            }
 
-        $comments = @($response)
-        if ((Get-SafeCount -InputObject $comments) -eq 0) {
-            break
-        }
-
-        foreach ($comment in $comments) {
-            $allComments.Add($comment) | Out-Null
-        }
-
-        if ((Get-SafeCount -InputObject $comments) -lt $PerPage) {
+            $safeMessage = Redact-SensitiveText -Text $_.Exception.Message -SensitiveTokens $SensitiveTokens
+            Write-Warning ("W_PARTIAL_GITHUB_REST_REVIEW_COMMENT_PAGINATION: Stopped paginating public REST review comments after page {0}; results may be incomplete. {1}" -f ($page - 1), $safeMessage)
             break
         }
     }
@@ -5067,6 +5095,26 @@ function Get-PublicPullRequestReviewCommentsFallback {
 
     Write-Warning "W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN: Public REST fallback cannot determine review-thread resolution state; returned records use resolutionState='unknown'."
     return $records.ToArray()
+}
+
+function Assert-RestReviewCommentsPageShape {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$Comments,
+
+        [Parameter(Mandatory = $true)]
+        [int]$Page
+    )
+
+    foreach ($comment in $Comments) {
+        $id = Get-FirstNonEmptyStringValue -Value (Get-ObjectPropertyValue -InputObject $comment -Name "id")
+        if ([string]::IsNullOrWhiteSpace($id)) {
+            $commentType = if ($null -eq $comment) { "<null>" } else { $comment.GetType().FullName }
+            throw "E_MALFORMED_RESPONSE: REST review comments page $Page contained an item without an id (received '$commentType')."
+        }
+    }
 }
 
 function Resolve-PullRequestTarget {

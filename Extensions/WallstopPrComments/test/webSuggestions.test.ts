@@ -8,6 +8,7 @@ import {
   htmlHasSuggestionMarkers,
   unmatchedSuggestionKeys,
 } from '../src/webSuggestions';
+import { formatReviewThreadRecords } from '../src/renderer';
 import type { ReviewThreadRecord, SuggestedDiff } from '../src/types';
 
 function changedLines(value: string, path?: string): SuggestedDiff {
@@ -312,6 +313,50 @@ test('attaches web suggestions by URL fallback when database id is missing', () 
   assert.equal(attached, 1);
   assert.equal(records[0].comments[0].unavailableReason, undefined);
   assert.equal(records[0].comments[0].suggestedDiffs[0].value, '-old();\n+new();');
+});
+
+test('web enrichment replaces stale diff context with the attached suggested diff', () => {
+  const records: ReviewThreadRecord[] = [
+    {
+      path: 'src/fallback.ts',
+      lineStart: 4,
+      lineEnd: 4,
+      comments: [
+        {
+          databaseId: 123,
+          body: 'Copilot suggested changeset available in the GitHub web UI.',
+          suggestedChanges: [],
+          suggestedDiffs: [],
+          diffHunk: '-old context();\n+new context();',
+          unavailableReason: 'GitHub web-only suggested changeset could not be extracted from the public API.',
+          unavailableSource: 'webOnlyUnavailable',
+          unavailableConfidence: 'unavailable',
+        },
+      ],
+    },
+  ];
+  const suggestions = new Map([
+    [
+      '123',
+      [
+        {
+          kind: 'changedLines' as const,
+          source: 'githubWebAutomatedDiff' as const,
+          confidence: 'medium' as const,
+          value: '-old();\n+new();',
+        },
+      ],
+    ],
+  ]);
+
+  const attached = attachWebSuggestedDiffs(records, suggestions);
+  const output = formatReviewThreadRecords(records);
+
+  assert.equal(attached, 1);
+  assert.equal(records[0].comments[0].diffHunk, undefined);
+  assert.match(output, /Suggested change:\n-old\(\);\n\+new\(\);/);
+  assert.doesNotMatch(output, /Diff context:/);
+  assert.doesNotMatch(output, /old context/);
 });
 
 test('extracts a rendered suggested-change diff table keyed by its comment anchor id', () => {

@@ -15,6 +15,10 @@ Preserve caller cancellation in retry wrappers: a caller `AbortSignal` must
 prevent a first attempt when already aborted, stop retries during backoff, and
 remain combined with per-attempt timeouts even when `AbortSignal.any` is
 unavailable.
+For accumulated pagination, preserve already-collected records when a later page
+fails or returns a malformed payload and emit an explicit incomplete-results
+diagnostic; first-page failures must still fail hard so auth/config problems are
+not hidden as empty results.
 
 ## Actionable Diagnostics And Resilience Tests
 
@@ -152,9 +156,12 @@ surface for the same GitHub PR comment extraction contracts.
   JSON-internal except for optional TEXT-only `Diff context:` output; web-only
   Copilot suggested changes are best-effort `github.com` HTML enrichment only,
   with sanitized cookies, public changed lines only, and warnings instead of
-  fabricated suggestions when unavailable. Keep record creation and text rendering on one shared renderable
-  comment predicate so placeholder-only unavailable suggestions do not become
-  `No review comments found.`.
+  fabricated suggestions when unavailable. Keep record creation and text rendering
+  on one shared renderable comment predicate so placeholder-only unavailable
+  suggestions do not become `No review comments found.`. Unavailable-suggestion
+  diagnostics must outrank optional diff context when cleaned prose is empty, and
+  web enrichment that attaches real suggested diffs must clear or suppress stale
+  `diffHunk` context so copied output shows the highest-confidence fix only.
 - Keep extension suggested-change acquisition ordered by trust: extract API
   ` ```suggestion ` fences first as `source: apiMarkdownSuggestion`,
   `confidence: high`; then enrich only `github.com` records from GitHub web PR

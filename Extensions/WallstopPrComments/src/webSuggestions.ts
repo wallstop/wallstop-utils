@@ -270,6 +270,7 @@ export function attachWebSuggestedDiffs(
         comment.unavailableReason = undefined;
         comment.unavailableSource = undefined;
         comment.unavailableConfidence = undefined;
+        comment.diffHunk = undefined;
       }
     }
   }

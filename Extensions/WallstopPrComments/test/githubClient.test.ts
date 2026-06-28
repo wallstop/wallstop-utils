@@ -1207,11 +1207,91 @@ test('preserves earlier REST review-comment pages when a later page keeps failin
   );
 });
 
+test('preserves earlier REST review-comment pages when a later page is malformed', async () => {
+  const firstPage = Array.from({ length: 100 }, (_unused, index) => ({
+    id: index + 1,
+    node_id: `node-${index + 1}`,
+    path: 'src/rest.ts',
+    body: `comment ${index + 1}`,
+    line: 1,
+    original_line: 1,
+    user: { login: 'reviewer' },
+  }));
+  const fetch: FetchLike = async (url) => {
+    if (/[?&]page=1\b/u.test(String(url))) {
+      return jsonResponse(firstPage);
+    }
+
+    return jsonResponse({ message: 'not an array' });
+  };
+  const client = new GitHubClient({ getToken: async () => undefined, fetch, sleep: async () => undefined, maxRetries: 1 });
+
+  const result = await client.getReviewThreads({ host: 'github.com', owner: 'org', repo: 'repo' }, 10, 'all');
+
+  const totalComments = result.threads.reduce((sum, thread) => sum + thread.comments.length, 0);
+  assert.equal(totalComments, 100, 'the gathered first REST page must be preserved when a later malformed page fails');
+  assert.equal(
+    result.warnings.some((warning) => /results may be incomplete/i.test(warning) && /non-array response/i.test(warning)),
+    true,
+    'a malformed later REST page must surface an incompleteness warning',
+  );
+});
+
+test('preserves earlier REST review-comment pages when a later page contains malformed items', async () => {
+  const firstPage = Array.from({ length: 100 }, (_unused, index) => ({
+    id: index + 1,
+    node_id: `node-${index + 1}`,
+    path: 'src/rest.ts',
+    body: `comment ${index + 1}`,
+    line: 1,
+    original_line: 1,
+    user: { login: 'reviewer' },
+  }));
+  const fetch: FetchLike = async (url) => {
+    if (/[?&]page=1\b/u.test(String(url))) {
+      return jsonResponse(firstPage);
+    }
+
+    return jsonResponse([{ message: 'not a review comment' }]);
+  };
+  const client = new GitHubClient({ getToken: async () => undefined, fetch, sleep: async () => undefined, maxRetries: 1 });
+
+  const result = await client.getReviewThreads({ host: 'github.com', owner: 'org', repo: 'repo' }, 10, 'all');
+
+  const totalComments = result.threads.reduce((sum, thread) => sum + thread.comments.length, 0);
+  assert.equal(totalComments, 100, 'the gathered first REST page must be preserved when a later page has malformed entries');
+  assert.equal(
+    result.warnings.some((warning) => /results may be incomplete/i.test(warning) && /malformed review comment/i.test(warning)),
+    true,
+    'a malformed later REST page item must surface an incompleteness warning',
+  );
+});
+
 test('propagates a first-page REST failure instead of silently returning empty results', async () => {
   const fetch: FetchLike = async () => new Response('rest page exploded', { status: 500 });
   const client = new GitHubClient({ getToken: async () => undefined, fetch, sleep: async () => undefined, maxRetries: 1 });
 
   await assert.rejects(() => client.getReviewThreads({ host: 'github.com', owner: 'org', repo: 'repo' }, 10, 'all'));
+});
+
+test('propagates a first-page malformed REST response instead of silently returning empty results', async () => {
+  const fetch: FetchLike = async () => jsonResponse({ message: 'not an array' });
+  const client = new GitHubClient({ getToken: async () => undefined, fetch, sleep: async () => undefined, maxRetries: 1 });
+
+  await assert.rejects(
+    () => client.getReviewThreads({ host: 'github.com', owner: 'org', repo: 'repo' }, 10, 'all'),
+    /non-array response/u,
+  );
+});
+
+test('propagates first-page malformed REST items instead of silently returning empty results', async () => {
+  const fetch: FetchLike = async () => jsonResponse([{ message: 'not a review comment' }]);
+  const client = new GitHubClient({ getToken: async () => undefined, fetch, sleep: async () => undefined, maxRetries: 1 });
+
+  await assert.rejects(
+    () => client.getReviewThreads({ host: 'github.com', owner: 'org', repo: 'repo' }, 10, 'all'),
+    /malformed review comment/u,
+  );
 });
 
 test('lists accessible repositories across paginated REST results and maps fields', async () => {
@@ -1259,6 +1339,56 @@ test('lists accessible repositories across paginated REST results and maps field
   assert.equal(repositories[100].archived, true);
   assert.equal(repositories[100].fork, true);
   assert.equal(repositories[100].description, 'cli');
+});
+
+test('preserves earlier accessible repository pages when a later page keeps failing', async () => {
+  const firstPage = Array.from({ length: 100 }, (_unused, index) => ({
+    full_name: `wallstop/repo-${index + 1}`,
+    name: `repo-${index + 1}`,
+    owner: { login: 'wallstop' },
+    private: false,
+    archived: false,
+    fork: false,
+  }));
+  const logs: string[] = [];
+  const fetch: FetchLike = async (url) => {
+    if (/[?&]page=1\b/u.test(String(url))) {
+      return jsonResponse(firstPage);
+    }
+
+    return new Response('repository page exploded', { status: 500 });
+  };
+  const client = new GitHubClient({
+    getToken: async () => 'token',
+    fetch,
+    sleep: async () => undefined,
+    maxRetries: 0,
+    log: (message) => logs.push(message),
+  });
+
+  const repositories = await client.listAccessibleRepositories('github.com');
+
+  assert.equal(repositories.length, 100, 'the gathered first repository page must be preserved when a later page fails');
+  assert.equal(
+    logs.some((message) => /Stopped paginating accessible repositories.+results may be incomplete/u.test(message)),
+    true,
+    'a failed repository page must surface an incompleteness diagnostic',
+  );
+});
+
+test('propagates a first-page accessible repository failure instead of silently returning empty results', async () => {
+  const logs: string[] = [];
+  const fetch: FetchLike = async () => new Response('repository page exploded', { status: 500 });
+  const client = new GitHubClient({
+    getToken: async () => 'token',
+    fetch,
+    sleep: async () => undefined,
+    maxRetries: 0,
+    log: (message) => logs.push(message),
+  });
+
+  await assert.rejects(() => client.listAccessibleRepositories('github.com'), /List accessible repositories failed/u);
+  assert.deepEqual(logs, []);
 });
 
 test('listAccessibleRepositories normalizes hosts before auth, REST calls, and mapped identities', async () => {

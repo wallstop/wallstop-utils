@@ -325,12 +325,14 @@ test('renders placeholder-only unavailable web suggestions instead of reporting 
         databaseId: 12,
         body: '![Copilot suggested changeset](https://example.test/suggestion.png)',
         authorLogin: 'copilot-pull-request-reviewer[bot]',
+        diffHunk: '@@ -9,1 +9,1 @@\n-oldCall();\n+newCall();',
       },
     ],
   });
 
   assert.ok(record);
   assert.equal(record.comments[0].body, '');
+  assert.equal(record.comments[0].diffHunk, undefined);
   assert.equal(
     formatReviewThreadRecords([record]),
     [
@@ -341,6 +343,29 @@ test('renders placeholder-only unavailable web suggestions instead of reporting 
       '---',
     ].join('\n'),
   );
+});
+
+test('does not let legacy diff context suppress an unavailable suggestion diagnostic', () => {
+  const output = formatReviewThreadRecords([
+    {
+      path: 'src/legacy.ts',
+      lineStart: 12,
+      lineEnd: 12,
+      comments: [
+        {
+          body: '',
+          suggestedChanges: [],
+          suggestedDiffs: [],
+          diffHunk: '-oldCall();\n+newCall();',
+          unavailableReason: 'External bot suggested fix was not exposed by the GitHub API. Author: @cursor[bot]. Fix URL: https://cursor.com/open?link=abc.',
+        },
+      ],
+    },
+  ]);
+
+  assert.match(output, /Suggestion unavailable:/);
+  assert.match(output, /https:\/\/cursor\.com\/open\?link=abc/);
+  assert.doesNotMatch(output, /Diff context:/);
 });
 
 test('does not fabricate a suggestion diff when a diff hunk has no resolvable line anchor', () => {

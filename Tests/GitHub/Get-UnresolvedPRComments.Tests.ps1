@@ -3882,6 +3882,130 @@ Describe "Get-UnresolvedReviewThreads" {
         ($records | Select-Object -ExpandProperty threadId) | Should -Not -Contain "T2"
     }
 
+    It "preserves earlier GraphQL pages and warns when a later review-thread page fails" {
+        $secret = "secret-token-12345"
+        $script:pageCall = 0
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            $script:pageCall++
+            if ($script:pageCall -eq 1) {
+                return @{
+                    data = @{
+                        repository = @{
+                            pullRequest = @{
+                                reviewThreads = @{
+                                    pageInfo = @{ hasNextPage = $true; endCursor = "CURSOR_1" }
+                                    nodes    = @(
+                                        @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @(@{ body = "A" }) } }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            throw "E_NETWORK_ERROR: failed with $secret"
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 100 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -SensitiveTokens @($secret))
+
+        $records.Count | Should -Be 1
+        $records[0].threadId | Should -Be "T1"
+        $script:warningMessages.Count | Should -Be 1
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REVIEW_THREAD_PAGINATION"
+        $script:warningMessages[0] | Should -Match "results may be incomplete"
+        $script:warningMessages[0] | Should -Not -Match [regex]::Escape($secret)
+    }
+
+    It "preserves earlier GraphQL pages and warns when a later review-thread page is malformed" {
+        $script:pageCall = 0
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            $script:pageCall++
+            if ($script:pageCall -eq 1) {
+                return @{
+                    data = @{
+                        repository = @{
+                            pullRequest = @{
+                                reviewThreads = @{
+                                    pageInfo = @{ hasNextPage = $true; endCursor = "CURSOR_1" }
+                                    nodes    = @(
+                                        @{ id = "T1"; isResolved = $false; path = "src/a.ts"; startLine = 1; line = 1; comments = @{ nodes = @(@{ body = "A" }) } }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{}
+                    }
+                }
+            }
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 100 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+
+        $records.Count | Should -Be 1
+        $records[0].threadId | Should -Be "T1"
+        $script:warningMessages.Count | Should -Be 1
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REVIEW_THREAD_PAGINATION"
+        $script:warningMessages[0] | Should -Match "E_MALFORMED_RESPONSE"
+    }
+
+    It "propagates a first-page GraphQL request failure instead of returning partial results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            throw "E_NETWORK_ERROR: first page failed"
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_NETWORK_ERROR*first page failed*"
+
+        $script:warningMessages.Count | Should -Be 0
+    }
+
+    It "propagates a first-page malformed GraphQL response instead of returning empty results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            return @{
+                data = @{
+                    repository = @{
+                        pullRequest = @{}
+                    }
+                }
+            }
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*reviewThreads*"
+
+        $script:warningMessages.Count | Should -Be 0
+    }
+
     It "sends lowercase GraphQL variable keys expected by the query" {
         $script:capturedGraphQLBodyJson = $null
 
@@ -4237,6 +4361,218 @@ Describe "Get-PublicPullRequestReviewCommentsFallback" {
         $parsed = @($json | ConvertFrom-JsonCompat -Depth 8)
         @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "resolutionState"
         @($parsed[0].PSObject.Properties.Name) | Should -Not -Contain "authSource"
+    }
+
+    It "preserves earlier REST pages and warns when a later public review-comment page fails" {
+        $secret = "secret-token-12345"
+        $script:restUris = @()
+        $script:warningMessages = @()
+
+        Mock Invoke-GitHubRequestWithRetry {
+            param(
+                [string]$Uri
+            )
+
+            $script:restUris += $Uri
+            if ($Uri -match "page=1") {
+                return @(
+                    [pscustomobject]@{
+                        id         = 101
+                        path       = "src/a.ts"
+                        line       = 6
+                        body       = "Top A"
+                        created_at = "2026-01-01T00:00:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r101"
+                        user       = [pscustomobject]@{ login = "reviewer-a" }
+                    },
+                    [pscustomobject]@{
+                        id         = 201
+                        path       = "src/b.ts"
+                        line       = 12
+                        body       = "Top B"
+                        created_at = "2026-01-01T00:02:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r201"
+                        user       = [pscustomobject]@{ login = "reviewer-b" }
+                    }
+                )
+            }
+
+            throw "E_NETWORK_ERROR: failed with $secret"
+        }
+
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -SensitiveTokens @($secret))
+
+        $records.Count | Should -Be 2
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:101"
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:201"
+        $script:restUris.Count | Should -Be 2
+        $script:warningMessages.Count | Should -Be 2
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REST_REVIEW_COMMENT_PAGINATION"
+        $script:warningMessages[0] | Should -Match "results may be incomplete"
+        $script:warningMessages[0] | Should -Not -Match [regex]::Escape($secret)
+        $script:warningMessages[1] | Should -Match "W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN"
+    }
+
+    It "preserves earlier REST pages and warns when a later public review-comment page is malformed" {
+        $script:restUris = @()
+        $script:warningMessages = @()
+
+        Mock Invoke-GitHubRequestWithRetry {
+            param(
+                [string]$Uri
+            )
+
+            $script:restUris += $Uri
+            if ($Uri -match "page=1") {
+                return @(
+                    [pscustomobject]@{
+                        id         = 101
+                        path       = "src/a.ts"
+                        line       = 6
+                        body       = "Top A"
+                        created_at = "2026-01-01T00:00:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r101"
+                        user       = [pscustomobject]@{ login = "reviewer-a" }
+                    },
+                    [pscustomobject]@{
+                        id         = 201
+                        path       = "src/b.ts"
+                        line       = 12
+                        body       = "Top B"
+                        created_at = "2026-01-01T00:02:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r201"
+                        user       = [pscustomobject]@{ login = "reviewer-b" }
+                    }
+                )
+            }
+
+            return [pscustomobject]@{ message = "not a review-comment array" }
+        }
+
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+
+        $records.Count | Should -Be 2
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:101"
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:201"
+        $script:restUris.Count | Should -Be 2
+        $script:warningMessages.Count | Should -Be 2
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REST_REVIEW_COMMENT_PAGINATION"
+        $script:warningMessages[0] | Should -Match "E_MALFORMED_RESPONSE"
+        $script:warningMessages[1] | Should -Match "W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN"
+    }
+
+    It "preserves earlier REST pages and warns when a later public review-comment page is null" {
+        $script:restUris = @()
+        $script:warningMessages = @()
+
+        Mock Invoke-GitHubRequestWithRetry {
+            param(
+                [string]$Uri
+            )
+
+            $script:restUris += $Uri
+            if ($Uri -match "page=1") {
+                return @(
+                    [pscustomobject]@{
+                        id         = 101
+                        path       = "src/a.ts"
+                        line       = 6
+                        body       = "Top A"
+                        created_at = "2026-01-01T00:00:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r101"
+                        user       = [pscustomobject]@{ login = "reviewer-a" }
+                    },
+                    [pscustomobject]@{
+                        id         = 201
+                        path       = "src/b.ts"
+                        line       = 12
+                        body       = "Top B"
+                        created_at = "2026-01-01T00:02:00Z"
+                        html_url   = "https://github.com/org/repo/pull/9#discussion_r201"
+                        user       = [pscustomobject]@{ login = "reviewer-b" }
+                    }
+                )
+            }
+
+            return $null
+        }
+
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        $records = @(Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+
+        $records.Count | Should -Be 2
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:101"
+        ($records | Select-Object -ExpandProperty threadId) | Should -Contain "rest:201"
+        $script:restUris.Count | Should -Be 2
+        $script:warningMessages.Count | Should -Be 2
+        $script:warningMessages[0] | Should -Match "W_PARTIAL_GITHUB_REST_REVIEW_COMMENT_PAGINATION"
+        $script:warningMessages[0] | Should -Match "returned null"
+        $script:warningMessages[1] | Should -Match "W_PUBLIC_REST_FALLBACK_RESOLUTION_UNKNOWN"
+    }
+
+    It "propagates a first-page public REST request failure instead of returning empty fallback results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            throw "E_NETWORK_ERROR: first page failed"
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_NETWORK_ERROR*first page failed*"
+
+        $script:warningMessages.Count | Should -Be 0
+    }
+
+    It "propagates a first-page null public REST page instead of returning empty fallback results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            return $null
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*returned null*"
+
+        $script:warningMessages.Count | Should -Be 0
+    }
+
+    It "propagates a first-page malformed public REST page instead of returning empty fallback results" {
+        $script:warningMessages = @()
+        Mock Invoke-GitHubRequestWithRetry {
+            return [pscustomobject]@{ message = "not a review-comment array" }
+        }
+        Mock Write-Warning {
+            param($Message)
+            $script:warningMessages += $Message
+        }
+
+        {
+            [void](Get-PublicPullRequestReviewCommentsFallback -Owner "org" -Repo "repo" -PrNumber 9 -GitHubHost "github.com" -PerPage 2 -MaxPages 5 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
+        } | Should -Throw "*E_MALFORMED_RESPONSE*without an id*"
+
+        $script:warningMessages.Count | Should -Be 0
     }
 
     It "uses current anchors for REST comments without an outdated flag" {

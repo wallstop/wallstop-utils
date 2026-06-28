@@ -221,16 +221,32 @@ export class GitHubClient {
 
     const repositories: AccessibleRepository[] = [];
     for (let page = 1; page <= MAX_REPOSITORY_PAGES; page++) {
-      const response = await this.fetch(
-        `${restBaseUrl(safeHost)}/user/repos?per_page=100&page=${page}&sort=pushed&affiliation=owner,collaborator,organization_member`,
-        { headers: this.restHeaders(token) },
-      );
-      const pageRepositories = await readJsonResponse<unknown[]>(response, 'List accessible repositories');
-      for (const value of pageRepositories) {
-        const mapped = mapAccessibleRepository(safeHost, value);
-        if (mapped !== undefined) {
-          repositories.push(mapped);
+      let pageRepositories: unknown[];
+      try {
+        const response = await this.fetch(
+          `${restBaseUrl(safeHost)}/user/repos?per_page=100&page=${page}&sort=pushed&affiliation=owner,collaborator,organization_member`,
+          { headers: this.restHeaders(token) },
+        );
+        pageRepositories = await readJsonResponse<unknown[]>(response, 'List accessible repositories');
+        if (!Array.isArray(pageRepositories)) {
+          throw new Error('List accessible repositories returned a non-array response.');
         }
+
+        for (const value of pageRepositories) {
+          const mapped = mapAccessibleRepository(safeHost, value);
+          if (mapped !== undefined) {
+            repositories.push(mapped);
+          }
+        }
+      } catch (error) {
+        // Keep repositories already gathered when a later page fails; a first-page failure still
+        // throws so auth and host issues surface clearly instead of producing an empty picker.
+        if (repositories.length === 0) {
+          throw error;
+        }
+
+        this.options.log?.(`Stopped paginating accessible repositories for ${safeHost} after a failed page; results may be incomplete. ${error instanceof Error ? error.message : String(error)}`);
+        break;
       }
 
       if (pageRepositories.length < 100) {
@@ -542,7 +558,14 @@ export class GitHubClient {
           `${restBaseUrl(repository.host)}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/pulls/${prNumber}/comments?per_page=100&page=${page}`,
           { headers: this.restHeaders(token) },
         );
-        pageComments = await readJsonResponse<RestReviewComment[]>(response, 'List review comments');
+        const parsed = await readJsonResponse<unknown>(response, 'List review comments');
+        if (!Array.isArray(parsed)) {
+          throw new Error('List review comments returned a non-array response.');
+        }
+
+        assertRestReviewCommentPage(parsed);
+        pageComments = parsed as RestReviewComment[];
+        comments.push(...pageComments);
       } catch (error) {
         // Keep comments already gathered when a later page fails; a first-page failure still throws
         // so the unauthenticated / all-scope REST paths surface (and can fall back on) the error.
@@ -553,7 +576,7 @@ export class GitHubClient {
         warnings?.push(`Stopped paginating REST review comments after a failed page; results may be incomplete. ${error instanceof Error ? error.message : String(error)}`);
         break;
       }
-      comments.push(...pageComments);
+
       if (pageComments.length < 100) {
         break;
       }
@@ -761,6 +784,14 @@ function mapRestComment(comment: RestReviewComment): ReviewComment {
     originalLine: comment.original_line ?? undefined,
     originalStartLine: comment.original_start_line ?? undefined,
   };
+}
+
+function assertRestReviewCommentPage(values: readonly unknown[]): void {
+  for (const [index, value] of values.entries()) {
+    if (!isRecord(value) || readNumber(value.id) === undefined) {
+      throw new Error(`List review comments returned a malformed review comment at index ${index}.`);
+    }
+  }
 }
 
 function mergeRestComments(threads: ReviewThread[], restComments: readonly RestReviewComment[]): void {

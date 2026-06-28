@@ -52,11 +52,17 @@ export function reviewThreadToRecord(
 
 export function hasRenderableCommentContent(comment: RenderableComment): boolean {
   return (
-    comment.body !== '' ||
-    comment.suggestedChanges.length > 0 ||
-    comment.suggestedDiffs.length > 0 ||
+    hasPublicCommentText(comment) ||
     (comment.diffHunk !== undefined && comment.diffHunk !== '') ||
     comment.unavailableReason !== undefined
+  );
+}
+
+export function hasPublicCommentText(comment: RenderableComment): boolean {
+  return (
+    comment.body !== '' ||
+    comment.suggestedChanges.length > 0 ||
+    comment.suggestedDiffs.length > 0
   );
 }
 
@@ -125,7 +131,7 @@ function toRenderableComment(
       })
     : undefined;
   const hasHigherConfidence = suggestedChanges.length > 0 || suggestedDiffs.length > 0;
-  const diffHunk = context.includeDiffHunks && !hasHigherConfidence
+  const diffHunk = context.includeDiffHunks && !hasHigherConfidence && unavailable === undefined
     ? trimDiffHunkToRange(comment.diffHunk, context.lineStart, context.lineEnd)
     : '';
 
