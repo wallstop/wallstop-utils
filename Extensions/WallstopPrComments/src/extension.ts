@@ -12,7 +12,7 @@ import {
   selectableRepositories,
 } from './repositoryStore';
 import { collectUnavailableSuggestionWarnings, reviewThreadToRecord } from './records';
-import { PrCommentsTreeProvider, type PullRequestNode, type TreeNode } from './treeProvider';
+import { PrCommentsTreeProvider, type PullRequestNode, type RepositoryNode, type TreeNode } from './treeProvider';
 import { AutoRefreshScheduler, type AutoRefreshConfig } from './autoRefresh';
 import type { AccessibleRepository, RepositoryRef, ReviewScope, ReviewThreadRecord, WebSuggestedDiffResult } from './types';
 
