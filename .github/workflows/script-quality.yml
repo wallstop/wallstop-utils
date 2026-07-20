@@ -33,18 +33,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0
 
       - name: Setup Python
         id: setup_python
-        uses: actions/setup-python@v6.2.0
+        uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.12"
 
       - name: Cache pre-commit environments
-        uses: actions/cache@v5.0.5
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml', 'requirements.txt') }}
@@ -396,16 +396,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
 
       - name: Setup Python
         id: setup_python
-        uses: actions/setup-python@v6.2.0
+        uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.12"
 
       - name: Cache pre-commit environments
-        uses: actions/cache@v5.0.5
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml', 'requirements.txt') }}
@@ -462,7 +462,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0
 
@@ -539,7 +539,7 @@ jobs:
 
       - name: Cache AutoHotkey portable runtime
         if: ${{ steps.detect_windows_targets.outputs.has_changes == 'true' }}
-        uses: actions/cache@v5.0.5
+        uses: actions/cache@v6.1.0
         with:
           path: ${{ runner.temp }}/autohotkey-portable-${{ env.AHK_RUNTIME_VERSION }}
           key: autohotkey-portable-${{ runner.os }}-${{ env.AHK_RUNTIME_VERSION }}
@@ -620,10 +620,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
 
       - name: Cache AutoHotkey portable runtime
-        uses: actions/cache@v5.0.5
+        uses: actions/cache@v6.1.0
         with:
           path: ${{ runner.temp }}/autohotkey-portable-${{ env.AHK_RUNTIME_VERSION }}
           key: autohotkey-portable-${{ runner.os }}-${{ env.AHK_RUNTIME_VERSION }}
@@ -691,7 +691,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
 
       - name: Run macOS language checks
         shell: bash
@@ -707,7 +707,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
 
       - name: Install PSScriptAnalyzer
         shell: pwsh
@@ -723,7 +723,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
 
       - name: Report PowerShell edition under test
         shell: powershell
@@ -740,7 +740,7 @@ jobs:
           [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "modulePath=$modulePath`n", [System.Text.UTF8Encoding]::new($false))
 
       - name: Cache Windows PowerShell 5.1 modules
-        uses: actions/cache@v5.0.5
+        uses: actions/cache@v6.1.0
         with:
           path: ${{ steps.psmodpath.outputs.modulePath }}
           key: psmodules-${{ runner.os }}-winps51-${{ hashFiles('Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1') }}
@@ -789,7 +789,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.0
 
       - name: Report PowerShell edition under test
         shell: pwsh
@@ -806,7 +806,7 @@ jobs:
           [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "modulePath=$modulePath`n", [System.Text.UTF8Encoding]::new($false))
 
       - name: Cache PowerShell 7+ modules
-        uses: actions/cache@v5.0.5
+        uses: actions/cache@v6.1.0
         with:
           path: ${{ steps.psmodpath.outputs.modulePath }}
           key: psmodules-${{ runner.os }}-pwsh7-${{ hashFiles('Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1') }}
