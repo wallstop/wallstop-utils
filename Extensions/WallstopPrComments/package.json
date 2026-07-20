@@ -176,14 +176,14 @@
     "test": "npm run compile && node scripts/run-tests.js"
   },
   "dependencies": {
-    "markdown-it": "^14.1.0"
+    "markdown-it": "^14.3.0"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
-    "@types/node": "^18.19.112",
-    "@types/vscode": "1.90.0",
-    "typescript": "^5.5.4",
-    "yauzl": "^2.10.0",
-    "yazl": "^2.5.1"
+    "@types/node": "^26.1.1",
+    "@types/vscode": "1.125.0",
+    "typescript": "^7.0.2",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1"
   }
 }
