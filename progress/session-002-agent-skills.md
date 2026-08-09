@@ -4,7 +4,7 @@
 
 - Open issue #45 requires each repository skill to be recognizable as a standard Agent Skill: a directory containing `SKILL.md` with YAML `name` and `description` metadata.
 - The existing `.llm/skills/*.md` cards used repository-specific trigger comments and were not directly discoverable by standard clients.
-- Open PRs #40 and #41 still have historical CI failures, but GitHub CLI authentication is unavailable in this environment; public API metadata was used for triage only.
+- Historical PRs #40 and #41 had CI failures, but they are no longer open; GitHub CLI authentication is unavailable in this environment, so public API metadata was used for triage.
 
 ## Changes
 
