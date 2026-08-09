@@ -225,6 +225,19 @@ Describe "BackupDxMessaging reliability conventions" {
         $functionAst[0].Body.Extent.Text | Should -Match 'finally\s*\{[\s\S]*\$process\.Dispose\(\)'
     }
 
+    It "preserves stable backup error codes at the script boundary" {
+        $outerTry = @($script:ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.TryStatementAst] -and
+                    $null -ne $node.Finally -and $node.Finally.Extent.Text -match '\$tempStagePath'
+                }, $true))[0]
+        $catchText = $outerTry.CatchClauses[0].Extent.Text
+        $catchText | Should -Match '\$failureMessage\s*=\s*\$_\.Exception\.Message'
+        $catchText | Should -Match '\$failureMessage\s+-match\s+[''\"]\^E_DXMSG_BACKUP_'
+        $catchText | Should -Match 'Write-Error\s+\$failureMessage'
+        $catchText | Should -Match 'E_DXMSG_BACKUP_UNEXPECTED'
+    }
+
     It "guards empty executable discovery before selecting deterministic candidates" {
         foreach ($case in @(
                 @{ List = 'robocopyCommands'; Selected = 'robocopyCommand'; Executable = 'Robocopy.exe'; Code = 'E_DXMSG_BACKUP_ROBOCOPY_NOT_AVAILABLE' },

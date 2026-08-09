@@ -303,8 +303,14 @@ try {
 
 }
 catch {
-    # Catch any unexpected errors during the process
-    Write-Error "E_DXMSG_BACKUP_UNEXPECTED: An unexpected error occurred: $($_.Exception.Message)"
+    # Preserve stable backup failure codes so callers can distinguish known failures.
+    $failureMessage = $_.Exception.Message
+    if ($failureMessage -match '^E_DXMSG_BACKUP_[A-Z0-9_]+:') {
+        Write-Error $failureMessage
+    }
+    else {
+        Write-Error "E_DXMSG_BACKUP_UNEXPECTED: An unexpected error occurred: $failureMessage"
+    }
     # Stack trace can be helpful for debugging: $_.ScriptStackTrace
     exit 1
 }
