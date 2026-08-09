@@ -266,18 +266,28 @@ if (Test-Path -Path $skillsDir -PathType Container) {
     )
 }
 
+$skillDirectories = @()
+if (Test-Path -Path $skillsDir -PathType Container) {
+    $skillDirectories = @(Get-ChildItem -Path $skillsDir -Directory -ErrorAction Stop | Sort-Object FullName)
+}
+
 # Agent Skills standard entrypoints are authoritative for discovery. Legacy cards are
 # retained only as an optional compatibility input for old temporary harness fixtures.
 $standardSkillFiles = @(
-    Get-ChildItem -Path $skillsDir -Directory -ErrorAction Stop |
+    $skillDirectories |
         ForEach-Object { Join-Path -Path $_.FullName -ChildPath 'SKILL.md' } |
         Where-Object { Test-Path -Path $_ -PathType Leaf } |
         Sort-Object
 )
-if ($standardSkillFiles.Count -gt 0 -and $skillFiles.Count -gt 0 -and $standardSkillFiles.Count -ne $skillFiles.Count) {
-    $errors.Add("E_LLM_STANDARD_SKILL_ENTRYPOINTS: every skill must contain SKILL.md (directories=$($standardSkillFiles.Count); legacyCards=$($skillFiles.Count)).") | Out-Null
+$missingStandardSkillDirectories = @(
+    $skillDirectories |
+        Where-Object { -not (Test-Path -Path (Join-Path -Path $_.FullName -ChildPath 'SKILL.md') -PathType Leaf) }
+)
+foreach ($missingDirectory in $missingStandardSkillDirectories) {
+    $missingRelativePath = Get-RelativePathCompat -BasePath $repoRoot -TargetPath $missingDirectory.FullName
+    $errors.Add("E_LLM_STANDARD_SKILL_ENTRYPOINT_MISSING: '$missingRelativePath' must contain SKILL.md.") | Out-Null
 }
-$skillCount = if ($standardSkillFiles.Count -gt 0) { $standardSkillFiles.Count } else { $skillFiles.Count }
+$skillCount = if ($skillDirectories.Count -gt 0) { $skillDirectories.Count } else { $skillFiles.Count }
 if ($skillCount -lt 1) {
     $errors.Add("At least one standard skill entrypoint is required in .llm/skills (found $skillCount).") | Out-Null
 }
@@ -306,6 +316,25 @@ foreach ($standardSkillPath in $standardSkillFiles) {
     $standardLineCount = [System.IO.File]::ReadAllLines($standardSkillPath,[System.Text.Encoding]::UTF8).Length
     if ($standardLineCount -gt 250) {
         $errors.Add("$standardRelativePath exceeds the Agent Skills hard limit (250 lines; found $standardLineCount).") | Out-Null
+    }
+
+    $detailsMatch = [regex]::Match($frontMatter.Groups['body'].Value,'(?m)^\s*details:\s*(?<details>[^\r\n]+)\s*$')
+    if (-not $detailsMatch.Success -or [string]::IsNullOrWhiteSpace($detailsMatch.Groups['details'].Value.Trim())) {
+        $errors.Add("$standardRelativePath must define a non-empty details metadata path.") | Out-Null
+        continue
+    }
+
+    $detailsValue = ConvertTo-PortablePath -PathValue $detailsMatch.Groups['details'].Value.Trim().Trim('"').Trim("'")
+    $detailsAbsolutePath = [System.IO.Path]::GetFullPath((Join-Path -Path (Split-Path -Path $standardSkillPath -Parent) -ChildPath $detailsValue))
+    if (-not (Test-IsPathWithinDirectory -BasePath $skillDetailsDir -CandidatePath $detailsAbsolutePath)) {
+        $errors.Add("$standardRelativePath details path '$detailsValue' must remain within .llm/skill-details.") | Out-Null
+    }
+    elseif (-not (Test-Path -Path $detailsAbsolutePath -PathType Leaf)) {
+        $errors.Add("$standardRelativePath references missing details file '$detailsValue'.") | Out-Null
+    }
+
+    if ($standardContent -notmatch '\(\.\./\.\./skill-details/.+?\.md\)') {
+        $errors.Add("$standardRelativePath must link to an expanded guide in ../../skill-details.") | Out-Null
     }
 }
 

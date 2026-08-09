@@ -3894,7 +3894,7 @@ Describe "Backup script safety conventions" {
 
     It "documents backup safety contract in LLM context" {
         $llmContext = (Get-Content -Path $script:llmContextPath -Raw) -replace "`r", ''
-        $komorebiSkill = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details/komorebi-machine-profile-safety.md') -Raw) -replace "`r", ''
+        $komorebiSkill = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skills/komorebi-machine-profile-safety/SKILL.md') -Raw) -replace "`r", ''
         $komorebiSkillDetail = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details/komorebi-machine-profile-safety.md') -Raw) -replace "`r", ''
 
         $llmContext | Should -Match '## Backup/Restore Safety Contract'
@@ -3905,8 +3905,8 @@ Describe "Backup script safety conventions" {
         $llmContext | Should -Match 'Config/Komorebi/profiles/<profile>/'
         $llmContext | Should -Match 'must not silently fall back'
 
-        $komorebiSkill | Should -Match 'Config/Komorebi/profiles'
-        $komorebiSkill | Should -Match 'KomorebiProfileHelpers\.Tests\.ps1'
+        $komorebiSkill | Should -Match '(?m)^name:\s*komorebi-machine-profile-safety\s*$'
+        $komorebiSkill | Should -Match '\.\./\.\./skill-details/komorebi-machine-profile-safety\.md'
         $komorebiSkillDetail | Should -Match 'WALLSTOP_KOMOREBI_PROFILE'
         $komorebiSkillDetail | Should -Match 'Config/Komorebi/profiles/<profile>/'
         $komorebiSkillDetail | Should -Match 'must not silently fall back'
