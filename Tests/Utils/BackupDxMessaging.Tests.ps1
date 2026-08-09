@@ -28,13 +28,13 @@ BeforeAll {
                     $child -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
                     $child -is [System.Management.Automation.Language.VariableExpressionAst]
                 }, $true) | Sort-Object { $_.Extent.StartOffset } | ForEach-Object {
-                    if ($_ -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                        '$' + $_.VariablePath.UserPath
-                    }
-                    else {
-                        $_.Value
-                    }
-                })
+                if ($_ -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                    '$' + $_.VariablePath.UserPath
+                }
+                else {
+                    $_.Value
+                }
+            })
     }
 
     function Get-CommandParameterArgument {
@@ -63,9 +63,9 @@ BeforeAll {
                     $node -is [System.Management.Automation.Language.CommandAst] -and
                     $node.GetCommandName() -eq 'Invoke-BackupProcess'
                 }, $true) | Where-Object {
-                    $descriptionArgument = Get-CommandParameterArgument -Command $_ -ParameterName 'Description'
-                    $null -ne $descriptionArgument -and $descriptionArgument.Value -eq $Description
-                })
+                $descriptionArgument = Get-CommandParameterArgument -Command $_ -ParameterName 'Description'
+                $null -ne $descriptionArgument -and $descriptionArgument.Value -eq $Description
+            })
     }
 
     function Get-GuardAst {
@@ -96,8 +96,8 @@ Describe "BackupDxMessaging reliability conventions" {
         ($foreachAsts | Where-Object { $_.Variable.VariablePath.UserPath -eq 'dir' }).Body.Extent.Text |
             Should -Match '\$robocopyArgs\s*\+=\s*["'']?/XD["'']?\s*,\s*\$dir'
         ($foreachAsts | Where-Object {
-                $_.Variable.VariablePath.UserPath -eq 'file' -and $_.Body.Extent.Text -match '\$robocopyArgs'
-            }).Body.Extent.Text |
+            $_.Variable.VariablePath.UserPath -eq 'file' -and $_.Body.Extent.Text -match '\$robocopyArgs'
+        }).Body.Extent.Text |
             Should -Match '\$robocopyArgs\s*\+=\s*["'']?/XF["'']?\s*,\s*\$file'
 
         $stagingTokens = @(Get-AstArgumentTokens -Node (Get-AssignmentAst -Name 'robocopyArgs')[0].Right)
