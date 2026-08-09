@@ -19,7 +19,9 @@
 
 ## Next milestone: analyzer baseline for #43
 
-- [ ] Capture the current analyzer inventory, versions, scopes, warning counts, and intentional suppressions in a reviewable artifact.
-- [ ] Select the first lane for warnings-as-errors using the smallest independently verifiable scope.
-- [ ] Add a failing baseline test for newly introduced warnings while remediation proceeds separately.
+- [x] Capture the current analyzer inventory, versions, scopes, warning counts, and intentional suppressions in a reviewable artifact.
+- [x] Select the first lane for warnings-as-errors using the smallest independently verifiable scope.
+- [x] Add a failing baseline test for newly introduced warnings while remediation proceeds separately.
 - [ ] Expand warnings-as-errors lane by lane only after the baseline is green and CI timing remains within contract.
+
+Evidence: [session-004 analyzer baseline](./progress/session-004-analyzer-baseline.md). The first lane is the 77-target PowerShell ScriptAnalyzer scope because it already has a deterministic zero-finding gate and does not require changing the shell/native release-tool lanes.

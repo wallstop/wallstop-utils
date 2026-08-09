@@ -2718,6 +2718,15 @@ Describe "Quality config file conventions" {
         }
     }
 
+    It "keeps the first warnings-as-errors lane fail-closed" {
+        $analyzerSettings = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.psscriptanalyzer.psd1') -Raw) -replace "`r", ''
+        $analyzerSettings | Should -Match "Severity\s*=\s*@\([\s\S]*Error[\s\S]*Warning" -Because "the PowerShell baseline must include both errors and warnings"
+
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = (Get-Content -Path $validatorPath -Raw) -replace "`r", ''
+        $validatorContent | Should -Match '\$analysisCount\s+-gt\s+0[\s\S]*E_LINT_FAILURE' -Because "any new ScriptAnalyzer finding must fail the validation gate"
+    }
+
     It "keeps git hook wrapper scripts ending with a trailing newline" {
         $hookPaths = @($script:preCommitHookPath, $script:prePushHookPath)
 
