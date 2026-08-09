@@ -8,6 +8,8 @@ Describe 'Scoop update automation' {
         $content = [System.IO.File]::ReadAllText($scriptPath, [System.Text.Encoding]::UTF8) -replace "`r", ''
 
         @([regex]::Matches($content, '(?m)^\s*scoop\s+update\s+\*\s*$')).Count | Should -Be 1
+        $content | Should -Match '\$scoopExitCode\s*=\s*\$LASTEXITCODE'
+        $content | Should -Match 'exit\s+\$scoopExitCode'
         $content | Should -Not -Match '(?m)^\s*scoop\s+update\s+java\s+\*\s*$'
     }
 }
