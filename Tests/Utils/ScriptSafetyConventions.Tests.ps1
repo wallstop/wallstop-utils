@@ -3772,10 +3772,17 @@ Describe "Backup script safety conventions" {
         $updateScript | Should -Match '\$stepResults\s*=\s*New-Object\s+System\.Collections\.Generic\.List\[object\]'
         $updateScript | Should -Match 'E_UPDATE_STEP_FAILED'
         $updateScript | Should -Match 'E_UPDATE_PARTIAL_FAILURE'
+        $updateScript | Should -Match 'Resolve-PowerShellExecutablePath\s*\r?\n\s*&\s*\$powerShellExecutable\s+-NoLogo\s+-NoProfile\s+-File\s+\$ScriptPath'
         $updateScript | Should -Match 'Failed steps:'
         $updateScript | Should -Not -Match 'RelativeScriptPath\s*=\s*"Utils/FormatPowershellScripts\.ps1"'
         $updateScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
         $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
+
+        $winGetUpdateScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WinGet/WinGetUpdate.ps1') -Raw) -replace "`r", ''
+        $winGetUpdateScript | Should -Match 'winget\s+upgrade\s+--all\s+--silent'
+        $winGetUpdateScript | Should -Match '\$wingetExitCode\s*=\s*\$LASTEXITCODE'
+        $winGetUpdateScript | Should -Match '-1978335189'
+        $winGetUpdateScript | Should -Match 'exit\s+0'
     }
 
     It "validates Config backup source before destructive clear" {

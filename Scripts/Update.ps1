@@ -98,7 +98,8 @@ function Invoke-UpdateStep {
         [string]$StepName
     )
 
-    & $ScriptPath
+    $powerShellExecutable = Resolve-PowerShellExecutablePath
+    & $powerShellExecutable -NoLogo -NoProfile -File $ScriptPath
     $stepSucceeded = $?
     $stepExitCode = Get-LastExitCodeOrDefault
     if (-not $stepSucceeded -or $stepExitCode -ne 0) {
