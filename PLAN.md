@@ -14,5 +14,12 @@
 
 ## Follow-up
 
-- Issue #46 (partial git uploads) requires operational evidence from a future backup run; current history shows atomic commits containing the four changed Config artifacts, with `partial success: 8/10` describing failed backup steps rather than a partial Git commit.
-- Issue #43 (warnings-as-errors and static-analyzer research) remains a separate, broad quality milestone and is not silently folded into this backup/CI maintenance PR.
+- Issue #46 (partial git uploads) now has explicit post-push remote-head verification and commit wording that distinguishes failed backup steps from Git publication. A live backup run remains required to close the operational investigation safely.
+- Issue #43 (warnings-as-errors and static-analyzer research) remains a separate milestone. Before implementation, inventory each enforced language/tool lane, record current warning counts and exclusions, then introduce warnings-as-errors one lane at a time with a reviewed baseline and remediation budget.
+
+## Next milestone: analyzer baseline for #43
+
+- [ ] Capture the current analyzer inventory, versions, scopes, warning counts, and intentional suppressions in a reviewable artifact.
+- [ ] Select the first lane for warnings-as-errors using the smallest independently verifiable scope.
+- [ ] Add a failing baseline test for newly introduced warnings while remediation proceeds separately.
+- [ ] Expand warnings-as-errors lane by lane only after the baseline is green and CI timing remains within contract.

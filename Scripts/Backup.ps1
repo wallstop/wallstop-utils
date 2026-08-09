@@ -172,6 +172,72 @@ function Assert-BackupGitBranchOrThrow {
     )
 }
 
+function Assert-BackupGitRemoteHeadOrThrow {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RemoteName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$BranchName
+    )
+
+    $localHeadArgs = @("-C", $RepositoryRoot, "rev-parse", "HEAD")
+    $localHeadOutput = @(& $GitExecutable @localHeadArgs 2>$null)
+    $localHeadExitCode = Get-LastExitCodeOrDefault
+    if ($localHeadExitCode -ne 0 -or $localHeadOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$localHeadOutput[0])) {
+        $localHeadDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $GitExecutable -GitArguments $localHeadArgs)
+        throw (
+            "E_BACKUP_GIT_REMOTE_VERIFY_FAILED: local HEAD verification failed after push (exitCode={0}; repositoryRoot='{1}'; outputPreview={2})." -f
+            $localHeadExitCode,
+            $RepositoryRoot,
+            (Get-OutputPreview -OutputLines $localHeadDiagnostics)
+        )
+    }
+
+    $remoteRef = "refs/heads/{0}" -f $BranchName
+    $remoteHeadArgs = @("-C", $RepositoryRoot, "ls-remote", "--exit-code", "--refs", $RemoteName, $remoteRef)
+    $remoteHeadOutput = @(& $GitExecutable @remoteHeadArgs 2>$null)
+    $remoteHeadExitCode = Get-LastExitCodeOrDefault
+    if ($remoteHeadExitCode -ne 0 -or $remoteHeadOutput.Count -eq 0 -or [string]$remoteHeadOutput[0] -notmatch '^([0-9a-fA-F]{40})\s+') {
+        $remoteHeadDiagnostics = @(Get-GitCommandDiagnosticsOutput -GitExecutable $GitExecutable -GitArguments $remoteHeadArgs)
+        throw (
+            "E_BACKUP_GIT_REMOTE_VERIFY_FAILED: remote branch verification failed after push (exitCode={0}; repositoryRoot='{1}'; remote='{2}'; branch='{3}'; outputPreview={4})." -f
+            $remoteHeadExitCode,
+            $RepositoryRoot,
+            $RemoteName,
+            $BranchName,
+            (Get-OutputPreview -OutputLines $remoteHeadDiagnostics)
+        )
+    }
+
+    $localHead = ([string]$localHeadOutput[0]).Trim()
+    $remoteHead = ([regex]::Match([string]$remoteHeadOutput[0], '^([0-9a-fA-F]{40})\s+')).Groups[1].Value
+    if (-not [string]::Equals($localHead, $remoteHead, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw (
+            "E_BACKUP_GIT_REMOTE_HEAD_MISMATCH: remote branch does not point to the pushed commit (repositoryRoot='{0}'; remote='{1}'; branch='{2}'; localHead='{3}'; remoteHead='{4}')." -f
+            $RepositoryRoot,
+            $RemoteName,
+            $BranchName,
+            $localHead,
+            $remoteHead
+        )
+    }
+
+    Write-Verbose (
+        "Backup git remote verification diagnostics: remote='{0}'; branch='{1}'; verifiedHead='{2}'; repositoryRoot='{3}'" -f
+        $RemoteName,
+        $BranchName,
+        $localHead,
+        $RepositoryRoot
+    )
+}
+
 function Get-GitStatusLinesOrThrow {
     param(
         [Parameter(Mandatory = $true)]
@@ -776,7 +842,7 @@ try {
     if (-not $hasGitFailure) {
         if ($stagedFiles.Count -gt 0) {
             if ($hasBackupStepFailures) {
-                $commitMessage = "Backup for $dateString (partial success: $succeededCount/$totalCount)"
+                $commitMessage = "Backup for $dateString (backup steps failed: $failedCount; $succeededCount/$totalCount succeeded)"
             }
             else {
                 $commitMessage = "Backup for $dateString ($succeededCount/$totalCount)"
@@ -926,6 +992,7 @@ try {
     }
 
     if (-not $hasGitFailure) {
+        Assert-BackupGitRemoteHeadOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -RemoteName "origin" -BranchName "main"
         $postPushStatus = @(Get-GitStatusLinesOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot)
         if ($postPushStatus.Count -gt 0) {
             $postPushSummary = Get-GitStatusSummary -StatusLines $postPushStatus
