@@ -24,3 +24,5 @@
 - Issue #46 investigation: recent backup commits are atomic Git commits containing the four changed Config artifacts; their `partial success: 8/10` message reflects failed backup steps while Git staging/commit/push remains a separate later phase. A live backup run is still required to prove or disprove an upload transport issue.
 - Implemented issue #48 by removing the duplicate `scoop update java *` command.
 - Implemented issue #47 by continuing all applicable Update.ps1 steps, recording per-step results, printing a summary, and returning stable `E_UPDATE_PARTIAL_FAILURE` after the run when any step fails.
+- Addressed the latest Cursor review by isolating each update step in the resolved PowerShell executable and normalizing WinGet's no-applicable-upgrade result (`-1978335189`) to success; focused ScriptSafety and pre-commit gates passed again.
+- Issue #43 received an evidence-based comment documenting the current analyzer inventory and the need for a separately scoped warnings-as-errors baseline/remediation plan. PR #49 is the only open PR; the stale Dependabot PRs are no longer open.
