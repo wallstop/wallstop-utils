@@ -191,19 +191,46 @@ function Get-SkillMetadata {
     )
 
     $content = [System.IO.File]::ReadAllText($SkillPath,[System.Text.Encoding]::UTF8)
-    $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
-    $match = [System.Text.RegularExpressions.Regex]::Match(
-        $content,
-        $triggerPattern,
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-
-    if (-not $match.Success) {
-        $relative = Get-RelativePathCompat -BasePath $Root -TargetPath $SkillPath
-        throw "E_LLM_TRIGGER_METADATA_MISSING: Missing trigger metadata comment in '$relative'."
+    $frontMatterMatch = [regex]::Match($content,'(?s)^---\s*\r?\n(?<frontmatter>.*?)\r?\n---\s*\r?\n')
+    if (-not $frontMatterMatch.Success) {
+        $legacy = [regex]::Match($content,'<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->',[System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $legacy.Success) {
+            $relative = Get-RelativePathCompat -BasePath $Root -TargetPath $SkillPath
+            throw "E_LLM_SKILL_FRONTMATTER_MISSING: Missing YAML front matter in '$relative'."
+        }
+        $legacyRelative = ConvertTo-PortablePath -PathValue (Get-RelativePathCompat -BasePath $Root -TargetPath $SkillPath)
+        $legacyLink = $legacyRelative
+        if ($legacyLink.StartsWith('.llm/',[System.StringComparison]::OrdinalIgnoreCase)) { $legacyLink = $legacyLink.Substring(5) }
+        $legacyDetails = ConvertTo-PortablePath -PathValue $legacy.Groups['details'].Value.Trim()
+        if ($legacyDetails.StartsWith('.llm/',[System.StringComparison]::OrdinalIgnoreCase)) { $legacyDetails = $legacyDetails.Substring(5) }
+        return [pscustomobject]@{
+            Name = ConvertTo-SkillTitle -FileName ([System.IO.Path]::GetFileNameWithoutExtension($SkillPath))
+            RelativePath = $legacyRelative
+            SkillCardLink = "./$legacyLink"
+            DetailsLink = "./$legacyDetails"
+            Keywords = ConvertTo-MarkdownTableValue -Value $legacy.Groups['keywords'].Value
+            Description = ConvertTo-MarkdownTableValue -Value $legacy.Groups['description'].Value
+            Category = ConvertTo-MarkdownTableValue -Value $legacy.Groups['category'].Value.Trim()
+        }
     }
 
-    $category = $match.Groups['category'].Value.Trim()
+    $frontMatter = $frontMatterMatch.Groups['frontmatter'].Value
+    $nameMatch = [regex]::Match($frontMatter,'(?m)^name:\s*(?<value>[^\r\n]+)\s*$')
+    $descriptionMatch = [regex]::Match($frontMatter,'(?m)^description:\s*(?<value>[^\r\n]+)\s*$')
+    $categoryMatch = [regex]::Match($frontMatter,'(?m)^\s*category:\s*(?<value>[^\r\n]+)\s*$')
+    $keywordsMatch = [regex]::Match($frontMatter,'(?m)^\s*keywords:\s*(?<value>[^\r\n]+)\s*$')
+    $detailsMatch = [regex]::Match($frontMatter,'(?m)^\s*details:\s*(?<value>[^\r\n]+)\s*$')
+    $name = if ($nameMatch.Success) { $nameMatch.Groups['value'].Value.Trim() } else { '' }
+    $description = if ($descriptionMatch.Success) { $descriptionMatch.Groups['value'].Value.Trim().Trim('"').Trim("'") } else { '' }
+    $category = if ($categoryMatch.Success) { $categoryMatch.Groups['value'].Value.Trim() } else { '' }
+    $keywords = if ($keywordsMatch.Success) { $keywordsMatch.Groups['value'].Value.Trim() } else { '' }
+    $detailsPath = if ($detailsMatch.Success) { $detailsMatch.Groups['value'].Value.Trim() } else { '' }
+    if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($description) -or
+        [string]::IsNullOrWhiteSpace($category) -or [string]::IsNullOrWhiteSpace($keywords) -or
+        [string]::IsNullOrWhiteSpace($detailsPath)) {
+        $relative = Get-RelativePathCompat -BasePath $Root -TargetPath $SkillPath
+        throw "E_LLM_SKILL_METADATA_MISSING: '$relative' must define name, description, category, keywords, and details."
+    }
 
     $relativePath = ConvertTo-PortablePath -PathValue (Get-RelativePathCompat -BasePath $Root -TargetPath $SkillPath)
     $skillLinkPath = $relativePath
@@ -211,24 +238,16 @@ function Get-SkillMetadata {
         $skillLinkPath = $skillLinkPath.Substring(5)
     }
 
-    $detailsPath = $match.Groups['details'].Value.Trim()
-    if ([string]::IsNullOrWhiteSpace($detailsPath)) {
-        $detailsPath = $skillLinkPath
-    }
     $detailsPath = ConvertTo-PortablePath -PathValue $detailsPath
-    if ($detailsPath.StartsWith('.llm/',[System.StringComparison]::OrdinalIgnoreCase)) {
-        $detailsPath = $detailsPath.Substring(5)
-    }
-
-    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($SkillPath)
-
+    $detailsAbsolute = [System.IO.Path]::GetFullPath((Join-Path -Path (Split-Path -Path $SkillPath -Parent) -ChildPath $detailsPath))
+    $detailsPath = ConvertTo-PortablePath -PathValue (Get-RelativePathCompat -BasePath (Join-Path -Path $Root -ChildPath '.llm') -TargetPath $detailsAbsolute)
     return [pscustomobject]@{
-        Name = ConvertTo-SkillTitle -FileName $baseName
+        Name = ConvertTo-SkillTitle -FileName $name
         RelativePath = $relativePath
         SkillCardLink = "./$skillLinkPath"
         DetailsLink = "./$detailsPath"
-        Keywords = ConvertTo-MarkdownTableValue -Value $match.Groups['keywords'].Value
-        Description = ConvertTo-MarkdownTableValue -Value $match.Groups['description'].Value
+        Keywords = ConvertTo-MarkdownTableValue -Value $keywords
+        Description = ConvertTo-MarkdownTableValue -Value $description
         Category = ConvertTo-MarkdownTableValue -Value $category
     }
 }
@@ -307,14 +326,17 @@ if (-not (Test-Path -Path $skillsRoot -PathType Container)) {
     throw "E_LLM_SKILLS_DIR_MISSING: Required directory not found at '$skillsRoot'."
 }
 
-$skillFiles = @(
-    Get-ChildItem -Path $skillsRoot -Filter '*.md' -File -Recurse -ErrorAction Stop |
-        Sort-Object FullName -Culture $script:InvariantCultureName
-)
+$skillDirectories = @(Get-ChildItem -Path $skillsRoot -Directory -ErrorAction Stop)
+if ($skillDirectories.Count -gt 0) {
+    $skillFiles = @($skillDirectories | ForEach-Object { Join-Path -Path $_.FullName -ChildPath 'SKILL.md' } | Where-Object { Test-Path -Path $_ -PathType Leaf } | Sort-Object)
+}
+else {
+    $skillFiles = @(Get-ChildItem -Path $skillsRoot -Filter '*.md' -File -ErrorAction Stop | Sort-Object FullName -Culture $script:InvariantCultureName)
+}
 
 $skillEntries = New-Object System.Collections.Generic.List[object]
 foreach ($skillFile in $skillFiles) {
-    $skillEntries.Add((Get-SkillMetadata -SkillPath $skillFile.FullName -Root $repoRoot)) | Out-Null
+    $skillEntries.Add((Get-SkillMetadata -SkillPath $skillFile -Root $repoRoot)) | Out-Null
 }
 
 $generatedLines = New-GeneratedIndexLines -Skills $skillEntries

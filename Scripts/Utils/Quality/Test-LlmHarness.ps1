@@ -261,19 +261,53 @@ foreach ($file in $llmMarkdownFiles) {
 $skillFiles = @()
 if (Test-Path -Path $skillsDir -PathType Container) {
     $skillFiles = @(
-        Get-ChildItem -Path $skillsDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
+        Get-ChildItem -Path $skillsDir -Filter '*.md' -File -ErrorAction Stop |
             Sort-Object FullName
     )
 }
 
-if ($skillFiles.Count -lt 1) {
-    $errors.Add("At least one skill card is required in .llm/skills (found $($skillFiles.Count)).") | Out-Null
+# Agent Skills standard entrypoints are authoritative for discovery. Legacy cards are
+# retained only as an optional compatibility input for old temporary harness fixtures.
+$standardSkillFiles = @(
+    Get-ChildItem -Path $skillsDir -Directory -ErrorAction Stop |
+        ForEach-Object { Join-Path -Path $_.FullName -ChildPath 'SKILL.md' } |
+        Where-Object { Test-Path -Path $_ -PathType Leaf } |
+        Sort-Object
+)
+if ($standardSkillFiles.Count -gt 0 -and $skillFiles.Count -gt 0 -and $standardSkillFiles.Count -ne $skillFiles.Count) {
+    $errors.Add("E_LLM_STANDARD_SKILL_ENTRYPOINTS: every skill must contain SKILL.md (directories=$($standardSkillFiles.Count); legacyCards=$($skillFiles.Count)).") | Out-Null
 }
-elseif ($skillFiles.Count -lt 8 -or $skillFiles.Count -gt 10) {
-    $diagnostics.Add("Skill count is outside the recommended range of 8-10 (found $($skillFiles.Count)).") | Out-Null
+$skillCount = if ($standardSkillFiles.Count -gt 0) { $standardSkillFiles.Count } else { $skillFiles.Count }
+if ($skillCount -lt 1) {
+    $errors.Add("At least one standard skill entrypoint is required in .llm/skills (found $skillCount).") | Out-Null
 }
-
-$diagnostics.Add("Skill metadata diagnostics: skillFiles=$($skillFiles.Count)") | Out-Null
+elseif ($skillCount -lt 8 -or $skillCount -gt 20) {
+    $diagnostics.Add("Skill count is outside the recommended range of 8-20 (found $skillCount).") | Out-Null
+}
+$diagnostics.Add("Skill metadata diagnostics: standardSkillFiles=$($standardSkillFiles.Count); legacyCards=$($skillFiles.Count)") | Out-Null
+foreach ($standardSkillPath in $standardSkillFiles) {
+    $standardRelativePath = Get-RelativePathCompat -BasePath $repoRoot -TargetPath $standardSkillPath
+    $standardContent = [System.IO.File]::ReadAllText($standardSkillPath,[System.Text.Encoding]::UTF8)
+    $frontMatter = [regex]::Match($standardContent,'(?s)^---\s*\r?\n(?<body>.*?)\r?\n---\s*\r?\n')
+    if (-not $frontMatter.Success) {
+        $errors.Add("$standardRelativePath must begin with YAML front matter.") | Out-Null
+        continue
+    }
+    $nameMatch = [regex]::Match($frontMatter.Groups['body'].Value,'(?m)^name:\s*(?<name>[^\r\n]+)\s*$')
+    $descriptionMatch = [regex]::Match($frontMatter.Groups['body'].Value,'(?m)^description:\s*(?<description>[^\r\n]+)\s*$')
+    $directoryName = Split-Path -Path (Split-Path -Path $standardSkillPath -Parent) -Leaf
+    if (-not $nameMatch.Success -or $nameMatch.Groups['name'].Value.Trim() -cne $directoryName -or
+        $directoryName -notmatch '^[a-z0-9]+(?:-[a-z0-9]+)*$') {
+        $errors.Add("$standardRelativePath must define a valid name matching its parent directory.") | Out-Null
+    }
+    if (-not $descriptionMatch.Success -or [string]::IsNullOrWhiteSpace($descriptionMatch.Groups['description'].Value.Trim())) {
+        $errors.Add("$standardRelativePath must define a non-empty description.") | Out-Null
+    }
+    $standardLineCount = [System.IO.File]::ReadAllLines($standardSkillPath,[System.Text.Encoding]::UTF8).Length
+    if ($standardLineCount -gt 250) {
+        $errors.Add("$standardRelativePath exceeds the Agent Skills hard limit (250 lines; found $standardLineCount).") | Out-Null
+    }
+}
 
 $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
 $anchorLinkPattern = '\[[^\]]+\]\(\.\./skill-details/(?<detailsPath>(?:[^/#)\s]+/)*[^/#)\s]+\.md)#(?<anchor>[^)\s]+)\)'
