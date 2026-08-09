@@ -281,6 +281,7 @@ Backup and restore scripts under `Scripts/` must prioritize data safety and dete
 22. `Backup.ps1` must run managed-path secret hygiene before staging/commit: redact known secret keys in text `Config/` outputs, skip binary files, then run a high-confidence unknown-secret scan; remaining hits must fail with `E_BACKUP_SECRET_SCAN_FAILED` using bounded redacted previews (never raw secrets).
 23. Komorebi backup/restore must be profile-scoped: select a validated profile via explicit parameter, `WALLSTOP_KOMOREBI_PROFILE`, or sanitized machine fallback; backup writes only `Config/Komorebi/profiles/<profile>/`; restore reads a complete selected profile with rollback semantics and must not silently fall back to another machine, a default profile, or legacy root snapshots. Legacy root snapshots may be used only by explicit migration tooling.
 24. Last-known-good publication: publish only a per-run unique candidate verified after transfer, using atomic replace-with-rollback or first-publication move semantics so failure leaves the prior final or a complete recoverable artifact; retention must select only final published names and exclude partial/rollback artifacts.
+25. Backup remote publication verification: after a successful backup `git push`, read back the target remote branch ref and compare it with local `HEAD`; fail with stable `E_*_REMOTE_VERIFY` or `E_*_REMOTE_HEAD_MISMATCH` diagnostics when the ref is unavailable or differs, rather than treating local post-push cleanliness as proof of remote publication.
 
 ## Contribution Rules
 

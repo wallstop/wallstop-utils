@@ -11,8 +11,9 @@
 - Added post-push verification that compares local `HEAD` with `origin`'s `refs/heads/main`, with stable diagnostics for verification failures and mismatches.
 - Changed partial backup commit wording to identify failed backup steps explicitly.
 - Advanced `PLAN.md` with a staged, measurable analyzer baseline for issue #43.
+- Retrospective invariant: local post-push cleanliness is insufficient evidence; remote branch readback must match local `HEAD`.
 
 ## Verification
 
 - Repository quality preflight passed, including managed shell/native tools and hook registration.
-- Targeted compatibility and pre-commit validation passed; full-repository validation is intentionally not run against the dirty Config snapshots because their formatter drift is pre-existing user work.
+- Targeted compatibility and pre-commit validation passed; PR #50's full required GitHub Actions run is green. Full-repository local validation was intentionally not run against the dirty Config snapshots because their formatter drift is pre-existing user work.
