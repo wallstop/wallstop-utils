@@ -21,6 +21,51 @@ if (-not (Test-IsWindowsPlatform)) {
     exit 1
 }
 
+function Invoke-BackupProcess {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$ArgumentList,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Description
+    )
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FilePath
+    $startInfo.UseShellExecute = $false
+    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList $ArgumentList
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        [void]$process.Start()
+        if (-not $process.WaitForExit($processTimeoutMilliseconds)) {
+            $terminationError = $null
+            try {
+                Stop-ProcessTreePortably -Process $process
+            }
+            catch {
+                $terminationError = $_.Exception.Message
+            }
+
+            if (-not $process.WaitForExit(10000)) {
+                throw "E_DXMSG_BACKUP_PROCESS_TERMINATION_FAILED: Timed-out $Description remained active after termination was requested. Detail: $terminationError"
+            }
+
+            throw "E_DXMSG_BACKUP_PROCESS_TIMEOUT: $Description exceeded the $processTimeoutMinutes minute timeout."
+        }
+
+        return $process.ExitCode
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
 $sourcePath = "D:\Code\Packages"
 $backupDir = "Z:\Backup\Code\Packages"
 # Define directories/files to exclude relative to the source path
@@ -30,20 +75,60 @@ $excludedDirs = @(
     "obj",
     "Builds",
     "CodeCoverage",
+    "TestResults",
     "Logs",
     "Temp",
-    "UserSettings",# Often excluded in Unity projects
-    ".vs" # Visual Studio temporary files, often hidden
+    "UserSettings",
+    ".vs",
+    ".idea",
+    ".tmp",
+    ".artifacts",
+    "artifacts",
+    ".venv",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".codex-home",
+    "coverage"
 )
-# You can also exclude specific files using /XF (e.g., "*.log") if needed
-# $excludedFiles = @("*.log", "*.tmp")
+$excludedFiles = @(
+    # Unix tools can create this legal POSIX name, but Win32 treats it as a device.
+    "nul",
+    ".DS_Store",
+    "Thumbs.db"
+)
 
 $date = Get-Date -Format "yyyy-MM-dd"
 $zipFileName = "$date.zip"
-$zipFilePath = Join-Path ([System.IO.Path]::GetTempPath()) $zipFileName # Final Zip location before move
-# Temporary location to stage files before zipping
-$tempStagePath = Join-Path ([System.IO.Path]::GetTempPath()) "TempBackupStage_$(Get-Date -Format 'yyyyMMddHHmmssffff')" # Unique temp dir name
+$runId = Get-Date -Format 'yyyyMMddHHmmssffff'
+$partialZipFileName = "dxmsg-$runId.partial.zip"
+$rollbackZipFileName = "dxmsg-$runId.rollback.zip"
+$zipFilePath = Join-Path ([System.IO.Path]::GetTempPath()) $partialZipFileName
+$tempStagePath = Join-Path ([System.IO.Path]::GetTempPath()) "TempBackupStage_$runId"
+$networkPartialPath = Join-Path -Path $backupDir -ChildPath $partialZipFileName
+$networkRollbackPath = Join-Path -Path $backupDir -ChildPath $rollbackZipFileName
+$networkFinalPath = Join-Path -Path $backupDir -ChildPath $zipFileName
 $maxBackups = 7
+$processTimeoutMinutes = 120
+$processTimeoutMilliseconds = $processTimeoutMinutes * 60 * 1000
+$backupPublished = $false
+
+$robocopyCommands = @(Get-Command -Name "Robocopy.exe" -CommandType Application -ErrorAction SilentlyContinue)
+if ($robocopyCommands.Count -eq 0) {
+    Write-Error "E_DXMSG_BACKUP_ROBOCOPY_NOT_AVAILABLE: Robocopy.exe is required but was not found."
+    exit 1
+}
+$robocopyCommand = $robocopyCommands[0]
+
+$tarCommands = @(Get-Command -Name "tar.exe" -CommandType Application -ErrorAction SilentlyContinue)
+if ($tarCommands.Count -eq 0) {
+    Write-Error "E_DXMSG_BACKUP_TAR_NOT_AVAILABLE: tar.exe is required to create a reliable ZIP archive but was not found."
+    exit 1
+}
+$tarCommand = $tarCommands[0]
 
 Write-Verbose (
     "DX messaging backup path diagnostics: sourcePath='{0}'; backupDir='{1}'; tempStagePath='{2}'; zipFilePath='{3}'" -f
@@ -87,9 +172,14 @@ try {
         $sourcePath,# Source
         $tempStagePath,# Destination
         '/E',# Copy Subdirectories, including Empty ones.
-        '/COPY:DAT',# Copy ALL file info (Data, Attributes, Timestamps, Security, Owner, Auditing). Use /COPY:DAT if less info is needed.
-        '/R:2',# Number of Retries on failed copies (default is 1 million!)
-        '/W:5',# Wait time between retries in seconds (default is 30)
+        '/COPY:DT',# Copy source data and timestamps; generated attributes are not backup-critical.
+        '/DCOPY:T',# Preserve directory timestamps without copying problematic attributes.
+        '/Z',# Use restartable mode for transient read failures.
+        '/XJ',# Exclude junctions that cannot be archived reliably.
+        '/XJD',# Explicitly exclude directory junctions/reparse points.
+        '/XJF',# Explicitly exclude file junctions/reparse points (for example Unix venv links).
+        '/R:3',# Keep retries bounded (Robocopy defaults to one million).
+        '/W:2',# Retry transient failures quickly.
         '/NFL',# No File List - Suppress file names being logged.
         '/NDL',# No Directory List - Suppress directory names being logged.
         '/NJH',# No Job Header.
@@ -101,15 +191,13 @@ try {
     foreach ($dir in $excludedDirs) {
         $robocopyArgs += '/XD',$dir
     }
-    # Add file exclusions (if you defined $excludedFiles)
-    # foreach ($file in $excludedFiles) {
-    #    $robocopyArgs += '/XF', $file
-    # }
+    foreach ($file in $excludedFiles) {
+        $robocopyArgs += '/XF',$file
+    }
 
     # Execute Robocopy
     Write-Host "Running Robocopy..."
-    $process = Start-Process Robocopy.exe -ArgumentList $robocopyArgs -Wait -NoNewWindow -Passthru
-    [void]$process.WaitForExit(30000)
+    $robocopyExitCode = Invoke-BackupProcess -FilePath $robocopyCommand.Source -ArgumentList $robocopyArgs -Description "staging copy"
 
     # Check Robocopy Exit Code (See Robocopy documentation for meanings)
     # 0 = No errors, no files copied
@@ -117,47 +205,80 @@ try {
     # 2 = Extra files/dirs detected (ok if destination wasn't empty)
     # 3 = 1 + 2
     # >= 8 indicates errors (e.g., 8=some failures, 16=serious error)
-    if ($process.ExitCode -ge 8) {
-        Write-Error "Robocopy failed during staging copy with exit code $($process.ExitCode). Backup aborted. Check logs or run manually for details."
-        # Consider leaving the $tempStagePath for diagnosis, or clean it up in finally
-        exit 1 # Exit the script
+    if ($robocopyExitCode -ge 8) {
+        throw "E_DXMSG_BACKUP_STAGING_COPY_FAILED: Robocopy failed during staging copy with exit code $robocopyExitCode."
     }
     else {
-        Write-Host "Robocopy completed staging copy successfully (Exit Code: $($process.ExitCode))."
+        Write-Host "Robocopy completed staging copy successfully (Exit Code: $robocopyExitCode)."
     }
 
     # 3. Create ZIP Archive from the Staged Directory Contents
     Write-Host "Creating ZIP archive '$zipFilePath' from staged files..."
-    # Use "$tempStagePath\*" to zip the *contents* of the directory, not the directory itself
-    Compress-Archive -Path "$tempStagePath\*" -DestinationPath $zipFilePath -Force
+    if (Test-Path -LiteralPath $zipFilePath -PathType Leaf) {
+        Remove-Item -LiteralPath $zipFilePath -Force
+    }
+    $archiveArgs = @('-a','-c','-f',$zipFilePath,'-C',$tempStagePath,'.')
+    $archiveExitCode = Invoke-BackupProcess -FilePath $tarCommand.Source -ArgumentList $archiveArgs -Description "ZIP archive creation"
+    if ($archiveExitCode -ne 0 -or -not (Test-Path -LiteralPath $zipFilePath -PathType Leaf) -or (Get-Item -LiteralPath $zipFilePath).Length -eq 0) {
+        throw "E_DXMSG_BACKUP_ARCHIVE_FAILED: tar.exe failed to create '$zipFilePath' (exit code $archiveExitCode)."
+    }
+    $requiredArchiveEntry = './Packages/com.wallstop-studios.dxmessaging/package.json'
+    $verifyArgs = @('-t','-f',$zipFilePath,$requiredArchiveEntry)
+    $verifyExitCode = Invoke-BackupProcess -FilePath $tarCommand.Source -ArgumentList $verifyArgs -Description "ZIP archive verification"
+    if ($verifyExitCode -ne 0) {
+        throw "E_DXMSG_BACKUP_ARCHIVE_VERIFY_FAILED: '$zipFilePath' is unreadable or is missing '$requiredArchiveEntry' (exit code $verifyExitCode)."
+    }
     Write-Host "ZIP archive created."
 
-    # 4. Move ZIP Archive to Network Location using Robocopy
-    Write-Host "Moving ZIP file to '$backupDir'..."
+    # 4. Copy to a unique network partial, then atomically publish the date-named archive.
+    Write-Host "Transferring ZIP file to '$backupDir'..."
     $robocopyMoveArgs = @(
-        ([System.IO.Path]::GetTempPath()),# Source Directory (where the zip file is)
-        $backupDir,# Destination Directory
-        $zipFileName,# File to move
-        '/MOV',# Move file (Copy then Delete source)
-        '/NFL',# No File List
-        '/NDL',# No Directory List
-        '/NP',# No Progress
-        '/NJH',# No Job Header
-        '/NJS' # No Job Summary
+        ([System.IO.Path]::GetTempPath()),
+        $backupDir,
+        $partialZipFileName,
+        '/Z',
+        '/R:3',
+        '/W:5',
+        '/NFL',
+        '/NDL',
+        '/NP',
+        '/NJH',
+        '/NJS'
     )
-    $processMove = Start-Process Robocopy.exe -ArgumentList $robocopyMoveArgs -Wait -NoNewWindow -Passthru
-    [void]$processMove.WaitForExit(30000)
-    if ($processMove.ExitCode -ge 8) {
-        Write-Error "Robocopy failed during ZIP file move with exit code $($processMove.ExitCode). The ZIP might still be in '$([System.IO.Path]::GetTempPath())'."
-        exit 1 # Exit the script
+    $moveExitCode = Invoke-BackupProcess -FilePath $robocopyCommand.Source -ArgumentList $robocopyMoveArgs -Description "backup transfer"
+    if ($moveExitCode -ge 8) {
+        throw "E_DXMSG_BACKUP_TRANSFER_FAILED: Robocopy failed during ZIP transfer with exit code $moveExitCode."
     }
-    else {
-        Write-Host "ZIP file moved successfully to network share."
+
+    $localArchiveLength = (Get-Item -LiteralPath $zipFilePath).Length
+    if (-not (Test-Path -LiteralPath $networkPartialPath -PathType Leaf) -or (Get-Item -LiteralPath $networkPartialPath).Length -ne $localArchiveLength) {
+        throw "E_DXMSG_BACKUP_TRANSFER_VERIFY_FAILED: Network partial '$networkPartialPath' does not match the local archive size."
     }
+    try {
+        if (Test-Path -LiteralPath $networkFinalPath -PathType Leaf) {
+            [System.IO.File]::Replace($networkPartialPath,$networkFinalPath,$networkRollbackPath,$true)
+        }
+        else {
+            [System.IO.File]::Move($networkPartialPath,$networkFinalPath)
+        }
+    }
+    catch {
+        throw "E_DXMSG_BACKUP_PUBLISH_FAILED: Failed to atomically publish '$networkFinalPath': $($_.Exception.Message)"
+    }
+    $backupPublished = $true
+    if (Test-Path -LiteralPath $networkRollbackPath -PathType Leaf) {
+        try {
+            Remove-Item -LiteralPath $networkRollbackPath -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "W_DXMSG_BACKUP_ROLLBACK_CLEANUP_FAILED: Published backup is valid, but failed to remove rollback '$networkRollbackPath': $($_.Exception.Message)"
+        }
+    }
+    Write-Host "ZIP file published successfully to network share."
 
     # 5. Cleanup: Delete Old Backups on the Network Share
     Write-Host "Checking for old backups to remove..."
-    $backups = Get-ChildItem -LiteralPath $backupDir -Filter "*.zip" | Sort-Object LastWriteTime
+    $backups = Get-ChildItem -LiteralPath $backupDir -Filter "????-??-??.zip" | Sort-Object LastWriteTime
     $backupTotal = Get-SafeCount -InputObject $backups
     if ($backupTotal -gt $maxBackups) {
         $toDelete = @($backups | Select-Object -First ($backupTotal - $maxBackups))
@@ -173,10 +294,10 @@ try {
     }
 
     # --- Final Report ---
-    $backupCount = Get-SafeCount -InputObject (Get-ChildItem -LiteralPath $backupDir -Filter "*.zip")
+    $backupCount = Get-SafeCount -InputObject (Get-ChildItem -LiteralPath $backupDir -Filter "????-??-??.zip")
     Write-Host "----------------------------------------"
     Write-Host "Backup completed successfully!"
-    Write-Host "Backup file: $backupDir\$zipFileName"
+    Write-Host "Backup file: $networkFinalPath"
     Write-Host "Total backups now in directory: $backupCount"
     Write-Host "----------------------------------------"
 
@@ -198,14 +319,28 @@ finally {
             Write-Warning "W_DXMSG_BACKUP_TEMP_STAGE_CLEANUP_FAILED: Failed to remove temporary staging directory '$tempStagePath': $($_.Exception.Message)"
         }
     }
-    # Optional: Clean up the zip file from TEMP if it still exists (e.g., if move failed but script didn't exit)
-    if (Test-Path -LiteralPath $zipFilePath -PathType Leaf) {
-        Write-Warning "Temporary zip file '$zipFilePath' still exists in $([System.IO.Path]::GetTempPath()). Removing it."
+    if (Test-Path -LiteralPath $networkPartialPath -PathType Leaf) {
         try {
-            Remove-Item -LiteralPath $zipFilePath -Force -ErrorAction Stop
+            Remove-Item -LiteralPath $networkPartialPath -Force -ErrorAction Stop
         }
         catch {
-            Write-Warning "W_DXMSG_BACKUP_TEMP_ZIP_CLEANUP_FAILED: Failed to remove temporary zip file '$zipFilePath': $($_.Exception.Message)"
+            Write-Warning "W_DXMSG_BACKUP_NETWORK_PARTIAL_CLEANUP_FAILED: Failed to remove '$networkPartialPath': $($_.Exception.Message)"
+        }
+    }
+    if (Test-Path -LiteralPath $networkRollbackPath -PathType Leaf) {
+        Write-Warning "W_DXMSG_BACKUP_ROLLBACK_RETAINED: Previous published archive retained at '$networkRollbackPath'."
+    }
+    if (Test-Path -LiteralPath $zipFilePath -PathType Leaf) {
+        if ($backupPublished) {
+            try {
+                Remove-Item -LiteralPath $zipFilePath -Force -ErrorAction Stop
+            }
+            catch {
+                Write-Warning "W_DXMSG_BACKUP_TEMP_ZIP_CLEANUP_FAILED: Failed to remove temporary zip file '$zipFilePath': $($_.Exception.Message)"
+            }
+        }
+        else {
+            Write-Warning "W_DXMSG_BACKUP_RECOVERY_ARCHIVE_RETAINED: Backup failed; complete local archive retained at '$zipFilePath'."
         }
     }
     Write-Host "Cleanup complete."

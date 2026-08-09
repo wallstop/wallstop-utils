@@ -94,8 +94,8 @@ test('extension CI runs on the VS Code 1.90 extension-host Node major', () => {
   );
   assert.match(
     workflow,
-    /uses:\s*actions\/setup-node@v6\.4\.0/u,
-    'extension CI must pin setup-node to an exact v6 release so Dependabot owns action updates',
+    /uses:\s*actions\/setup-node@v\d+\.\d+\.\d+/u,
+    'extension CI must pin setup-node to an exact semver release so Dependabot owns action updates',
   );
   assert.match(
     workflow,
