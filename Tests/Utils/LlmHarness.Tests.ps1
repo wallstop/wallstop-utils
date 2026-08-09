@@ -125,9 +125,10 @@ Describe "LLM harness structure" {
         }
     }
 
-    It "keeps lightweight skill cards with trigger metadata and expanded guides" {
+    It "keeps standard SKILL.md entrypoints with valid metadata and expanded guides" {
         $skillFiles = @(
-            Get-ChildItem -Path $script:skillsDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
+            Get-ChildItem -Path $script:skillsDir -Directory -ErrorAction Stop |
+                ForEach-Object { Get-Item -LiteralPath (Join-Path -Path $_.FullName -ChildPath 'SKILL.md') -ErrorAction Stop } |
                 Sort-Object FullName
         )
         $skillDetailFiles = @(
@@ -138,23 +139,16 @@ Describe "LLM harness structure" {
         $skillFiles.Count | Should -BeGreaterOrEqual 1
         $skillDetailFiles.Count | Should -BeGreaterOrEqual $skillFiles.Count
 
-        $triggerPattern = '<!--\s*trigger:\s*(?<keywords>[^|]+?)\s*\|\s*(?<description>[^|]+?)\s*\|\s*(?<category>[^|>]+?)\s*\|\s*(?<details>[^>]+?)\s*-->'
         foreach ($skillFile in $skillFiles) {
             $content = [System.IO.File]::ReadAllText($skillFile.FullName, [System.Text.Encoding]::UTF8)
-            $match = [regex]::Match($content, $triggerPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            $match.Success | Should -BeTrue -Because "$($skillFile.Name) must include trigger metadata"
-            $content | Should -Match '\(\.\./skill-details/.+?\.md\)' -Because "$($skillFile.Name) must link to expanded guide"
+            $content | Should -Match '(?m)^name:\s*[a-z0-9]+(?:-[a-z0-9]+)*\s*$' -Because "$($skillFile.FullName) must include standard name metadata"
+            $content | Should -Match '(?m)^description:\s*\S' -Because "$($skillFile.FullName) must include a description"
+            $content | Should -Match '\(\.\./\.\./skill-details/.+?\.md\)' -Because "$($skillFile.FullName) must link to expanded guide"
 
             $lineCount = [System.IO.File]::ReadAllLines($skillFile.FullName, [System.Text.Encoding]::UTF8).Length
-            $lineCount | Should -BeLessOrEqual 80 -Because "$($skillFile.Name) must remain lightweight"
-
-            $detailsPath = ($match.Groups['details'].Value.Trim() -replace '[\\/]+', '/')
-            if ($detailsPath.StartsWith('.llm/', [System.StringComparison]::OrdinalIgnoreCase)) {
-                $detailsPath = $detailsPath.Substring(5)
-            }
-
-            $detailsAbsolutePath = Join-Path -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm') -ChildPath $detailsPath
-            Test-Path -Path $detailsAbsolutePath -PathType Leaf | Should -BeTrue -Because "$($skillFile.Name) details path must exist"
+            $lineCount | Should -BeLessOrEqual 250 -Because "$($skillFile.FullName) must remain within the Agent Skills hard limit"
+            $detailsPath = [regex]::Match($content, '(?m)^\s*details:\s*(?<path>[^\r\n]+)').Groups['path'].Value.Trim()
+            Test-Path -Path ([System.IO.Path]::GetFullPath((Join-Path -Path (Split-Path -Path $skillFile.FullName -Parent) -ChildPath $detailsPath))) -PathType Leaf | Should -BeTrue -Because "$($skillFile.FullName) details path must exist"
         }
 
         foreach ($detailsFile in $skillDetailFiles) {
@@ -171,7 +165,7 @@ Describe "LLM harness structure" {
         $indexContent | Should -Match '(?m)^##\s+Core$'
         $indexContent | Should -Match '(?m)^\| Skill Card \| Expanded Guide \| Trigger Keywords \| Usage \|$'
         $indexContent | Should -Match '(?m)^\| --- \| --- \| --- \| --- \|$'
-        $indexContent | Should -Match '(?m)^\| \[.+\]\(\./skills/.+\.md\) \| \[Expanded Guide\]\(\./skill-details/.+\.md\) \|'
+        $indexContent | Should -Match '(?m)^\| \[.+\]\(\./skills/.+/SKILL\.md\) \| \[Expanded Guide\]\(\./skill-details/.+\.md\) \|'
 
         $trailingWhitespace = @($indexContent -split "`n" | Where-Object { $_ -match '\s+$' })
         $trailingWhitespace.Count | Should -Be 0 -Because 'generated index should not include trailing whitespace'
@@ -581,8 +575,8 @@ Describe "LLM document drift detection" {
 
     It "keeps every skill-detail file paired with a skill card" {
         $skillNames = @(
-            Get-ChildItem -Path $script:skillsDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
-                ForEach-Object { $_.BaseName }
+            Get-ChildItem -Path $script:skillsDir -Directory -ErrorAction Stop |
+                ForEach-Object { $_.Name }
         )
         # Only check top-level detail files; subdirectories contain reference material.
         $detailFiles = @(

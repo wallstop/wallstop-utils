@@ -1,2 +1,3 @@
 scoop update *
-scoop update java *
+$scoopExitCode = $LASTEXITCODE
+exit $scoopExitCode

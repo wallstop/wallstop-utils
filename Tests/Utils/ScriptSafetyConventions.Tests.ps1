@@ -3769,9 +3769,20 @@ Describe "Backup script safety conventions" {
         $updateScript | Should -Match 'Assert-ApplicableUpdateStepsFlat\s+-ApplicableSteps\s+\$applicableSteps'
         $updateScript | Should -Match 'Update platform diagnostics:'
         $updateScript | Should -Match 'Write-Host\s+"INFO_UPDATE_FORMATTER_BOUNDARY:[^"]*pre-commit run --all-files'
+        $updateScript | Should -Match '\$stepResults\s*=\s*New-Object\s+System\.Collections\.Generic\.List\[object\]'
+        $updateScript | Should -Match 'E_UPDATE_STEP_FAILED'
+        $updateScript | Should -Match 'E_UPDATE_PARTIAL_FAILURE'
+        $updateScript | Should -Match 'Resolve-PowerShellExecutablePath\s*\r?\n\s*&\s*\$powerShellExecutable\s+-NoLogo\s+-NoProfile\s+-File\s+\$ScriptPath'
+        $updateScript | Should -Match 'Failed steps:'
         $updateScript | Should -Not -Match 'RelativeScriptPath\s*=\s*"Utils/FormatPowershellScripts\.ps1"'
         $updateScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
         $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
+
+        $winGetUpdateScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WinGet/WinGetUpdate.ps1') -Raw) -replace "`r", ''
+        $winGetUpdateScript | Should -Match 'winget\s+upgrade\s+--all\s+--silent'
+        $winGetUpdateScript | Should -Match '\$wingetExitCode\s*=\s*\$LASTEXITCODE'
+        $winGetUpdateScript | Should -Match '-1978335189'
+        $winGetUpdateScript | Should -Match 'exit\s+0'
     }
 
     It "validates Config backup source before destructive clear" {
@@ -3894,7 +3905,7 @@ Describe "Backup script safety conventions" {
 
     It "documents backup safety contract in LLM context" {
         $llmContext = (Get-Content -Path $script:llmContextPath -Raw) -replace "`r", ''
-        $komorebiSkill = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skills/komorebi-machine-profile-safety.md') -Raw) -replace "`r", ''
+        $komorebiSkill = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skills/komorebi-machine-profile-safety/SKILL.md') -Raw) -replace "`r", ''
         $komorebiSkillDetail = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.llm/skill-details/komorebi-machine-profile-safety.md') -Raw) -replace "`r", ''
 
         $llmContext | Should -Match '## Backup/Restore Safety Contract'
@@ -3905,8 +3916,8 @@ Describe "Backup script safety conventions" {
         $llmContext | Should -Match 'Config/Komorebi/profiles/<profile>/'
         $llmContext | Should -Match 'must not silently fall back'
 
-        $komorebiSkill | Should -Match 'Config/Komorebi/profiles'
-        $komorebiSkill | Should -Match 'KomorebiProfileHelpers\.Tests\.ps1'
+        $komorebiSkill | Should -Match '(?m)^name:\s*komorebi-machine-profile-safety\s*$'
+        $komorebiSkill | Should -Match '\.\./\.\./skill-details/komorebi-machine-profile-safety\.md'
         $komorebiSkillDetail | Should -Match 'WALLSTOP_KOMOREBI_PROFILE'
         $komorebiSkillDetail | Should -Match 'Config/Komorebi/profiles/<profile>/'
         $komorebiSkillDetail | Should -Match 'must not silently fall back'
