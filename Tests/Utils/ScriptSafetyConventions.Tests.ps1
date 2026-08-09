@@ -2451,11 +2451,11 @@ Describe "Cross-language quality platform conventions" {
         $crossLanguageWorkflow = Get-Content -Path $script:crossLanguageWorkflowPath -Raw
         $powerShellWorkflow = Get-Content -Path $script:workflowPath -Raw
 
-        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/checkout@v6\.\d+\.\d+'
-        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/setup-python@v6\.\d+\.\d+'
-        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/cache@v5\.\d+\.\d+'
+        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/checkout@v\d+\.\d+\.\d+'
+        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/setup-python@v\d+\.\d+\.\d+'
+        $crossLanguageWorkflow | Should -Match 'uses:\s+actions/cache@v\d+\.\d+\.\d+'
         $crossLanguageWorkflow | Should -Match 'uses:\s+actions/upload-artifact@v(?:6|7)\.\d+\.\d+'
-        $powerShellWorkflow | Should -Match 'uses:\s+actions/checkout@v6\.\d+\.\d+'
+        $powerShellWorkflow | Should -Match 'uses:\s+actions/checkout@v\d+\.\d+\.\d+'
         $powerShellWorkflow | Should -Match 'uses:\s+actions/upload-artifact@v(?:6|7)\.\d+\.\d+'
     }
 

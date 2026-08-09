@@ -26,3 +26,8 @@ Extensions/**/node_modules/
 Extensions/**/out/
 Extensions/**/.npm-cache/
 Extensions/**/dist/
+
+# Local agent planning and progress artifacts.
+/GOAL.md
+/PLAN.md
+/progress/
