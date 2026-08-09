@@ -80,6 +80,37 @@ function Assert-ApplicableUpdateStepsFlat {
     }
 }
 
+function Get-LastExitCodeOrDefault {
+    $lastExitCode = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -ne $lastExitCode) {
+        return [int]$lastExitCode
+    }
+
+    return 0
+}
+
+function Invoke-UpdateStep {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$StepName
+    )
+
+    & $ScriptPath
+    $stepSucceeded = $?
+    $stepExitCode = Get-LastExitCodeOrDefault
+    if (-not $stepSucceeded -or $stepExitCode -ne 0) {
+        throw (
+            "E_UPDATE_STEP_FAILED: Step '{0}' failed (exitCode={1}; scriptPath='{2}')." -f
+            $StepName,
+            $stepExitCode,
+            $ScriptPath
+        )
+    }
+}
+
 $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
 $compatibilityHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/CompatibilityHelpers.ps1"
 if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
@@ -102,8 +133,45 @@ Write-Host "INFO_UPDATE_FORMATTER_BOUNDARY: FormatPowershellScripts is no longer
 
 Push-Location -LiteralPath $scriptsDirectory
 try {
+    $stepResults = New-Object System.Collections.Generic.List[object]
     foreach ($step in $applicableSteps) {
-        & (Join-Path -Path $scriptsDirectory -ChildPath $step.RelativeScriptPath)
+        $stepPath = Join-Path -Path $scriptsDirectory -ChildPath $step.RelativeScriptPath
+        try {
+            Invoke-UpdateStep -ScriptPath $stepPath -StepName $step.Name
+            [void]$stepResults.Add([pscustomobject]@{
+                    Name    = $step.Name
+                    Success = $true
+                    Error   = ""
+                })
+        }
+        catch {
+            $errorMessage = $_.Exception.Message
+            Write-Warning ("{0}: {1}" -f $step.Name, $errorMessage)
+            [void]$stepResults.Add([pscustomobject]@{
+                    Name    = $step.Name
+                    Success = $false
+                    Error   = $errorMessage
+                })
+        }
+    }
+
+    $failedSteps = @($stepResults | Where-Object { -not $_.Success })
+    $failedCount = $failedSteps.Count
+    $totalCount = $stepResults.Count
+    $succeededCount = $totalCount - $failedCount
+
+    Write-Host ""
+    Write-Host "========== UPDATE SUMMARY ==========" -ForegroundColor Cyan
+    Write-Host ("Planned steps: {0}, Applicable on {1}: {2}, Skipped by platform: {3}" -f $steps.Count, $currentPlatformName, $applicableSteps.Count, ($steps.Count - $applicableSteps.Count))
+    Write-Host ("Total steps: {0}, Successful: {1}, Failed: {2}" -f $totalCount, $succeededCount, $failedCount)
+
+    if ($failedCount -gt 0) {
+        Write-Host "Failed steps:" -ForegroundColor Yellow
+        foreach ($failedStep in $failedSteps) {
+            Write-Host ("  - {0}: {1}" -f $failedStep.Name, $failedStep.Error) -ForegroundColor Yellow
+        }
+
+        throw ("E_UPDATE_PARTIAL_FAILURE: One or more update steps failed ({0}/{1} succeeded)." -f $succeededCount, $totalCount)
     }
 }
 finally {

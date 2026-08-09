@@ -21,3 +21,6 @@
 - Targeted `LlmHarness.Tests.ps1` Pester gate passed.
 - Targeted pre-commit validation passed after the ScriptAnalyzer declaration fix.
 - Full validation reached all-files pre-commit but remains blocked by pre-existing dirty `Config/` snapshots being rewritten by format hooks; those user changes were not staged or intentionally changed.
+- Issue #46 investigation: recent backup commits are atomic Git commits containing the four changed Config artifacts; their `partial success: 8/10` message reflects failed backup steps while Git staging/commit/push remains a separate later phase. A live backup run is still required to prove or disprove an upload transport issue.
+- Implemented issue #48 by removing the duplicate `scoop update java *` command.
+- Implemented issue #47 by continuing all applicable Update.ps1 steps, recording per-step results, printing a summary, and returning stable `E_UPDATE_PARTIAL_FAILURE` after the run when any step fails.
