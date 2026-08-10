@@ -35,6 +35,16 @@ test('package manifest routes npm test through the cross-platform test runner', 
   assert.equal(manifest.scripts?.test, 'npm run compile && node scripts/run-tests.js');
 });
 
+test('TypeScript compiler keeps unused declarations as errors', () => {
+  const extensionRoot = join(__dirname, '..', '..');
+  const compilerConfig = JSON.parse(readFileSync(join(extensionRoot, 'tsconfig.json'), 'utf8')) as {
+    compilerOptions?: { noUnusedLocals?: boolean; noUnusedParameters?: boolean };
+  };
+
+  assert.equal(compilerConfig.compilerOptions?.noUnusedLocals, true);
+  assert.equal(compilerConfig.compilerOptions?.noUnusedParameters, true);
+});
+
 test('package manifest declares opt-out auto-refresh settings (enabled by default)', () => {
   const extensionRoot = join(__dirname, '..', '..');
   const manifest = JSON.parse(readFileSync(join(extensionRoot, 'package.json'), 'utf8')) as {
