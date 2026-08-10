@@ -59,7 +59,7 @@ Describe "Invoke-PreCommitAutoRepairMain" {
         $script:recordedGitArguments[1] | Should -Match 'diff --name-only -- Scripts/AutoHotKey/window-control\.ahk'
         $script:recordedGitArguments[2] | Should -Match 'diff --name-only -- Scripts/AutoHotKey/window-control\.ahk'
         $script:recordedGitArguments[3] | Should -Match 'add -- Scripts/AutoHotKey/window-control\.ahk'
-        Assert-MockCalled -CommandName Invoke-WindowsLanguageCheckerForAutoRepair -Times 1 -Exactly -ParameterFilter {
+        Should -Invoke Invoke-WindowsLanguageCheckerForAutoRepair -Times 1 -Exactly -ParameterFilter {
             $RepositoryRoot -eq $repoRoot -and $RepairTargets.Count -eq 1 -and $RepairTargets[0] -eq 'Scripts/AutoHotKey/window-control.ahk'
         }
     }
@@ -84,7 +84,7 @@ Describe "Invoke-PreCommitAutoRepairMain" {
         { Invoke-PreCommitAutoRepairMain } | Should -Not -Throw
 
         $script:gitCallCount | Should -Be 2
-        Assert-MockCalled -CommandName Write-Warning -Times 1 -Exactly -ParameterFilter {
+        Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter {
             $Message -like "W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SKIPPED_UNSTAGED*"
         }
     }
@@ -113,8 +113,8 @@ Describe "Invoke-PreCommitAutoRepairMain" {
         { Invoke-PreCommitAutoRepairMain } | Should -Not -Throw
 
         $script:gitCallCount | Should -Be 3
-        Assert-MockCalled -CommandName Invoke-WindowsLanguageCheckerForAutoRepair -Times 0 -Exactly
-        Assert-MockCalled -CommandName Write-Warning -Times 1 -Exactly -ParameterFilter {
+        Should -Invoke Invoke-WindowsLanguageCheckerForAutoRepair -Times 0 -Exactly
+        Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter {
             $Message -like "W_PRECOMMIT_AUTOREPAIR_WINDOWS_LANGUAGE_SOURCE_UNSTAGED*"
         }
     }
@@ -200,7 +200,7 @@ Describe "Invoke-GitCommandOrThrow index lock recovery" {
         $output = Invoke-GitCommandOrThrow -GitExecutable "git" -RepositoryRoot "/tmp/repo" -Arguments @("diff", "--cached", "--name-only") -FailureCode "E_TEST" -FailureContext "test git command"
         $output | Should -Be @("Scripts/AutoHotKey/window-control.ahk")
         $script:gitInvocationCount | Should -Be 2
-        Assert-MockCalled -CommandName Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
+        Should -Invoke Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
     }
 
     It "throws lock persisted code when index lock remains after retry" {
@@ -254,6 +254,6 @@ Describe "Invoke-GitCommandOrThrow index lock recovery" {
         {
             Invoke-GitCommandOrThrow -GitExecutable "git" -RepositoryRoot "/tmp/repo" -Arguments @("diff", "--cached", "--name-only") -FailureCode "E_TEST" -FailureContext "test git command"
         } | Should -Throw "*E_PRECOMMIT_GIT_INDEX_LOCK_RECOVERY_FAILED*"
-        Assert-MockCalled -CommandName Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
+        Should -Invoke Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
     }
 }

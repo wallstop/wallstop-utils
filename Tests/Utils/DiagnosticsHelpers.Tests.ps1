@@ -81,7 +81,7 @@ Describe "Invoke-SafeGitIndexLockRecovery" {
         $result.Recovered | Should -BeTrue
         $result.LockPath | Should -Be ([System.IO.Path]::GetFullPath($lockPath))
         Test-Path -LiteralPath $lockPath -PathType Leaf | Should -BeFalse
-        Assert-MockCalled -CommandName Get-ActiveGitProcessScanState -Times 1 -Exactly
+        Should -Invoke Get-ActiveGitProcessScanState -Times 1 -Exactly
     }
 
     It "fails closed when process scan is degraded and active-git override is disabled" {
@@ -124,7 +124,7 @@ Describe "Invoke-SafeGitIndexLockRecovery" {
         $result.SkippedReason | Should -Be "process_scan_degraded"
         $result.ProcessScanDegraded | Should -BeTrue
         Test-Path -LiteralPath $lockPath -PathType Leaf | Should -BeTrue
-        Assert-MockCalled -CommandName Get-ActiveGitProcessScanState -Times 1 -Exactly
+        Should -Invoke Get-ActiveGitProcessScanState -Times 1 -Exactly
     }
 
     It "fails closed when process scan is degraded even if active-git override is enabled" {
@@ -211,7 +211,7 @@ Describe "Invoke-SafeGitIndexLockRecovery" {
             $result.Recovered | Should -BeFalse
             $result.SkippedReason | Should -Be "lock_in_use"
             Test-Path -LiteralPath $lockPath -PathType Leaf | Should -BeTrue
-            Assert-MockCalled -CommandName Get-ActiveGitProcessScanState -Times 1 -Exactly
+            Should -Invoke Get-ActiveGitProcessScanState -Times 1 -Exactly
         }
         finally {
             $heldStream.Dispose()

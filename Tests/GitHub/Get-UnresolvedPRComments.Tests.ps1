@@ -625,6 +625,7 @@ Describe "Test-ShouldUseClipboardOsc52" {
 Describe "Get-ClipboardCommand" {
     It "prefers Set-Clipboard when available" {
         Mock Test-ShouldUseClipboardOsc52 { $false }
+        Mock Get-Command { $null }
         Mock Get-Command {
             [pscustomobject]@{ Name = "Set-Clipboard" }
         } -ParameterFilter { $Name -eq "Set-Clipboard" }
@@ -635,6 +636,7 @@ Describe "Get-ClipboardCommand" {
 
     It "falls back to xclip when Set-Clipboard and pbcopy are unavailable" {
         Mock Test-ShouldUseClipboardOsc52 { $false }
+        Mock Get-Command { $null }
         Mock Get-Command { $null } -ParameterFilter { $Name -eq "Set-Clipboard" }
         Mock Get-Command { $null } -ParameterFilter { $Name -eq "pbcopy" }
         Mock Get-Command { [pscustomobject]@{ Name = "xclip" } } -ParameterFilter { $Name -eq "xclip" }
@@ -687,7 +689,7 @@ Describe "Copy-ToClipboard" {
         $copied = Copy-ToClipboard -Text "copy me"
 
         $copied | Should -BeTrue
-        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { $Value -eq "copy me" }
+        Should -Invoke Set-ClipboardValue -Times 1 -Scope It -ParameterFilter { $Value -eq "copy me" }
     }
 
     It "returns false and warns when clipboard command is unavailable" {
@@ -737,8 +739,8 @@ Describe "Copy-ToClipboard" {
 
         $copied | Should -BeTrue
         (($script:clipboardAttemptOrder) -join ",") | Should -Be "Osc52,Set-Clipboard" -Because "clipboard fallback should preserve OSC52-first attempt order and then recover with the native clipboard"
-        Assert-MockCalled Write-Osc52Clipboard -Times 1 -Scope It
-        Assert-MockCalled Set-ClipboardValue -Times 1 -Scope It
+        Should -Invoke Write-Osc52Clipboard -Times 1 -Scope It
+        Should -Invoke Set-ClipboardValue -Times 1 -Scope It
     }
 
     It "invokes Write-Osc52Clipboard when the Osc52 strategy is selected" {
@@ -748,7 +750,7 @@ Describe "Copy-ToClipboard" {
         $copied = Copy-ToClipboard -Text "copy me"
 
         $copied | Should -BeTrue
-        Assert-MockCalled Write-Osc52Clipboard -Times 1 -Scope It -ParameterFilter { $Text -eq "copy me" }
+        Should -Invoke Write-Osc52Clipboard -Times 1 -Scope It -ParameterFilter { $Text -eq "copy me" }
     }
 
     It "routes native clipboard tools through the detached Invoke-NativeClipboardTool seam" {
@@ -764,7 +766,7 @@ Describe "Copy-ToClipboard" {
 
         $copied | Should -BeTrue
         $script:nativeToolCalled | Should -Be "pbcopy"
-        Assert-MockCalled Invoke-NativeClipboardTool -Times 1 -Scope It -ParameterFilter { $Tool -eq "pbcopy" -and $Text -eq "copy me" }
+        Should -Invoke Invoke-NativeClipboardTool -Times 1 -Scope It -ParameterFilter { $Tool -eq "pbcopy" -and $Text -eq "copy me" }
     }
 
     It "falls back across native clipboard tools in priority order" {
@@ -1289,8 +1291,8 @@ Describe "Terminal-safe interactive read and fast-exit gating" {
 
         $result = Read-TerminalResponse -Prompt "GitHub owner"
         $result | Should -Be "octocat"
-        Assert-MockCalled Read-ConsoleInputLine -Times 1 -Scope It
-        Assert-MockCalled Read-Host -Times 0 -Scope It
+        Should -Invoke Read-ConsoleInputLine -Times 1 -Scope It
+        Should -Invoke Read-Host -Times 0 -Scope It
     }
 
     It "Read-TerminalResponse records that the console input subsystem was initialized" {
@@ -1377,7 +1379,7 @@ Describe "Set-ClipboardValue" {
 
         Set-ClipboardValue -Value "plain copy"
 
-        Assert-MockCalled Set-Clipboard -Times 1 -Scope It -ParameterFilter { $Value -eq "plain copy" }
+        Should -Invoke Set-Clipboard -Times 1 -Scope It -ParameterFilter { $Value -eq "plain copy" }
     }
 }
 
@@ -1424,7 +1426,7 @@ Describe "Write-Osc52Clipboard" {
         Write-Osc52Clipboard -Text "verbatim"
 
         $script:capturedSequence | Should -BeExactly (ConvertTo-Osc52Sequence -Text "verbatim")
-        Assert-MockCalled Write-ConsoleHostSequence -Times 1 -Scope It
+        Should -Invoke Write-ConsoleHostSequence -Times 1 -Scope It
     }
 
     It "warns about terminal truncation when the payload exceeds the OSC52 budget" {
@@ -1436,7 +1438,7 @@ Describe "Write-Osc52Clipboard" {
 
         $script:lastWarning | Should -Match "W_CLIPBOARD_OSC52_TRUNCATION_RISK"
         # The copy is still attempted as best effort after warning.
-        Assert-MockCalled Write-ConsoleHostSequence -Times 1 -Scope It
+        Should -Invoke Write-ConsoleHostSequence -Times 1 -Scope It
     }
 
     It "does not warn when the payload is within the OSC52 budget" {
@@ -1460,7 +1462,7 @@ Describe "Initialize-Utf8ConsoleOutputEncoding" {
         # Setting [System.Console]::OutputEncoding triggers SetConsoleOutputCP on Windows, a slow
         # and sometimes flickery code-page switch. It must be skipped when already UTF-8 (the
         # common case) so it never adds per-invocation terminal latency.
-        Assert-MockCalled Set-ConsoleOutputEncoding -Times 0 -Scope It
+        Should -Invoke Set-ConsoleOutputEncoding -Times 0 -Scope It
     }
 
     It "sets UTF-8 only when the console is not already UTF-8" {
@@ -1470,7 +1472,7 @@ Describe "Initialize-Utf8ConsoleOutputEncoding" {
 
         Initialize-Utf8ConsoleOutputEncoding
 
-        Assert-MockCalled Set-ConsoleOutputEncoding -Times 1 -Scope It
+        Should -Invoke Set-ConsoleOutputEncoding -Times 1 -Scope It
         $script:assignedEncoding | Should -Not -BeNullOrEmpty
         $script:assignedEncoding.CodePage | Should -Be 65001
     }
@@ -1480,7 +1482,7 @@ Describe "Initialize-Utf8ConsoleOutputEncoding" {
         Mock Set-ConsoleOutputEncoding { }
 
         { Initialize-Utf8ConsoleOutputEncoding } | Should -Not -Throw
-        Assert-MockCalled Set-ConsoleOutputEncoding -Times 0 -Scope It
+        Should -Invoke Set-ConsoleOutputEncoding -Times 0 -Scope It
     }
 
     It "is resilient when setting the console encoding throws" {
@@ -1498,7 +1500,7 @@ Describe "Invoke-FastProcessExit" {
 
         Invoke-FastProcessExit -ExitCode 0
 
-        Assert-MockCalled Stop-CurrentProcessImmediately -Times 1 -Scope It -ParameterFilter { $ExitCode -eq 0 }
+        Should -Invoke Stop-CurrentProcessImmediately -Times 1 -Scope It -ParameterFilter { $ExitCode -eq 0 }
         $script:fastExitCode | Should -Be 0
     }
 
@@ -1508,7 +1510,7 @@ Describe "Invoke-FastProcessExit" {
 
         Invoke-FastProcessExit -ExitCode 1
 
-        Assert-MockCalled Stop-CurrentProcessImmediately -Times 1 -Scope It -ParameterFilter { $ExitCode -eq 1 }
+        Should -Invoke Stop-CurrentProcessImmediately -Times 1 -Scope It -ParameterFilter { $ExitCode -eq 1 }
         $script:fastExitCode | Should -Be 1
     }
 
@@ -1518,7 +1520,7 @@ Describe "Invoke-FastProcessExit" {
         Mock Invoke-ConsoleFlush { throw "no console" }
 
         { Invoke-FastProcessExit -ExitCode 0 } | Should -Not -Throw
-        Assert-MockCalled Stop-CurrentProcessImmediately -Times 1 -Scope It
+        Should -Invoke Stop-CurrentProcessImmediately -Times 1 -Scope It
         $script:fastExitCode | Should -Be 0
     }
 
@@ -2464,7 +2466,7 @@ Describe "Convert-ReviewThreadToOutputRecord" {
         $result.Count | Should -Be 0
         $script:capturedWebHeaders["Cookie"] | Should -Be "logged-in-cookie"
         $script:webSessionParameterWasBound | Should -BeFalse
-        Assert-MockCalled Invoke-WebRequest -Times 1 -Scope It
+        Should -Invoke Invoke-WebRequest -Times 1 -Scope It
     }
 
     It "throws a redacted error when provided GitHub web cookie cannot fetch changesets" {
@@ -3315,21 +3317,21 @@ Describe "Invoke-GitHubRequestWithRetry" {
         $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 3 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30))
         $result.ok | Should -BeTrue
         $script:attempt | Should -Be 2
-        Assert-MockCalled Start-Sleep -Times 1 -Scope It
+        Should -Invoke Start-Sleep -Times 1 -Scope It
     }
 
     It "rejects non-https request URIs before invoking the transport" {
         Mock Invoke-RestMethod { throw "should not run" }
 
         { Invoke-GitHubRequestWithRetry -Method GET -Uri "http://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Throw "*E_INVALID_URL*"
-        Assert-MockCalled Invoke-RestMethod -Times 0 -Scope It
+        Should -Invoke Invoke-RestMethod -Times 0 -Scope It
     }
 
     It "enforces host allowlist before invoking the transport" {
         Mock Invoke-RestMethod { throw "should not run" }
 
         { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -AllowedGitHubHostsNormalized @("ghes.example.com") } | Should -Throw "*E_INVALID_URL*allowed GitHub host list*"
-        Assert-MockCalled Invoke-RestMethod -Times 0 -Scope It
+        Should -Invoke Invoke-RestMethod -Times 0 -Scope It
     }
 
     It "maps 401 to E_AUTH_INVALID" {
@@ -3373,7 +3375,7 @@ Describe "Invoke-GitHubRequestWithRetry" {
         $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit
         $result.ok | Should -BeTrue
         $script:attempt | Should -Be 2
-        Assert-MockCalled Start-Sleep -Times 1 -Scope It
+        Should -Invoke Start-Sleep -Times 1 -Scope It
     }
 
     It "uses Retry-After RFC date fallback when waiting on rate limits" {
@@ -3394,7 +3396,7 @@ Describe "Invoke-GitHubRequestWithRetry" {
         $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit
         $result.ok | Should -BeTrue
         $script:attempt | Should -Be 2
-        Assert-MockCalled Start-Sleep -Times 1 -Scope It
+        Should -Invoke Start-Sleep -Times 1 -Scope It
     }
 
     It "uses X-RateLimit-Reset when waiting on rate limits" {
@@ -3415,7 +3417,7 @@ Describe "Invoke-GitHubRequestWithRetry" {
         $result = Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) -WaitOnRateLimit
         $result.ok | Should -BeTrue
         $script:attempt | Should -Be 2
-        Assert-MockCalled Start-Sleep -Times 1 -Scope It
+        Should -Invoke Start-Sleep -Times 1 -Scope It
     }
 
     It "fails fast when Retry-After is present but unparseable" {
@@ -3467,7 +3469,7 @@ Describe "Invoke-GitHubRequestWithRetry" {
         Mock Start-Sleep { }
 
         { Invoke-GitHubRequestWithRetry -Method GET -Uri "https://api.github.com/ping" -Headers @{} -RequestTimeoutSeconds 10 -MaxRetries 0 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(2)) -WaitOnRateLimit } | Should -Throw "*E_NETWORK_TIMEOUT*"
-        Assert-MockCalled Start-Sleep -Times 0 -Scope It
+        Should -Invoke Start-Sleep -Times 0 -Scope It
     }
 
     It "applies exponential backoff with jitter bounds" {
@@ -3655,7 +3657,7 @@ Describe "Validate-GitHubTokenForRepoAccess" {
         Mock Invoke-WebRequest { throw "should not run" }
 
         { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(-1)) } | Should -Throw "*E_NETWORK_TIMEOUT*"
-        Assert-MockCalled Invoke-WebRequest -Times 0 -Scope It
+        Should -Invoke Invoke-WebRequest -Times 0 -Scope It
     }
 
     It "caps request timeout to remaining deadline budget" {
@@ -3690,7 +3692,7 @@ Describe "Validate-GitHubTokenForRepoAccess" {
 
         { Validate-GitHubTokenForRepoAccess -Owner "org" -Repo "repo" -GitHubHost "github.com" -Headers @{} -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)) } | Should -Not -Throw
         $script:attempt | Should -Be 3
-        Assert-MockCalled Start-Sleep -Times 2 -Scope It
+        Should -Invoke Start-Sleep -Times 2 -Scope It
     }
 
     It "passes when repository metadata is reachable" {
@@ -4120,8 +4122,8 @@ Describe "Get-UnresolvedReviewThreads" {
             [void](Get-UnresolvedReviewThreads -Owner "org" -Repo "repo" -PrNumber 10 -Endpoint "https://api.github.com/graphql" -Headers @{} -GitHubHost "github.com" -PerPage 100 -MaxPages 1 -OverallDeadlineUtc ([datetime]::UtcNow.AddSeconds(30)))
         } | Should -Throw "*E_CONFIG_ERROR*synthetic variable-map validation failure*"
 
-        Assert-MockCalled Assert-GraphQLVariableMap -Times 1 -Scope It
-        Assert-MockCalled Invoke-GitHubRequestWithRetry -Times 0 -Scope It
+        Should -Invoke Assert-GraphQLVariableMap -Times 1 -Scope It
+        Should -Invoke Invoke-GitHubRequestWithRetry -Times 0 -Scope It
     }
 
     It "redacts sensitive text in GraphQL errors" {
@@ -4801,7 +4803,7 @@ Describe "Invoke-Main" {
         Invoke-Main
 
         $script:lastOutput | Should -Match "src/main.ts"
-        Assert-MockCalled Validate-GitHubTokenForRepoAccess -Times 1 -Scope It -ParameterFilter { $RequestTimeoutSeconds -eq 60 }
+        Should -Invoke Validate-GitHubTokenForRepoAccess -Times 1 -Scope It -ParameterFilter { $RequestTimeoutSeconds -eq 60 }
     }
 
     It "uses public REST fallback for PR URL mode with no token and does not prompt" {
@@ -4859,9 +4861,9 @@ Describe "Invoke-Main" {
         Invoke-Main
 
         $script:lastOutput | Should -Be "public fallback"
-        Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
-        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
+        Should -Invoke Get-UnresolvedReviewThreads -Times 0 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "retries after interactive login when unauthenticated request fails" {
@@ -4945,10 +4947,10 @@ Describe "Invoke-Main" {
         $script:authTokenCallCount | Should -Be 2
         $script:reviewCallCount | Should -Be 1
         $script:lastOutput | Should -Be "ok"
-        Assert-MockCalled Validate-GitHubTokenForRepoAccess -Times 1 -Scope It -ParameterFilter {
+        Should -Invoke Validate-GitHubTokenForRepoAccess -Times 1 -Scope It -ParameterFilter {
             $AllowedGitHubHostsNormalized.Count -eq 1 -and $AllowedGitHubHostsNormalized[0] -eq "github.com"
         }
-        Assert-MockCalled Get-UnresolvedReviewThreads -Times 1 -Scope It -ParameterFilter {
+        Should -Invoke Get-UnresolvedReviewThreads -Times 1 -Scope It -ParameterFilter {
             $AllowedGitHubHostsNormalized.Count -eq 1 -and $AllowedGitHubHostsNormalized[0] -eq "github.com"
         }
     }
@@ -5025,7 +5027,7 @@ Describe "Invoke-Main" {
         $script:authTokenCallCount | Should -Be 2
         $script:reviewCallCount | Should -Be 1
         $script:lastOutput | Should -Be "ok"
-        Assert-MockCalled Read-TerminalResponse -Times 1 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 1 -Scope It
     }
 
     It "tries stored credentials before prompting when provided credentials are invalid" {
@@ -5116,7 +5118,7 @@ Describe "Invoke-Main" {
         $script:authTokenCallCount | Should -Be 2
         $script:validateCallCount | Should -Be 2
         $script:lastOutput | Should -Be "ok"
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "tries stored credentials before public REST fallback when token validation is rate-limited" {
@@ -5214,8 +5216,8 @@ Describe "Invoke-Main" {
         $script:authTokenCallCount | Should -Be 2
         $script:validateCallCount | Should -Be 2
         $script:secondCallRejectedTokens | Should -Contain "rate-limited-token"
-        Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 0 -Scope It
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Get-PublicPullRequestReviewCommentsFallback -Times 0 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "passes rejected-token exclusions to stored credential retry" {
@@ -5339,7 +5341,7 @@ Describe "Invoke-Main" {
         $script:reviewCallCount | Should -Be 1
         $script:secondCallIgnoredEnvironmentTokens | Should -BeTrue
         $script:secondCallRejectedTokens | Should -Contain "bad-env-token"
-        Assert-MockCalled Get-AuthToken -Times 1 -Scope It -ParameterFilter { $IgnoreEnvironmentTokens.IsPresent -and $RejectedTokenValues -contains "bad-env-token" }
+        Should -Invoke Get-AuthToken -Times 1 -Scope It -ParameterFilter { $IgnoreEnvironmentTokens.IsPresent -and $RejectedTokenValues -contains "bad-env-token" }
     }
 
     It "uses stored credentials in interactive mode before prompting when provided credentials are invalid" {
@@ -5431,7 +5433,7 @@ Describe "Invoke-Main" {
         $script:lastOutput | Should -Be "interactive recovered"
         $script:authTokenCallCount | Should -Be 2
         $script:validateCallCount | Should -Be 2
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "fails fast in direct owner/repo mode when an explicit token is invalid" {
@@ -5480,11 +5482,11 @@ Describe "Invoke-Main" {
         Mock Get-PublicPullRequestReviewCommentsFallback { throw "Public REST fallback should not be called when an explicit token fails in direct mode." }
 
         { Invoke-Main } | Should -Throw "*E_AUTH_INVALID*"
-        Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "bad-token" }
-        Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
-        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
-        Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 0 -Scope It
+        Should -Invoke Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "bad-token" }
+        Should -Invoke Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Get-UnresolvedReviewThreads -Times 0 -Scope It
+        Should -Invoke Get-PublicPullRequestReviewCommentsFallback -Times 0 -Scope It
     }
 
     It "uses public REST fallback in direct owner/repo mode after environment-token auth failure" {
@@ -5588,9 +5590,9 @@ Describe "Invoke-Main" {
         $script:authTokenCallCount | Should -Be 2
         $script:storedRetryIgnoredEnvironmentTokens | Should -BeTrue
         $script:storedRetryRejectedTokens | Should -Contain "bad-env-token"
-        Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
-        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
+        Should -Invoke Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Get-UnresolvedReviewThreads -Times 0 -Scope It
     }
 
     It "uses public REST fallback for direct-mode environment-token auth rate limits without prompting" {
@@ -5678,9 +5680,9 @@ Describe "Invoke-Main" {
 
         $script:lastOutput | Should -Be "direct rate-limit fallback"
         $script:authTokenCallCount | Should -Be 2
-        Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
-        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
+        Should -Invoke Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Get-UnresolvedReviewThreads -Times 0 -Scope It
     }
 
     It "retries anonymously when token validation fails for PR URL mode" {
@@ -5758,11 +5760,11 @@ Describe "Invoke-Main" {
         Invoke-Main
 
         $script:lastOutput | Should -Be "anonymous success"
-        Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "expired-token" }
-        Assert-MockCalled Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
-        Assert-MockCalled Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
-        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "expired-token" }
+        Should -Invoke Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
+        Should -Invoke Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
+        Should -Invoke Get-UnresolvedReviewThreads -Times 0 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "surfaces non-auth public REST fallback errors even when prompt is available" {
@@ -5833,8 +5835,8 @@ Describe "Invoke-Main" {
         { Invoke-Main } | Should -Throw "*E_NETWORK_TIMEOUT*Public REST fallback timed out*"
         $script:authTokenCallCount | Should -Be 2
         $script:validateCallCount | Should -Be 1
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
-        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Get-UnresolvedReviewThreads -Times 0 -Scope It
     }
 
     It "surfaces non-auth anonymous retry errors when prompt is unavailable" {
@@ -5892,8 +5894,8 @@ Describe "Invoke-Main" {
 
         { Invoke-Main } | Should -Throw "*E_NETWORK_TIMEOUT*"
         $script:authTokenCallCount | Should -Be 2
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
-        Assert-MockCalled Get-UnresolvedReviewThreads -Times 0 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Get-UnresolvedReviewThreads -Times 0 -Scope It
     }
 
     It "redacts original token in anonymous retry errors" {
@@ -5994,7 +5996,7 @@ Describe "Invoke-Main" {
         Mock Read-TerminalResponse { "y" }
 
         { Invoke-Main } | Should -Throw "*E_AUTH_REQUIRED*"
-        Assert-MockCalled Read-TerminalResponse -Times 0 -Scope It
+        Should -Invoke Read-TerminalResponse -Times 0 -Scope It
     }
 
     It "copies output when Copy is set and still writes to stdout" {
@@ -6049,7 +6051,7 @@ Describe "Invoke-Main" {
         Invoke-Main
 
         $script:lastOutput | Should -Be "copied output"
-        Assert-MockCalled Copy-ToClipboard -Times 1 -Scope It -ParameterFilter { $Text -eq "copied output" }
+        Should -Invoke Copy-ToClipboard -Times 1 -Scope It -ParameterFilter { $Text -eq "copied output" }
     }
 
     It "writes stdout output even when copy fails" {
@@ -6104,8 +6106,8 @@ Describe "Invoke-Main" {
         Invoke-Main
 
         $script:lastOutput | Should -Be "still output"
-        Assert-MockCalled Copy-ToClipboard -Times 1 -Scope It
-        Assert-MockCalled Write-Output -Times 1 -Scope It -ParameterFilter { $InputObject -eq "still output" }
+        Should -Invoke Copy-ToClipboard -Times 1 -Scope It
+        Should -Invoke Write-Output -Times 1 -Scope It -ParameterFilter { $InputObject -eq "still output" }
     }
 
     It "writes no-unresolved message when review thread retrieval returns zero objects" {
@@ -6260,7 +6262,7 @@ Describe "Invoke-Main" {
 
         Invoke-Main
 
-        Assert-MockCalled Write-RenderedOutputToFile -Times 1 -Scope It -ParameterFilter { $OutputPath -eq (Join-Path -Path $TestDrive -ChildPath "artifacts/out.txt") -and $Text -eq "file output" }
+        Should -Invoke Write-RenderedOutputToFile -Times 1 -Scope It -ParameterFilter { $OutputPath -eq (Join-Path -Path $TestDrive -ChildPath "artifacts/out.txt") -and $Text -eq "file output" }
         $script:lastOutput | Should -Be "file output"
     }
 
@@ -6311,7 +6313,7 @@ Describe "Invoke-Main" {
 
         Invoke-Main
 
-        Assert-MockCalled Get-UnresolvedReviewThreads -Times 1 -Scope It -ParameterFilter { $Truncate.IsPresent }
+        Should -Invoke Get-UnresolvedReviewThreads -Times 1 -Scope It -ParameterFilter { $Truncate.IsPresent }
     }
 }
 
