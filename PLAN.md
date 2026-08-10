@@ -12,7 +12,7 @@
 - [x] Migrate repository skills to standard Agent Skills `SKILL.md` entrypoints with a 250-line hard limit (issue #45).
 - [x] Remove duplicate Scoop update execution and make Update.ps1 continue through all steps before reporting partial failure (issues #47/#48).
 - [x] Make Backup.ps1 distinguish managed snapshot drift from out-of-scope worktree changes and preserve managed drift through pull (issue #53 follow-up).
-- [ ] Refresh and publish a verified-current Scoop and PowerToys host-state snapshot for issue #53.
+- [x] Refresh and publish a verified-current Scoop and PowerToys host-state snapshot for issue #53.
 
 ## Follow-up
 
@@ -29,4 +29,4 @@
 
 Evidence: [session-004 analyzer baseline](./progress/session-004-analyzer-baseline.md), [session-005 dependency and shell lane](./progress/session-005-dependency-and-shell-lane.md), and [session-007 native analyzer lane](./progress/session-007-native-analyzer-lane.md). The PowerShell ScriptAnalyzer, managed ShellCheck, StyLua, and actionlint lanes now have explicit fail-closed coverage; native checks remain separately gated to preserve CI timing.
 
-Evidence for the host-state snapshot: [session-008 config snapshot](./progress/session-008-config-snapshot.md), [session-010 backup host-state audit](./progress/session-010-backup-host-state-audit.md), and [session-011 backup host-state runbook](./progress/session-011-backup-host-state-runbook.md).
+Evidence for the host-state snapshot: [session-008 config snapshot](./progress/session-008-config-snapshot.md), [session-010 backup host-state audit](./progress/session-010-backup-host-state-audit.md), [session-011 backup host-state runbook](./progress/session-011-backup-host-state-runbook.md), and [session-012 verified snapshot](./progress/session-012-verified-host-state-snapshot.md).
