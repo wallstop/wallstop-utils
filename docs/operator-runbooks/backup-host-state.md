@@ -84,3 +84,11 @@ repository validation/pre-commit workflow before publishing changes.
 If either source check still fails, stop and investigate the reported path.
 The repository must not silently substitute a stale profile or a different
 machine's Komorebi configuration.
+
+## Non-Windows hosts
+
+`Config/.config` is a Windows host-state snapshot. `ConfigBackup.ps1` exits
+successfully with a warning on Linux and macOS without modifying that snapshot;
+run the backup on Windows when it needs to be refreshed. This prevents a
+partial container or developer-environment `.config` directory from replacing
+the Windows snapshot.

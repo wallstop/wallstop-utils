@@ -3810,10 +3810,17 @@ Describe "Backup script safety conventions" {
         $configBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Config/ConfigBackup.ps1') -Raw) -replace "`r", ''
 
         $configBackup | Should -Match 'E_CONFIG_BACKUP_SOURCE_MISSING'
+        $configBackup | Should -Match 'Test-IsWindowsPlatform'
+        $configBackup | Should -Match 'W_CONFIG_BACKUP_SKIPPED_PLATFORM'
         $configBackup | Should -Match 'Get-ChildItem\s+-LiteralPath\s+\$backupFolder\s+-Force\s+-ErrorAction\s+Stop'
         $configBackup | Should -Match 'foreach\s*\(\$backupEntry\s+in\s+\$backupEntries\)\s*\{[\s\S]*Remove-Item\s+-LiteralPath\s+\$backupEntry\.FullName'
         $configBackup | Should -Match 'Backup successful! \.config folder saved to \$backupFolder'
         $configBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
+
+        $platformGuardOffset = $configBackup.IndexOf('if (-not (Test-IsWindowsPlatform))')
+        $destructiveClearOffset = $configBackup.IndexOf('Remove-Item -LiteralPath $backupEntry.FullName')
+        $platformGuardOffset | Should -BeGreaterThan -1
+        $destructiveClearOffset | Should -BeGreaterThan $platformGuardOffset
     }
 
     It "fails when Windows Terminal backup source is missing" {

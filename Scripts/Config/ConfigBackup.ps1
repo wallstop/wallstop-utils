@@ -3,9 +3,20 @@ $ErrorActionPreference = "Stop"
 
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
+$compatibilityHelpersPath = Join-Path -Path $baseDirectory -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1"
+if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_BACKUP_COMPATIBILITY_HELPER_MISSING: compatibility helper file not found at '$compatibilityHelpersPath'."
+}
+
+. $compatibilityHelpersPath
 
 Push-Location -LiteralPath $baseDirectory
 try {
+    if (-not (Test-IsWindowsPlatform)) {
+        Write-Warning "W_CONFIG_BACKUP_SKIPPED_PLATFORM: Config/.config contains Windows host state and was not modified on this platform. Run backup on Windows to refresh it."
+        exit 0
+    }
+
     $configFolder = Join-Path -Path $HOME -ChildPath ".config"
     if (-not (Test-Path -LiteralPath $configFolder -PathType Container)) {
         Write-Error "E_CONFIG_BACKUP_SOURCE_MISSING: Source .config folder not found at '$configFolder'."
