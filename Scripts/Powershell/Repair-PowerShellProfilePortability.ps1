@@ -1,0 +1,111 @@
+[CmdletBinding(SupportsShouldProcess = $true)]
+param(
+    [Parameter(Mandatory = $false)]
+    [AllowNull()]
+    [string]$ProfilePath,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Apply
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$operatorRunbookUrl = "https://github.com/wallstop/wallstop-utils/blob/main/docs/operator-runbooks/backup-host-state.md"
+$repositoryRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
+$profileHelperPath = Join-Path -Path $repositoryRoot -ChildPath "Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1"
+$repositoryProfilePath = Join-Path -Path $repositoryRoot -ChildPath "Config/Powershell/CurrentUserCurrentHost_Microsoft.PowerShell_profile.ps1"
+
+if (-not (Test-Path -LiteralPath $profileHelperPath -PathType Leaf)) {
+    throw "E_PROFILE_REPAIR_HELPER_MISSING: PSReadLine portability helper not found at '$profileHelperPath'. See $operatorRunbookUrl"
+}
+if (-not (Test-Path -LiteralPath $repositoryProfilePath -PathType Leaf)) {
+    throw "E_PROFILE_REPAIR_SOURCE_MISSING: Repository PowerShell profile not found at '$repositoryProfilePath'. See $operatorRunbookUrl"
+}
+
+. $profileHelperPath
+
+if ([string]::IsNullOrWhiteSpace($ProfilePath)) {
+    $ProfilePath = $PROFILE.CurrentUserCurrentHost
+}
+
+if ([string]::IsNullOrWhiteSpace($ProfilePath)) {
+    throw "E_PROFILE_REPAIR_DESTINATION_UNAVAILABLE: No PowerShell current-user profile path was available. Pass -ProfilePath explicitly. See $operatorRunbookUrl"
+}
+
+$resolvedRepositoryProfilePath = (Resolve-Path -LiteralPath $repositoryProfilePath -ErrorAction Stop).Path
+$repositoryViolations = @(Get-PSReadLineProfilePortabilityViolation -Path $resolvedRepositoryProfilePath)
+if ($repositoryViolations.Count -gt 0) {
+    throw (
+        "E_PROFILE_REPAIR_SOURCE_NOT_PORTABLE: Repository profile '{0}' is not portable. violations={1}. Repair the repository profile before changing a user profile. See {2}" -f
+        $resolvedRepositoryProfilePath,
+        ($repositoryViolations -join ','),
+        $operatorRunbookUrl
+    )
+}
+
+$destinationPath = [System.IO.Path]::GetFullPath($ProfilePath)
+$destinationDirectory = [System.IO.Path]::GetDirectoryName($destinationPath)
+if ([string]::IsNullOrWhiteSpace($destinationDirectory)) {
+    throw "E_PROFILE_REPAIR_DESTINATION_INVALID: Could not resolve a parent directory for '$destinationPath'. See $operatorRunbookUrl"
+}
+
+Write-Host "PowerShell profile repair preview" -ForegroundColor Cyan
+Write-Host ("  Source:      {0}" -f $resolvedRepositoryProfilePath)
+Write-Host ("  Destination: {0}" -f $destinationPath)
+Write-Host ("  Apply:       {0}" -f $Apply.IsPresent)
+
+if (-not $Apply.IsPresent) {
+    Write-Host "No files changed. Re-run with -Apply after reviewing the destination." -ForegroundColor Yellow
+    exit 0
+}
+
+if (-not $PSCmdlet.ShouldProcess($destinationPath, "replace with the validated repository PowerShell profile")) {
+    exit 0
+}
+
+try {
+    [System.IO.Directory]::CreateDirectory($destinationDirectory) | Out-Null
+    $backupPath = $null
+    if (Test-Path -LiteralPath $destinationPath -PathType Leaf) {
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $backupPath = "{0}.pre-portability-repair-{1}.bak" -f $destinationPath, $timestamp
+        Copy-Item -LiteralPath $destinationPath -Destination $backupPath -Force -ErrorAction Stop
+    }
+
+    $temporaryPath = Join-Path -Path $destinationDirectory -ChildPath (".{0}.{1}.tmp" -f [System.IO.Path]::GetFileName($destinationPath), [guid]::NewGuid().ToString("N"))
+    try {
+        Copy-Item -LiteralPath $resolvedRepositoryProfilePath -Destination $temporaryPath -Force -ErrorAction Stop
+        Move-Item -LiteralPath $temporaryPath -Destination $destinationPath -Force -ErrorAction Stop
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $destinationViolations = @(Get-PSReadLineProfilePortabilityViolation -Path $destinationPath)
+    if ($destinationViolations.Count -gt 0) {
+        if ($null -ne $backupPath -and (Test-Path -LiteralPath $backupPath -PathType Leaf)) {
+            Copy-Item -LiteralPath $backupPath -Destination $destinationPath -Force -ErrorAction SilentlyContinue
+        }
+        throw (
+            "E_PROFILE_REPAIR_RESULT_NOT_PORTABLE: Repaired profile '{0}' still failed portability validation. violations={1}. See {2}" -f
+            $destinationPath,
+            ($destinationViolations -join ','),
+            $operatorRunbookUrl
+        )
+    }
+
+    Write-Host ("PowerShell profile repaired successfully: {0}" -f $destinationPath) -ForegroundColor Green
+    if ($null -ne $backupPath) {
+        Write-Host ("Previous profile backed up to: {0}" -f $backupPath) -ForegroundColor DarkGray
+    }
+}
+catch {
+    if ($_.Exception.Message -match '^E_PROFILE_REPAIR_') {
+        throw
+    }
+
+    throw "E_PROFILE_REPAIR_FAILED: Could not repair PowerShell profile '$destinationPath'. error=$($_.Exception.Message). See $operatorRunbookUrl"
+}
