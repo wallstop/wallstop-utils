@@ -170,6 +170,7 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "lint:scripts": "node --check scripts/install-local.js && node --check scripts/package-vsix.js && node --check scripts/run-tests.js",
     "setup": "node scripts/install-local.js --setup-only",
     "install:local": "node scripts/install-local.js",
     "package:vsix": "npm run compile && node scripts/package-vsix.js",
