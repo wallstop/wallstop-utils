@@ -17,7 +17,7 @@
 ## Follow-up
 
 - Issue #46 (partial git uploads) now has explicit post-push remote-head verification and commit wording that distinguishes failed backup steps from Git publication. A live backup run remains required to close the operational investigation safely.
-- Issue #43 (warnings-as-errors and static-analyzer research) remains open for broader analyzer inventory and additional lanes; the managed production PowerShell, ShellCheck/shfmt, StyLua, actionlint, and TypeScript compiler lanes now have deterministic enforcement documented in sessions 004–007, 013, and 015. The remaining PowerShell test-fixture findings are tracked separately in issue #59.
+- Issue #43 (warnings-as-errors and static-analyzer research) remains open for broader analyzer inventory and additional lanes; the managed production and test PowerShell, ShellCheck/shfmt, StyLua, actionlint, and TypeScript compiler lanes now have deterministic enforcement documented in sessions 004–007, 013, 015, and 017.
 
 ## Next milestone: analyzer baseline for #43
 
@@ -28,8 +28,8 @@
 - [x] Expand warnings-as-errors to the managed native analyzer lane with fail-closed StyLua/actionlint regression coverage.
 - [x] Expand warnings-as-errors to the TypeScript extension compiler with unused-local and unused-parameter checks.
 - [x] Expand PowerShell warnings-as-errors to all tracked production scripts under `Scripts/` with staged-file targeting preserved for fast hooks.
-- [ ] Characterize and safely govern the dynamic Pester-fixture analyzer surface tracked in issue #59 without weakening the production `Scripts/` lane.
+- [x] Characterize and safely govern the dynamic Pester-fixture analyzer surface tracked in issue #59 without weakening the production `Scripts/` lane.
 
-Evidence: [session-004 analyzer baseline](./progress/session-004-analyzer-baseline.md), [session-005 dependency and shell lane](./progress/session-005-dependency-and-shell-lane.md), [session-007 native analyzer lane](./progress/session-007-native-analyzer-lane.md), [session-013 TypeScript analyzer lane](./progress/session-013-typescript-analyzer-lane.md), [session-015 production PowerShell lane](./progress/session-015-production-powershell-lane.md), and [session-016 test-fixture inventory](./progress/session-016-test-fixture-inventory.md). The production PowerShell ScriptAnalyzer, managed ShellCheck, StyLua, actionlint, and TypeScript compiler lanes now have explicit fail-closed coverage; native checks remain separately gated to preserve CI timing.
+Evidence: [session-004 analyzer baseline](./progress/session-004-analyzer-baseline.md), [session-005 dependency and shell lane](./progress/session-005-dependency-and-shell-lane.md), [session-007 native analyzer lane](./progress/session-007-native-analyzer-lane.md), [session-013 TypeScript analyzer lane](./progress/session-013-typescript-analyzer-lane.md), [session-015 production PowerShell lane](./progress/session-015-production-powershell-lane.md), [session-016 test-fixture inventory](./progress/session-016-test-fixture-inventory.md), and [session-017 test-fixture remediation](./progress/session-017-test-fixture-remediation.md). The production and test PowerShell ScriptAnalyzer, managed ShellCheck, StyLua, actionlint, and TypeScript compiler lanes now have explicit fail-closed coverage; native checks remain separately gated to preserve CI timing.
 
 Evidence for the host-state snapshot: [session-008 config snapshot](./progress/session-008-config-snapshot.md), [session-010 backup host-state audit](./progress/session-010-backup-host-state-audit.md), [session-011 backup host-state runbook](./progress/session-011-backup-host-state-runbook.md), and [session-012 verified snapshot](./progress/session-012-verified-host-state-snapshot.md).

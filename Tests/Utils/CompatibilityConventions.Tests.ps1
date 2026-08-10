@@ -452,7 +452,6 @@ Describe "Cross-version compatibility - automatic variable scan (dependency-free
         # Mirrors the gate's AST scan but needs no PSScriptAnalyzer, so it runs on every
         # lane (including the Windows PowerShell 5.1 test lane). $IsWindows/$IsMacOS/$IsLinux
         # do not exist on Desktop edition and throw under StrictMode; $PSStyle is 7.2+.
-        $forbidden = @('IsWindows', 'IsMacOS', 'IsLinux', 'IsCoreCLR', 'PSStyle')
         $scanRoots = @('Scripts', 'Config', 'Tests') |
             ForEach-Object { Join-Path -Path $script:repoRoot -ChildPath $_ } |
             Where-Object { Test-Path -LiteralPath $_ -PathType Container }
