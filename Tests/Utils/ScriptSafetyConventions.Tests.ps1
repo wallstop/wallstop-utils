@@ -942,12 +942,13 @@ Describe "Scope safety conventions" {
         # inside the existing dot-source guard so dot-sourced tests never terminate the host. The fast
         # exit is ALSO gated by Test-ShouldUseFastExit so a run that would strand the terminal (an
         # interactive host, or a run that read from the console) takes the safe managed exit instead.
-        $content | Should -Match 'Invoke-Main\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
+        $content | Should -Match 'Invoke-Main(?:\s+@[^\r\n]+)?\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
         $content | Should -Match 'if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+1'
     }
 
     It "gates the fast exit so it never strands an interactive or read-from terminal" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
+        $content = Get-Content -Path $fullPath -Raw
         $tokens = $null
         $parseErrors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
