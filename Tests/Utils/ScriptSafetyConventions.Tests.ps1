@@ -1771,7 +1771,7 @@ Describe "Cross-language quality platform conventions" {
         $validatorContent | Should -Match 'PreCommitKomorebiPolicy'
         $validatorContent | Should -Match 'Skipping Tests/Utils Pester suite for script-only staged changes in fast local mode'
         $validatorContent | Should -Match 'full suite remains enforced in -All/full validation'
-        $preCommitConfig | Should -Match 'Scripts/\(Utils\|Komorebi\)/\.\*\\\.ps1'
+        $preCommitConfig | Should -Match 'Scripts/\.\*\\\.ps1'
     }
 
     It "routes native Lua and workflow checks through the precommit orchestrator" {
@@ -5242,12 +5242,12 @@ Set-PortableProcessEnvironmentVariable -StartInfo $startInfo -Name "PATH" -Value
         $outsideRepoGuardIndex | Should -BeLessThan $writeIndex -Because 'Outside-repository guard must execute before writing the artifact file.'
     }
 
-    It "scopes ScriptAnalyzer targets to staged Scripts/Utils files unless -All is used" {
+    It "scopes ScriptAnalyzer targets to staged Scripts files unless -All is used" {
         $preCommitPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Run-PreCommitValidation.ps1"
         $content = (Get-Content -Path $preCommitPath -Raw) -replace "`r", ''
 
         $content | Should -Match '\$analyzerTargets\s*=\s*@\(\)'
-        $content | Should -Match 'if\s*\(\$All\)\s*\{\s*\$analyzerTargets\s*=\s*@\("Scripts/Utils"\)'
+        $content | Should -Match 'if\s*\(\$All\)\s*\{\s*\$analyzerTargets\s*=\s*@\("Scripts"\)'
         $content | Should -Match 'elseif\s*\(\$scriptFiles\.Count\s*-gt\s*0\)'
         $content | Should -Match 'Write-Verbose\s*\(\s*"ScriptAnalyzer staged-path diagnostics: skippedMissingCount='
         $content | Should -Match '\$analyzerTargets\s*=\s*@\(\s*\$scriptFiles\s*\|\s*Where-Object\s*\{\s*Test-Path\s*-LiteralPath\s*\$_\s*-PathType\s*Leaf\s*\}\s*\|\s*Sort-Object\s*-Unique\s*\)'
