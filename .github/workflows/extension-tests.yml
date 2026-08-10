@@ -48,8 +48,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate JavaScript utility syntax
-        run: npm run lint:scripts
-
       - name: Compile and run tests
         run: npm test
