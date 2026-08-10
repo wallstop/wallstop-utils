@@ -46,7 +46,7 @@ function Assert-PowerShellProfileBackupPortability {
 
     if ($violations.Count -gt 0) {
         throw (
-            "E_POWERSHELL_BACKUP_PROFILE_PORTABILITY: PowerShell profile '{0}' at '{1}' contains PSReadLine setup that is not guarded for Windows PowerShell 5.1 and older PSReadLine versions. violations={2}. Restore the repository profile or run Repair-PowerShellProfilePortability.ps1 -Apply to update the source profile. See {3}" -f
+            "E_POWERSHELL_BACKUP_PROFILE_PORTABILITY: PowerShell profile '{0}' at '{1}' contains PSReadLine setup that is not guarded for Windows PowerShell 5.1 and older PSReadLine versions. violations={2}. Run Repair-PowerShellProfilePortability.ps1 -ProfilePath '{1}' -Apply to repair this specific failing profile, or restore the repository profile. See {3}" -f
             $ProfileName,
             $resolvedPath,
             ($violations -join ','),
