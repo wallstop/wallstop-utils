@@ -485,7 +485,7 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
         $result.ExitCode | Should -Be 0
         $result.Stdout | Should -Be "Scripts/Utils/example.ps1`n"
         $script:rawGitInvocationCount | Should -Be 2
-        Assert-MockCalled -CommandName Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
+        Should -Invoke Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
     }
 
     It "auto-restages formatter-updated clean staged files and retries once" {
@@ -675,7 +675,7 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
 
         Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
             Should -Be 124
-        Assert-MockCalled -CommandName Invoke-PreCommitEnvironmentRepair -Times 0 -Exactly
+        Should -Invoke Invoke-PreCommitEnvironmentRepair -Times 0 -Exactly
     }
 
     It "recovers from git index lock failures before environment repair" {
@@ -720,7 +720,7 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
         Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
             Should -Be 0
 
-        Assert-MockCalled -CommandName Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
+        Should -Invoke Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
         @($script:capturedRunCommands.ToArray()).Count | Should -Be 2
     }
 
@@ -753,8 +753,8 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
         Invoke-PreCommitWithRecoveryMain -Stage pre-commit -UseAllFiles:$false -OnlyInstallHooks:$false -MaximumRepairAttempts 1 -CommandTimeoutSeconds 30 |
             Should -Be 23
 
-        Assert-MockCalled -CommandName Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
-        Assert-MockCalled -CommandName Invoke-PreCommitEnvironmentRepair -Times 0 -Exactly
+        Should -Invoke Invoke-SafeGitIndexLockRecovery -Times 1 -Exactly
+        Should -Invoke Invoke-PreCommitEnvironmentRepair -Times 0 -Exactly
     }
 
     It "passes explicit repository root to index-lock recovery from a different working directory" {

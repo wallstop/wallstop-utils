@@ -426,7 +426,7 @@ Describe "Invoke-AutoHotkeyValidationCommand" {
         $result.Status | Should -Be $ExpectedStatus
         $result.Mode | Should -Be $ExpectedMode
         @($result.Attempts).Count | Should -Be $ExpectedCallCount
-        Assert-MockCalled -CommandName Invoke-AutoHotkeyCommand -Times $ExpectedCallCount -Exactly
+        Should -Invoke Invoke-AutoHotkeyCommand -Times $ExpectedCallCount -Exactly
     }
 }
 
@@ -508,7 +508,7 @@ Describe "Test-AutoHotkeyScripts control flow" {
             Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA)
         } | Should -Throw "*E_AHK_REQUIRES_V2_MISSING*"
 
-        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 0 -Exactly
+        Should -Invoke Get-AutoHotkeyExecutablePath -Times 0 -Exactly
     }
 
     It "fails v1 syntax static violations before runtime discovery" {
@@ -525,7 +525,7 @@ Describe "Test-AutoHotkeyScripts control flow" {
             Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA)
         } | Should -Throw "*E_AHK_V1_SYNTAX_DETECTED*"
 
-        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 0 -Exactly
+        Should -Invoke Get-AutoHotkeyExecutablePath -Times 0 -Exactly
     }
 
     It "auto-fixes missing #Requires when content has no v1 markers" {
@@ -544,7 +544,7 @@ Describe "Test-AutoHotkeyScripts control flow" {
 
         $updatedContent = Get-Content -Path $fileA -Raw
         $updatedContent | Should -Match '^#Requires\s+AutoHotkey\s+v2\.0\b'
-        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 1 -Exactly
+        Should -Invoke Get-AutoHotkeyExecutablePath -Times 1 -Exactly
     }
 
     It "auto-repairs managed Config/.config snapshot drift from same-named v2 source" {
@@ -567,7 +567,7 @@ Describe "Test-AutoHotkeyScripts control flow" {
         } | Should -Not -Throw
 
         (Get-Content -Path $configFile -Raw) | Should -Be $sourceContent
-        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 1 -Exactly
+        Should -Invoke Get-AutoHotkeyExecutablePath -Times 1 -Exactly
     }
 
     It "runs a follow-up static pass so source repairs unblock dependent config snapshot repair" {
@@ -596,7 +596,7 @@ Describe "Test-AutoHotkeyScripts control flow" {
 
         $updatedSourceContent | Should -Match '^#Requires\s+AutoHotkey\s+v2\.0\b'
         $updatedConfigContent | Should -Be $updatedSourceContent
-        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 1 -Exactly
+        Should -Invoke Get-AutoHotkeyExecutablePath -Times 1 -Exactly
     }
 
     It "skips runtime probing in static-only mode after static checks pass" {
@@ -613,7 +613,7 @@ Describe "Test-AutoHotkeyScripts control flow" {
             Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA) -StaticOnly
         } | Should -Not -Throw
 
-        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 0 -Exactly
+        Should -Invoke Get-AutoHotkeyExecutablePath -Times 0 -Exactly
     }
 
     It "preserves collected validation failures when a later file reports unsupported mode" {
@@ -649,7 +649,7 @@ Describe "Test-AutoHotkeyScripts control flow" {
             Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA, $fileB)
         } | Should -Throw "*E_AHK_VALIDATION_FAILED*"
 
-        Assert-MockCalled -CommandName Invoke-AutoHotkeyValidationCommand -Times 2 -Exactly
+        Should -Invoke Invoke-AutoHotkeyValidationCommand -Times 2 -Exactly
     }
 
     It "fails immediately with E_AHK_VALIDATE_UNAVAILABLE in required mode" {
@@ -673,7 +673,7 @@ Describe "Test-AutoHotkeyScripts control flow" {
             Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA) -RequireAutoHotkey
         } | Should -Throw "*E_AHK_VALIDATE_UNAVAILABLE*"
 
-        Assert-MockCalled -CommandName Invoke-AutoHotkeyValidationCommand -Times 1 -Exactly
+        Should -Invoke Invoke-AutoHotkeyValidationCommand -Times 1 -Exactly
     }
 
     It "adds explicit runtime/capture hint when all validation probes return no output in required mode" {
@@ -700,7 +700,7 @@ Describe "Test-AutoHotkeyScripts control flow" {
             Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @($fileA) -RequireAutoHotkey
         } | Should -Throw "*Hint: all probe attempts returned no output*"
 
-        Assert-MockCalled -CommandName Invoke-AutoHotkeyValidationCommand -Times 1 -Exactly
+        Should -Invoke Invoke-AutoHotkeyValidationCommand -Times 1 -Exactly
     }
 
     It "does not fall back to full-repo AHK discovery when targeted scope is requested but resolves zero files" {
@@ -714,8 +714,8 @@ Describe "Test-AutoHotkeyScripts control flow" {
             Test-AutoHotkeyScripts -RepoRoot $repoRoot -RequestedTargetFilePaths @() -UseTargetedScope
         } | Should -Not -Throw
 
-        Assert-MockCalled -CommandName Get-ChildItem -Times 0 -Exactly
-        Assert-MockCalled -CommandName Get-AutoHotkeyExecutablePath -Times 0 -Exactly
+        Should -Invoke Get-ChildItem -Times 0 -Exactly
+        Should -Invoke Get-AutoHotkeyExecutablePath -Times 0 -Exactly
     }
 }
 
@@ -783,7 +783,7 @@ Describe "Test-BatchScriptsStaticSmoke" {
             Test-BatchScriptsStaticSmoke -RepoRoot $repoRoot -RequestedTargetFilePaths @() -UseTargetedScope
         } | Should -Not -Throw
 
-        Assert-MockCalled -CommandName Get-ChildItem -Times 0 -Exactly
+        Should -Invoke Get-ChildItem -Times 0 -Exactly
     }
 }
 
@@ -834,16 +834,16 @@ Describe "Invoke-Main targeted mode behavior" {
 
         Invoke-Main -TargetFiles "Scripts/does-not-exist.ahk"
 
-        Assert-MockCalled -CommandName Test-AutoHotkeyScripts -Times 1 -Exactly -ParameterFilter {
+        Should -Invoke Test-AutoHotkeyScripts -Times 1 -Exactly -ParameterFilter {
             $UseTargetedScope -and $RequestedTargetFilePaths.Count -eq 0
         }
-        Assert-MockCalled -CommandName Test-BatchScriptsStaticSmoke -Times 1 -Exactly -ParameterFilter {
+        Should -Invoke Test-BatchScriptsStaticSmoke -Times 1 -Exactly -ParameterFilter {
             $UseTargetedScope -and $RequestedTargetFilePaths.Count -eq 0
         }
-        Assert-MockCalled -CommandName Write-Verbose -Times 1 -ParameterFilter {
+        Should -Invoke Write-Verbose -Times 1 -ParameterFilter {
             $Message -like "Windows language checks: targeted mode requested via TargetFiles input."
         }
-        Assert-MockCalled -CommandName Write-Verbose -Times 1 -ParameterFilter {
+        Should -Invoke Write-Verbose -Times 1 -ParameterFilter {
             $Message -like "Windows language checks: targeted mode resolved zero existing .ahk/.bat files; skipping targeted checks without full-repo fallback."
         }
     }
@@ -856,7 +856,7 @@ Describe "Invoke-Main targeted mode behavior" {
 
         Invoke-Main -TargetFiles "Scripts/AutoHotKey/example.ahk" -StaticOnly
 
-        Assert-MockCalled -CommandName Test-AutoHotkeyScripts -Times 1 -Exactly -ParameterFilter {
+        Should -Invoke Test-AutoHotkeyScripts -Times 1 -Exactly -ParameterFilter {
             $StaticOnly -and $UseTargetedScope -and $RequestedTargetFilePaths.Count -eq 1
         }
     }

@@ -120,9 +120,9 @@ Describe "Invoke-NativeQualityChecks target scoping" {
         { Invoke-NativeQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("does-not-exist.lua") } |
             Should -Not -Throw
 
-        Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
-        Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
-        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
+        Should -Invoke Read-NativeQualityToolManifest -Times 0 -Exactly
+        Should -Invoke Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+        Should -Invoke Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
     }
 
     It "skips workflow-only targets in stylua mode before reading the manifest or resolving tools" {
@@ -134,10 +134,10 @@ Describe "Invoke-NativeQualityChecks target scoping" {
         { Invoke-NativeQualityChecksMain -SelectedTool stylua -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @(".github/workflows/script-quality.yml") } |
             Should -Not -Throw
 
-        Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
-        Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
-        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
-        Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 0 -Exactly
+        Should -Invoke Read-NativeQualityToolManifest -Times 0 -Exactly
+        Should -Invoke Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+        Should -Invoke Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
+        Should -Invoke Invoke-StyluaQualityCheck -Times 0 -Exactly
     }
 
     It "skips Lua-only targets in actionlint mode before reading the manifest or resolving tools" {
@@ -149,10 +149,10 @@ Describe "Invoke-NativeQualityChecks target scoping" {
         { Invoke-NativeQualityChecksMain -SelectedTool actionlint -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("Config/Wezterm/wezterm.lua") } |
             Should -Not -Throw
 
-        Assert-MockCalled -CommandName Read-NativeQualityToolManifest -Times 0 -Exactly
-        Assert-MockCalled -CommandName Resolve-NativeQualityToolExecutable -Times 0 -Exactly
-        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
-        Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 0 -Exactly
+        Should -Invoke Read-NativeQualityToolManifest -Times 0 -Exactly
+        Should -Invoke Resolve-NativeQualityToolExecutable -Times 0 -Exactly
+        Should -Invoke Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
+        Should -Invoke Invoke-ActionlintQualityCheck -Times 0 -Exactly
     }
 
     It "passes only owned targets to a selected single native tool" {
@@ -183,9 +183,9 @@ Describe "Invoke-NativeQualityChecks target scoping" {
         $script:styluaSingleToolTargets.Count | Should -Be 1
         (ConvertTo-NativeQualityRelativePath -RepositoryRoot $script:repoRoot -Path $script:styluaSingleToolTargets[0]) |
             Should -Be "Config/Wezterm/wezterm.lua"
-        Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 1 -Exactly
-        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
-        Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 0 -Exactly
+        Should -Invoke Invoke-StyluaQualityCheck -Times 1 -Exactly
+        Should -Invoke Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
+        Should -Invoke Invoke-ActionlintQualityCheck -Times 0 -Exactly
     }
 
     It "resolves only tools with matching targets and keeps embedded analyzers when supported in All mode" {
@@ -218,9 +218,9 @@ Describe "Invoke-NativeQualityChecks target scoping" {
         $script:actionlintTargetPaths.Count | Should -Be 1
         (ConvertTo-NativeQualityRelativePath -RepositoryRoot $script:repoRoot -Path $script:actionlintTargetPaths[0]) |
             Should -Be ".github/workflows/script-quality.yml"
-        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 1 -Exactly
-        Assert-MockCalled -CommandName Invoke-ActionlintQualityCheck -Times 1 -Exactly
-        Assert-MockCalled -CommandName Invoke-StyluaQualityCheck -Times 0 -Exactly
+        Should -Invoke Resolve-NativeEmbeddedShellCheckExecutable -Times 1 -Exactly
+        Should -Invoke Invoke-ActionlintQualityCheck -Times 1 -Exactly
+        Should -Invoke Invoke-StyluaQualityCheck -Times 0 -Exactly
     }
 
     It "disables embedded analyzers with a diagnostic when the host cannot run them reliably" {
@@ -248,7 +248,7 @@ Describe "Invoke-NativeQualityChecks target scoping" {
 
         $script:actionlintShellCheckPath | Should -Be ""
         @($script:nativeQualityWarnings.ToArray()) | Should -Contain "W_NATIVE_QUALITY_ACTIONLINT_EMBEDDED_ANALYZERS_DISABLED_WINDOWS: actionlint shellcheck/pyflakes subprocess integration is disabled on Windows to avoid native subprocess hangs; Linux CI keeps blocking workflow embedded analyzer coverage."
-        Assert-MockCalled -CommandName Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
+        Should -Invoke Resolve-NativeEmbeddedShellCheckExecutable -Times 0 -Exactly
     }
 
     It "still resolves all requested tools in EnsureOnly mode" {
@@ -306,6 +306,32 @@ Describe "Invoke-NativeQualityChecks actionlint optional analyzers" {
 
         $script:capturedActionlintArguments[0..3] | Should -Be @("-shellcheck", "", "-pyflakes", "")
         $script:capturedActionlintArguments | Should -Contain ".github/workflows/script-quality.yml"
+    }
+}
+
+Describe "Invoke-NativeQualityChecks fail-closed analyzer lane" {
+    It "turns a non-zero StyLua check into a stable formatting failure" {
+        Mock Invoke-QualityToolingProcess { return 7 }
+
+        {
+            Invoke-StyluaQualityCheck -ExecutablePath "/tmp/stylua" -RepositoryRoot $script:repoRoot -Files @("Config/Wezterm/wezterm.lua") -ApplyFix:$false
+        } | Should -Throw -ExpectedMessage "*E_STYLUA_FORMAT_REQUIRED*"
+    }
+
+    It "turns a non-zero StyLua fix run into a stable analyzer failure" {
+        Mock Invoke-QualityToolingProcess { return 9 }
+
+        {
+            Invoke-StyluaQualityCheck -ExecutablePath "/tmp/stylua" -RepositoryRoot $script:repoRoot -Files @("Config/Wezterm/wezterm.lua") -ApplyFix:$true
+        } | Should -Throw -ExpectedMessage "*E_STYLUA_FAILED*"
+    }
+
+    It "turns a non-zero actionlint run into a stable analyzer failure" {
+        Mock Invoke-QualityToolingProcess { return 3 }
+
+        {
+            Invoke-ActionlintQualityCheck -ExecutablePath "/tmp/actionlint" -RepositoryRoot $script:repoRoot -Files @(".github/workflows/script-quality.yml")
+        } | Should -Throw -ExpectedMessage "*E_ACTIONLINT_FAILED*"
     }
 }
 
@@ -436,7 +462,7 @@ Describe "Invoke-NativeQualityChecks install robustness" {
 
             Test-QualityToolingToolReady -Context $script:NativeQualityContext -InstallRoot $installRoot -AssetSpec $assetSpec -RepositoryRoot $script:repoRoot |
                 Should -BeTrue
-            Assert-MockCalled -CommandName Assert-QualityToolingToolVersion -Times 1 -Exactly
+            Should -Invoke Assert-QualityToolingToolVersion -Times 1 -Exactly
         }
         finally {
             if (Test-Path -LiteralPath $tempRoot) {

@@ -54,7 +54,7 @@ Describe "Format-PowerShellFiles idempotence" {
         $secondPassBytes = [System.IO.File]::ReadAllBytes($samplePath)
 
         ([System.Convert]::ToBase64String($secondPassBytes)) | Should -Be ([System.Convert]::ToBase64String($firstPassBytes))
-        Assert-MockCalled -CommandName Write-Host -Times 1 -Exactly -ParameterFilter { $Object -like "Formatted *" }
+        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { $Object -like "Formatted *" }
         [System.IO.File]::ReadAllText($samplePath) | Should -Be "Write-Host 'hello'`n"
     }
 
@@ -95,7 +95,7 @@ Describe "Format-PowerShellFiles idempotence" {
 
         $result | Should -Not -Match "`t"
         $result | Should -Match ([regex]::Escape($ExpectedSnippet))
-        Assert-MockCalled -CommandName Write-Host -Times 1 -Exactly -ParameterFilter { $Object -like "Formatted *" }
+        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { $Object -like "Formatted *" }
     }
 
     It "fails fast with actionable diagnostics when formatter output still contains leading tabs: <Name>" -TestCases @(

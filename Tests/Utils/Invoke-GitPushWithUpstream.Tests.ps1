@@ -46,7 +46,7 @@ Describe "Invoke-GitPushWithUpstream" {
         Invoke-GitPushWithUpstreamMain -SelectedRemote origin -RequestedRepositoryRoot $script:repoRoot | Should -Be 0
 
         @($script:gitPushCalls.ToArray()) | Should -Contain "push"
-        Assert-MockCalled -CommandName Assert-GitHookRegistration -Times 1 -Exactly
+        Should -Invoke Assert-GitHookRegistration -Times 1 -Exactly
     }
 
     It "accepts an explicit remote when it matches the existing upstream remote" {

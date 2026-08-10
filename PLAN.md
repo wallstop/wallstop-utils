@@ -23,6 +23,6 @@
 - [x] Select the first lane for warnings-as-errors using the smallest independently verifiable scope.
 - [x] Add a failing baseline test for newly introduced warnings while remediation proceeds separately.
 - [x] Expand warnings-as-errors to the managed ShellCheck lane, preserving its style-level blocking policy and wrapper failure diagnostic.
-- [ ] Expand warnings-as-errors to the managed native analyzer lane only after the shell lane remains green in CI.
+- [x] Expand warnings-as-errors to the managed native analyzer lane with fail-closed StyLua/actionlint regression coverage.
 
-Evidence: [session-004 analyzer baseline](./progress/session-004-analyzer-baseline.md) and [session-005 dependency and shell lane](./progress/session-005-dependency-and-shell-lane.md). The PowerShell ScriptAnalyzer scope and managed ShellCheck lane now have explicit fail-closed policy coverage; the native lane remains separately gated to preserve CI timing.
+Evidence: [session-004 analyzer baseline](./progress/session-004-analyzer-baseline.md), [session-005 dependency and shell lane](./progress/session-005-dependency-and-shell-lane.md), and [session-007 native analyzer lane](./progress/session-007-native-analyzer-lane.md). The PowerShell ScriptAnalyzer, managed ShellCheck, StyLua, and actionlint lanes now have explicit fail-closed coverage; native checks remain separately gated to preserve CI timing.

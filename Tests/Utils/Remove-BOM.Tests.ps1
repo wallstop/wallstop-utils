@@ -175,8 +175,8 @@ Describe "Remove-BOM file discovery" {
 
         $actualCanonicalPath | Should -Be $expectedCanonicalPath -Because "Scenario '$Scenario' should canonicalize without traversing intermediate path segments."
         $expectedResolvedPathCalls = if (Test-IsWindowsPlatform) { 1 } else { 2 }
-        Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $resolvedPath } -Times $expectedResolvedPathCalls -Exactly
-        Assert-MockCalled -CommandName Get-Item -ParameterFilter { $LiteralPath -eq $missingIntermediate } -Times 0 -Exactly
+        Should -Invoke Get-Item -ParameterFilter { $LiteralPath -eq $resolvedPath } -Times $expectedResolvedPathCalls -Exactly
+        Should -Invoke Get-Item -ParameterFilter { $LiteralPath -eq $missingIntermediate } -Times 0 -Exactly
     }
 
     It "normalizes top-level symlink aliases during canonicalization (<Scenario>)" -TestCases @(
@@ -291,7 +291,7 @@ Describe "Remove-BOM file discovery" {
         $actualCanonicalPath | Should -Be "/private/var/folders/canonical-test-root" -Because "Scenario '$Scenario' should normalize top-level aliases consistently."
 
         if (-not [string]::IsNullOrWhiteSpace($ResolvePathAliasPath)) {
-            Assert-MockCalled -CommandName Resolve-Path -ParameterFilter { $LiteralPath -eq $aliasRoot } -Times 1 -Exactly
+            Should -Invoke Resolve-Path -ParameterFilter { $LiteralPath -eq $aliasRoot } -Times 1 -Exactly
         }
     }
 
