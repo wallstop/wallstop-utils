@@ -677,8 +677,7 @@ Describe "Get-PortableLinkTarget" {
         $item = Get-Item -LiteralPath $cycleA -Force
         # The visited-target set (plus the MaxDepth bound) must break the cycle rather than hang,
         # and return $null to match the native ResolveLinkTarget($true) "unresolved" outcome.
-        $cycleResult = $null
-        { $cycleResult = Get-PortableLinkTarget -Item $item -ForceFallback } | Should -Not -Throw
+        $cycleResult = Get-PortableLinkTarget -Item $item -ForceFallback
         $cycleResult | Should -BeNullOrEmpty -Because "a symbolic-link cycle is unresolvable, mirroring native ResolveLinkTarget."
     }
 }

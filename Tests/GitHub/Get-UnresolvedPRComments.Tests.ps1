@@ -4,6 +4,35 @@ $ErrorActionPreference = "Stop"
 BeforeAll {
     . "$PSScriptRoot/../../Scripts/Utils/Common/CompatibilityHelpers.ps1"
     . "$PSScriptRoot/../../Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1" -NoRun
+
+    function Invoke-TestMain {
+        param(
+            [AllowNull()]
+            [string]$PullRequestUrl,
+            [AllowNull()]
+            [string]$Owner,
+            [AllowNull()]
+            [string]$Repo,
+            [string]$GitHubHost,
+            [string[]]$AllowedGitHubHosts,
+            [int]$PullRequestNumber,
+            [AllowNull()]
+            [string]$Token,
+            [string]$OutputFormat,
+            [bool]$Interactive,
+            [bool]$WaitOnRateLimit,
+            [int]$PerPage,
+            [int]$MaxPages,
+            [int]$RequestTimeoutSeconds,
+            [int]$OverallTimeoutSeconds,
+            [string]$OutputPath,
+            [bool]$Truncate,
+            [bool]$Copy,
+            [bool]$CopyStrict
+        )
+
+        Invoke-Main -PullRequestUrl $PullRequestUrl -Owner $Owner -Repo $Repo -GitHubHost $GitHubHost -AllowedGitHubHosts $AllowedGitHubHosts -PullRequestNumber $PullRequestNumber -Token $Token -OutputFormat $OutputFormat -Interactive:$Interactive -WaitOnRateLimit:$WaitOnRateLimit -PerPage $PerPage -MaxPages $MaxPages -RequestTimeoutSeconds $RequestTimeoutSeconds -OverallTimeoutSeconds $OverallTimeoutSeconds -OutputPath $OutputPath -Truncate:$Truncate -Copy:$Copy -CopyStrict:$CopyStrict
+    }
 }
 
 Describe "Parse-GitHubPullRequestUrl" {
@@ -3577,8 +3606,7 @@ Describe "Invoke-GitHubRequestWithRetry" {
     It "returns null instead of throwing when the shared web session type is unavailable" {
         Mock Resolve-WebRequestSessionType { $null }
 
-        $session = $null
-        { $session = New-GitHubWebSession } | Should -Not -Throw
+        $session = New-GitHubWebSession
         $session | Should -BeNullOrEmpty
     }
 
@@ -4800,7 +4828,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:lastOutput | Should -Match "src/main.ts"
         Should -Invoke Validate-GitHubTokenForRepoAccess -Times 1 -Scope It -ParameterFilter { $RequestTimeoutSeconds -eq 60 }
@@ -4858,7 +4886,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:lastOutput | Should -Be "public fallback"
         Should -Invoke Get-PublicPullRequestReviewCommentsFallback -Times 1 -Scope It
@@ -4942,7 +4970,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:authTokenCallCount | Should -Be 2
         $script:reviewCallCount | Should -Be 1
@@ -5022,7 +5050,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:authTokenCallCount | Should -Be 2
         $script:reviewCallCount | Should -Be 1
@@ -5113,7 +5141,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:authTokenCallCount | Should -Be 2
         $script:validateCallCount | Should -Be 2
@@ -5210,7 +5238,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:lastOutput | Should -Be "rate-limit recovered"
         $script:authTokenCallCount | Should -Be 2
@@ -5332,7 +5360,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:lastOutput | Should -Be "recovered with fresh token"
         $script:authTokenCallCount | Should -Be 2
@@ -5428,7 +5456,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:lastOutput | Should -Be "interactive recovered"
         $script:authTokenCallCount | Should -Be 2
@@ -5481,7 +5509,7 @@ Describe "Invoke-Main" {
         Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called when token validation fails." }
         Mock Get-PublicPullRequestReviewCommentsFallback { throw "Public REST fallback should not be called when an explicit token fails in direct mode." }
 
-        { Invoke-Main } | Should -Throw "*E_AUTH_INVALID*"
+        { Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds } | Should -Throw "*E_AUTH_INVALID*"
         Should -Invoke Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "bad-token" }
         Should -Invoke Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { [string]::IsNullOrWhiteSpace($AuthToken) }
         Should -Invoke Read-TerminalResponse -Times 0 -Scope It
@@ -5584,7 +5612,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:lastOutput | Should -Be "direct public fallback"
         $script:authTokenCallCount | Should -Be 2
@@ -5676,7 +5704,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:lastOutput | Should -Be "direct rate-limit fallback"
         $script:authTokenCallCount | Should -Be 2
@@ -5757,7 +5785,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
 
         $script:lastOutput | Should -Be "anonymous success"
         Should -Invoke Get-GitHubHeaders -Times 1 -Scope It -ParameterFilter { $AuthToken -eq "expired-token" }
@@ -5832,7 +5860,7 @@ Describe "Invoke-Main" {
         }
         Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called for non-auth REST fallback failures." }
 
-        { Invoke-Main } | Should -Throw "*E_NETWORK_TIMEOUT*Public REST fallback timed out*"
+        { Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds } | Should -Throw "*E_NETWORK_TIMEOUT*Public REST fallback timed out*"
         $script:authTokenCallCount | Should -Be 2
         $script:validateCallCount | Should -Be 1
         Should -Invoke Read-TerminalResponse -Times 0 -Scope It
@@ -5892,7 +5920,7 @@ Describe "Invoke-Main" {
         Mock Get-PublicPullRequestReviewCommentsFallback { throw "E_NETWORK_TIMEOUT: Public REST fallback timed out" }
         Mock Get-UnresolvedReviewThreads { throw "Get-UnresolvedReviewThreads should not be called for non-auth REST fallback failures." }
 
-        { Invoke-Main } | Should -Throw "*E_NETWORK_TIMEOUT*"
+        { Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds } | Should -Throw "*E_NETWORK_TIMEOUT*"
         $script:authTokenCallCount | Should -Be 2
         Should -Invoke Read-TerminalResponse -Times 0 -Scope It
         Should -Invoke Get-UnresolvedReviewThreads -Times 0 -Scope It
@@ -5952,7 +5980,7 @@ Describe "Invoke-Main" {
 
         $thrownMessage = $null
         try {
-            Invoke-Main
+            Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds
         }
         catch {
             $thrownMessage = $_.Exception.Message
@@ -5995,7 +6023,7 @@ Describe "Invoke-Main" {
         Mock Get-PublicPullRequestReviewCommentsFallback { throw "E_NOT_FOUND: Public REST fallback could not read this PR" }
         Mock Read-TerminalResponse { "y" }
 
-        { Invoke-Main } | Should -Throw "*E_AUTH_REQUIRED*"
+        { Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds } | Should -Throw "*E_AUTH_REQUIRED*"
         Should -Invoke Read-TerminalResponse -Times 0 -Scope It
     }
 
@@ -6048,7 +6076,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds -Truncate $Truncate -Copy $Copy
 
         $script:lastOutput | Should -Be "copied output"
         Should -Invoke Copy-ToClipboard -Times 1 -Scope It -ParameterFilter { $Text -eq "copied output" }
@@ -6103,7 +6131,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds -Truncate $Truncate -Copy $Copy
 
         $script:lastOutput | Should -Be "still output"
         Should -Invoke Copy-ToClipboard -Times 1 -Scope It
@@ -6148,7 +6176,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds -Truncate $Truncate -Copy $Copy
 
         $script:lastOutput | Should -Be "No unresolved review threads found."
     }
@@ -6157,7 +6185,7 @@ Describe "Invoke-Main" {
         $Copy = [System.Management.Automation.SwitchParameter]::new($false)
         $CopyStrict = [System.Management.Automation.SwitchParameter]::new($true)
 
-        { Invoke-Main } | Should -Throw "*E_CONFIG_ERROR*-CopyStrict requires -Copy*"
+        { Invoke-Main -Copy:$Copy -CopyStrict:$CopyStrict } | Should -Throw "*E_CONFIG_ERROR*-CopyStrict requires -Copy*"
     }
 
     It "throws E_CLIPBOARD_COPY_FAILED when CopyStrict is set and copy fails" {
@@ -6205,7 +6233,7 @@ Describe "Invoke-Main" {
         Mock Format-UnresolvedThreadsAsText { "strict output" }
         Mock Copy-ToClipboard { $false }
 
-        { Invoke-Main } | Should -Throw "*E_CLIPBOARD_COPY_FAILED*"
+        { Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds -Truncate $Truncate -Copy $Copy -CopyStrict $CopyStrict } | Should -Throw "*E_CLIPBOARD_COPY_FAILED*"
     }
 
     It "writes output file when OutputPath is provided and still writes stdout" {
@@ -6260,7 +6288,7 @@ Describe "Invoke-Main" {
             $script:lastOutput = $InputObject
         }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds -OutputPath $OutputPath -Truncate $Truncate -Copy $Copy -CopyStrict $CopyStrict
 
         Should -Invoke Write-RenderedOutputToFile -Times 1 -Scope It -ParameterFilter { $OutputPath -eq (Join-Path -Path $TestDrive -ChildPath "artifacts/out.txt") -and $Text -eq "file output" }
         $script:lastOutput | Should -Be "file output"
@@ -6311,7 +6339,7 @@ Describe "Invoke-Main" {
         Mock Format-UnresolvedThreadsAsText { "ok" }
         Mock Write-Output { }
 
-        Invoke-Main
+        Invoke-TestMain $PullRequestUrl $Owner $Repo $GitHubHost $AllowedGitHubHosts $PullRequestNumber $Token $OutputFormat $Interactive $WaitOnRateLimit $PerPage $MaxPages $RequestTimeoutSeconds $OverallTimeoutSeconds -Truncate $Truncate -Copy $Copy
 
         Should -Invoke Get-UnresolvedReviewThreads -Times 1 -Scope It -ParameterFilter { $Truncate.IsPresent }
     }

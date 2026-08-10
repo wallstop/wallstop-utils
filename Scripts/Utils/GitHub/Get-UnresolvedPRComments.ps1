@@ -5540,7 +5540,34 @@ function Test-ShouldUseFastExit {
 
 function Invoke-Main {
     [CmdletBinding()]
-    param()
+    param(
+        [string]$PullRequestUrl,
+        [string]$Owner,
+        [string]$Repo,
+        [string]$GitHubHost = "github.com",
+        [string[]]$AllowedGitHubHosts = @(),
+        [int]$PullRequestNumber,
+        [string]$Token,
+        [string]$GitHubWebCookie,
+        [ValidateSet("text", "json")]
+        [string]$OutputFormat = "text",
+        [string]$OutputPath,
+        [switch]$Interactive,
+        [switch]$WaitOnRateLimit,
+        [switch]$Truncate,
+        [switch]$KeepMarkup,
+        [switch]$Copy,
+        [switch]$CopyStrict,
+        [switch]$NoFastExit,
+        [ValidateRange(1, 100)]
+        [int]$PerPage = 100,
+        [ValidateRange(1, 100)]
+        [int]$MaxPages = 100,
+        [ValidateRange(5, 300)]
+        [int]$RequestTimeoutSeconds = 60,
+        [ValidateRange(30, 3600)]
+        [int]$OverallTimeoutSeconds = 300
+    )
 
     # Suppress the web-cmdlet progress UI for the whole run. PowerShell's Invoke-WebRequest /
     # Invoke-RestMethod render a progress bar that hides the cursor and emits DSR cursor-position
@@ -5779,7 +5806,7 @@ function Invoke-Main {
 # Allow tests to dot-source without executing main flow.
 if (-not $NoRun.IsPresent -and $MyInvocation.InvocationName -ne ".") {
     try {
-        Invoke-Main
+        Invoke-Main @script:TopLevelBoundParameters
         # By default the process terminates immediately after a successful run, skipping the slow
         # .NET/PowerShell managed teardown (finalizers + HTTP connection-pool shutdown) that
         # dominates wall time on slow container filesystems. Output is already rendered and flushed

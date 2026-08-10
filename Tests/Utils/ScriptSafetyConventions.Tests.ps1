@@ -942,7 +942,7 @@ Describe "Scope safety conventions" {
         # inside the existing dot-source guard so dot-sourced tests never terminate the host. The fast
         # exit is ALSO gated by Test-ShouldUseFastExit so a run that would strand the terminal (an
         # interactive host, or a run that read from the console) takes the safe managed exit instead.
-        $content | Should -Match 'Invoke-Main\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
+        $content | Should -Match 'Invoke-Main(?:\s+@[^\r\n]+)?\s*\r?\n\s*#[\s\S]*?if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+0'
         $content | Should -Match 'if\s*\(-not\s*\$NoFastExit\.IsPresent\s+-and\s+\(Test-ShouldUseFastExit\)\)\s*\{\s*\r?\n?\s*Invoke-FastProcessExit\s+-ExitCode\s+1'
     }
 
@@ -1147,7 +1147,6 @@ Describe "Scope safety conventions" {
 
     It "prompts only through the canonical-mode terminal-read seam, never Read-Host" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1"
-        $content = Get-Content -Path $fullPath -Raw
         $tokens = $null
         $parseErrors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$tokens, [ref]$parseErrors)
@@ -4062,7 +4061,6 @@ Describe "Backup script safety conventions" {
         # Scripts/Utils/Common/CanonicalJsonHelpers.ps1 so every writer shares one proven implementation.
         $helperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CanonicalJsonHelpers.ps1"
         Test-Path -LiteralPath $helperPath | Should -BeTrue
-        $helperContent = (Get-Content -Path $helperPath -Raw) -replace "`r", ''
         $tokens = $null
         $parseErrors = $null
         $helperAst = [System.Management.Automation.Language.Parser]::ParseFile($helperPath, [ref]$tokens, [ref]$parseErrors)
