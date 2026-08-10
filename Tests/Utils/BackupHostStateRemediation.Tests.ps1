@@ -33,7 +33,7 @@ Describe "Backup host-state remediation" {
         $komorebiHelpers = Get-Content -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Komorebi/KomorebiProfileHelpers.ps1") -Raw
 
         $powershellBackup | Should -Match "https://github\.com/wallstop/wallstop-utils/blob/main/docs/operator-runbooks/backup-host-state\.md"
-        $powershellBackup | Should -Match "Repair-PowerShellProfilePortability\.ps1\s+-Apply"
+        $powershellBackup | Should -Match "Repair-PowerShellProfilePortability\.ps1\s+-ProfilePath\s+'\{1\}'\s+-Apply"
         $komorebiHelpers | Should -Match "https://github\.com/wallstop/wallstop-utils/blob/main/docs/operator-runbooks/backup-host-state\.md"
         $komorebiHelpers | Should -Match "Repair-KomorebiBackupSource\.ps1\s+-ProfileName"
     }
