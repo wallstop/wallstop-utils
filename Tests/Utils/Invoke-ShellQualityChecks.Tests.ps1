@@ -92,8 +92,8 @@ Describe "Invoke-ShellQualityChecks target scoping" {
         { Invoke-ShellQualityChecksMain -SelectedTool All -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("does-not-exist.sh") } |
             Should -Not -Throw
 
-        Assert-MockCalled -CommandName Read-ShellQualityToolManifest -Times 0 -Exactly
-        Assert-MockCalled -CommandName Resolve-ShellQualityToolExecutable -Times 0 -Exactly
+        Should -Invoke Read-ShellQualityToolManifest -Times 0 -Exactly
+        Should -Invoke Resolve-ShellQualityToolExecutable -Times 0 -Exactly
     }
 
     It "skips existing non-shell targets before reading the manifest or resolving tools" {
@@ -105,10 +105,10 @@ Describe "Invoke-ShellQualityChecks target scoping" {
         { Invoke-ShellQualityChecksMain -SelectedTool shfmt -ApplyFix:$false -OnlyEnsureTools:$false -InputFiles @("README.md") } |
             Should -Not -Throw
 
-        Assert-MockCalled -CommandName Read-ShellQualityToolManifest -Times 0 -Exactly
-        Assert-MockCalled -CommandName Resolve-ShellQualityToolExecutable -Times 0 -Exactly
-        Assert-MockCalled -CommandName Invoke-ShfmtQualityCheck -Times 0 -Exactly
-        Assert-MockCalled -CommandName Invoke-ShellCheckQualityCheck -Times 0 -Exactly
+        Should -Invoke Read-ShellQualityToolManifest -Times 0 -Exactly
+        Should -Invoke Resolve-ShellQualityToolExecutable -Times 0 -Exactly
+        Should -Invoke Invoke-ShfmtQualityCheck -Times 0 -Exactly
+        Should -Invoke Invoke-ShellCheckQualityCheck -Times 0 -Exactly
     }
 
     It "still resolves all requested tools in EnsureOnly mode" {
@@ -159,6 +159,24 @@ Describe "Invoke-ShellQualityChecks bounded process execution" {
         }
 
         $elapsed.TotalSeconds | Should -BeLessThan 25
+    }
+}
+
+Describe "Invoke-ShellQualityChecks warnings-as-errors lane" {
+    It "keeps ShellCheck style findings blocking" {
+        $configPath = Join-Path -Path $script:repoRoot -ChildPath ".shellcheckrc"
+        $config = (Get-Content -LiteralPath $configPath -Raw) -replace "`r", ''
+
+        $config | Should -Match '(?m)^severity\s*=\s*style\s*$'
+    }
+
+    It "fails closed when ShellCheck reports a finding" {
+        Mock Invoke-QualityToolingProcess { return 1 }
+
+        $targetPath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/post-create.sh"
+        {
+            Invoke-ShellCheckQualityCheck -ExecutablePath "/tmp/shellcheck" -RepositoryRoot $script:repoRoot -Files @($targetPath)
+        } | Should -Throw -ExpectedMessage "*E_SHELLCHECK_FAILED*"
     }
 }
 

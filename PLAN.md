@@ -22,6 +22,7 @@
 - [x] Capture the current analyzer inventory, versions, scopes, warning counts, and intentional suppressions in a reviewable artifact.
 - [x] Select the first lane for warnings-as-errors using the smallest independently verifiable scope.
 - [x] Add a failing baseline test for newly introduced warnings while remediation proceeds separately.
-- [ ] Expand warnings-as-errors lane by lane only after the baseline is green and CI timing remains within contract.
+- [x] Expand warnings-as-errors to the managed ShellCheck lane, preserving its style-level blocking policy and wrapper failure diagnostic.
+- [ ] Expand warnings-as-errors to the managed native analyzer lane only after the shell lane remains green in CI.
 
-Evidence: [session-004 analyzer baseline](./progress/session-004-analyzer-baseline.md). The first lane is the 77-target PowerShell ScriptAnalyzer scope because it already has a deterministic zero-finding gate and does not require changing the shell/native release-tool lanes.
+Evidence: [session-004 analyzer baseline](./progress/session-004-analyzer-baseline.md) and [session-005 dependency and shell lane](./progress/session-005-dependency-and-shell-lane.md). The PowerShell ScriptAnalyzer scope and managed ShellCheck lane now have explicit fail-closed policy coverage; the native lane remains separately gated to preserve CI timing.
