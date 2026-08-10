@@ -8,7 +8,7 @@ Audit issue #43 after the test-fixture remediation and identify any remaining la
 
 ## Verified managed coverage
 
-- 101 tracked PowerShell files: PSScriptAnalyzer 1.21.0 with `.psscriptanalyzer.psd1`, `Scripts/` and `Tests/` each at zero findings; changed files also pass the cross-version compatibility gate.
+- 101 tracked PowerShell files: PSScriptAnalyzer 1.21.0 with `.psscriptanalyzer.psd1`; the managed `Scripts/` and `Tests/` lanes each have zero findings and changed files pass the cross-version compatibility gate. Four intentional `Config/Powershell/` profile files retain `PSAvoidUsingCmdletAliases` warnings and are outside that managed script lane.
 - Managed shell targets: pinned ShellCheck/shfmt enforcement through the shared quality wrappers.
 - Lua: pinned StyLua enforcement for `Config/Wezterm/wezterm.lua`.
 - GitHub Actions: pinned actionlint enforcement for tracked workflow files.
