@@ -252,12 +252,19 @@ function Assert-KomorebiSnapshotDirectoryComplete {
 
     $state = Get-KomorebiSnapshotDirectoryState -Directory $Directory
     if (-not $state.IsComplete) {
+        $operatorRunbookSuffix = if ($ErrorCode -eq "E_KOMOREBI_BACKUP_SOURCE_MISSING") {
+            ". Run Repair-KomorebiBackupSource.ps1 -ProfileName <profile> -Apply to restore an explicitly selected repository profile, or see https://github.com/wallstop/wallstop-utils/blob/main/docs/operator-runbooks/backup-host-state.md"
+        }
+        else {
+            ""
+        }
         throw (
-            "{0}: Missing required Komorebi {1} file(s) under '{2}': {3}" -f
+            "{0}: Missing required Komorebi {1} file(s) under '{2}': {3}{4}" -f
             $ErrorCode,
             $Context,
             $Directory,
-            ($state.Missing -join ", ")
+            ($state.Missing -join ", "),
+            $operatorRunbookSuffix
         )
     }
 }

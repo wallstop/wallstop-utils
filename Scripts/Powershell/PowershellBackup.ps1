@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$operatorRunbookUrl = "https://github.com/wallstop/wallstop-utils/blob/main/docs/operator-runbooks/backup-host-state.md"
 
 $compatibilityHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath '../Utils/Common/CompatibilityHelpers.ps1'
 if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
@@ -35,19 +36,21 @@ function Assert-PowerShellProfileBackupPortability {
     }
     catch {
         throw (
-            "E_POWERSHELL_BACKUP_PROFILE_PARSE_FAILED: PowerShell profile '{0}' at '{1}' could not be parsed before backup. error={2}" -f
+            "E_POWERSHELL_BACKUP_PROFILE_PARSE_FAILED: PowerShell profile '{0}' at '{1}' could not be parsed before backup. error={2}. See {3}" -f
             $ProfileName,
             $resolvedPath,
-            $_.Exception.Message
+            $_.Exception.Message,
+            $operatorRunbookUrl
         )
     }
 
     if ($violations.Count -gt 0) {
         throw (
-            "E_POWERSHELL_BACKUP_PROFILE_PORTABILITY: PowerShell profile '{0}' at '{1}' contains PSReadLine setup that is not guarded for Windows PowerShell 5.1 and older PSReadLine versions. violations={2}. Restore the repository profile or update the source profile before backup." -f
+            "E_POWERSHELL_BACKUP_PROFILE_PORTABILITY: PowerShell profile '{0}' at '{1}' contains PSReadLine setup that is not guarded for Windows PowerShell 5.1 and older PSReadLine versions. violations={2}. Restore the repository profile or run Repair-PowerShellProfilePortability.ps1 -Apply to update the source profile. See {3}" -f
             $ProfileName,
             $resolvedPath,
-            ($violations -join ',')
+            ($violations -join ','),
+            $operatorRunbookUrl
         )
     }
 }
@@ -143,7 +146,7 @@ try {
     }
 
     if ($profilesBackedUp -eq 0) {
-        Write-Error "E_POWERSHELL_BACKUP_NO_PROFILES_FOUND: No PowerShell profile files were found to back up from discovered CurrentUser profile paths."
+        Write-Error "E_POWERSHELL_BACKUP_NO_PROFILES_FOUND: No PowerShell profile files were found to back up from discovered CurrentUser profile paths. See $operatorRunbookUrl"
         exit 1
     }
 
