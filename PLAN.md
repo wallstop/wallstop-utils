@@ -17,7 +17,7 @@
 ## Follow-up
 
 - Issue #46 (partial git uploads) now has explicit post-push remote-head verification and commit wording that distinguishes failed backup steps from Git publication. A live backup run remains required to close the operational investigation safely.
-- Issue #43 (warnings-as-errors and static-analyzer research) remains open for broader analyzer inventory and additional lanes; the managed production and test PowerShell, ShellCheck/shfmt, StyLua, actionlint, and TypeScript compiler lanes now have deterministic enforcement documented in sessions 004–007, 013, 015, and 017.
+- Issue #43 (warnings-as-errors and static-analyzer research) is complete for the repository's supported managed quality surface: all tracked PowerShell, ShellCheck/shfmt, StyLua, actionlint, and TypeScript compiler lanes now have deterministic enforcement documented in sessions 004–007, 013, 015, and 017. Remaining small-language analyzer decisions are tracked in follow-up issue #62.
 
 ## Next milestone: analyzer baseline for #43
 
