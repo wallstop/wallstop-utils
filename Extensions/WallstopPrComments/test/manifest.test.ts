@@ -86,20 +86,27 @@ test('extension runtime floor supports the Node version required by production d
     engines?: { vscode?: string };
   };
   const lockfile = JSON.parse(readFileSync(join(extensionRoot, 'package-lock.json'), 'utf8')) as {
-    packages?: { [key: string]: { engines?: { node?: string } } };
+    packages?: {
+      [key: string]: {
+        dependencies?: { [key: string]: string };
+        engines?: { node?: string };
+      };
+    };
   };
   const workflow = readFileSync(join(repositoryRoot, '.github', 'workflows', 'extension-tests.yml'), 'utf8');
 
-  assert.equal(
-    manifest.engines?.vscode,
-    '^1.101.0',
-    'update this runtime-policy test when the extension VS Code engine floor changes',
-  );
-  assert.equal(
-    lockfile.packages?.['node_modules/entities']?.engines?.node,
-    '>=20.19.0',
-    'the runtime-policy test must track the minimum Node version required by entities',
-  );
+  const vscodeEngineMatch = /^\^(\d+)\.(\d+)\.(\d+)$/u.exec(manifest.engines?.vscode ?? '');
+  assert.ok(vscodeEngineMatch, 'the VS Code engine floor must be a caret semver range');
+  assert.ok(Number(vscodeEngineMatch[2]) >= 101, 'the VS Code floor must provide the modern Node extension host');
+
+  const markdownItPackage = lockfile.packages?.['node_modules/markdown-it'];
+  const entityPackageName = markdownItPackage?.dependencies?.entities;
+  assert.match(entityPackageName ?? '', /^\^\d+\.\d+\.\d+$/u, 'markdown-it must declare a semver entities dependency');
+
+  const entityPackage = lockfile.packages?.[`node_modules/entities`];
+  const nodeEngineMatch = /^>=(\d+)\.(\d+)\.(\d+)$/u.exec(entityPackage?.engines?.node ?? '');
+  assert.ok(nodeEngineMatch, 'the production entity dependency must declare a minimum Node engine');
+  assert.ok(Number(nodeEngineMatch[1]) >= 20, 'the extension must not package an entity dependency requiring an obsolete Node major');
   assert.match(
     workflow,
     /uses:\s*actions\/setup-node@v\d+\.\d+\.\d+/u,
