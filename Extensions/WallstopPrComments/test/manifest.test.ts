@@ -79,18 +79,26 @@ test('package manifest pins refreshRepo inline on repository tree items', () => 
   assert.match(refreshRepoMenu.group ?? '', /^inline(@\d+)?$/u, 'refreshRepo must render inline on the repository node');
 });
 
-test('extension CI runs on the VS Code 1.90 extension-host Node major', () => {
+test('extension runtime floor supports the Node version required by production dependencies', () => {
   const extensionRoot = join(__dirname, '..', '..');
   const repositoryRoot = join(extensionRoot, '..', '..');
   const manifest = JSON.parse(readFileSync(join(extensionRoot, 'package.json'), 'utf8')) as {
     engines?: { vscode?: string };
   };
+  const lockfile = JSON.parse(readFileSync(join(extensionRoot, 'package-lock.json'), 'utf8')) as {
+    packages?: { [key: string]: { engines?: { node?: string } } };
+  };
   const workflow = readFileSync(join(repositoryRoot, '.github', 'workflows', 'extension-tests.yml'), 'utf8');
 
   assert.equal(
     manifest.engines?.vscode,
-    '^1.90.0',
+    '^1.101.0',
     'update this runtime-policy test when the extension VS Code engine floor changes',
+  );
+  assert.equal(
+    lockfile.packages?.['node_modules/entities']?.engines?.node,
+    '>=20.19.0',
+    'the runtime-policy test must track the minimum Node version required by entities',
   );
   assert.match(
     workflow,
