@@ -146,6 +146,7 @@ Safety notes:
 
 - Unattended mode bypasses hook verification only for backup commit (`git commit --no-verify`).
 - Backup still enforces clean preflight, managed scope checks, pull-before-mutate, branch assertions, and post-push clean checks.
+- Pre-existing changes under the managed `Config/` path are preserved through the pull and regenerated before the managed backup commit; changes outside `Config/` still fail preflight and are never auto-committed.
 - Before staging/commit, backup redacts known secret fields in changed `Config/` text outputs and fails with `E_BACKUP_SECRET_SCAN_FAILED` if unknown high-confidence secret patterns remain.
 
 **macOS:**

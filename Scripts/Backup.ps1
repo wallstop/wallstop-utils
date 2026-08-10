@@ -297,22 +297,148 @@ function Assert-BackupGitTreeCleanPreflight {
         [string]$GitExecutable,
 
         [Parameter(Mandatory = $true)]
-        [string]$RepositoryRoot
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$ManagedPathspecs
     )
 
     $statusLines = @(Get-GitStatusLinesOrThrow -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot)
     if ($statusLines.Count -eq 0) {
-        return
+        return $false
     }
 
     $statusSummary = Get-GitStatusSummary -StatusLines $statusLines
-    throw (
-        "E_BACKUP_GIT_TREE_DIRTY_PREFLIGHT: Repository has pre-existing changes before backup begins. " +
-        "Commit or discard local changes before running backup.`nSummary: tracked={0}, untracked={1}, total={2}`nDetails:`n{3}" -f
+    $outsideManagedPathspec = @(".")
+    foreach ($managedPathspec in $ManagedPathspecs) {
+        $outsideManagedPathspec += ":(exclude)$managedPathspec"
+    }
+
+    $outsideManagedChanges = @(Get-GitStatusLinesOrThrow -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Pathspec $outsideManagedPathspec)
+    if ($outsideManagedChanges.Count -gt 0) {
+        $outsideSummary = Get-GitStatusSummary -StatusLines $outsideManagedChanges
+        throw ((
+                "E_BACKUP_GIT_TREE_DIRTY_PREFLIGHT: Repository has pre-existing changes before backup begins, including changes outside managed pathspecs ({0}). " +
+                "Commit or discard out-of-scope changes before running backup.`nSummary: tracked={1}, untracked={2}, total={3}`nDetails:`n{4}`nOut-of-scope details:`n{5}") -f
+            ($ManagedPathspecs -join ', '),
+            $statusSummary.TrackedCount,
+            $statusSummary.UntrackedCount,
+            $statusSummary.TotalCount,
+            $statusSummary.Details,
+            $outsideSummary.Details)
+    }
+
+    Write-Warning ((
+            "W_BACKUP_GIT_MANAGED_DIRTY_PREFLIGHT: Preserving pre-existing changes under managed pathspecs ({0}) through git pull and backup regeneration. " +
+            "These files remain eligible for the managed backup commit. tracked={1}; untracked={2}; total={3}; details={4}") -f
+        ($ManagedPathspecs -join ', '),
         $statusSummary.TrackedCount,
         $statusSummary.UntrackedCount,
         $statusSummary.TotalCount,
-        $statusSummary.Details
+        ($statusSummary.Details -replace "`r?`n", '; '))
+
+    return $true
+}
+
+function Invoke-BackupGitPullWithManagedChanges {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitExecutable,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$ManagedPathspecs
+    )
+
+    $managedStatus = @(Get-GitStatusLinesOrThrow -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot -Pathspec $ManagedPathspecs)
+    $stashCreated = $false
+    $stashReference = ""
+
+    if ($managedStatus.Count -gt 0) {
+        $stashMessage = "wallstop-backup-managed-preflight-{0}" -f ([DateTime]::UtcNow.ToString("yyyyMMddTHHmmssfffZ", [System.Globalization.CultureInfo]::InvariantCulture))
+        $stashArgs = @("-C", $RepositoryRoot, "stash", "push", "--include-untracked", "--message", $stashMessage, "--")
+        $stashArgs += $ManagedPathspecs
+        $stashOutput = @(& $GitExecutable @stashArgs 2>&1)
+        $stashExitCode = Get-LastExitCodeOrDefault
+        if ($stashExitCode -ne 0) {
+            throw (
+                "E_BACKUP_GIT_MANAGED_STASH_FAILED: git stash push for pre-existing managed changes exited with code {0} (repositoryRoot='{1}'; pathspec={2}; outputPreview={3})." -f
+                $stashExitCode,
+                $RepositoryRoot,
+                (Get-PathspecDiagnosticsText -Pathspec $ManagedPathspecs),
+                (Get-OutputPreview -OutputLines $stashOutput)
+            )
+        }
+
+        $stashReferenceOutput = @(& $GitExecutable -C $RepositoryRoot rev-parse --verify refs/stash 2>$null)
+        $stashReferenceExitCode = Get-LastExitCodeOrDefault
+        if ($stashReferenceExitCode -ne 0 -or $stashReferenceOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$stashReferenceOutput[0])) {
+            throw "E_BACKUP_GIT_MANAGED_STASH_REFERENCE_FAILED: managed changes were stashed but refs/stash could not be verified; do not continue until the stash is recovered manually."
+        }
+
+        $stashReference = ([string]$stashReferenceOutput[0]).Trim()
+        $stashCreated = $true
+        Write-Verbose (
+            "Backup managed-change stash diagnostics: stashReference='{0}'; repositoryRoot='{1}'; pathspec={2}" -f
+            $stashReference,
+            $RepositoryRoot,
+            (Get-PathspecDiagnosticsText -Pathspec $ManagedPathspecs)
+        )
+    }
+
+    $gitPullOutput = @(& $GitExecutable -C $RepositoryRoot pull --ff-only origin main 2>&1)
+    $gitPullExitCode = Get-LastExitCodeOrDefault
+    if ($gitPullExitCode -ne 0) {
+        if ($stashCreated) {
+            $restoreOutput = @(& $GitExecutable -C $RepositoryRoot stash pop --index 2>&1)
+            $restoreExitCode = Get-LastExitCodeOrDefault
+            if ($restoreExitCode -ne 0) {
+                throw (
+                    "E_BACKUP_GIT_MANAGED_RESTORE_FAILED: git pull failed and restoring managed pre-existing changes also failed (restoreExitCode={0}; stashReference='{1}'; repositoryRoot='{2}'; outputPreview={3})." -f
+                    $restoreExitCode,
+                    $stashReference,
+                    $RepositoryRoot,
+                    (Get-OutputPreview -OutputLines $restoreOutput)
+                )
+            }
+        }
+
+        throw (
+            "E_BACKUP_GIT_PULL_FAILED: git pull --ff-only origin main exited with code {0} (repositoryRoot='{1}'; managedChangesStashed={2}; outputPreview={3})." -f
+            $gitPullExitCode,
+            $RepositoryRoot,
+            $stashCreated,
+            (Get-OutputPreview -OutputLines $gitPullOutput)
+        )
+    }
+
+    if ($stashCreated) {
+        $restoreOutput = @(& $GitExecutable -C $RepositoryRoot stash pop --index 2>&1)
+        $restoreExitCode = Get-LastExitCodeOrDefault
+        if ($restoreExitCode -ne 0) {
+            throw (
+                "E_BACKUP_GIT_MANAGED_RESTORE_FAILED: git pull succeeded but restoring managed pre-existing changes failed (restoreExitCode={0}; stashReference='{1}'; repositoryRoot='{2}'; outputPreview={3}). The stash remains available for manual recovery." -f
+                $restoreExitCode,
+                $stashReference,
+                $RepositoryRoot,
+                (Get-OutputPreview -OutputLines $restoreOutput)
+            )
+        }
+
+        Write-Verbose (
+            "Backup managed-change restore diagnostics: restoredStash='{0}'; repositoryRoot='{1}'" -f
+            $stashReference,
+            $RepositoryRoot
+        )
+    }
+
+    Write-Verbose (
+        "Backup git pull diagnostics: repositoryRoot='{0}'; managedChangesStashed={1}; outputPreview={2}" -f
+        $RepositoryRoot,
+        $stashCreated,
+        (Get-OutputPreview -OutputLines $gitPullOutput)
     )
 }
 
@@ -641,22 +767,17 @@ try {
 
     Write-Host ""
     Write-Host "========== BACKUP GIT PREFLIGHT ==========" -ForegroundColor Cyan
-    Assert-BackupGitTreeCleanPreflight -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot
+    $hasPreExistingManagedChanges = Assert-BackupGitTreeCleanPreflight -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ManagedPathspecs $managedPathspecs
     Assert-BackupGitBranchOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ExpectedBranch "main"
-    Write-Host "Git tree is clean before backup mutations." -ForegroundColor Green
+    if ($hasPreExistingManagedChanges) {
+        Write-Host "Managed snapshot changes will be preserved through pull and regenerated before commit." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "Git tree is clean before backup mutations." -ForegroundColor Green
+    }
 
     # Pull before backup mutations so backup never starts from an out-of-date branch.
-    $gitPullPreflightOutput = @(& $gitExecutable -C $repositoryRoot pull --ff-only origin main 2>&1)
-    $gitPullPreflightExitCode = Get-LastExitCodeOrDefault
-    if ($gitPullPreflightExitCode -ne 0) {
-        $gitPullPreflightPreview = Get-OutputPreview -OutputLines $gitPullPreflightOutput
-        throw (
-            "E_BACKUP_GIT_PULL_FAILED: git pull --ff-only origin main exited with code {0} (repositoryRoot='{1}'; outputPreview={2})." -f
-            $gitPullPreflightExitCode,
-            $repositoryRoot,
-            $gitPullPreflightPreview
-        )
-    }
+    Invoke-BackupGitPullWithManagedChanges -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ManagedPathspecs $managedPathspecs
 
     Write-Host "Git preflight completed. Starting backup steps..." -ForegroundColor Green
 
