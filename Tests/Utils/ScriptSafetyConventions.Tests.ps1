@@ -2718,6 +2718,15 @@ Describe "Quality config file conventions" {
         }
     }
 
+    It "keeps the first warnings-as-errors lane fail-closed" {
+        $analyzerSettings = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath '.psscriptanalyzer.psd1') -Raw) -replace "`r", ''
+        $analyzerSettings | Should -Match "Severity\s*=\s*@\([\s\S]*Error[\s\S]*Warning" -Because "the PowerShell baseline must include both errors and warnings"
+
+        $validatorPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Run-PreCommitValidation.ps1'
+        $validatorContent = (Get-Content -Path $validatorPath -Raw) -replace "`r", ''
+        $validatorContent | Should -Match '\$analysisCount\s+-gt\s+0[\s\S]*E_LINT_FAILURE' -Because "any new ScriptAnalyzer finding must fail the validation gate"
+    }
+
     It "keeps git hook wrapper scripts ending with a trailing newline" {
         $hookPaths = @($script:preCommitHookPath, $script:prePushHookPath)
 
@@ -3583,7 +3592,7 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'param\(\s*\[Parameter\(Mandatory\s*=\s*\$false\)\]\s*\[switch\]\$Unattended\s*\)'
         $backupScript | Should -Match 'WALLSTOP_BACKUP_UNATTENDED'
         $backupScript | Should -Match 'function\s+Test-BackupTruthySettingValue'
-        $backupScript | Should -Match 'if\s*\(\s*\$hasBackupStepFailures\s*\)\s*\{[\s\S]*partial success:'
+        $backupScript | Should -Match 'if\s*\(\s*\$hasBackupStepFailures\s*\)\s*\{[\s\S]*backup steps failed: \$failedCount; \$succeededCount/\$totalCount succeeded'
         $backupScript | Should -Match 'else\s*\{[\s\S]*\$commitMessage\s*=\s*"Backup for \$dateString \(\$succeededCount/\$totalCount\)"'
         $backupScript | Should -Match 'Resolve-PowerShellExecutablePath'
         $backupScript | Should -Not -Match 'Get-Command\s+-Name\s+"pwsh"'
@@ -3610,6 +3619,9 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT'
         $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED'
         $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED'
+        $backupScript | Should -Match 'function\s+Assert-BackupGitRemoteHeadOrThrow'
+        $backupScript | Should -Match 'E_BACKUP_GIT_REMOTE_VERIFY_FAILED'
+        $backupScript | Should -Match 'E_BACKUP_GIT_REMOTE_HEAD_MISMATCH'
         $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED:[\s\S]*repositoryRoot=' -Because 'Backup pull failures must include repositoryRoot for actionable diagnostics.'
         $backupScript | Should -Match 'E_BACKUP_GIT_PULL_FAILED:[\s\S]*outputPreview=' -Because 'Backup pull failures must include outputPreview for actionable diagnostics.'
         $backupScript | Should -Match 'E_BACKUP_GIT_ADD_FAILED:[\s\S]*repositoryRoot=' -Because 'Backup add failures must include repositoryRoot for actionable diagnostics.'
@@ -3621,6 +3633,7 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED:[\s\S]*repositoryRoot=' -Because 'Backup push failures must include repositoryRoot for actionable diagnostics.'
         $backupScript | Should -Match 'E_BACKUP_GIT_PUSH_FAILED:[\s\S]*outputPreview=' -Because 'Backup push failures must include outputPreview for actionable diagnostics.'
         $backupScript | Should -Match 'E_BACKUP_GIT_TREE_DIRTY_POSTPUSH'
+        $backupScript | Should -Match 'Assert-BackupGitRemoteHeadOrThrow\s+-GitExecutable\s+\$gitExecutable\s+-RepositoryRoot\s+\$repositoryRoot\s+-RemoteName\s+"origin"\s+-BranchName\s+"main"'
         $backupScript | Should -Match 'Backup git availability diagnostics:'
         $backupScript | Should -Match 'Backup git preflight diagnostics:'
         $backupScript | Should -Match 'Backup git staging diagnostics:'
