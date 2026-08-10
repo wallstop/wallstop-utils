@@ -3,9 +3,11 @@
   "app_specific_configuration_path": "$Env:USERPROFILE/applications.json",
   "window_hiding_behaviour": "Cloak",
   "cross_monitor_move_behaviour": "Insert",
-  "default_workspace_padding": 0,
-  "default_container_padding": 0,
+  "default_workspace_padding": 2,
+  "default_container_padding": 2,
   "border": false,
+  "border_width": 2,
+  "border_offset": 0,
   "mouse_follows_focus": true,
   "animation": {
     "enabled": false,
@@ -26,21 +28,29 @@
     {
       "workspaces": [
         {
-          "name": "I",
-          "layout": "Scrolling",
-          "layout_options": {
-            "scrolling": {
-              "columns": 1,
-              "center_focused_column": true
-            }
-          },
-          "workspace_padding": 0,
-          "container_padding": 0
+          "name": "Middle",
+          "layout": "Grid"
+        }
+      ]
+    },
+    {
+      "workspaces": [
+        {
+          "name": "Right",
+          "layout": "Rows"
+        }
+      ]
+    },
+    {
+      "workspaces": [
+        {
+          "name": "Left",
+          "layout": "Rows"
         }
       ]
     }
   ],
-  "float_rules": [
+  "ignore_rules": [
     {
       "kind": "Title",
       "id": " Hot Reload",
