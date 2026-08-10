@@ -1475,7 +1475,7 @@ try {
     $githubTestPattern = '^(Scripts/Utils/GitHub|Tests/GitHub)/.+\.ps1$'
     $komorebiProfilePattern = '^(Scripts/Komorebi/.+\.ps1|Tests/Utils/KomorebiProfileHelpers\.Tests\.ps1)$'
     $komorebiPolicyPattern = '^(Scripts/Komorebi/.+\.ps1|Scripts/Utils/Run-PreCommitValidation\.ps1|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1|\.pre-commit-config\.yaml)$'
-    $scriptPattern = '^(Scripts/Utils|Scripts/Komorebi)/.+\.ps1$'
+    $scriptPattern = '^Scripts/.+\.ps1$'
     $shellQualityPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push))$'
     $shellSafetyTriggerPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push)|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1)$'
     $nativeQualityPattern = '^(Config/Wezterm/wezterm\.lua|\.github/workflows/.+\.(yml|yaml))$'
@@ -1575,7 +1575,7 @@ try {
 
     $analyzerTargets = @()
     if ($All) {
-        $analyzerTargets = @("Scripts/Utils")
+        $analyzerTargets = @("Scripts")
     }
     elseif ($scriptFiles.Count -gt 0) {
         $missingAnalyzerTargets = @(
