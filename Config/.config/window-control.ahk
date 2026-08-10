@@ -1,4 +1,5 @@
 #Requires AutoHotkey v2.0
+; Restored Windows host-state snapshot.
 
 ; ============================================
 ; WindowManager.ahk
