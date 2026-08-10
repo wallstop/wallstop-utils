@@ -11,12 +11,14 @@ tool, dependency, or CI lane.
 
 - Enabled `noUnusedLocals` and `noUnusedParameters` in the extension's
   `tsconfig.json`.
+- Added a manifest-suite regression test so the warning-as-error settings
+  cannot be removed while the compile still passes.
 - Updated `PLAN.md` to record the completed TypeScript compiler lane.
 
 ## Verification
 
-- `npx tsc -p tsconfig.json --noEmit --noUnusedLocals --noUnusedParameters`
-  passed against the current extension sources.
+- `npm test` passed: 278 tests, including compilation and the configuration
+  regression test.
 - The existing extension workflow's `npm test` command exercises the same
   compiler configuration, so the new checks are part of the required CI gate.
 
