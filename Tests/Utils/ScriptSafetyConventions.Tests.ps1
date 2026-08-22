@@ -1717,7 +1717,7 @@ Describe "Cross-language quality platform conventions" {
         $workflow = Get-Content -Path $script:devcontainerWorkflowPath -Raw
 
         $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+-EnsureOnly'
-        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
+        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/post-start\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
         $workflow | Should -Not -Match 'apt-get\s+install[\s\S]*shellcheck'
         $workflow | Should -Not -Match 'shellcheck\s+--severity'
     }
@@ -2754,6 +2754,7 @@ Describe "Shell quality conventions" {
         $shellFiles = @(
             Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts') -Filter '*.sh' -File -Recurse -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-start.sh') -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-commit') -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-push') -ErrorAction Stop
         )
@@ -2779,6 +2780,7 @@ Describe "Shell quality conventions" {
         $shellFiles = @(
             Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts') -Filter '*.sh' -File -Recurse -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-start.sh') -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-commit') -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-push') -ErrorAction Stop
         )

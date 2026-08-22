@@ -196,6 +196,57 @@ _ensure_apt_index_updated() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# Volume-mounted cache ownership repair.
+#
+# Named volumes are mounted directly at ${HOME}/.npm and ${HOME}/.cache/*;
+# when a mount target is absent from the base image Docker provisions the
+# mount point root-owned, and the persistent (${devcontainerId}-*) volumes
+# keep that content across rebuilds. Non-root npm/pip/pre-commit/opencode
+# then fail with EACCES (for example mkdir '${HOME}/.npm/_cacache'). Repair
+# ownership before any tooling touches those paths.
+# ---------------------------------------------------------------------------
+
+_find_root_owned_cache_mounts() {
+  local uid="$1"
+  local cache_path=''
+  while IFS= read -r cache_path; do
+    [[ -d "${cache_path}" ]] || continue
+    if [[ -n "$(find "${cache_path}" -maxdepth 3 ! -user "${uid}" -print -quit 2> /dev/null)" ]]; then
+      printf '%s\n' "${cache_path}"
+    fi
+  done < <(printf '%s\n' "${HOME}/.npm" "${HOME}/.cache")
+}
+
+_repair_home_cache_mount_ownership() {
+  local uid=''
+  local gid=''
+  uid="$(id -u)"
+  gid="$(id -g)"
+
+  local stale_paths=''
+  stale_paths="$(_find_root_owned_cache_mounts "${uid}")"
+  if [[ -z "${stale_paths}" ]]; then
+    _log "Cache mount ownership already OK for uid ${uid}; no repair needed."
+    return 0
+  fi
+
+  local stale_display="${stale_paths//$'\n'/, }"
+  if ! _can_use_sudo_non_interactive; then
+    _warn "E_DEVCONTAINER_CACHE_OWNERSHIP_UNREPAIRABLE: root-owned files under '${stale_display}' but passwordless sudo is unavailable; npm/pip/opencode may fail with EACCES."
+    return 1
+  fi
+
+  _log "Repairing root-owned cache mounts: ${stale_display}..."
+  # shellcheck disable=SC2086 # Intentional word split: newline-delimited absolute paths contain no spaces.
+  if ! sudo -n chown -R "${uid}:${gid}" ${stale_paths}; then
+    _warn "E_DEVCONTAINER_CACHE_OWNERSHIP_FAILED: unable to chown '${stale_display}' to uid ${uid}."
+    return 1
+  fi
+
+  _log "Cache mount ownership repaired."
+}
+
 _ensure_npm_on_path() {
   if command -v npm > /dev/null 2>&1; then
     return 0
@@ -643,6 +694,369 @@ _should_enable_codex_bootstrap() {
 }
 
 # ---------------------------------------------------------------------------
+# OpenCode CLI bootstrap (npm package: opencode-ai, binary name: opencode)
+# Mirrors the Codex bootstrap contract: npm-managed resolution first, stale
+# ~/.local/bin fallback exclusion, verified symlink postconditions.
+# ---------------------------------------------------------------------------
+
+_test_opencode_path_is_local_bin_entry() {
+  local opencode_path="$1"
+  local opencode_dir=''
+  local opencode_dir_real=''
+  local local_bin_path="${HOME}/.local/bin"
+  local local_bin_real_path=''
+
+  if [[ -z "${opencode_path}" || "$(basename "${opencode_path}")" != "opencode" ]]; then
+    return 1
+  fi
+
+  opencode_dir="$(dirname "${opencode_path}")"
+  if [[ ! -d "${opencode_dir}" || ! -d "${local_bin_path}" ]]; then
+    return 1
+  fi
+
+  opencode_dir_real="$(cd -P "${opencode_dir}" && pwd -P)"
+  local_bin_real_path="$(cd -P "${local_bin_path}" && pwd -P)"
+  [[ "${opencode_dir_real}" == "${local_bin_real_path}" ]]
+}
+
+_resolve_opencode_npm_package_bin() {
+  local npm_root_output=''
+  local npm_root=''
+  local package_dir=''
+  local package_manifest_path=''
+  local package_bin_path=''
+
+  if ! command -v node > /dev/null 2>&1; then
+    return 1
+  fi
+
+  if ! npm_root_output="$(npm root --global 2> /dev/null)"; then
+    return 1
+  fi
+
+  while IFS= read -r npm_root; do
+    if [[ -z "${npm_root}" || "${npm_root}" == "undefined" || "${npm_root}" == "null" ]]; then
+      continue
+    fi
+
+    if [[ "${npm_root}" != /* ]]; then
+      if ! npm_root="$(_resolve_absolute_directory "${npm_root}")"; then
+        continue
+      fi
+    fi
+
+    package_dir="${npm_root}/opencode-ai"
+    package_manifest_path="${package_dir}/package.json"
+    if [[ ! -f "${package_manifest_path}" ]]; then
+      continue
+    fi
+
+    package_bin_path="$(
+      node -e '
+const fs = require("fs");
+const path = require("path");
+const manifestPath = process.argv[1];
+const packageDir = path.dirname(manifestPath);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const bin = typeof manifest.bin === "string" ? manifest.bin : manifest.bin && manifest.bin.opencode;
+if (!bin) {
+  process.exit(1);
+}
+const resolved = path.resolve(packageDir, bin);
+const relative = path.relative(packageDir, resolved);
+if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  process.exit(1);
+}
+process.stdout.write(resolved);
+' "${package_manifest_path}" 2> /dev/null || true
+    )"
+
+    if [[ -n "${package_bin_path}" && -x "${package_bin_path}" ]]; then
+      printf '%s\n' "${package_bin_path}"
+      return 0
+    fi
+  done <<< "${npm_root_output}"
+
+  return 1
+}
+
+_test_opencode_local_bin_is_npm_managed() {
+  local opencode_path="$1"
+  local package_bin_path=''
+  local opencode_real_path=''
+  local package_bin_real_path=''
+
+  if [[ ! -x "${opencode_path}" ]]; then
+    return 1
+  fi
+
+  if ! _test_opencode_path_is_local_bin_entry "${opencode_path}"; then
+    return 1
+  fi
+
+  if ! package_bin_path="$(_resolve_opencode_npm_package_bin)"; then
+    return 1
+  fi
+
+  opencode_real_path="$(readlink -f "${opencode_path}" 2> /dev/null || true)"
+  package_bin_real_path="$(readlink -f "${package_bin_path}" 2> /dev/null || true)"
+  [[ -n "${opencode_real_path}" && -n "${package_bin_real_path}" && "${opencode_real_path}" == "${package_bin_real_path}" ]]
+}
+
+_resolve_opencode_npm_global_bin() {
+  local npm_prefix_output=''
+  local npm_prefix=''
+  local existing_prefix=''
+  local prefix_opencode_path=''
+  local opencode_link_path="${HOME}/.local/bin/opencode"
+  local -a npm_prefixes=()
+
+  if ! npm_prefix_output="$(npm prefix --global 2> /dev/null)"; then
+    return 1
+  fi
+
+  while IFS= read -r npm_prefix; do
+    if [[ -z "${npm_prefix}" || "${npm_prefix}" == "undefined" || "${npm_prefix}" == "null" ]]; then
+      continue
+    fi
+
+    if [[ "${npm_prefix}" != /* ]]; then
+      if ! npm_prefix="$(_resolve_absolute_directory "${npm_prefix}")"; then
+        continue
+      fi
+    fi
+
+    for existing_prefix in "${npm_prefixes[@]}"; do
+      if [[ "${existing_prefix}" == "${npm_prefix}" ]]; then
+        continue 2
+      fi
+    done
+
+    npm_prefixes+=("${npm_prefix}")
+  done <<< "${npm_prefix_output}"
+
+  for npm_prefix in "${npm_prefixes[@]}"; do
+    prefix_opencode_path="${npm_prefix}/bin/opencode"
+    if _test_opencode_path_is_local_bin_entry "${prefix_opencode_path}"; then
+      if _test_opencode_local_bin_is_npm_managed "${prefix_opencode_path}"; then
+        printf '%s\n' "${opencode_link_path}"
+        return 0
+      fi
+      continue
+    fi
+
+    if [[ -x "${prefix_opencode_path}" ]]; then
+      printf '%s\n' "${prefix_opencode_path}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+_resolve_opencode_path_without_local_bin() {
+  local opencode_link_path="${HOME}/.local/bin/opencode"
+  local local_bin_path="${HOME}/.local/bin"
+  local local_bin_real_path="${local_bin_path}"
+  local path_entry=''
+  local path_entry_real=''
+  local filtered_path=''
+  local opencode_path=''
+  local opencode_path_dir=''
+  local opencode_path_dir_real=''
+  local opencode_real_path=''
+  local opencode_link_real_path=''
+  local old_ifs="${IFS}"
+  local -a path_entries=()
+  local -a filtered_path_entries=()
+
+  if [[ -d "${local_bin_path}" ]]; then
+    local_bin_real_path="$(cd -P "${local_bin_path}" && pwd -P)"
+  fi
+
+  IFS=':' read -r -a path_entries <<< "${PATH:-}"
+  IFS="${old_ifs}"
+  for path_entry in "${path_entries[@]}"; do
+    if [[ -z "${path_entry}" ]]; then
+      continue
+    fi
+
+    path_entry_real="${path_entry}"
+    if [[ -d "${path_entry}" ]]; then
+      path_entry_real="$(cd -P "${path_entry}" && pwd -P)"
+    fi
+
+    if [[ "${path_entry}" == "${local_bin_path}" || "${path_entry_real}" == "${local_bin_real_path}" ]]; then
+      continue
+    fi
+
+    filtered_path_entries+=("${path_entry}")
+  done
+
+  if ((${#filtered_path_entries[@]} == 0)); then
+    return 1
+  fi
+
+  IFS=':'
+  filtered_path="${filtered_path_entries[*]}"
+  IFS="${old_ifs}"
+
+  opencode_path="$(PATH="${filtered_path}" command -v opencode 2> /dev/null || true)"
+  if [[ -z "${opencode_path}" || "${opencode_path}" == "${opencode_link_path}" || ! -x "${opencode_path}" ]]; then
+    return 1
+  fi
+
+  opencode_path_dir="$(dirname "${opencode_path}")"
+  opencode_path_dir_real="${opencode_path_dir}"
+  if [[ -d "${opencode_path_dir}" ]]; then
+    opencode_path_dir_real="$(cd -P "${opencode_path_dir}" && pwd -P)"
+  fi
+  if [[ "${opencode_path_dir_real}" == "${local_bin_real_path}" ]]; then
+    return 1
+  fi
+
+  opencode_real_path="$(readlink -f "${opencode_path}" 2> /dev/null || true)"
+  opencode_link_real_path="$(readlink -f "${opencode_link_path}" 2> /dev/null || true)"
+  if [[ -n "${opencode_real_path}" && -n "${opencode_link_real_path}" && "${opencode_real_path}" == "${opencode_link_real_path}" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "${opencode_path}"
+  return 0
+}
+
+_link_opencode_into_local_bin() {
+  local opencode_source_path="$1"
+  local opencode_link_path="${HOME}/.local/bin/opencode"
+
+  if [[ -z "${opencode_source_path}" ]]; then
+    _warn "E_DEVCONTAINER_OPENCODE_LINK_FAILED: OpenCode source path is empty; cannot update ${opencode_link_path}."
+    return 1
+  fi
+
+  if [[ "${opencode_source_path}" != /* ]]; then
+    local opencode_source_dir
+    if opencode_source_dir="$(_resolve_absolute_directory "$(dirname "${opencode_source_path}")")"; then
+      opencode_source_path="${opencode_source_dir}/$(basename "${opencode_source_path}")"
+    fi
+  fi
+
+  mkdir -p "${HOME}/.local/bin"
+
+  if [[ "${opencode_source_path}" == "${opencode_link_path}" ]]; then
+    _warn "E_DEVCONTAINER_OPENCODE_LINK_FAILED: refusing to use ${opencode_link_path} as its own link source."
+    return 1
+  fi
+
+  if [[ ! -x "${opencode_source_path}" ]]; then
+    _warn "E_DEVCONTAINER_OPENCODE_SOURCE_NOT_EXECUTABLE: OpenCode source '${opencode_source_path}' is missing or not executable."
+    return 1
+  fi
+
+  if ! ln -sfn "${opencode_source_path}" "${opencode_link_path}"; then
+    _warn "E_DEVCONTAINER_OPENCODE_LINK_FAILED: failed to link ${opencode_link_path} to '${opencode_source_path}'."
+    return 1
+  fi
+
+  local linked_target=''
+  linked_target="$(readlink "${opencode_link_path}" 2> /dev/null || true)"
+  if [[ -n "${linked_target}" && "${linked_target}" != /* ]]; then
+    linked_target="$(cd "$(dirname "${opencode_link_path}")" && pwd)/${linked_target}"
+  fi
+
+  if [[ "${linked_target}" != "${opencode_source_path}" ]]; then
+    _warn "E_DEVCONTAINER_OPENCODE_LINK_FAILED: ${opencode_link_path} points to '${linked_target}' after link; expected '${opencode_source_path}'."
+    return 1
+  fi
+
+  if [[ ! -x "${opencode_link_path}" ]]; then
+    _warn "E_DEVCONTAINER_OPENCODE_LINK_FAILED: ${opencode_link_path} is not executable after linking to '${opencode_source_path}'."
+    return 1
+  fi
+
+  return 0
+}
+
+_install_opencode_cli() {
+  local package_spec='opencode-ai@latest'
+
+  if ! _ensure_npm_on_path; then
+    _warn "npm is unavailable; cannot install OpenCode CLI (${package_spec})."
+    return 1
+  fi
+
+  _log "Installing/updating OpenCode CLI via npm (${package_spec})..."
+  local max_attempts=3
+  local attempt=1
+  local retry_delay_seconds=2
+  local npm_install_timeout_seconds="${WALLSTOP_DEVCONTAINER_OPENCODE_NPM_TIMEOUT_SECONDS:-180}"
+
+  while ((attempt <= max_attempts)); do
+    local install_output
+    set +e
+    install_output="$(_run_with_timeout "${npm_install_timeout_seconds}" npm install --global "${package_spec}" 2>&1)"
+    local install_exit=$?
+    set -e
+
+    if ((install_exit == 0)); then
+      local opencode_path=''
+      if opencode_path="$(_resolve_opencode_npm_global_bin)"; then
+        if _test_opencode_path_is_local_bin_entry "${opencode_path}"; then
+          _log "OpenCode CLI available at ${opencode_path}."
+          return 0
+        fi
+
+        if _link_opencode_into_local_bin "${opencode_path}"; then
+          _log "OpenCode CLI available at ${opencode_path}."
+          return 0
+        fi
+      fi
+
+      if opencode_path="$(_resolve_opencode_path_without_local_bin)" && _link_opencode_into_local_bin "${opencode_path}"; then
+        _log "OpenCode CLI available at ${opencode_path}."
+        return 0
+      fi
+
+      _warn "E_DEVCONTAINER_OPENCODE_BINARY_UNRESOLVED: OpenCode CLI install succeeded but no executable npm-managed opencode binary could be resolved outside stale local-bin fallbacks."
+      return 1
+    fi
+
+    if ((install_exit == 124)); then
+      _warn "OpenCode CLI npm install attempt ${attempt}/${max_attempts} timed out after ${npm_install_timeout_seconds}s: ${install_output}"
+    else
+      _warn "OpenCode CLI npm install attempt ${attempt}/${max_attempts} failed: ${install_output}"
+    fi
+    if ((attempt < max_attempts)); then
+      _log "Retrying OpenCode CLI npm install in ${retry_delay_seconds}s..."
+      sleep "${retry_delay_seconds}"
+      retry_delay_seconds=$((retry_delay_seconds * 2))
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  return 1
+}
+
+_should_enable_opencode_bootstrap() {
+  local opencode_toggle="${WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE:-1}"
+  opencode_toggle="$(printf '%s' "${opencode_toggle}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${opencode_toggle}" in
+    1 | true | yes | on)
+      return 0
+      ;;
+    0 | false | no | off | '')
+      return 1
+      ;;
+    *)
+      _warn "WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE has unsupported value '${WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE}'; treating OpenCode bootstrap as disabled."
+      return 1
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # pre-commit install strategies (ordered by preference)
 # ---------------------------------------------------------------------------
 
@@ -838,6 +1252,12 @@ _ensure_precommit_cli_ready() {
 # Install pre-commit (skip if already present)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Repair volume-mounted cache ownership (must precede all npm/pip usage)
+# ---------------------------------------------------------------------------
+
+_repair_home_cache_mount_ownership || _warn "Cache mount ownership repair failed (non-blocking)."
+
 ensure_local_bin_on_path || _warn "PATH setup failed; continuing without profile updates."
 
 # ---------------------------------------------------------------------------
@@ -862,6 +1282,17 @@ else
   _log "Codex CLI bootstrap explicitly disabled (set WALLSTOP_DEVCONTAINER_ENABLE_CODEX=1 to re-enable)."
 fi
 ensure_local_bin_on_path || _warn "PATH refresh failed after Codex install; continuing without profile updates."
+
+# ---------------------------------------------------------------------------
+# Install/update OpenCode CLI (non-blocking)
+# ---------------------------------------------------------------------------
+
+if _should_enable_opencode_bootstrap; then
+  _install_opencode_cli || _warn "OpenCode CLI install/update failed (non-blocking)."
+else
+  _log "OpenCode CLI bootstrap explicitly disabled (set WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE=1 to re-enable)."
+fi
+ensure_local_bin_on_path || _warn "PATH refresh failed after OpenCode install; continuing without profile updates."
 
 # ---------------------------------------------------------------------------
 # Register git hooks via pre-commit

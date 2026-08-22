@@ -724,7 +724,7 @@ Describe "devcontainer-validate.yml Codex verification contract" {
     BeforeAll {
         $script:runPostCreateStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Run post-create.sh"
         $script:ensureShellQualityStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Ensure repo-managed shell quality tools"
-        $script:lintShellQualityStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Lint post-create.sh and githook scripts"
+        $script:lintShellQualityStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Lint post-create.sh, post-start.sh, and githook scripts"
         $script:verifyFirstCodexStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Verify Codex CLI is discoverable now and in fresh shells"
         $script:confirmIdempotenceStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Confirm idempotence (run post-create.sh a second time)"
         $script:verifySecondCodexStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Verify Codex CLI after second post-create run"
@@ -734,7 +734,7 @@ Describe "devcontainer-validate.yml Codex verification contract" {
         $script:ensureShellQualityStep | Should -Match 'shell:\s+pwsh'
         $script:ensureShellQualityStep | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+-EnsureOnly'
         $script:lintShellQualityStep | Should -Match 'shell:\s+pwsh'
-        $script:lintShellQualityStep | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
+        $script:lintShellQualityStep | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/post-start\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
         $script:devcontainerWorkflowContent | Should -Not -Match 'apt-get\s+install[\s\S]*shellcheck'
         $script:devcontainerWorkflowContent | Should -Not -Match 'shellcheck\s+--severity'
     }
@@ -787,6 +787,51 @@ Describe "devcontainer-validate.yml Codex verification contract" {
     It "keeps Codex bootstrap explicitly enabled for Codex verification steps" {
         $script:runPostCreateStep | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_CODEX:\s*"1"'
         $script:confirmIdempotenceStep | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_CODEX:\s*"1"'
+    }
+}
+
+Describe "devcontainer-validate.yml OpenCode verification contract" {
+    BeforeAll {
+        $script:runPostCreateStepForOpencode = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Run post-create.sh"
+        $script:confirmIdempotenceStepForOpencode = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Confirm idempotence (run post-create.sh a second time)"
+        $script:verifyFirstOpencodeStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Verify OpenCode CLI is discoverable now and in fresh shells"
+        $script:verifySecondOpencodeStep = & $script:getWorkflowStepBlock -Content $script:devcontainerWorkflowContent -StepName "Verify OpenCode CLI after second post-create run"
+    }
+
+    It "keeps OpenCode bootstrap explicitly enabled for post-create runs" {
+        $script:runPostCreateStepForOpencode | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE:\s*"1"'
+        $script:confirmIdempotenceStepForOpencode | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE:\s*"1"'
+    }
+
+    It "verifies first-run OpenCode checks strictly even when post-create reports non-blocking failure" {
+        $script:verifyFirstOpencodeStep | Should -Match 'OpenCode CLI available at '
+        $script:verifyFirstOpencodeStep | Should -Match 'OpenCode CLI install/update failed \(non-blocking\)\.'
+        $script:verifyFirstOpencodeStep | Should -Match 'reported OpenCode availability but opencode is missing on PATH'
+        $script:verifyFirstOpencodeStep | Should -Match 'opencode --version'
+        $script:verifyFirstOpencodeStep | Should -Match 'fresh shell'
+    }
+
+    It "runs OpenCode second-run validation after the idempotence rerun step" {
+        $lines = $script:devcontainerWorkflowContent -split "`n"
+        $idempotenceStepLine = -1
+        $secondOpencodeStepLine = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*-\s+name:\s+Confirm idempotence \(run post-create\.sh a second time\)\s*$' -and $idempotenceStepLine -eq -1) {
+                $idempotenceStepLine = $i
+            }
+            if ($lines[$i] -match '^\s*-\s+name:\s+Verify OpenCode CLI after second post-create run\s*$' -and $secondOpencodeStepLine -eq -1) {
+                $secondOpencodeStepLine = $i
+            }
+        }
+
+        $idempotenceStepLine | Should -Not -Be -1 -Because "Workflow must rerun post-create.sh for idempotence checks"
+        $secondOpencodeStepLine | Should -Not -Be -1 -Because "Workflow must validate OpenCode after the second run"
+        $idempotenceStepLine | Should -BeLessThan $secondOpencodeStepLine `
+            -Because "OpenCode idempotence validation must run after the second post-create execution"
+
+        $script:verifySecondOpencodeStep | Should -Match 'OpenCode CLI available at '
+        $script:verifySecondOpencodeStep | Should -Match 'non-blocking install failure, but CI requires opencode availability'
+        $script:verifySecondOpencodeStep | Should -Match 'after second run'
     }
 }
 
@@ -988,5 +1033,179 @@ Describe ".githooks install-guidance anti-regression (PEP 668)" {
 
     It "pre-push hook recommends pipx as the install method" {
         $script:prePushHookContent | Should -Match 'pipx\s+install\s+pre-commit'
+    }
+}
+
+Describe "post-create.sh volume-mounted cache ownership repair" {
+    It "defines dedicated ownership repair functions" {
+        $script:postCreateContent | Should -Match '_find_root_owned_cache_mounts\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_repair_home_cache_mount_ownership\(\)\s*\{'
+    }
+
+    It "detects root-owned files under ~/.npm and ~/.cache with a bounded find" {
+        $findBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_find_root_owned_cache_mounts"
+        $findBody | Should -Match '"\$\{HOME\}/\.npm"'
+        $findBody | Should -Match '"\$\{HOME\}/\.cache"'
+        $findBody | Should -Match '-maxdepth 3'
+        $findBody | Should -Match '! -user "\$\{uid\}"'
+        $findBody | Should -Match '-print -quit'
+    }
+
+    It "repairs ownership non-interactively and reports stable diagnostics" {
+        $repairBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_repair_home_cache_mount_ownership"
+        $repairBody | Should -Match '_can_use_sudo_non_interactive'
+        $repairBody | Should -Match 'sudo\s+-n\s+chown\s+-R'
+        $repairBody | Should -Match 'E_DEVCONTAINER_CACHE_OWNERSHIP_UNREPAIRABLE'
+        $repairBody | Should -Match 'E_DEVCONTAINER_CACHE_OWNERSHIP_FAILED'
+    }
+
+    It "invokes ownership repair before any npm-based bootstrap in the main flow" {
+        $lines = $script:postCreateContent -split "`n"
+        $repairCallLine = -1
+        $codexInstallLine = -1
+
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '_repair_home_cache_mount_ownership\s*\|\|\s*_warn' -and $repairCallLine -eq -1) {
+                $repairCallLine = $i
+            }
+            if ($lines[$i] -match '_should_enable_codex_bootstrap;' -and $codexInstallLine -eq -1) {
+                # Main-flow Codex gate is the first npm-consuming bootstrap block.
+                $inMainFlow = $false
+                for ($j = [Math]::Max(0, $i - 3); $j -le $i; $j++) {
+                    if ($lines[$j] -match '^if _should_enable_codex_bootstrap') {
+                        $inMainFlow = $true
+                        break
+                    }
+                }
+                if ($inMainFlow) {
+                    $codexInstallLine = $i
+                    break
+                }
+            }
+        }
+
+        $repairCallLine | Should -Not -Be -1 -Because "main flow must call _repair_home_cache_mount_ownership"
+        $codexInstallLine | Should -Not -Be -1 -Because "main flow must bootstrap Codex via npm"
+        $repairCallLine | Should -BeLessThan $codexInstallLine `
+            -Because "cache ownership must be repaired before npm writes to the persistent cache volumes"
+    }
+}
+
+Describe ".devcontainer/post-start.sh cache-ownership self-heal" {
+    BeforeAll {
+        $script:postStartPath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/post-start.sh"
+        $script:postStartContent = if (Test-Path -LiteralPath $script:postStartPath) {
+            Get-Content -Path $script:postStartPath -Raw
+        }
+        else {
+            ""
+        }
+    }
+
+    It "exists at .devcontainer/post-start.sh" {
+        $script:postStartPath | Should -Exist
+    }
+
+    It "has a bash shebang, strict mode, and devcontainer log prefix" {
+        $firstLine = ($script:postStartContent -split "`n")[0]
+        $firstLine | Should -Match '^#!/usr/bin/env bash'
+        $script:postStartContent | Should -Match 'set\s+-euo\s+pipefail'
+        $script:postStartContent | Should -Match '\[devcontainer\]'
+    }
+
+    It "self-heals root-owned cache mounts without breaking the session" {
+        $script:postStartContent | Should -Match '_find_root_owned_cache_mounts\(\)\s*\{'
+        $script:postStartContent | Should -Match '_repair_cache_mount_ownership\(\)\s*\{'
+        $script:postStartContent | Should -Match '! -user'
+        $script:postStartContent | Should -Match '_can_use_sudo_non_interactive'
+        $script:postStartContent | Should -Match 'sudo\s+-n\s+chown\s+-R'
+        $script:postStartContent | Should -Match 'E_DEVCONTAINER_CACHE_OWNERSHIP_UNREPAIRABLE'
+        $script:postStartContent | Should -Match '_repair_cache_mount_ownership\s*\|\|\s*_warn'
+    }
+}
+
+Describe "post-create.sh OpenCode CLI bootstrap" {
+    BeforeAll {
+        $script:testOpencodePathIsLocalBinEntryBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_test_opencode_path_is_local_bin_entry"
+        $script:resolveOpencodeNpmPackageBinBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_resolve_opencode_npm_package_bin"
+        $script:testOpencodeLocalBinIsNpmManagedBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_test_opencode_local_bin_is_npm_managed"
+        $script:resolveOpencodeNpmGlobalBinBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_resolve_opencode_npm_global_bin"
+        $script:resolveOpencodePathWithoutLocalBinBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_resolve_opencode_path_without_local_bin"
+        $script:installOpencodeCliBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_install_opencode_cli"
+        $script:linkOpencodeBody = & $script:getBashFunctionBlock -Content $script:postCreateContent -FunctionName "_link_opencode_into_local_bin"
+    }
+
+    It "defines a dedicated OpenCode install function family" {
+        $script:postCreateContent | Should -Match '_install_opencode_cli\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_should_enable_opencode_bootstrap\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_resolve_opencode_npm_package_bin\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_test_opencode_local_bin_is_npm_managed\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_resolve_opencode_npm_global_bin\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_resolve_opencode_path_without_local_bin\(\)\s*\{'
+        $script:postCreateContent | Should -Match '_link_opencode_into_local_bin\(\)\s*\{'
+    }
+
+    It "installs opencode-ai using npm latest tag (the correct OpenCode package)" {
+        # Regression guard: 'open-code' is an unrelated placeholder package;
+        # OpenCode ships on npm as opencode-ai with a binary named opencode.
+        $script:installOpencodeCliBody | Should -Match 'opencode-ai@latest'
+        $script:installOpencodeCliBody | Should -Not -Match 'open-code'
+        $script:installOpencodeCliBody | Should -Match 'npm\s+install\s+--global'
+    }
+
+    It "uses timeout-guarded bounded retries for npm OpenCode install" {
+        $script:installOpencodeCliBody | Should -Match 'WALLSTOP_DEVCONTAINER_OPENCODE_NPM_TIMEOUT_SECONDS'
+        $script:installOpencodeCliBody | Should -Match '_run_with_timeout\s+"\$\{npm_install_timeout_seconds\}"\s+npm\s+install\s+--global'
+        $script:installOpencodeCliBody | Should -Match 'max_attempts=3'
+        $script:installOpencodeCliBody | Should -Match 'Retrying OpenCode CLI npm install in'
+    }
+
+    It "guards against self-referential ~/.local/bin/opencode symlink loops" {
+        $script:linkOpencodeBody | Should -Match 'opencode_source_path.*opencode_link_path'
+        $script:linkOpencodeBody | Should -Match 'readlink\s+"\$\{opencode_link_path\}"'
+        $script:linkOpencodeBody | Should -Match 'E_DEVCONTAINER_OPENCODE_LINK_FAILED'
+        $script:linkOpencodeBody | Should -Match 'refusing to use \${opencode_link_path} as its own link source'
+        $script:linkOpencodeBody | Should -Match 'ln\s+-sfn\s+"\$\{opencode_source_path\}"\s+"\$\{opencode_link_path\}"'
+        $script:linkOpencodeBody | Should -Match 'points to.*after link.*expected'
+        $script:linkOpencodeBody | Should -Match 'not executable after linking'
+    }
+
+    It "accepts local npm-prefix OpenCode only when package metadata proves npm ownership" {
+        $script:resolveOpencodeNpmPackageBinBody | Should -Match 'npm root --global'
+        $script:resolveOpencodeNpmPackageBinBody | Should -Match 'opencode-ai'
+        $script:testOpencodeLocalBinIsNpmManagedBody | Should -Match '_resolve_opencode_npm_package_bin'
+        $script:resolveOpencodeNpmGlobalBinBody | Should -Match '_test_opencode_local_bin_is_npm_managed'
+        $script:installOpencodeCliBody | Should -Match '_test_opencode_path_is_local_bin_entry'
+    }
+
+    It "prefers npm global binary resolution before PATH fallback without ~/.local/bin" {
+        $prefixIndex = ($script:installOpencodeCliBody | Select-String '_resolve_opencode_npm_global_bin' -AllMatches).Matches[0].Index
+        $pathFallbackIndex = ($script:installOpencodeCliBody | Select-String '_resolve_opencode_path_without_local_bin' -AllMatches).Matches[0].Index
+        $prefixIndex | Should -BeLessThan $pathFallbackIndex `
+            -Because "npm global resolution should run before PATH fallback to avoid stale ~/.local/bin/opencode links"
+        $script:resolveOpencodePathWithoutLocalBinBody | Should -Match 'command\s+-v\s+opencode'
+        $script:resolveOpencodePathWithoutLocalBinBody | Should -Match 'local_bin_path="\$\{HOME\}/\.local/bin"'
+        $script:installOpencodeCliBody | Should -Not -Match 'command\s+-v\s+opencode'
+    }
+
+    It "invokes OpenCode install/update as non-blocking in the main flow after the Codex block" {
+        $script:postCreateContent | Should -Match 'WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE:-1'
+        $script:postCreateContent | Should -Match 'OpenCode CLI bootstrap explicitly disabled \(set WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE=1 to re-enable\)\.'
+        $script:postCreateContent | Should -Match '_install_opencode_cli\s*\|\|\s*_warn\s+"OpenCode CLI install/update failed \(non-blocking\)\."'
+
+        $lines = $script:postCreateContent -split "`n"
+        $codexBlockLine = -1
+        $opencodeBlockLine = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^if _should_enable_codex_bootstrap' -and $codexBlockLine -eq -1) {
+                $codexBlockLine = $i
+            }
+            if ($lines[$i] -match '^if _should_enable_opencode_bootstrap' -and $opencodeBlockLine -eq -1) {
+                $opencodeBlockLine = $i
+            }
+        }
+        $codexBlockLine | Should -Not -Be -1
+        $opencodeBlockLine | Should -Not -Be -1
+        $opencodeBlockLine | Should -BeGreaterThan $codexBlockLine
     }
 }
