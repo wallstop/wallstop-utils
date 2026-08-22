@@ -346,7 +346,11 @@ function Get-BackupSecretHygieneTextContent {
 }
 
 function Get-BackupSecretHygieneKnownSecretFieldPattern {
-    return '(?im)(?<prefix>["'']?(?:token|access_token|refresh_token|api_key|apikey|secret|client_secret|password|pat|github_token|bearer_token)["'']?\s*[:=]\s*)(?<value>"[^"\r\n]*"|''[^''\r\n]*''|[^\s,\r\n#;]+)'
+    # The key name must not continue an alphanumeric identifier (for example
+    # "1Password") and the unquoted-value branch must never consume JSON/YAML
+    # structural characters ("{", "}", "[", "]"); either case corrupted managed
+    # config syntax instead of redacting a secret.
+    return '(?im)(?<prefix>(?<![A-Za-z0-9])["'']?(?:token|access_token|refresh_token|api_key|apikey|secret|client_secret|password|pat|github_token|bearer_token)["'']?\s*[:=]\s*)(?<value>"[^"\r\n]*"|''[^''\r\n]*''|[^\s,\r\n#;\[\]{}]+)'
 }
 
 function Get-BackupSecretHygieneUnknownSecretPatterns {
