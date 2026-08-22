@@ -3897,6 +3897,35 @@ Describe "Backup script safety conventions" {
         $powerToysBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
     }
 
+    It "backs up Thunderbird profiles.ini as an explicit best-effort step" {
+        $thunderbirdBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Thunderbird/ThunderbirdBackup.ps1') -Raw) -replace "`r", ''
+        $backupOrchestrator = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        # Missing Thunderbird state is a skip-with-warning, never a failed backup step.
+        $thunderbirdBackup | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
+        $thunderbirdBackup | Should -Match 'W_THUNDERBIRD_BACKUP_SOURCE_MISSING'
+        $thunderbirdBackup | Should -Not -Match 'exit\s+1[\s\S]{0,80}W_THUNDERBIRD_BACKUP_SOURCE_MISSING'
+        $thunderbirdBackup | Should -Match 'E_THUNDERBIRD_BACKUP_COPY_FAILED'
+        $thunderbirdBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$sourcePath\s+-Destination\s+\$destinationPath'
+        $thunderbirdBackup | Should -Match '"Thunderbird/profiles\.ini"'
+
+        # The orchestrator registers the step on Windows so unattended backups capture profiles.ini.
+        $backupOrchestrator | Should -Match '@\{\s*Name\s*=\s*"ThunderbirdBackup"\s*;\s*RelativeScriptPath\s*=\s*"Thunderbird/ThunderbirdBackup\.ps1"\s*;\s*SupportedPlatforms\s*=\s*@\("Windows"\)\s*\}'
+    }
+
+    It "deploys Mozilla update-blocking policies after Scoop restore" {
+        $scoopRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Scoop/ScoopRestore.ps1') -Raw) -replace "`r", ''
+
+        # Issue #68: Mozilla in-app updaters corrupt the scoop current junction; the
+        # restore path must harden every installed Mozilla app against self-update.
+        $scoopRestore | Should -Match 'function\s+Install-MozillaUpdateBlockingPolicies'
+        $scoopRestore | Should -Match '"persist/\{0\}/distribution"'
+        $scoopRestore | Should -Match "'\^\(thunderbird\|firefox\)'"
+        $scoopRestore | Should -Match 'W_SCOOP_RESTORE_MOZILLA_POLICY_FAILED'
+        $scoopRestore | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\$false\)'
+        $scoopRestore | Should -Match 'DisableAppUpdate'
+    }
+
     It "validates Komorebi backup sources before copy operations" {
         $komorebiBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiBackup.ps1') -Raw) -replace "`r", ''
         $komorebiHelper = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiProfileHelpers.ps1') -Raw) -replace "`r", ''
@@ -4141,7 +4170,8 @@ Describe "Path derivation safety conventions" {
             'Scripts/WindowsTerminal/WindowsTerminalBackup.ps1',
             'Scripts/WindowsTerminal/WindowsTerminalRestore.ps1',
             'Scripts/PowerToys/PowerToysBackup.ps1',
-            'Scripts/PowerToys/PowerToysRestore.ps1'
+            'Scripts/PowerToys/PowerToysRestore.ps1',
+            'Scripts/Thunderbird/ThunderbirdBackup.ps1'
         )
 
         foreach ($relativePath in $nestedUtilityScripts) {
