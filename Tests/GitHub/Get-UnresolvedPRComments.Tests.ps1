@@ -1189,8 +1189,14 @@ Describe "Terminal restoration across exit (end-to-end PTY)" {
         foreach ($candidate in @("python3", "python")) {
             $resolved = Get-Command -Name $candidate -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($null -ne $resolved -and -not [string]::IsNullOrWhiteSpace([string]$resolved.Source)) {
-                $script:ptyPython = [string]$resolved.Source
-                break
+                # Capability probe: some minimal containers ship interpreter binaries with a
+                # stripped standard library; require the exact PTY-driver imports up front so
+                # such hosts produce an explicit skip instead of an empty-output assertion failure.
+                $null = & $resolved.Source -c "import pty, termios, subprocess, select" 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    $script:ptyPython = [string]$resolved.Source
+                    break
+                }
             }
         }
         $script:ptyPwsh = $null
