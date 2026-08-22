@@ -11,11 +11,12 @@ Run quality work in the provided container baseline to reduce host-specific drif
 Prefer an image-first devcontainer contract for reliability and rebuild speed:
 
 - Pin `.devcontainer/devcontainer.json` `image` to an official `mcr.microsoft.com/devcontainers/*@sha256:...` digest.
-- Avoid `build` and non-empty `features` in this repository's end-user devcontainer; feature mutation during build is a common transient network failure source.
+- Avoid `build` and arbitrary `features` in this repository's end-user devcontainer; feature mutation during build is a common transient network failure source. The single sanctioned exception is `ghcr.io/devcontainers/features/node:1` with `version: latest`, which keeps Node.js/npm current without a custom image (Dependabot's weekly `devcontainers` lane governs it).
 - Keep `init: true` in `.devcontainer/devcontainer.json` for stronger startup/shutdown process hygiene.
-- Keep persistent cache mounts for `/home/vscode/.cache/pip`, `/home/vscode/.cache/pre-commit`, and `/home/vscode/.npm` to reduce repeat cold-start bootstrap cost.
+- Keep persistent cache mounts for `/home/vscode/.cache/pip`, `/home/vscode/.cache/pre-commit`, and `/home/vscode/.npm` to reduce repeat cold-start bootstrap cost. Docker provisions volume mount points root-owned when the target path is absent from the base image, and the persistent volumes keep that content across rebuilds; `.devcontainer/post-start.sh` self-heals ownership of `/home/vscode/.npm` and `/home/vscode/.cache` on every start, and post-create runs the same repair before any npm usage. Never run `sudo npm install -g` inside the container: it writes root-owned files into these caches and installs into root's prefix.
 - Keep project-specific tool bootstrap in `.devcontainer/post-create.sh`, bounded by timeout guards and explicit non-blocking diagnostics.
 - Keep Codex bootstrap enabled by default so `codex` is available in devcontainers; use `WALLSTOP_DEVCONTAINER_ENABLE_CODEX=0` only for explicit opt-out scenarios.
+- Keep OpenCode bootstrap enabled by default so `opencode` is available in devcontainers (npm package `opencode-ai@latest`; the binary is `opencode`, not `open-code`); use `WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE=0` only for explicit opt-out scenarios. Mirror the Codex bootstrap contract: npm-managed resolution first, stale `~/.local/bin/opencode` fallback exclusion, verified symlink postconditions.
 - Host-side Docker cleanup must keep process streams separated end to end:
   parse machine data such as `docker ps -q` IDs and `docker inspect` JSON from
   stdout only, while using combined output only for diagnostics. Test fakes and
@@ -44,5 +45,6 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Run-PreCommitValidation.ps1
 
 - `.devcontainer/devcontainer.json`
 - `.devcontainer/post-create.sh`
+- `.devcontainer/post-start.sh`
 - `README.md`
 - `Scripts/Utils/Run-PreCommitValidation.ps1`

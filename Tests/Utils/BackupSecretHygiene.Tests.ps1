@@ -100,6 +100,105 @@ Describe "Backup secret hygiene helper behaviors" {
         [Convert]::ToBase64String($afterBytes) | Should -Be ([Convert]::ToBase64String($binaryBytes))
     }
 
+    It "sanitizes known secret fields without corrupting JSON structure" {
+        # Regression data for the "1Password": { corruption class: an unanchored
+        # key match ("Password" inside "1Password") plus an unquoted-value branch
+        # that consumed "{" rewrote structural JSON syntax as [REDACTED].
+        $corruptionCases = @(
+            @{
+                Name     = "key-name-suffix-object-brace"
+                Content  = '{
+  "1Password": {
+    "ignore": []
+  }
+}'
+            },
+            @{
+                Name     = "structural-value-positions"
+                Content  = '{
+  "token": {},
+  "secret": [],
+  "password": [1, 2]
+}'
+            }
+        )
+
+        foreach ($case in $corruptionCases) {
+            $relativePath = "Config/structure-$($case.Name).json"
+            $fullPath = Join-Path -Path $script:testRoot -ChildPath $relativePath
+            [System.IO.File]::WriteAllText($fullPath, $case.Content, [System.Text.UTF8Encoding]::new($false))
+
+            $null = Invoke-BackupSecretHygieneSanitizeKnownSecrets -RepositoryRoot $script:testRoot -RelativePaths @($relativePath)
+
+            $sanitizedText = [System.IO.File]::ReadAllText($fullPath, [System.Text.UTF8Encoding]::new($false))
+            $sanitizedText | Should -Be $case.Content -Because "structural syntax must survive sanitization ($($case.Name))"
+        }
+    }
+
+    It "still redacts known secret values across common config shapes" {
+        $redactionCases = @(
+            @{
+                Name          = "quoted-json-key"
+                Content       = '{"api_key": "supersecretvalue123"}'
+                ExpectedMatch = '"api_key": "[REDACTED]"'
+            },
+            @{
+                Name          = "quoted-json-key-with-escaped-quote"
+                Content       = '{"password": "he said \"hi\" supersecretvalue123"}'
+                ExpectedMatch = '"password": "[REDACTED]"'
+            },
+            @{
+                Name          = "unquoted-env-key"
+                Content       = "PASSWORD=supersecretvalue123`n"
+                ExpectedMatch = 'PASSWORD=[REDACTED]'
+            },
+            @{
+                Name          = "snake-case-env-key"
+                Content       = "DB_PASSWORD=supersecretvalue123`n"
+                ExpectedMatch = 'DB_PASSWORD=[REDACTED]'
+            },
+            @{
+                Name          = "single-quoted-yaml-key-with-doubled-quote"
+                Content       = "'client_secret': 'it''s supersecretvalue123'`n"
+                ExpectedMatch = "'client_secret': '[REDACTED]'"
+            }
+        )
+
+        foreach ($case in $redactionCases) {
+            $relativePath = "Config/redact-$($case.Name).txt"
+            $fullPath = Join-Path -Path $script:testRoot -ChildPath $relativePath
+            [System.IO.File]::WriteAllText($fullPath, $case.Content, [System.Text.UTF8Encoding]::new($false))
+
+            $sanitizationResult = Invoke-BackupSecretHygieneSanitizeKnownSecrets -RepositoryRoot $script:testRoot -RelativePaths @($relativePath)
+
+            @($sanitizationResult.RedactedFiles) | Should -Contain $relativePath -Because $case.Name
+
+            $sanitizedText = [System.IO.File]::ReadAllText($fullPath, [System.Text.UTF8Encoding]::new($false))
+            $sanitizedText | Should -Match ([regex]::Escape($case.ExpectedMatch)) -Because $case.Name
+            $sanitizedText | Should -Not -Match 'supersecretvalue123'
+
+            if ($case.Content.TrimStart().StartsWith("{")) {
+                { $null = ConvertFrom-Json -InputObject $sanitizedText } | Should -Not -Throw -Because "$($case.Name) must stay valid JSON after redaction"
+            }
+        }
+    }
+
+    It "fails closed when comma truncation leaves residue after a redaction" {
+        # Comma terminates unquoted values; a longer secret like "a,b" would be
+        # half-redacted. The residue must surface as a high-confidence finding so
+        # the backup fails instead of committing partial secrets.
+        $relativePath = "Config/residue.txt"
+        $fullPath = Join-Path -Path $script:testRoot -ChildPath $relativePath
+        [System.IO.File]::WriteAllText(
+            $fullPath,
+            "PASSWORD=[REDACTED],residueleak123`n",
+            [System.Text.UTF8Encoding]::new($false))
+
+        $findings = @(Find-BackupSecretHygieneUnknownSecretFindings -RepositoryRoot $script:testRoot -RelativePaths @($relativePath))
+
+        @($findings | Where-Object { $_.PatternName -eq "known-field-redaction-residue" }).Count | Should -Be 1
+    }
+
     It "detects quoted JSON Authorization bearer tokens with high-confidence pattern" {
         $relativePath = "Config/auth.json"
         $fullPath = Join-Path -Path $script:testRoot -ChildPath $relativePath

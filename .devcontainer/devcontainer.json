@@ -4,9 +4,16 @@
   "init": true,
   "updateRemoteUserUID": false,
   "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "latest"
+    }
+  },
   "containerEnv": {
     "WALLSTOP_DEVCONTAINER_ENABLE_CODEX": "1",
     "WALLSTOP_DEVCONTAINER_CODEX_NPM_TIMEOUT_SECONDS": "180",
+    "WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE": "1",
+    "WALLSTOP_DEVCONTAINER_OPENCODE_NPM_TIMEOUT_SECONDS": "180",
     "WALLSTOP_DEVCONTAINER_PREFLIGHT_TIMEOUT_SECONDS": "90",
     "WALLSTOP_DEVCONTAINER_PRECOMMIT_PREWARM_TIMEOUT_SECONDS": "90"
   },
@@ -17,6 +24,7 @@
   ],
   "initializeCommand": "bash .devcontainer/initialize-host.sh \"${localWorkspaceFolder}\"",
   "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/post-start.sh",
   "customizations": {
     "vscode": {
       "extensions": [

@@ -82,6 +82,22 @@ BeforeAll {
 }
 
 Describe "powershell pre-push pre-commit validation hook" {
+    BeforeAll {
+        # hash-object output is captured with 2>&1 so exit-code diagnostics keep git
+        # stderr; on hosts where git emits warnings (for example safe.directory
+        # notices) the blob SHA is not the first merged line, so extract it by shape.
+        function Get-TestBlobShaFromGitHashOutput {
+            param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$OutputLines)
+
+            $blobSha = [string]($OutputLines | Where-Object { $_ -match '^[0-9a-f]{40,64}$' } | Select-Object -First 1)
+            if ([string]::IsNullOrEmpty($blobSha)) {
+                throw "git hash-object output contained no blob SHA. Output: $($OutputLines -join "`n")"
+            }
+
+            return $blobSha
+        }
+    }
+
     It "passes pre-commit-owned checks so pre-push keeps changed-file parity" {
         $wrapperPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Quality/Invoke-PrePushPreCommitValidation.ps1"
         $wrapperContent = Get-Content -Path $wrapperPath -Raw
@@ -121,7 +137,7 @@ Describe "powershell pre-push pre-commit validation hook" {
                 "temp-index blob creation should succeed before pre-commit governance test. Output: {0}" -f
                 ($blobOutput -join "`n")
             )
-            $blobSha = [string]($blobOutput | Select-Object -First 1)
+            $blobSha = Get-TestBlobShaFromGitHashOutput -OutputLines $blobOutput
             $updateIndexOutput = @(& $gitCommand.Source -C $script:repoRoot update-index --add --cacheinfo 100644 $blobSha .pre-commit-config.yaml 2>&1)
             $LASTEXITCODE | Should -Be 0 -Because (
                 "temp-index staging should make .pre-commit-config.yaml visible to validation. Output: {0}" -f
@@ -327,7 +343,7 @@ Describe "powershell pre-push pre-commit validation hook" {
                 "temp-index blob creation should succeed before pre-commit staged-blob test. Output: {0}" -f
                 ($blobOutput -join "`n")
             )
-            $blobSha = [string]($blobOutput | Select-Object -First 1)
+            $blobSha = Get-TestBlobShaFromGitHashOutput -OutputLines $blobOutput
 
             $updateIndexOutput = @(& $gitCommand.Source -C $script:repoRoot update-index --add --cacheinfo 100755 $blobSha $missingShellPath 2>&1)
             $LASTEXITCODE | Should -Be 0 -Because (
@@ -432,7 +448,7 @@ exit 0
                 "temp-index blob creation should succeed before pre-commit full-suite non-fast test. Output: {0}" -f
                 ($blobOutput -join "`n")
             )
-            $blobSha = [string]($blobOutput | Select-Object -First 1)
+            $blobSha = Get-TestBlobShaFromGitHashOutput -OutputLines $blobOutput
             $updateIndexOutput = @(& $gitCommand.Source -C $script:repoRoot update-index --add --cacheinfo 100644 $blobSha README.md 2>&1)
             $LASTEXITCODE | Should -Be 0 -Because (
                 "temp-index staging should make README.md visible to the hook. Output: {0}" -f
@@ -565,7 +581,7 @@ esac
                 "temp-index blob creation should succeed before pre-commit recovery-125 test. Output: {0}" -f
                 ($blobOutput -join "`n")
             )
-            $blobSha = [string]($blobOutput | Select-Object -First 1)
+            $blobSha = Get-TestBlobShaFromGitHashOutput -OutputLines $blobOutput
             $updateIndexOutput = @(& $gitCommand.Source -C $script:repoRoot update-index --add --cacheinfo 100644 $blobSha README.md 2>&1)
             $LASTEXITCODE | Should -Be 0 -Because (
                 "temp-index staging should make README.md visible to the hook. Output: {0}" -f
@@ -765,7 +781,7 @@ exit 0
                 "temp-index blob creation should succeed before pre-commit diff-check non-fast test. Output: {0}" -f
                 ($blobOutput -join "`n")
             )
-            $blobSha = [string]($blobOutput | Select-Object -First 1)
+            $blobSha = Get-TestBlobShaFromGitHashOutput -OutputLines $blobOutput
             $updateIndexOutput = @(& $gitCommand.Source -C $script:repoRoot update-index --add --cacheinfo 100644 $blobSha README.md 2>&1)
             $LASTEXITCODE | Should -Be 0 -Because (
                 "temp-index staging should make README.md visible to the hook. Output: {0}" -f
