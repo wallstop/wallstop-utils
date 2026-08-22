@@ -1717,7 +1717,7 @@ Describe "Cross-language quality platform conventions" {
         $workflow = Get-Content -Path $script:devcontainerWorkflowPath -Raw
 
         $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+-EnsureOnly'
-        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
+        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/post-start\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
         $workflow | Should -Not -Match 'apt-get\s+install[\s\S]*shellcheck'
         $workflow | Should -Not -Match 'shellcheck\s+--severity'
     }
@@ -2754,6 +2754,7 @@ Describe "Shell quality conventions" {
         $shellFiles = @(
             Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts') -Filter '*.sh' -File -Recurse -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-start.sh') -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-commit') -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-push') -ErrorAction Stop
         )
@@ -2779,6 +2780,7 @@ Describe "Shell quality conventions" {
         $shellFiles = @(
             Get-ChildItem -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts') -Filter '*.sh' -File -Recurse -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-create.sh') -ErrorAction Stop
+            Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.devcontainer/post-start.sh') -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-commit') -ErrorAction Stop
             Get-Item -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath '.githooks/pre-push') -ErrorAction Stop
         )
@@ -3895,6 +3897,45 @@ Describe "Backup script safety conventions" {
         $powerToysBackup | Should -Not -Match 'Remove-Item[^\r\n]*-ErrorAction\s+SilentlyContinue'
     }
 
+    It "backs up Thunderbird profiles.ini as an explicit best-effort step" {
+        $thunderbirdBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Thunderbird/ThunderbirdBackup.ps1') -Raw) -replace "`r", ''
+        $backupOrchestrator = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        # Missing Thunderbird state is a skip-with-warning, never a failed backup step.
+        $thunderbirdBackup | Should -Match 'Set-StrictMode\s+-Version\s+Latest'
+        $thunderbirdBackup | Should -Match 'W_THUNDERBIRD_BACKUP_SOURCE_MISSING'
+        $thunderbirdBackup | Should -Not -Match 'exit\s+1[\s\S]{0,80}W_THUNDERBIRD_BACKUP_SOURCE_MISSING'
+        $thunderbirdBackup | Should -Match 'E_THUNDERBIRD_BACKUP_COPY_FAILED'
+        $thunderbirdBackup | Should -Match '"Thunderbird/profiles\.ini"'
+        # Unattended backups commit with --no-verify, so the writer itself must
+        # normalize to the hook-canonical text form (UTF-8 no BOM, LF, one
+        # trailing newline) instead of blind-copying host bytes.
+        $thunderbirdBackup | Should -Match '\[System\.IO\.File\]::WriteAllText'
+        $thunderbirdBackup | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\$false\)'
+
+        # The orchestrator registers the step on Windows so unattended backups capture profiles.ini.
+        $backupOrchestrator | Should -Match '@\{\s*Name\s*=\s*"ThunderbirdBackup"\s*;\s*RelativeScriptPath\s*=\s*"Thunderbird/ThunderbirdBackup\.ps1"\s*;\s*SupportedPlatforms\s*=\s*@\("Windows"\)\s*\}'
+    }
+
+    It "deploys Mozilla update-blocking policies after Scoop restore" {
+        $scoopRestore = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Scoop/ScoopRestore.ps1') -Raw) -replace "`r", ''
+
+        # Issue #68: Mozilla in-app updaters corrupt the scoop current junction; the
+        # restore path must harden every installed Mozilla app against self-update.
+        $scoopRestore | Should -Match 'function\s+Install-MozillaUpdateBlockingPolicies'
+        $scoopRestore | Should -Match '"persist/\{0\}/distribution"'
+        $scoopRestore | Should -Match "'\^\(thunderbird\|firefox\)'"
+        $scoopRestore | Should -Match 'W_SCOOP_RESTORE_MOZILLA_POLICY_FAILED'
+        $scoopRestore | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\$false\)'
+        $scoopRestore | Should -Match 'DisableAppUpdate'
+        # Existing hand-set enterprise policies must be merged, not clobbered,
+        # via strict-mode-safe PSObject.Properties access (never bare member reads).
+        $scoopRestore | Should -Match 'ConvertFrom-Json\s+-InputObject\s+\$existingPayload'
+        $scoopRestore | Should -Match 'W_SCOOP_RESTORE_MOZILLA_POLICY_UNPARSEABLE'
+        $scoopRestore | Should -Not -Match '\$existingPolicyDocument\.policies'
+        $scoopRestore | Should -Match '\$existingPolicyDocument\.PSObject\.Properties\["policies"\]'
+    }
+
     It "validates Komorebi backup sources before copy operations" {
         $komorebiBackup = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiBackup.ps1') -Raw) -replace "`r", ''
         $komorebiHelper = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Komorebi/KomorebiProfileHelpers.ps1') -Raw) -replace "`r", ''
@@ -4139,7 +4180,8 @@ Describe "Path derivation safety conventions" {
             'Scripts/WindowsTerminal/WindowsTerminalBackup.ps1',
             'Scripts/WindowsTerminal/WindowsTerminalRestore.ps1',
             'Scripts/PowerToys/PowerToysBackup.ps1',
-            'Scripts/PowerToys/PowerToysRestore.ps1'
+            'Scripts/PowerToys/PowerToysRestore.ps1',
+            'Scripts/Thunderbird/ThunderbirdBackup.ps1'
         )
 
         foreach ($relativePath in $nestedUtilityScripts) {

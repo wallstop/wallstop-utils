@@ -178,19 +178,24 @@ This repository includes a ready-to-use VS Code development container at `.devco
 The devcontainer follows an image-first reliability contract:
 
 - The `image` value is pinned to an official `mcr.microsoft.com/devcontainers/*` digest.
-- `build` and `features` are intentionally omitted to avoid build-time feature mutation failures.
+- `build` is intentionally omitted to avoid build-time Dockerfile drift; the single sanctioned `features` entry is `ghcr.io/devcontainers/features/node:1` pinned to `version=latest`, so containers ship current Node.js and npm without a custom image.
 - The container runs with `init: true` for improved process reaping and shutdown behavior.
 - Project-specific setup remains in `.devcontainer/post-create.sh` with bounded timeouts and non-blocking fallback diagnostics.
 - Persistent cache mounts are configured for `pip`, `pre-commit`, and `npm` to reduce repeat bootstrap cost on rebuilds.
+- `.devcontainer/post-start.sh` runs on every container start and repairs root-owned files under `/home/vscode/.npm` and `/home/vscode/.cache` (Docker provisions volume mount points root-owned when they are absent from the base image, which otherwise breaks npm/pip/opencode with `EACCES`).
 - Codex bootstrap is enabled by default so `codex` is available immediately in devcontainers; set `WALLSTOP_DEVCONTAINER_ENABLE_CODEX=0` only when you need to opt out.
+- OpenCode bootstrap is enabled by default so `opencode` (npm package `opencode-ai`) is available immediately in devcontainers; set `WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE=0` only when you need to opt out.
 
 What it provides:
 
 - A pinned Debian Bookworm-based devcontainer image (`mcr.microsoft.com/devcontainers/dotnet`)
+- Latest Node.js and npm via the pinned devcontainer Node.js feature
 - PowerShell and Python preinstalled in the base image
 - Pre-commit bootstrap and hook installation on first create
 - PowerShell quality module bootstrap (`Pester`, `PSScriptAnalyzer`)
 - Codex CLI bootstrap as a non-blocking best-effort step in `.devcontainer/post-create.sh`
+- OpenCode CLI bootstrap as a non-blocking best-effort step in `.devcontainer/post-create.sh`
+- Cache-mount ownership self-heal on every start via `.devcontainer/post-start.sh`
 - Curated extension pack for script-heavy workflows plus polished themes/icons
 
 Open it in VS Code:
@@ -207,11 +212,14 @@ pre-commit run --all-files
 pwsh -File ./Scripts/Utils/Run-PreCommitValidation.ps1
 ```
 
-Disable Codex bootstrap only for explicit opt-out runs:
+Disable Codex or OpenCode bootstrap only for explicit opt-out runs:
 
 ```bash
 WALLSTOP_DEVCONTAINER_ENABLE_CODEX=0 bash .devcontainer/post-create.sh
+WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE=0 bash .devcontainer/post-create.sh
 ```
+
+Never install npm packages inside the container with `sudo npm install -g`; it pollutes the persistent cache volumes with root-owned files and installs into root's prefix. Use plain `npm install -g` (the Node.js feature leaves the global prefix user-writable) and let the bootstrap scripts manage CLIs.
 
 ## GitHub Utilities
 

@@ -29,14 +29,19 @@ Describe "devcontainer.json image-first contract" {
         $null -eq $script:devcontainer.PSObject.Properties["build"] | Should -BeTrue
     }
 
-    It "keeps feature-based image mutation disabled" {
+    It "allows only the Node.js feature and pins it to latest so devcontainers ship current Node.js/npm" {
+        # Image-first contract: arbitrary feature mutation is forbidden; the single
+        # sanctioned exception is ghcr.io/devcontainers/features/node:1 pinned to
+        # version=latest (kept fresh by the weekly Dependabot devcontainers lane).
         $featuresProperty = $script:devcontainer.PSObject.Properties["features"]
-        if ($null -eq $featuresProperty) {
-            $true | Should -BeTrue
-            return
-        }
+        $null -eq $featuresProperty | Should -BeFalse -Because "the Node.js feature is required for latest Node.js/npm in devcontainers"
 
-        @($featuresProperty.Value.PSObject.Properties).Count | Should -Be 0
+        $features = @($featuresProperty.Value.PSObject.Properties)
+        $features.Count | Should -Be 1
+        $features[0].Name | Should -Be 'ghcr.io/devcontainers/features/node:1'
+
+        $nodeOptions = $features[0].Value
+        $nodeOptions.version | Should -Be "latest"
     }
 
     It "enables init process for startup signal and zombie reaping reliability" {
@@ -107,11 +112,71 @@ Describe "devcontainer.json image-first contract" {
         $containerEnv.WALLSTOP_DEVCONTAINER_CODEX_NPM_TIMEOUT_SECONDS | Should -Match '^[0-9]+$'
         [int]$containerEnv.WALLSTOP_DEVCONTAINER_CODEX_NPM_TIMEOUT_SECONDS | Should -BeGreaterOrEqual 30
     }
+
+    It "enables OpenCode bootstrap by default so opencode is available in devcontainers" {
+        $containerEnv = $script:devcontainer.PSObject.Properties["containerEnv"].Value
+        $containerEnv.WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE | Should -Be "1"
+    }
+
+    It "defines an explicit bounded OpenCode npm install timeout" {
+        $containerEnv = $script:devcontainer.PSObject.Properties["containerEnv"].Value
+        $containerEnv.WALLSTOP_DEVCONTAINER_OPENCODE_NPM_TIMEOUT_SECONDS | Should -Match '^[0-9]+$'
+        [int]$containerEnv.WALLSTOP_DEVCONTAINER_OPENCODE_NPM_TIMEOUT_SECONDS | Should -BeGreaterOrEqual 30
+    }
+
+    It "runs a cache-ownership self-heal on every container start" {
+        # Volume-mounted caches (/home/vscode/.npm, /home/vscode/.cache/*) are
+        # provisioned root-owned when the mount target is absent from the image;
+        # post-start.sh restores user ownership before the first tool writes.
+        $postStartProperty = $script:devcontainer.PSObject.Properties["postStartCommand"]
+        $null -eq $postStartProperty | Should -BeFalse
+        [string]$postStartProperty.Value | Should -Match 'post-start\.sh'
+    }
+}
+
+Describe "devcontainer-lock.json feature pinning contract" {
+    BeforeAll {
+        $script:lockPath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/devcontainer-lock.json"
+        $script:lockContent = Get-Content -Path $script:lockPath -Raw
+        $script:lock = $script:lockContent | ConvertFrom-Json
+    }
+
+    It "exists at .devcontainer/devcontainer-lock.json" {
+        $script:lockPath | Should -Exist
+    }
+
+    It "locks exactly one resolved feature" {
+        $featuresProperty = $script:lock.PSObject.Properties["features"]
+        $null -eq $featuresProperty | Should -BeFalse -Because "the lock file must record the resolved feature set"
+
+        $lockedFeatures = @($featuresProperty.Value.PSObject.Properties)
+        $lockedFeatures.Count | Should -Be 1
+    }
+
+    It "locks the same sanctioned Node.js feature declared in devcontainer.json" {
+        $lockedFeatures = @($script:lock.PSObject.Properties["features"].Value.PSObject.Properties)
+        $configuredFeatures = @($script:devcontainer.PSObject.Properties["features"].Value.PSObject.Properties)
+        $lockedFeatures[0].Name | Should -Be $configuredFeatures[0].Name
+        $lockedFeatures[0].Name | Should -Be 'ghcr.io/devcontainers/features/node:1'
+    }
+
+    It "records version plus sha256 digest integrity for the locked feature" {
+        $lockedEntry = @($script:lock.PSObject.Properties["features"].Value.PSObject.Properties)[0].Value
+        [string]$lockedEntry.version | Should -Not -BeNullOrEmpty
+        [string]$lockedEntry.resolved | Should -Match '^ghcr\.io/devcontainers/features/node@sha256:[0-9a-f]{64}$'
+        [string]$lockedEntry.integrity | Should -Match '^sha256:[0-9a-f]{64}$'
+        [string]$lockedEntry.resolved | Should -BeLike "*$([string]$lockedEntry.integrity)"
+    }
 }
 
 Describe "devcontainer validate workflow policy contract" {
     It "includes an explicit image-first policy check step" {
         $script:workflowContent | Should -Match 'name:\s+Validate image-first devcontainer contract'
+    }
+
+    It "validates devcontainer-lock.json feature pins in the policy check step" {
+        $script:workflowContent | Should -Match 'devcontainer-lock\.json must exist and parse as JSON'
+        $script:workflowContent | Should -Match 'devcontainer-lock\.json feature pins validated\.'
     }
 
     It "runs when the custom Wallstop PR Comments extension changes" {

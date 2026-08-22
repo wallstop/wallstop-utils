@@ -1185,23 +1185,37 @@ Describe "Terminal restoration across exit (end-to-end PTY)" {
     BeforeAll {
         $script:ptyIsUnix = -not (Test-IsWindowsPlatform)
         $script:ptyScript = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/GitHub/Get-UnresolvedPRComments.ps1")).Path
+
+        # The PTY driver is Unix-only: skip interpreter discovery entirely on
+        # Windows so the per-test guards take the explicit skip path. (Probing a
+        # native interpreter under Windows PowerShell 5.1 with EAP=Stop can
+        # convert stderr output into a terminating error, failing the Describe.)
         $script:ptyPython = $null
-        foreach ($candidate in @("python3", "python")) {
-            $resolved = Get-Command -Name $candidate -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($null -ne $resolved -and -not [string]::IsNullOrWhiteSpace([string]$resolved.Source)) {
-                $script:ptyPython = [string]$resolved.Source
-                break
-            }
-        }
         $script:ptyPwsh = $null
-        try {
-            $candidate = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) { $script:ptyPwsh = $candidate }
-        }
-        catch { $script:ptyPwsh = $null }
-        if ($null -eq $script:ptyPwsh) {
-            $homeCandidate = Join-Path -Path $PSHOME -ChildPath "pwsh"
-            if (Test-Path -LiteralPath $homeCandidate) { $script:ptyPwsh = $homeCandidate }
+        if ($script:ptyIsUnix) {
+            foreach ($candidate in @("python3", "python")) {
+                $resolved = Get-Command -Name $candidate -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($null -ne $resolved -and -not [string]::IsNullOrWhiteSpace([string]$resolved.Source)) {
+                    # Capability probe: some minimal containers ship interpreter binaries with a
+                    # stripped standard library; require the exact PTY-driver imports up front so
+                    # such hosts produce an explicit skip instead of an empty-output assertion failure.
+                    $probeOutput = @(& $resolved.Source -c "import pty, termios, subprocess, select" 2>&1)
+                    if ($LASTEXITCODE -eq 0) {
+                        $script:ptyPython = [string]$resolved.Source
+                        break
+                    }
+                }
+            }
+
+            try {
+                $candidate = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+                if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) { $script:ptyPwsh = $candidate }
+            }
+            catch { $script:ptyPwsh = $null }
+            if ($null -eq $script:ptyPwsh) {
+                $homeCandidate = Join-Path -Path $PSHOME -ChildPath "pwsh"
+                if (Test-Path -LiteralPath $homeCandidate) { $script:ptyPwsh = $homeCandidate }
+            }
         }
 
         # Drives `pwsh -File <inner>` attached to a real pseudo-terminal, feeds it a line, lets it exit,

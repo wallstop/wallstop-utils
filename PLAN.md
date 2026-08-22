@@ -14,13 +14,20 @@
 - [x] Make Backup.ps1 distinguish managed snapshot drift from out-of-scope worktree changes and preserve managed drift through pull (issue #53 follow-up).
 - [x] Refresh and publish a verified-current Scoop and PowerToys host-state snapshot for issue #53.
 
-## Follow-up
+## Current milestone: restore green main + issue #68 hardening
 
-- Issue #46 (partial git uploads) now has explicit post-push remote-head verification and commit wording that distinguishes failed backup steps from Git publication. A live backup run remains required to close the operational investigation safely.
-- Issue #43 (warnings-as-errors and static-analyzer research) is complete for the repository's supported managed quality surface: tracked production and test PowerShell, ShellCheck/shfmt, StyLua, actionlint, and TypeScript compiler lanes now have deterministic enforcement documented in sessions 004–007, 013, 015, and 017. Intentional PowerShell profile files under `Config/Powershell/` remain outside the managed script lane.
-- Issue #62 (JavaScript and macOS static analyzer coverage) is complete: the three JavaScript utility scripts have a dependency-free `node --check` gate in the extension workflow, while the existing macOS `osacompile`/`osadecompile` migration-safe validator remains the appropriate AppleScript check. No heavyweight third-party analyzer was added for this small utility surface.
+- [x] RCA and fix `pre-commit full repo (Linux)`: backup secret redaction corrupted `Config/Komorebi/profiles/spicy/applications.json`; anchor the key match, exclude structural characters, repair the file, add data-driven regression tests.
+- [x] RCA and fix `PowerShell tests (PowerShell 7+)`: commit `06a1a3a` reverted `Config/.config/window-control.ahk` to AHK v1; commit the v2 restoration.
+- [x] Harden hook tests against stderr-noisy git hosts (blob-SHA extraction by shape) and PTY tests against stripped-python hosts (capability probe with explicit skip).
+- [x] Complete the devcontainer carry-forward: OpenCode bootstrap, post-start cache-ownership self-heal, node feature pinning, and lock-file validation in workflow plus tests.
+- [x] Incorporate Dependabot pre-commit 4.6.1 → 4.6.2 (closes PR #67).
+- [x] Issue #68: deploy Mozilla update-blocking policies on Scoop restore, back up Thunderbird `profiles.ini`, publish the scoop host audit recovery runbook.
+- [x] Open the PR aggregating this session and drive reviewer feedback/checks to green (PR #69: all lanes green, Bugbot finding fixed, mergeable state clean).
+- [ ] Follow-up tracked in issue #70 (needs operator action or its own focused review): `Scripts/Scoop/Invoke-ScoopHealthCheck.ps1` health-check script; redeploy v2 `window-control.ahk` on the primary host so backups stop re-committing the v1 regression.
 
-## Next milestone: analyzer baseline for #43
+Evidence: [session-020](./progress/session-020-green-ci-and-issue-68.md)
+
+## Completed milestone: analyzer baseline for #43
 
 - [x] Capture the current analyzer inventory, versions, scopes, warning counts, and intentional suppressions in a reviewable artifact.
 - [x] Select the first lane for warnings-as-errors using the smallest independently verifiable scope.
@@ -31,6 +38,8 @@
 - [x] Expand PowerShell warnings-as-errors to all tracked production scripts under `Scripts/` with staged-file targeting preserved for fast hooks.
 - [x] Characterize and safely govern the dynamic Pester-fixture analyzer surface tracked in issue #59 without weakening the production `Scripts/` lane.
 - [x] Evaluate the remaining JavaScript utility and AppleScript analyzer surface tracked in issue #62, adding only bounded enforcement that preserves extension CI timing.
+
+Issue #43 (warnings-as-errors) is complete for the repository's supported managed quality surface; issue #62 is complete with dependency-free gates for the small-language surface.
 
 Evidence: [session-004 analyzer baseline](./progress/session-004-analyzer-baseline.md), [session-005 dependency and shell lane](./progress/session-005-dependency-and-shell-lane.md), [session-007 native analyzer lane](./progress/session-007-native-analyzer-lane.md), [session-013 TypeScript analyzer lane](./progress/session-013-typescript-analyzer-lane.md), [session-015 production PowerShell lane](./progress/session-015-production-powershell-lane.md), [session-016 test-fixture inventory](./progress/session-016-test-fixture-inventory.md), [session-017 test-fixture remediation](./progress/session-017-test-fixture-remediation.md), and [session-019 small-language analyzer evaluation](./progress/session-019-small-language-analyzer-evaluation.md). The production and test PowerShell ScriptAnalyzer, managed ShellCheck, StyLua, actionlint, TypeScript compiler, JavaScript syntax, and AppleScript validation lanes now have explicit coverage; native checks remain separately gated to preserve CI timing.
 

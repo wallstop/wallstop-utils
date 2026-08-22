@@ -62,13 +62,56 @@ jobs:
           if "build" in config:
               raise SystemExit("ERROR: image-first policy forbids a build block in devcontainer.json.")
 
-          features = config.get("features")
-          if isinstance(features, dict) and len(features) > 0:
+          features = config.get("features") or {}
+          allowed_features = {"ghcr.io/devcontainers/features/node:1"}
+          if not isinstance(features, dict) or not features:
+              raise SystemExit("ERROR: devcontainer contract requires the Node.js feature entry.")
+
+          disallowed = [
+              key for key in features
+              if key.split("@")[0].lower() not in {f.lower() for f in allowed_features}
+          ]
+          if disallowed:
               raise SystemExit(
-                  f"ERROR: image-first policy forbids feature mutations, found {len(features)} feature entries."
+                  f"ERROR: image-first policy only allows {sorted(allowed_features)}, found disallowed entries: {disallowed}."
               )
 
+          node_options = features.get("ghcr.io/devcontainers/features/node:1")
+          if not isinstance(node_options, dict) or node_options.get("version") != "latest":
+              raise SystemExit(
+                  "ERROR: ghcr.io/devcontainers/features/node:1 must set version=latest so devcontainers ship current Node.js/npm."
+              )
+
+          lock_path = ".devcontainer/devcontainer-lock.json"
+          try:
+              with open(lock_path, "r", encoding="utf-8") as handle:
+                  lock = json.load(handle)
+          except (OSError, ValueError) as error:
+              raise SystemExit(f"ERROR: devcontainer-lock.json must exist and parse as JSON: {error}")
+
+          locked_features = lock.get("features")
+          if not isinstance(locked_features, dict) or len(locked_features) != 1:
+              raise SystemExit(
+                  f"ERROR: devcontainer-lock.json must lock exactly {sorted(allowed_features)}, found: {sorted(locked_features) if isinstance(locked_features, dict) else locked_features}."
+              )
+          if sorted(key.split("@")[0].lower() for key in locked_features) != sorted(key.lower() for key in allowed_features):
+              raise SystemExit(
+                  f"ERROR: devcontainer-lock.json locks {sorted(locked_features)}; expected {sorted(allowed_features)} to mirror devcontainer.json."
+              )
+
+          locked_node = locked_features["ghcr.io/devcontainers/features/node:1"]
+          if not isinstance(locked_node, dict) or not str(locked_node.get("version") or "").strip():
+              raise SystemExit("ERROR: devcontainer-lock.json node feature entry must record a resolved version.")
+
+          resolved = str(locked_node.get("resolved") or "")
+          integrity = str(locked_node.get("integrity") or "")
+          if not re.fullmatch(r"ghcr\.io/devcontainers/features/node@sha256:[0-9a-f]{64}", resolved):
+              raise SystemExit(f"ERROR: devcontainer-lock.json resolved digest is malformed: {resolved}")
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", integrity) or not resolved.endswith(integrity):
+              raise SystemExit(f"ERROR: devcontainer-lock.json integrity '{integrity}' does not match resolved digest '{resolved}'.")
+
           print("Image-first devcontainer contract validated.")
+          print("devcontainer-lock.json feature pins validated.")
           PY
 
       - name: Setup Python
@@ -81,10 +124,10 @@ jobs:
         run: |
           ./Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All -EnsureOnly
 
-      - name: Lint post-create.sh and githook scripts
+      - name: Lint post-create.sh, post-start.sh, and githook scripts
         shell: pwsh
         run: |
-          ./Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All .devcontainer/post-create.sh .devcontainer/initialize-host.sh .devcontainer/build-wallstop-pr-comments-vsix.sh .githooks/pre-commit .githooks/pre-push
+          ./Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All .devcontainer/post-create.sh .devcontainer/post-start.sh .devcontainer/initialize-host.sh .devcontainer/build-wallstop-pr-comments-vsix.sh .githooks/pre-commit .githooks/pre-push
 
       - name: Build Wallstop PR Comments VSIX
         shell: bash
@@ -115,6 +158,7 @@ jobs:
         shell: bash
         env:
           WALLSTOP_DEVCONTAINER_ENABLE_CODEX: "1"
+          WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE: "1"
         run: |
           set -euo pipefail
           bash .devcontainer/post-create.sh | tee "${RUNNER_TEMP}/post-create-first.log"
@@ -199,6 +243,53 @@ jobs:
           bash -lc 'codex --version'
           echo "codex is resolvable in fresh shell sessions."
 
+      - name: Verify OpenCode CLI is discoverable now and in fresh shells
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          first_log="${RUNNER_TEMP}/post-create-first.log"
+
+          opencode_in_path=0
+          opencode_reported_available=0
+          opencode_reported_nonblocking_failure=0
+
+          if command -v opencode > /dev/null 2>&1; then
+            opencode_in_path=1
+          fi
+          if [[ -f "${first_log}" ]] && grep -qF 'OpenCode CLI available at ' "${first_log}"; then
+            opencode_reported_available=1
+          fi
+          if [[ -f "${first_log}" ]] && grep -qF 'OpenCode CLI install/update failed (non-blocking).' "${first_log}"; then
+            opencode_reported_nonblocking_failure=1
+          fi
+
+          if [[ "${opencode_in_path}" -eq 0 ]]; then
+            if [[ "${opencode_reported_available}" -eq 1 ]]; then
+              echo "ERROR: post-create.sh reported OpenCode availability but opencode is missing on PATH."
+              exit 1
+            fi
+            if [[ "${opencode_reported_nonblocking_failure}" -eq 1 ]]; then
+              echo "ERROR: OpenCode CLI unavailable after first run; post-create.sh reported a non-blocking install failure, but CI requires opencode availability."
+              exit 1
+            fi
+            echo "ERROR: opencode is missing after post-create.sh without an expected non-blocking failure signal."
+            exit 1
+          fi
+
+          if ! opencode --version; then
+            echo "ERROR: opencode command exists but --version failed."
+            exit 1
+          fi
+          echo "opencode is available: $(command -v opencode)"
+
+          if ! bash -lc 'command -v opencode > /dev/null 2>&1'; then
+            echo "ERROR: opencode is not resolvable in a fresh shell session."
+            exit 1
+          fi
+          bash -lc 'opencode --version'
+          echo "opencode is resolvable in fresh shell sessions."
+
       - name: Verify git hooks are configured
         shell: bash
         run: |
@@ -242,6 +333,7 @@ jobs:
         shell: bash
         env:
           WALLSTOP_DEVCONTAINER_ENABLE_CODEX: "1"
+          WALLSTOP_DEVCONTAINER_ENABLE_OPENCODE: "1"
         run: |
           set -euo pipefail
           bash .devcontainer/post-create.sh | tee "${RUNNER_TEMP}/post-create-second.log"
@@ -317,6 +409,50 @@ jobs:
           fi
           bash -lc 'codex --version'
           echo "codex remains resolvable after second post-create run."
+
+      - name: Verify OpenCode CLI after second post-create run
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          first_log="${RUNNER_TEMP}/post-create-first.log"
+          second_log="${RUNNER_TEMP}/post-create-second.log"
+
+          opencode_reported_available=0
+          opencode_reported_nonblocking_failure=0
+          if [[ -f "${first_log}" ]] && grep -qF 'OpenCode CLI available at ' "${first_log}"; then
+            opencode_reported_available=1
+          fi
+          if [[ -f "${second_log}" ]] && grep -qF 'OpenCode CLI available at ' "${second_log}"; then
+            opencode_reported_available=1
+          fi
+          if [[ -f "${second_log}" ]] && grep -qF 'OpenCode CLI install/update failed (non-blocking).' "${second_log}"; then
+            opencode_reported_nonblocking_failure=1
+          fi
+
+          if ! command -v opencode > /dev/null 2>&1; then
+            if [[ "${opencode_reported_available}" -eq 1 ]]; then
+              echo "ERROR: OpenCode was reported available but is missing after second run."
+              exit 1
+            fi
+            if [[ "${opencode_reported_nonblocking_failure}" -eq 1 ]]; then
+              echo "ERROR: OpenCode CLI unavailable after second run; post-create.sh reported a non-blocking install failure, but CI requires opencode availability."
+              exit 1
+            fi
+            echo "ERROR: opencode is missing after second run without an expected non-blocking failure signal."
+            exit 1
+          fi
+
+          if ! opencode --version; then
+            echo "ERROR: opencode command exists but --version failed after second run."
+            exit 1
+          fi
+          if ! bash -lc 'command -v opencode > /dev/null 2>&1'; then
+            echo "ERROR: opencode is not resolvable in a fresh shell after second run."
+            exit 1
+          fi
+          bash -lc 'opencode --version'
+          echo "opencode remains resolvable after second post-create run."
 
   # ---------------------------------------------------------------------------
   # Coverage job: exercise the venv fallback strategy (Strategy 3) by removing
