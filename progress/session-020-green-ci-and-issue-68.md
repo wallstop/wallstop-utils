@@ -105,8 +105,37 @@ dependency, and advance issue #68 follow-ups.
 
 ## Validation summary
 
-- Targeted Pester gates: secret hygiene 8/0, devcontainer 117/0,
+- Targeted Pester gates: secret hygiene 10/0 (two added corruption-vector
+  cases plus residue fail-closed case), devcontainer 117/0,
   PreCommitPrePushValidationHook green, Get-UnresolvedPRComments green,
   ScriptSafetyConventions green (policy additions included).
 - `Run-PreCommitValidation -TargetFiles` over changed PowerShell: pass.
 - Full validation (`Invoke-FullValidation.ps1`) executed at session close.
+
+## PR review cycle
+
+- Published as PR #69 (`agent/green-main-ci-and-scoop-hardening`); follow-up
+  issue #70 filed for the deferred Scoop health-check script and the host-side
+  v2 `window-control.ahk` redeploy.
+- Adversarial sub-agent review found additional members of the redaction
+  corruption class; fixed in-session:
+  - escaped quotes inside JSON string values (`\"`) now terminate correctly;
+  - YAML doubled-quote values and block-scalar indicators no longer corrupt;
+  - comma-truncated unquoted redactions now fail closed via a new
+    `known-field-redaction-residue` high-confidence scan pattern;
+  - Mozilla `policies.json` deployment merges into existing enterprise
+    policies through strict-mode-safe `PSObject.Properties` access (Cursor
+    Bugbot finding) instead of clobbering or throwing under
+    `Set-StrictMode`;
+  - Thunderbird profiles.ini copy normalizes to hook-canonical text (LF,
+    single trailing newline, UTF-8 no BOM) because unattended backups bypass
+    hooks.
+- First PR CI run caught one more environment-class failure: the new PTY
+  python capability probe ran on Windows PowerShell 5.1, where native stderr
+  under EAP=Stop becomes a terminating error inside BeforeAll. Probe is now
+  Unix-gated so Windows hosts take the explicit skip path.
+- Final PR head: all Script Quality lanes green (pwsh7, winps51,
+  pre-commit-linux, windows-language, macOS AppleScript, devcontainer,
+  github-utility-coverage, Validation summary). Copilot reviewer reported its
+  own quota exhaustion (not a code finding); Cursor Bugbot's single Medium
+  finding was fixed as described above.

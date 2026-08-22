@@ -3928,9 +3928,12 @@ Describe "Backup script safety conventions" {
         $scoopRestore | Should -Match 'W_SCOOP_RESTORE_MOZILLA_POLICY_FAILED'
         $scoopRestore | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\$false\)'
         $scoopRestore | Should -Match 'DisableAppUpdate'
-        # Existing hand-set enterprise policies must be merged, not clobbered.
+        # Existing hand-set enterprise policies must be merged, not clobbered,
+        # via strict-mode-safe PSObject.Properties access (never bare member reads).
         $scoopRestore | Should -Match 'ConvertFrom-Json\s+-InputObject\s+\$existingPayload'
         $scoopRestore | Should -Match 'W_SCOOP_RESTORE_MOZILLA_POLICY_UNPARSEABLE'
+        $scoopRestore | Should -Not -Match '\$existingPolicyDocument\.policies'
+        $scoopRestore | Should -Match '\$existingPolicyDocument\.PSObject\.Properties\["policies"\]'
     }
 
     It "validates Komorebi backup sources before copy operations" {

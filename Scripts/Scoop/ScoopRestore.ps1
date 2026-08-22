@@ -82,26 +82,34 @@ function Install-MozillaUpdateBlockingPolicies {
             }
 
             # Preserve any hand-set enterprise policies; only the update/telemetry
-            # switches are owned by this deployment step.
+            # switches are owned by this deployment step. Property access goes
+            # through PSObject.Properties so Set-StrictMode never throws on a
+            # missing member and custom sections are merged, never clobbered.
             if (-not [string]::IsNullOrEmpty($existingPayload)) {
                 try {
                     $existingPolicyDocument = ConvertFrom-Json -InputObject $existingPayload -ErrorAction Stop
-                    if ($null -eq $existingPolicyDocument.policies) {
-                        $existingPolicyDocument | Add-Member -MemberType NoteProperty -Name "policies" -Value ([pscustomobject]@{})
-                    }
 
-                    if ($null -ne ($existingPolicyDocument.policies.PSObject.Properties["DisableAppUpdate"])) {
-                        $existingPolicyDocument.policies.DisableAppUpdate = $true
+                    $policiesProperty = $existingPolicyDocument.PSObject.Properties["policies"]
+                    if ($null -eq $policiesProperty) {
+                        $policiesSection = [pscustomobject]@{}
+                        $existingPolicyDocument | Add-Member -MemberType NoteProperty -Name "policies" -Value $policiesSection
                     }
                     else {
-                        $existingPolicyDocument.policies | Add-Member -MemberType NoteProperty -Name "DisableAppUpdate" -Value $true
+                        $policiesSection = $policiesProperty.Value
                     }
 
-                    if ($null -ne ($existingPolicyDocument.policies.PSObject.Properties["DisableTelemetry"])) {
-                        $existingPolicyDocument.policies.DisableTelemetry = $true
+                    if ($policiesSection -isnot [System.Management.Automation.PSCustomObject]) {
+                        throw "The existing 'policies' section is not a JSON object, so it cannot be merged safely."
                     }
-                    else {
-                        $existingPolicyDocument.policies | Add-Member -MemberType NoteProperty -Name "DisableTelemetry" -Value $true
+
+                    foreach ($policySwitchName in @("DisableAppUpdate", "DisableTelemetry")) {
+                        $switchProperty = $policiesSection.PSObject.Properties[$policySwitchName]
+                        if ($null -ne $switchProperty) {
+                            $switchProperty.Value = $true
+                        }
+                        else {
+                            $policiesSection | Add-Member -MemberType NoteProperty -Name $policySwitchName -Value $true
+                        }
                     }
 
                     $policyPayload = ConvertTo-Json -InputObject $existingPolicyDocument -Depth 10 -Compress
