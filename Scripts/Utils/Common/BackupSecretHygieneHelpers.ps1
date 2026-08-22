@@ -346,11 +346,25 @@ function Get-BackupSecretHygieneTextContent {
 }
 
 function Get-BackupSecretHygieneKnownSecretFieldPattern {
-    # The key name must not continue an alphanumeric identifier (for example
-    # "1Password") and the unquoted-value branch must never consume JSON/YAML
-    # structural characters ("{", "}", "[", "]"); either case corrupted managed
-    # config syntax instead of redacting a secret.
-    return '(?im)(?<prefix>(?<![A-Za-z0-9])["'']?(?:token|access_token|refresh_token|api_key|apikey|secret|client_secret|password|pat|github_token|bearer_token)["'']?\s*[:=]\s*)(?<value>"[^"\r\n]*"|''[^''\r\n]*''|[^\s,\r\n#;\[\]{}]+)'
+    # Corruption guards baked into this pattern:
+    # - The key name must not continue an alphanumeric identifier (for example
+    #   "1Password"), or the redaction rewrites structural syntax mid-key.
+    # - The double-quoted branch is escape-aware ("(?:[^"\\\r\n]|\\.)*") so a
+    #   value containing \" terminates at the real closing quote, not the escape.
+    # - The single-quoted branch consumes YAML doubled-quote escapes ('').
+    # - The unquoted branch never consumes JSON/YAML structural characters
+    #   ("{", "}", "[", "]") or block-scalar indicators ("|", ">", "*", "&", "!").
+    # Comma remains a terminator; truncated residue after a redaction is caught
+    # fail-closed by Get-BackupSecretHygieneKnownSecretResiduePattern.
+    return '(?im)(?<prefix>(?<![A-Za-z0-9])["'']?(?:token|access_token|refresh_token|api_key|apikey|secret|client_secret|password|pat|github_token|bearer_token)["'']?\s*[:=]\s*)(?<value>"(?:[^"\\\r\n]|\\.)*"|''[^''\r\n]*(?:''[^''\r\n]*)*''|(?![|>*&])[^\s,\r\n#;\[\]{}]+)'
+}
+
+function Get-BackupSecretHygieneKnownSecretResiduePattern {
+    # Fail-closed companion to the field pattern: when a comma-terminated
+    # unquoted redaction truncates a longer value ("password=a,b"), the
+    # sanitized line keeps ",b" directly after the marker. Surface that as a
+    # high-confidence finding instead of silently committing partial secrets.
+    return '(?im)(?<![A-Za-z0-9])(?:token|access_token|refresh_token|api_key|apikey|secret|client_secret|password|pat|github_token|bearer_token)["'']?\s*[:=]\s*\[REDACTED\],[^\s\r\n]'
 }
 
 function Get-BackupSecretHygieneUnknownSecretPatterns {
@@ -366,6 +380,10 @@ function Get-BackupSecretHygieneUnknownSecretPatterns {
         [pscustomobject]@{
             Name  = 'authorization-header-bearer-token'
             Regex = '(?im)(?:^|[\s{,;])(?:"|'')?Authorization(?:"|'')?\s*[:=]\s*(?:"|'')?(?:Bearer|token)\s+[A-Za-z0-9._~+\/=\-]{20,}(?:"|'')?'
+        },
+        [pscustomobject]@{
+            Name  = 'known-field-redaction-residue'
+            Regex = (Get-BackupSecretHygieneKnownSecretResiduePattern)
         }
     )
 }

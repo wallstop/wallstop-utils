@@ -143,6 +143,11 @@ Describe "Backup secret hygiene helper behaviors" {
                 ExpectedMatch = '"api_key": "[REDACTED]"'
             },
             @{
+                Name          = "quoted-json-key-with-escaped-quote"
+                Content       = '{"password": "he said \"hi\" supersecretvalue123"}'
+                ExpectedMatch = '"password": "[REDACTED]"'
+            },
+            @{
                 Name          = "unquoted-env-key"
                 Content       = "PASSWORD=supersecretvalue123`n"
                 ExpectedMatch = 'PASSWORD=[REDACTED]'
@@ -153,8 +158,8 @@ Describe "Backup secret hygiene helper behaviors" {
                 ExpectedMatch = 'DB_PASSWORD=[REDACTED]'
             },
             @{
-                Name          = "single-quoted-yaml-key"
-                Content       = "'client_secret': 'supersecretvalue123'`n"
+                Name          = "single-quoted-yaml-key-with-doubled-quote"
+                Content       = "'client_secret': 'it''s supersecretvalue123'`n"
                 ExpectedMatch = "'client_secret': '[REDACTED]'"
             }
         )
@@ -171,7 +176,27 @@ Describe "Backup secret hygiene helper behaviors" {
             $sanitizedText = [System.IO.File]::ReadAllText($fullPath, [System.Text.UTF8Encoding]::new($false))
             $sanitizedText | Should -Match ([regex]::Escape($case.ExpectedMatch)) -Because $case.Name
             $sanitizedText | Should -Not -Match 'supersecretvalue123'
+
+            if ($case.Content.TrimStart().StartsWith("{")) {
+                { $null = ConvertFrom-Json -InputObject $sanitizedText } | Should -Not -Throw -Because "$($case.Name) must stay valid JSON after redaction"
+            }
         }
+    }
+
+    It "fails closed when comma truncation leaves residue after a redaction" {
+        # Comma terminates unquoted values; a longer secret like "a,b" would be
+        # half-redacted. The residue must surface as a high-confidence finding so
+        # the backup fails instead of committing partial secrets.
+        $relativePath = "Config/residue.txt"
+        $fullPath = Join-Path -Path $script:testRoot -ChildPath $relativePath
+        [System.IO.File]::WriteAllText(
+            $fullPath,
+            "PASSWORD=[REDACTED],residueleak123`n",
+            [System.Text.UTF8Encoding]::new($false))
+
+        $findings = @(Find-BackupSecretHygieneUnknownSecretFindings -RepositoryRoot $script:testRoot -RelativePaths @($relativePath))
+
+        @($findings | Where-Object { $_.PatternName -eq "known-field-redaction-residue" }).Count | Should -Be 1
     }
 
     It "detects quoted JSON Authorization bearer tokens with high-confidence pattern" {
