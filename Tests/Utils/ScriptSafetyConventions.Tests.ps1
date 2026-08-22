@@ -3906,8 +3906,12 @@ Describe "Backup script safety conventions" {
         $thunderbirdBackup | Should -Match 'W_THUNDERBIRD_BACKUP_SOURCE_MISSING'
         $thunderbirdBackup | Should -Not -Match 'exit\s+1[\s\S]{0,80}W_THUNDERBIRD_BACKUP_SOURCE_MISSING'
         $thunderbirdBackup | Should -Match 'E_THUNDERBIRD_BACKUP_COPY_FAILED'
-        $thunderbirdBackup | Should -Match 'Copy-Item\s+-LiteralPath\s+\$sourcePath\s+-Destination\s+\$destinationPath'
         $thunderbirdBackup | Should -Match '"Thunderbird/profiles\.ini"'
+        # Unattended backups commit with --no-verify, so the writer itself must
+        # normalize to the hook-canonical text form (UTF-8 no BOM, LF, one
+        # trailing newline) instead of blind-copying host bytes.
+        $thunderbirdBackup | Should -Match '\[System\.IO\.File\]::WriteAllText'
+        $thunderbirdBackup | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\$false\)'
 
         # The orchestrator registers the step on Windows so unattended backups capture profiles.ini.
         $backupOrchestrator | Should -Match '@\{\s*Name\s*=\s*"ThunderbirdBackup"\s*;\s*RelativeScriptPath\s*=\s*"Thunderbird/ThunderbirdBackup\.ps1"\s*;\s*SupportedPlatforms\s*=\s*@\("Windows"\)\s*\}'
@@ -3924,6 +3928,9 @@ Describe "Backup script safety conventions" {
         $scoopRestore | Should -Match 'W_SCOOP_RESTORE_MOZILLA_POLICY_FAILED'
         $scoopRestore | Should -Match '\[System\.Text\.UTF8Encoding\]::new\(\$false\)'
         $scoopRestore | Should -Match 'DisableAppUpdate'
+        # Existing hand-set enterprise policies must be merged, not clobbered.
+        $scoopRestore | Should -Match 'ConvertFrom-Json\s+-InputObject\s+\$existingPayload'
+        $scoopRestore | Should -Match 'W_SCOOP_RESTORE_MOZILLA_POLICY_UNPARSEABLE'
     }
 
     It "validates Komorebi backup sources before copy operations" {

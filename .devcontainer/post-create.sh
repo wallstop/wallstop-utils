@@ -1249,14 +1249,14 @@ _ensure_precommit_cli_ready() {
 }
 
 # ---------------------------------------------------------------------------
-# Install pre-commit (skip if already present)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # Repair volume-mounted cache ownership (must precede all npm/pip usage)
 # ---------------------------------------------------------------------------
 
 _repair_home_cache_mount_ownership || _warn "Cache mount ownership repair failed (non-blocking)."
+
+# ---------------------------------------------------------------------------
+# Install pre-commit (skip if already present)
+# ---------------------------------------------------------------------------
 
 ensure_local_bin_on_path || _warn "PATH setup failed; continuing without profile updates."
 

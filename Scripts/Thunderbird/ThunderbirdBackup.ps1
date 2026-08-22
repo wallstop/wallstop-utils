@@ -24,13 +24,35 @@ try {
     }
 
     $destinationPath = Join-Path -Path $backupFolder -ChildPath "profiles.ini"
-    Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force -ErrorAction Stop
+    $copyFailureDetail = ''
+
+    # Normalize to LF with one trailing newline in UTF-8 (no BOM): unattended
+    # backups commit with --no-verify, so the committed form must already match
+    # what the repository's text hooks would produce.
+    $sourceContent = [System.IO.File]::ReadAllText($sourcePath, [System.Text.Encoding]::UTF8)
+    $normalizedContent = ($sourceContent -replace "\r\n?", "`n").TrimEnd() + "`n"
+    $existingContent = ''
+    if (Test-Path -LiteralPath $destinationPath -PathType Leaf) {
+        $existingContent = [System.IO.File]::ReadAllText($destinationPath, [System.Text.Encoding]::UTF8)
+    }
+
+    if ($normalizedContent -ne $existingContent) {
+        try {
+            [System.IO.File]::WriteAllText($destinationPath, $normalizedContent, [System.Text.UTF8Encoding]::new($false))
+        }
+        catch {
+            $copyFailureDetail = [string]$_.Exception.Message
+        }
+    }
+
+    if (-not [string]::IsNullOrEmpty($copyFailureDetail)) {
+        # Emitted via Write-Error (ErrorActionPreference=Stop), which terminates
+        # with a non-zero exit for the orchestrator's per-step classification.
+        Write-Error ("E_THUNDERBIRD_BACKUP_COPY_FAILED: Failed to back up Thunderbird profiles.ini. Detail: {0}" -f $copyFailureDetail)
+        return
+    }
 
     Write-Host "Thunderbird profiles.ini has been backed up to $destinationPath." -ForegroundColor Green
-}
-catch {
-    Write-Error ("E_THUNDERBIRD_BACKUP_COPY_FAILED: Failed to back up Thunderbird profiles.ini. Detail: {0}" -f [string]$_.Exception.Message)
-    exit 1
 }
 finally {
     Pop-Location

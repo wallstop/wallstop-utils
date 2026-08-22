@@ -53,13 +53,15 @@ function Install-MozillaUpdateBlockingPolicies {
     }
 
     $mozillaAppDirectories = @(Get-ChildItem -LiteralPath $appsRoot -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^(thunderbird|firefox)' -and $_.Name -ne 'scoop' })
+            Where-Object { $_.Name -match '^(thunderbird|firefox)' })
     if ($mozillaAppDirectories.Count -eq 0) {
         return
     }
 
-    $policyPayload = '{"policies":{"DisableAppUpdate":true,"DisableTelemetry":true}}'
     foreach ($appDirectory in $mozillaAppDirectories) {
+        # Reset per app: an earlier app's merged document must not leak into
+        # this app's comparison baseline or written payload.
+        $policyPayload = '{"policies":{"DisableAppUpdate":true,"DisableTelemetry":true}}'
         $distributionDirectory = Join-Path -Path $scoopRoot -ChildPath (
             "persist/{0}/distribution" -f $appDirectory.Name
         )
@@ -74,13 +76,47 @@ function Install-MozillaUpdateBlockingPolicies {
                 $existingPayload = [System.IO.File]::ReadAllText($policyPath, [System.Text.Encoding]::UTF8).Trim()
             }
 
-            if ($existingPayload -ne $policyPayload) {
-                [System.IO.File]::WriteAllText($policyPath, $policyPayload + "`n", [System.Text.UTF8Encoding]::new($false))
-                Write-Host ("Deployed Mozilla update-blocking policy: {0}" -f $policyPath) -ForegroundColor Green
-            }
-            else {
+            if ($existingPayload -eq $policyPayload) {
                 Write-Verbose ("Mozilla update-blocking policy already current: {0}" -f $policyPath)
+                continue
             }
+
+            # Preserve any hand-set enterprise policies; only the update/telemetry
+            # switches are owned by this deployment step.
+            if (-not [string]::IsNullOrEmpty($existingPayload)) {
+                try {
+                    $existingPolicyDocument = ConvertFrom-Json -InputObject $existingPayload -ErrorAction Stop
+                    if ($null -eq $existingPolicyDocument.policies) {
+                        $existingPolicyDocument | Add-Member -MemberType NoteProperty -Name "policies" -Value ([pscustomobject]@{})
+                    }
+
+                    if ($null -ne ($existingPolicyDocument.policies.PSObject.Properties["DisableAppUpdate"])) {
+                        $existingPolicyDocument.policies.DisableAppUpdate = $true
+                    }
+                    else {
+                        $existingPolicyDocument.policies | Add-Member -MemberType NoteProperty -Name "DisableAppUpdate" -Value $true
+                    }
+
+                    if ($null -ne ($existingPolicyDocument.policies.PSObject.Properties["DisableTelemetry"])) {
+                        $existingPolicyDocument.policies.DisableTelemetry = $true
+                    }
+                    else {
+                        $existingPolicyDocument.policies | Add-Member -MemberType NoteProperty -Name "DisableTelemetry" -Value $true
+                    }
+
+                    $policyPayload = ConvertTo-Json -InputObject $existingPolicyDocument -Depth 10 -Compress
+                }
+                catch {
+                    Write-Warning (
+                        "W_SCOOP_RESTORE_MOZILLA_POLICY_UNPARSEABLE: Existing '{0}' is not valid JSON and will be replaced. Detail: {1}" -f
+                        $policyPath,
+                        [string]$_.Exception.Message
+                    )
+                }
+            }
+
+            [System.IO.File]::WriteAllText($policyPath, $policyPayload + "`n", [System.Text.UTF8Encoding]::new($false))
+            Write-Host ("Deployed Mozilla update-blocking policy: {0}" -f $policyPath) -ForegroundColor Green
         }
         catch {
             Write-Warning (
