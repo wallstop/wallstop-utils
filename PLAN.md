@@ -22,8 +22,8 @@
 - [x] Complete the devcontainer carry-forward: OpenCode bootstrap, post-start cache-ownership self-heal, node feature pinning, and lock-file validation in workflow plus tests.
 - [x] Incorporate Dependabot pre-commit 4.6.1 → 4.6.2 (closes PR #67).
 - [x] Issue #68: deploy Mozilla update-blocking policies on Scoop restore, back up Thunderbird `profiles.ini`, publish the scoop host audit recovery runbook.
-- [ ] Open the PR aggregating this session and drive reviewer feedback/checks to green.
-- [ ] Follow-up (needs GitHub auth or operator action): file remaining issue #68 item — `Scripts/Scoop/Invoke-ScoopHealthCheck.ps1` health-check script; redeploy v2 `window-control.ahk` on the primary host so backups stop re-committing the v1 regression.
+- [x] Open the PR aggregating this session and drive reviewer feedback/checks to green (PR #69: all lanes green, Bugbot finding fixed, mergeable state clean).
+- [ ] Follow-up tracked in issue #70 (needs operator action or its own focused review): `Scripts/Scoop/Invoke-ScoopHealthCheck.ps1` health-check script; redeploy v2 `window-control.ahk` on the primary host so backups stop re-committing the v1 regression.
 
 Evidence: [session-020](./progress/session-020-green-ci-and-issue-68.md)
 
