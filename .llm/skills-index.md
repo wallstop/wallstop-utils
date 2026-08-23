@@ -38,6 +38,7 @@ This file is generated. Do not edit generated sections manually.
 
 | Skill Card | Expanded Guide | Trigger Keywords | Usage |
 | --- | --- | --- | --- |
+| [GitHub API Auth Vscode Connector](./skills/github-api-auth-vscode-connector/SKILL.md) | [Expanded Guide](./skill-details/github-api-auth-vscode-connector.md) | github api auth, vscode askpass, credential helper, bearer token, gh cli fallback, github mcp server, pull request creation, single prompt, cache credentials | Obtain and use GitHub API credentials inside this devcontainer via the VSCode git askpass connector chain, with check-first, single-prompt-and-cache etiquette. |
 | [GitHub PR Unresolved Comments](./skills/github-pr-unresolved-comments/SKILL.md) | [Expanded Guide](./skill-details/github-pr-unresolved-comments.md) | github api, unresolved comments, github copilot, copilot-pull-request-reviewer, cursor bugbot, suggested changes, retries, auth recovery, GH_TOKEN, GITHUB_TOKEN, output encoding | Safely inspect and render unresolved GitHub pull-request comments, suggested changes, bot feedback, and resilient API output. |
 
 <!-- END GENERATED SKILLS INDEX -->
