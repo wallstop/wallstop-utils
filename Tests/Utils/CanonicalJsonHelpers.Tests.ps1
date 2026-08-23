@@ -119,6 +119,141 @@ Describe "ConvertTo-CanonicalJsonText" {
     }
 }
 
+Describe "ConvertTo-CanonicalJsonText -SortObjectKeys" {
+    # Regression guard for the daily whole-file scoopfile.json churn (2026-08-12..2026-08-22): scoop
+    # export rebuilds app objects from hashtables whose iteration order differs per invocation, so the
+    # canonicalizer must be able to make the bytes data-determined by sorting member names Ordinally.
+
+    It "preserves source member order by default (no switch)" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "member-order preservation requires System.Text.Json"
+            return
+        }
+
+        # Other canonicalizer consumers rely on order preservation; sorting must be strictly opt-in.
+        $canonical = ConvertTo-CanonicalJsonText -RawJson '{ "b": 1, "a": 2 }'
+        $canonical | Should -BeExactly "{`n  `"b`": 1,`n  `"a`": 2`n}`n"
+    }
+
+    It "sorts <description> with -SortObjectKeys" -ForEach @(
+        @{
+            description = "top-level members alphabetically"
+            source      = '{ "buckets": {}, "apps": {} }'
+            expected    = "{`n  `"apps`": {},`n  `"buckets`": {}`n}`n"
+        }
+        @{
+            description = "members Ordinally (uppercase before lowercase, culture-independent)"
+            source      = '{ "a": 1, "B": 2 }'
+            expected    = "{`n  `"B`": 2,`n  `"a`": 1`n}`n"
+        }
+        @{
+            description = "an empty-string member name first"
+            source      = '{ "b": 2, "": 1 }'
+            expected    = "{`n  `"`": 1,`n  `"b`": 2`n}`n"
+        }
+        @{
+            description = "nested objects recursively"
+            source      = '{ "outer": { "z": 1, "a": { "y": 2, "b": 3 } } }'
+            expected    = "{`n  `"outer`": {`n    `"a`": {`n      `"b`": 3,`n      `"y`": 2`n    },`n    `"z`": 1`n  }`n}`n"
+        }
+    ) {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "member sorting requires System.Text.Json"
+            return
+        }
+
+        (ConvertTo-CanonicalJsonText -RawJson $source -SortObjectKeys) | Should -BeExactly $expected
+    }
+
+    It "fails closed with a stable diagnostic on duplicate member names instead of dropping data" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "duplicate-member rejection requires System.Text.Json"
+            return
+        }
+
+        # The unsorted path preserves duplicate members; a sorted rebuild cannot represent them, so it
+        # must surface E_CANONICAL_JSON_SORT_FAILED rather than silently returning unsorted output.
+        { ConvertTo-CanonicalJsonText -RawJson '{ "a": 1, "a": 2 }' -SortObjectKeys } |
+            Should -Throw 'E_CANONICAL_JSON_SORT_FAILED*'
+    }
+
+    It "produces byte-identical output for differently ordered inputs (permutation invariance)" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "permutation invariance requires System.Text.Json"
+            return
+        }
+
+        $first = ConvertTo-CanonicalJsonText -RawJson '{ "Name": "main", "Manifests": 5, "Source": "x" }' -SortObjectKeys
+        $second = ConvertTo-CanonicalJsonText -RawJson '{ "Source": "x", "Name": "main", "Manifests": 5 }' -SortObjectKeys
+        $second | Should -BeExactly $first
+        $first | Should -BeExactly "{`n  `"Manifests`": 5,`n  `"Name`": `"main`",`n  `"Source`": `"x`"`n}`n"
+    }
+
+    It "preserves array element order while sorting members of objects inside arrays" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "array-aware sorting requires System.Text.Json"
+            return
+        }
+
+        # Array ITEMS must never be reordered -- only object members within them.
+        $canonical = ConvertTo-CanonicalJsonText -RawJson '{ "apps": [ { "Version": "1", "Name": "zeta" }, { "Version": "2", "Name": "alpha" } ] }' -SortObjectKeys
+        $parsed = $canonical | ConvertFrom-Json
+        @($parsed.apps).Count | Should -Be 2
+        $parsed.apps[0].Name | Should -Be "zeta"
+        $parsed.apps[1].Name | Should -Be "alpha"
+
+        ($canonical -split "`n") | Where-Object { $_ -match '"Name"' } | Should -BeExactly @(
+            '      "Name": "zeta",'
+            '      "Name": "alpha",'
+        ) -Because "members inside each array element must appear sorted (Name before Version)"
+    }
+
+    It "keeps leaf payloads verbatim under sorting (timestamps, number tokens, literals)" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "leaf fidelity checks require System.Text.Json"
+            return
+        }
+
+        $raw = '{ "Updated": "2026-04-27T23:30:18.9329513-07:00", "Ratio": 1.50, "On": true, "Nothing": null }'
+        $canonical = ConvertTo-CanonicalJsonText -RawJson $raw -SortObjectKeys
+        $canonical | Should -Match ([regex]::Escape('"Updated": "2026-04-27T23:30:18.9329513-07:00"'))
+        $canonical | Should -Not -Match '\+00:00' -Because "timestamps must not be normalized to UTC"
+        $canonical | Should -Match ([regex]::Escape('"Ratio": 1.50')) -Because "number tokens must not be re-formatted"
+        $canonical | Should -Match ([regex]::Escape('"Nothing": null'))
+        ($canonical | ConvertFrom-Json).On | Should -BeTrue
+    }
+
+    It "is idempotent under -SortObjectKeys (sorted output re-canonicalizes to identical bytes)" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "idempotence requires System.Text.Json"
+            return
+        }
+
+        $once = ConvertTo-CanonicalJsonText -RawJson '{ "b": [ { "y": 1, "a": 2 } ], "a": "x" }' -SortObjectKeys
+        $twice = ConvertTo-CanonicalJsonText -RawJson $once -SortObjectKeys
+        $twice | Should -BeExactly $once
+    }
+
+    It "tolerates JSONC comments and trailing commas on the sorted path" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "JSONC tolerance on the sorted path requires System.Text.Json"
+            return
+        }
+
+        $canonical = ConvertTo-CanonicalJsonText -RawJson "{ // comment`n  `"b`": 1,`n  `"a`": 2,`n}" -SortObjectKeys
+        $canonical | Should -BeExactly "{`n  `"a`": 2,`n  `"b`": 1`n}`n"
+    }
+
+    It "leaves a scalar-null document unchanged on the sorted path" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "scalar handling requires System.Text.Json"
+            return
+        }
+
+        (ConvertTo-CanonicalJsonText -RawJson 'null' -SortObjectKeys) | Should -BeExactly "null`n"
+    }
+}
+
 Describe "Committed JSON artifacts are byte-identical to the canonicalizer" {
     # The strongest guard: every committed artifact under pretty-format-json scope must already be a fixed
     # point of the shared canonicalizer, proving the canonicalizer reproduces the hook output byte-for-byte.
@@ -138,6 +273,20 @@ Describe "Committed JSON artifacts are byte-identical to the canonicalizer" {
         $fullPath = Join-Path -Path $script:repoRoot -ChildPath $path
         $raw = [System.IO.File]::ReadAllText($fullPath, [System.Text.Encoding]::UTF8)
         (ConvertTo-CanonicalJsonText -RawJson $raw) | Should -BeExactly $raw -Because "$path must be a fixed point of the pretty-format-json hook"
+    }
+
+    It "reproduces Config/scoopfile.json exactly under -SortObjectKeys (data-determined member order)" {
+        # scoopfile.json is written by ScoopBackup through -SortObjectKeys because `scoop export` emits
+        # app members in varying order per invocation. The committed form must therefore also be a fixed
+        # point of the SORTED canonicalizer, proving the daily backup cannot churn whole-file diffs again.
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "byte-exact canonical form requires System.Text.Json"
+            return
+        }
+
+        $fullPath = Join-Path -Path $script:repoRoot -ChildPath "Config/scoopfile.json"
+        $raw = [System.IO.File]::ReadAllText($fullPath, [System.Text.Encoding]::UTF8)
+        (ConvertTo-CanonicalJsonText -RawJson $raw -SortObjectKeys) | Should -BeExactly $raw -Because "the committed scoopfile.json must already be in sorted-key canonical form"
     }
 }
 

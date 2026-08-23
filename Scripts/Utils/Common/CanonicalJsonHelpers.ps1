@@ -77,6 +77,82 @@ function ConvertTo-AsciiEscapedJsonText {
     return $builder.ToString()
 }
 
+function ConvertTo-JsonNodeWithSortedObjectKeys {
+    # Rebuilds a System.Text.Json.Nodes JsonNode tree so every JSON object's properties appear in
+    # [System.StringComparer]::Ordinal key order, recursively. Array element order is preserved (only
+    # object MEMBERS are reordered -- never array items). This exists because some upstream generators,
+    # notably `scoop export` (which builds each app object from a PowerShell hashtable whose iteration
+    # order varies per invocation), emit the same data with different member order on every run: without
+    # sorting, a byte-stable committed artifact is impossible and backups churn whole-file diffs daily.
+    #
+    # Leaf values are copied by round-tripping their exact JSON text through JsonNode so string payloads
+    # (ISO-8601 timestamps), number tokens, booleans, and nulls survive verbatim without type-specific
+    # GetValue<T> probing. Duplicate input member names cannot be represented by a rebuilt JsonObject:
+    # JsonNode.Parse rejects them outright, and ConvertTo-CanonicalJsonText wraps that failure in the
+    # stable E_CANONICAL_JSON_SORT_FAILED diagnostic so it fails CLOSED instead of silently dropping data.
+    # Callers must runtime-gate invocation on "System.Text.Json.Nodes.JsonNode" -as [type]; Windows
+    # PowerShell 5.1 never reaches this function.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '', Justification = 'System.Text.Json.Nodes is runtime-gated to PowerShell 7+ via a "...JsonNode" -as [type]" probe at the call site; Windows PowerShell 5.1 never invokes this function. This is the sanctioned runtime-guarded pattern in .llm/context.md.')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [System.Text.Json.Nodes.JsonNode]$Node
+    )
+
+    if ($null -eq $Node) {
+        return $null
+    }
+
+    if ($Node -is [System.Text.Json.Nodes.JsonObject]) {
+        $sortedObject = [System.Text.Json.Nodes.JsonObject]::new()
+        # Ordinal insertion sort over the member pairs: deterministic across machines and cultures
+        # (context.md portability rule 15) with no follow-up key lookup. Object member counts here are
+        # tiny (scoop app objects carry five members), so quadratic insertion cost is irrelevant.
+        $sortedPairs = New-Object System.Collections.Generic.List[object]
+        foreach ($property in $Node.AsObject()) {
+            $insertIndex = $sortedPairs.Count
+            for ($pairIndex = 0; $pairIndex -lt $sortedPairs.Count; $pairIndex++) {
+                $ordinalComparison = [System.String]::CompareOrdinal($property.Key, [string]$sortedPairs[$pairIndex].Key)
+                if ($ordinalComparison -lt 0) {
+                    $insertIndex = $pairIndex
+                    break
+                }
+            }
+
+            $sortedPairs.Insert($insertIndex, $property)
+        }
+
+        foreach ($pair in $sortedPairs) {
+            $sortedChild = ConvertTo-JsonNodeWithSortedObjectKeys -Node $pair.Value
+            [void]$sortedObject.Add([string]$pair.Key, $sortedChild)
+        }
+
+        # Comma-wrapped returns throughout: JsonObject/JsonArray implement IDictionary/IEnumerable, so
+        # bare `return $node` would be UNROLLED by the PowerShell pipeline into KeyValuePairs/elements and
+        # callers would receive object[] instead of the rebuilt node (see .llm/context.md "PowerShell Empty
+        # Array Return Safety"). The comma operator preserves the node as a single pipeline item.
+        return , $sortedObject
+    }
+
+    if ($Node -is [System.Text.Json.Nodes.JsonArray]) {
+        $sortedArray = [System.Text.Json.Nodes.JsonArray]::new()
+        foreach ($element in $Node.AsArray()) {
+            $sortedChild = ConvertTo-JsonNodeWithSortedObjectKeys -Node $element
+            [void]$sortedArray.Add($sortedChild)
+        }
+
+        # Comma-wrapped return: JsonArray is IEnumerable, so a bare `return $sortedArray` would be
+        # unrolled by the PowerShell pipeline into its elements and callers would receive object[]
+        # instead of the rebuilt node (see .llm/context.md "PowerShell Empty Array Return Safety").
+        return , $sortedArray
+    }
+
+    # Leaf value: copy via its exact serialized text (comma-wrapped for the same pipeline-unroll safety).
+    $rawLeafText = $Node.ToJsonString()
+    return , ([System.Text.Json.JsonSerializer]::Deserialize($rawLeafText, [System.Text.Json.Nodes.JsonNode]))
+}
+
 function ConvertTo-CanonicalJsonText {
     # Re-emits JSON in the repository's canonical committed form -- 2-space indent, LF newlines, exactly
     # one trailing newline, non-ASCII escaped to \uXXXX -- byte-identical to the pre-commit
@@ -98,14 +174,29 @@ function ConvertTo-CanonicalJsonText {
     # exactly what `pretty-format-json`/`check-json` require. On Windows PowerShell 5.1, where
     # System.Text.Json is unavailable, it falls back to line-ending/trailing-newline normalization only and
     # an attended commit's hook canonicalizes the indentation; timestamps are still preserved (no reparse).
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '', Justification = 'System.Text.Json is runtime-gated to PowerShell 7+ via a "...-as [type]" probe; Windows PowerShell 5.1 takes the line-ending-normalizing fallback. This is the sanctioned runtime-guarded pattern in .llm/context.md.')]
+    #
+    # -SortObjectKeys additionally rebuilds every JSON object with Ordinal-sorted member names (nested
+    # recursively; array element order untouched) before serialization, for upstream generators whose own
+    # member order is non-deterministic across runs (`scoop export` app objects built from PowerShell
+    # hashtables). The sorted form stays a byte-identical fixed point of `pretty-format-json` because that
+    # hook preserves key order -- sorting at the source is what removes the daily whole-file churn.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleTypes', '', Justification = 'System.Text.Json (including Nodes for -SortObjectKeys) is runtime-gated to PowerShell 7+ via a "...-as [type]" probe; Windows PowerShell 5.1 takes the line-ending-normalizing fallback. This is the sanctioned runtime-guarded pattern in .llm/context.md.')]
     [OutputType([string])]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
-        [string]$RawJson
+        [string]$RawJson,
+
+        [switch]$SortObjectKeys
     )
+
+    # Sorted-path availability is probed once up front so BOTH degradation modes (no System.Text.Json at
+    # all on Windows PowerShell 5.1, or an older Core build without the Nodes API) surface the same
+    # actionable warning instead of silently returning unsorted output.
+    if ($SortObjectKeys -and $null -eq ("System.Text.Json.Nodes.JsonNode" -as [type])) {
+        Write-Warning "W_CANONICAL_JSON_SORT_UNAVAILABLE: -SortObjectKeys was requested but System.Text.Json.Nodes is unavailable on this runtime; output member order was NOT normalized."
+    }
 
     $jsonDocumentType = "System.Text.Json.JsonDocument" -as [type]
     if ($null -ne $jsonDocumentType) {
@@ -114,16 +205,45 @@ function ConvertTo-CanonicalJsonText {
             $documentOptions = [System.Text.Json.JsonDocumentOptions]::new()
             $documentOptions.CommentHandling = [System.Text.Json.JsonCommentHandling]::Skip
             $documentOptions.AllowTrailingCommas = $true
-            $document = [System.Text.Json.JsonDocument]::Parse($RawJson, $documentOptions)
 
             $serializerOptions = [System.Text.Json.JsonSerializerOptions]::new()
             $serializerOptions.WriteIndented = $true
             $serializerOptions.Encoder = [System.Text.Encodings.Web.JavaScriptEncoder]::UnsafeRelaxedJsonEscaping
 
+            # Sorted path: parse into an editable JsonNode tree, rebuild it Ordinal-sorted, and serialize
+            # the rebuilt tree through the same serializer options as the default path so formatting is
+            # identical. A scalar "null" document parses to a null node and falls through to the default
+            # path, which has no member order to sort.
+            $sortedRootNode = $null
+            if ($SortObjectKeys) {
+                $jsonNodeType = "System.Text.Json.Nodes.JsonNode" -as [type]
+                if ($null -ne $jsonNodeType) {
+                    try {
+                        $jsonNodeOptions = [System.Text.Json.Nodes.JsonNodeOptions]::new()
+                        $jsonNodeOptions.PropertyNameCaseInsensitive = $false
+                        $sortedRootNode = ConvertTo-JsonNodeWithSortedObjectKeys -Node ($jsonNodeType::Parse($RawJson, $jsonNodeOptions, $documentOptions))
+                    }
+                    catch {
+                        # Fail closed with a stable code: unlike the default path, a sorted rebuild cannot
+                        # represent every input (duplicate member names are rejected by JsonNode.Parse), so
+                        # callers must never mistake a silent unsorted fallback for success.
+                        $sortFailureDetail = [string]$_.Exception.Message
+                        throw ("E_CANONICAL_JSON_SORT_FAILED: -SortObjectKeys could not rebuild the JSON tree for sorted serialization. Detail: {0}" -f $sortFailureDetail)
+                    }
+                }
+            }
+
             # WriteIndented uses CRLF on .NET running under Windows (the indented Utf8JsonWriter newline was
             # hard-coded to "`r`n" before .NET 9 / the configurable JsonWriterOptions.NewLine). The LF
             # normalization below is what makes the output LF-only on every platform, not just Linux/macOS.
-            $serialized = [System.Text.Json.JsonSerializer]::Serialize($document.RootElement, $serializerOptions)
+            if ($null -ne $sortedRootNode) {
+                $serialized = [System.Text.Json.JsonSerializer]::Serialize($sortedRootNode, $serializerOptions)
+            }
+            else {
+                $document = [System.Text.Json.JsonDocument]::Parse($RawJson, $documentOptions)
+                $serialized = [System.Text.Json.JsonSerializer]::Serialize($document.RootElement, $serializerOptions)
+            }
+
             $serialized = ConvertTo-AsciiEscapedJsonText -Text $serialized
             return (ConvertTo-LfTextWithSingleTrailingNewline -Text $serialized)
         }
