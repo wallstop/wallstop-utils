@@ -19,6 +19,13 @@ function ConvertTo-CanonicalScoopExportJson {
     # every line. The shared helper parses via System.Text.Json's JsonDocument so the ISO-8601 `Updated`
     # timestamps are preserved verbatim (ConvertFrom-Json/ConvertTo-Json would reparse and timezone-shift
     # them); see Scripts/Utils/Common/CanonicalJsonHelpers.ps1 for the full contract.
+    #
+    # -SortObjectKeys is load-bearing for stability: scoop builds each exported app object from a
+    # PowerShell hashtable, whose iteration order differs per invocation, so successive `scoop export`
+    # runs emit identical data with different member order. Without sorting, every daily backup rewrote
+    # all ~680 lines of scoopfile.json (observed 2026-08-12..2026-08-22), drowning real changes in noise.
+    # Sorting member names Ordinally makes the bytes data-determined; pretty-format-json preserves key
+    # order, so the sorted form remains hook-identical.
     [OutputType([string])]
     [CmdletBinding()]
     param(
@@ -27,7 +34,7 @@ function ConvertTo-CanonicalScoopExportJson {
         [string]$RawJson
     )
 
-    return ConvertTo-CanonicalJsonText -RawJson $RawJson
+    return ConvertTo-CanonicalJsonText -RawJson $RawJson -SortObjectKeys
 }
 
 function Invoke-ScoopBackup {

@@ -20,6 +20,18 @@ Run focused checks before widening any validator include patterns.
 
 Backup orchestration should stage only managed snapshot outputs under `Config/`; any out-of-scope mutations must fail fast rather than being auto-committed.
 
+## Generator Nondeterminism And Whole-File Churn
+
+When a managed snapshot shows whole-file diffs while the underlying data is unchanged,
+suspect upstream generator nondeterminism (member/key order), not data drift: some
+generators build output from unordered structures so member order varies per invocation
+(example: `scoop export` builds each app object from a PowerShell hashtable). Normalize
+at the writer rather than hand-sorting committed artifacts: route through
+`ConvertTo-CanonicalJsonText -SortObjectKeys` (`Scripts/Utils/Common/CanonicalJsonHelpers.ps1`),
+which rebuilds object members in Ordinal key order recursively while staying a
+byte-identical fixed point of the `pretty-format-json --no-sort-keys` hook. Formatter
+hooks stay order-preserving (`--no-sort-keys`); sorting happens only at the source.
+
 ## References
 
 - `.pre-commit-config.yaml`

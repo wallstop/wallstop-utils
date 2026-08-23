@@ -62,6 +62,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 7. Prefer category-level guidance over brittle one-off rules.
 8. Keep commits bisectable: each commit must pass all gates independently.
 9. **Mandatory post-work self-improvement**: after any significant work, execute the [post-work self-improvement workflow](./skills/post-work-self-improvement.md) using sub-agents with adversarial consensus to analyze work done, extract new knowledge, and update `.llm/` guidance. This is a session-close gate, not optional. See [expanded guide](./skill-details/post-work-self-improvement.md) for trigger criteria and protocol.
+10. Start multi-unit work on its feature branch before the first commit; recover wrong-base commits by branching at the commit, and never run history-destroying recovery (`git reset --hard`) while unstaged unit changes are pending — stage or stash them first.
 
 ## Primary Commands
 
@@ -183,6 +184,8 @@ array semantics in empty-result paths.
 - Use `return , @()` (comma operator) when callers access `.Count` directly on the result.
 - If callers always wrap with `@()`, the bare `return @()` is safe — add `# array-unwrap-safe`.
 - Do not comma-wrap already materialized arrays returned to call sites that already use `@(...)`; `return , $array` in that case creates nested arrays and breaks `foreach` step iteration.
+- Unrolling also hits non-empty `IEnumerable` containers returned bare from functions (`List[T]`, `HashSet[T]`, `System.Text.Json.Nodes.JsonObject`/`JsonArray`; non-generic `IDictionary` types like hashtable travel whole), so callers get element sequences instead of the container and downstream `.Add` calls then fail overload resolution.
+- When callers need container identity, comma-wrap the return (`return , $container`; precedent: `ConvertTo-JsonNodeWithSortedObjectKeys` in `Scripts/Utils/Common/CanonicalJsonHelpers.ps1`).
 - For array-return helpers with multiple call sites, keep one explicit contract end-to-end: either bare returns + `@(...)` at every call site, or comma-wrapped returns + non-wrapped call sites; do not mix contracts.
 - Add both behavioral and structural coverage for high-risk array-return helpers: behavior tests for empty/non-empty flattening plus AST/pattern checks that call-site wrapper usage matches the helper's return contract.
 - A convention test in `ScriptSafetyConventions.Tests.ps1` enforces this in `Scripts/`.

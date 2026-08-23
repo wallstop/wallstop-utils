@@ -7,9 +7,10 @@ BeforeAll {
     # the pure functions for testing.
     . "$PSScriptRoot/../../Scripts/Scoop/ScoopBackup.ps1"
 
-    # A representative `scoop export` payload in scoop's native 4-space indentation, including the
-    # ISO-8601 `Updated` timestamps (with timezone offset and sub-second precision) that must survive
-    # canonicalization verbatim.
+    # A representative `scoop export` payload in scoop's native 4-space indentation. Object member order
+    # is deliberately NOT alphabetical (scoop builds app objects from hashtables, so real exports arrive
+    # in varying orders), including the ISO-8601 `Updated` timestamps (with timezone offset and sub-second
+    # precision) that must survive canonicalization verbatim.
     $script:rawFourSpace = @"
 {
     "buckets": [
@@ -27,6 +28,30 @@ BeforeAll {
             "Version": "24.09",
             "Updated": "2026-04-27T23:30:18.9329513-07:00",
             "Info": ""
+        }
+    ]
+}
+"@ -replace "`r`n", "`n"
+
+    # The same data with every object's members emitted in a different order: scoop export produces this
+    # kind of permutation on another day/run, and the canonical output must be byte-identical for both.
+    $script:rawFourSpacePermuted = @"
+{
+    "apps": [
+        {
+            "Info": "",
+            "Updated": "2026-04-27T23:30:18.9329513-07:00",
+            "Version": "24.09",
+            "Name": "7zip",
+            "Source": "main"
+        }
+    ],
+    "buckets": [
+        {
+            "Manifests": 1579,
+            "Updated": "2026-06-19T22:48:12-07:00",
+            "Source": "https://github.com/ScoopInstaller/Main",
+            "Name": "main"
         }
     ]
 }
@@ -70,6 +95,11 @@ Describe "ConvertTo-CanonicalScoopExportJson" {
     }
 
     It "produces a stable fixed point (canonicalizing the output again yields identical bytes)" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "byte-exact canonical form requires System.Text.Json"
+            return
+        }
+
         # The committed file must be a fixed point of the formatter so attended (hook) and unattended
         # (--no-verify) backup commits land identical bytes, which is what prevents the merge conflicts.
         $once = ConvertTo-CanonicalScoopExportJson -RawJson $script:rawFourSpace
@@ -85,11 +115,39 @@ Describe "ConvertTo-CanonicalScoopExportJson" {
 
         $canonical = ConvertTo-CanonicalScoopExportJson -RawJson $script:rawFourSpace
         $lines = $canonical -split "`n"
-        ($lines[1]) | Should -Be '  "buckets": [' -Because "top-level members must use 2-space indentation"
+        # Member names sort Ordinally, so "apps" precedes "buckets" at the top level.
+        ($lines[1]) | Should -Be '  "apps": [' -Because "top-level members must use 2-space indentation and sorted key order"
         # The deepest nested members sit at 6 spaces (member -> array -> object) under 2-space indent.
         @($lines | Where-Object { $_ -match '^      "Name": "main"' }).Count | Should -BeGreaterThan 0
         # No residual 4-space (scoop) indentation for a top-level key.
         $canonical | Should -Not -Match '(?m)^    "buckets":'
+    }
+
+    It "emits object members in Ordinal-sorted order regardless of scoop's per-run ordering" {
+        if (-not $script:hasSystemTextJson) {
+            Set-ItResult -Skipped -Because "member sorting requires System.Text.Json (Windows PowerShell 5.1 fallback cannot rewrite JSON)"
+            return
+        }
+
+        $canonical = ConvertTo-CanonicalScoopExportJson -RawJson $script:rawFourSpace
+        $canonicalFromPermutation = ConvertTo-CanonicalScoopExportJson -RawJson $script:rawFourSpacePermuted
+        $canonicalFromPermutation | Should -BeExactly $canonical -Because "identical data must produce identical bytes no matter what member order scoop emitted"
+
+        # Pin the deterministic shape: nested members appear Ordinally sorted inside BOTH arrays
+        # (app: Info, Name, Source, Updated, Version; bucket: Manifests, Name, Source, Updated) and the
+        # ISO timestamps survive verbatim inside the sorted form.
+        $memberLines = @($canonical -split "`n" | Where-Object { $_ -match '^      "' })
+        $memberLines | Should -BeExactly @(
+            '      "Info": "",'
+            '      "Name": "7zip",'
+            '      "Source": "main",'
+            '      "Updated": "2026-04-27T23:30:18.9329513-07:00",'
+            '      "Version": "24.09"'
+            '      "Manifests": 1579,'
+            '      "Name": "main",'
+            '      "Source": "https://github.com/ScoopInstaller/Main",'
+            '      "Updated": "2026-06-19T22:48:12-07:00"'
+        )
     }
 
     It "accepts an already-canonical payload unchanged (idempotent on canonical input)" {

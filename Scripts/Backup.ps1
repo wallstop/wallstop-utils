@@ -965,7 +965,12 @@ try {
     if (-not $hasGitFailure) {
         if ($stagedFiles.Count -gt 0) {
             if ($hasBackupStepFailures) {
-                $commitMessage = "Backup for $dateString (backup steps failed: $failedCount; $succeededCount/$totalCount succeeded)"
+                # Name the failing steps in the commit message itself: the summary above is console-only,
+                # while this message persists in git history, so partial-failure runs remain diagnosable
+                # from the log alone instead of requiring access to the host console.
+                $failedStepNames = @($failedSteps | ForEach-Object { $_.Name })
+                $failedStepsText = $failedStepNames -join ', '
+                $commitMessage = "Backup for $dateString (backup steps failed: $failedCount [$failedStepsText]; $succeededCount/$totalCount succeeded)"
             }
             else {
                 $commitMessage = "Backup for $dateString ($succeededCount/$totalCount)"
