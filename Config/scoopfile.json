@@ -65,6 +65,13 @@
     },
     {
       "Info": "",
+      "Name": "btop",
+      "Source": "main",
+      "Updated": "2026-08-22T14:13:29.1162836-07:00",
+      "Version": "1.0.5"
+    },
+    {
+      "Info": "",
       "Name": "bun",
       "Source": "main",
       "Updated": "2026-08-20T23:30:54.6070905-07:00",
@@ -277,8 +284,8 @@
       "Info": "",
       "Name": "innounp",
       "Source": "main",
-      "Updated": "2025-11-06T23:30:59.3532-08:00",
-      "Version": "2025"
+      "Updated": "2026-08-22T11:44:52.3575698-07:00",
+      "Version": "2.71.0"
     },
     {
       "Info": "",
@@ -351,11 +358,11 @@
       "Version": "2.5.2"
     },
     {
-      "Info": "Install failed",
+      "Info": "",
       "Name": "megatools",
-      "Source": null,
-      "Updated": "2025-12-27T21:56:30.9168446-08:00",
-      "Version": null
+      "Source": "main",
+      "Updated": "2026-08-22T12:08:15.7176563-07:00",
+      "Version": "1.11.5.20250706"
     },
     {
       "Info": "",
@@ -422,10 +429,38 @@
     },
     {
       "Info": "",
+      "Name": "ollama",
+      "Source": "main",
+      "Updated": "2026-08-22T11:38:08.873918-07:00",
+      "Version": "0.32.15"
+    },
+    {
+      "Info": "",
+      "Name": "ollama-full",
+      "Source": "extras",
+      "Updated": "2026-08-22T11:45:59.0827969-07:00",
+      "Version": "0.32.15"
+    },
+    {
+      "Info": "",
       "Name": "onecommander",
       "Source": "extras",
       "Updated": "2026-04-19T12:17:19.2996727-07:00",
       "Version": "3.108.0.0"
+    },
+    {
+      "Info": "",
+      "Name": "opencode",
+      "Source": "main",
+      "Updated": "2026-08-22T11:37:16.6645923-07:00",
+      "Version": "1.18.21"
+    },
+    {
+      "Info": "",
+      "Name": "opencode-desktop",
+      "Source": "extras",
+      "Updated": "2026-08-22T11:37:25.1188518-07:00",
+      "Version": "1.18.21"
     },
     {
       "Info": "",
@@ -569,10 +604,10 @@
     },
     {
       "Info": "",
-      "Name": "thunderbird-esr",
-      "Source": null,
-      "Updated": "2026-08-17T21:38:43.6140203-07:00",
-      "Version": "128.10.1esr"
+      "Name": "thunderbird",
+      "Source": "extras",
+      "Updated": "2026-08-22T12:32:38.3512703-07:00",
+      "Version": "154.0"
     },
     {
       "Info": "",
@@ -580,6 +615,13 @@
       "Source": "extras",
       "Updated": "2026-06-19T23:32:23.9436855-07:00",
       "Version": "1.8.2.4"
+    },
+    {
+      "Info": "",
+      "Name": "uv",
+      "Source": "main",
+      "Updated": "2026-08-22T13:42:10.3886538-07:00",
+      "Version": "0.12.5"
     },
     {
       "Info": "",
@@ -625,6 +667,13 @@
     },
     {
       "Info": "",
+      "Name": "winsw",
+      "Source": "main",
+      "Updated": "2026-08-22T14:14:00.1601846-07:00",
+      "Version": "2.12.0"
+    },
+    {
+      "Info": "",
       "Name": "wixtoolset",
       "Source": "main",
       "Updated": "2026-04-19T12:22:12.4226122-07:00",
@@ -650,13 +699,13 @@
       "Manifests": 1635,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-08-21T21:30:59-07:00"
+      "Updated": "2026-08-22T21:31:23-07:00"
     },
     {
       "Manifests": 2371,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-08-21T23:26:01-07:00"
+      "Updated": "2026-08-22T21:30:52-07:00"
     },
     {
       "Manifests": 75,
@@ -668,7 +717,7 @@
       "Manifests": 132,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-08-21T18:53:51-07:00"
+      "Updated": "2026-08-22T13:44:10-07:00"
     },
     {
       "Manifests": 336,
