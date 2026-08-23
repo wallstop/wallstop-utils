@@ -1,6 +1,16 @@
 # Plan
 
-## Current milestone: green quality PR
+## Current milestone: scoop host-health tooling (issue #70)
+
+- [x] Implement `Scripts/Scoop/Invoke-ScoopHealthCheck.ps1` covering every audited failure mode: `scoop status` anomalies (Install failed / Manifest removed / missing versions), installed-vs-bucket version inversion (the `2025 > 2.71.0` deadlock), junction integrity (`current` reparse-point checks), Mozilla channel drift against real `compatibility.ini` `LastVersion=<version>_<buildId>/<prev>` shapes, and orphaned Mozilla helper processes.
+- [x] Honor `$env:SCOOP_GLOBAL` (admin/global installs) in both the health check and ScoopRestore's Mozilla policy deployment, single-sourced through `Scripts/Utils/Common/ScoopInstallRootHelpers.ps1` (closes the gap noted during PR #69 review).
+- [x] Wire `ScoopHealthCheck` into the `Backup.ps1` step list as a Windows-only best-effort step so audit-class drift surfaces in daily backup summaries instead of tribal memory.
+- [x] Data-driven Pester coverage: pure classifiers plus child-process behavioral tests using PATH-shim fake scoop commands; adversarial review loop applied (real-world LastVersion format fix, Thunderbird-only pairing, 5.1 strict-mode crash path, per-app junction resilience).
+- [ ] Operator action on the primary Windows host (tracked in issue #70): redeploy v2 `window-control.ahk` over `%USERPROFILE%\.config\window-control.ahk` and confirm the next backup shows no diff.
+
+Evidence: [session-021](./progress/session-021-scoop-host-health-check.md)
+
+## Completed milestone: green quality PR
 
 - [x] Triage the repository's open pull requests and current CI failures.
 - [x] Carry the in-progress DxMessaging backup reliability work with focused tests.
@@ -23,7 +33,7 @@
 - [x] Incorporate Dependabot pre-commit 4.6.1 → 4.6.2 (closes PR #67).
 - [x] Issue #68: deploy Mozilla update-blocking policies on Scoop restore, back up Thunderbird `profiles.ini`, publish the scoop host audit recovery runbook.
 - [x] Open the PR aggregating this session and drive reviewer feedback/checks to green (PR #69: all lanes green, Bugbot finding fixed, mergeable state clean).
-- [ ] Follow-up tracked in issue #70 (needs operator action or its own focused review): `Scripts/Scoop/Invoke-ScoopHealthCheck.ps1` health-check script; redeploy v2 `window-control.ahk` on the primary host so backups stop re-committing the v1 regression.
+- [x] Issue #70 repo-side follow-up delivered in session-021 (`Invoke-ScoopHealthCheck.ps1` + SCOOP_GLOBAL-aware policy deployment); the remaining host-side `window-control.ahk` redeploy stays open in issue #70 and the current milestone above.
 
 Evidence: [session-020](./progress/session-020-green-ci-and-issue-68.md)
 
