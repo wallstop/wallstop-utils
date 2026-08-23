@@ -3593,7 +3593,8 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'param\(\s*\[Parameter\(Mandatory\s*=\s*\$false\)\]\s*\[switch\]\$Unattended\s*\)'
         $backupScript | Should -Match 'WALLSTOP_BACKUP_UNATTENDED'
         $backupScript | Should -Match 'function\s+Test-BackupTruthySettingValue'
-        $backupScript | Should -Match 'if\s*\(\s*\$hasBackupStepFailures\s*\)\s*\{[\s\S]*backup steps failed: \$failedCount; \$succeededCount/\$totalCount succeeded'
+        $backupScript | Should -Match 'if\s*\(\s*\$hasBackupStepFailures\s*\)\s*\{[\s\S]*backup steps failed: \$failedCount \[\$failedStepsText\]; \$succeededCount/\$totalCount succeeded' -Because "partial-failure backup commits must name the failing steps in the persistent commit message (issue #46), not just in console-only output."
+        $backupScript | Should -Match '\$failedStepNames\s*=\s*@\(\$failedSteps\s*\|\s*ForEach-Object\s*\{\s*\$_\.Name\s*\}\)'
         $backupScript | Should -Match 'else\s*\{[\s\S]*\$commitMessage\s*=\s*"Backup for \$dateString \(\$succeededCount/\$totalCount\)"'
         $backupScript | Should -Match 'Resolve-PowerShellExecutablePath'
         $backupScript | Should -Not -Match 'Get-Command\s+-Name\s+"pwsh"'
