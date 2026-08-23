@@ -386,15 +386,26 @@ function Get-ScoopMozillaChannelDriftReason {
     }
 
     $comparedSegmentCount = [Math]::Min($profileMajorSegments.Count, $installedMajorSegments.Count)
+    $isProfileNewer = $false
     for ($segmentIndex = 0; $segmentIndex -lt $comparedSegmentCount; $segmentIndex++) {
         if ($profileMajorSegments[$segmentIndex] -gt $installedMajorSegments[$segmentIndex]) {
-            [void]$reasons.Add(("profile was last written by version '{0}', newer than installed '{1}' (downgrade guard will block launch)" -f $profileToken, $InstalledAppVersion))
+            $isProfileNewer = $true
             break
         }
 
         if ($profileMajorSegments[$segmentIndex] -lt $installedMajorSegments[$segmentIndex]) {
             break
         }
+    }
+
+    # Equal through every compared segment but the profile carries MORE parsed segments (for example
+    # profile '140.14.0.1' vs installed '140.14.0'): the profile was written by a newer build.
+    if (-not $isProfileNewer -and $profileMajorSegments.Count -gt $installedMajorSegments.Count) {
+        $isProfileNewer = $true
+    }
+
+    if ($isProfileNewer) {
+        [void]$reasons.Add(("profile was last written by version '{0}', newer than installed '{1}' (downgrade guard will block launch)" -f $profileToken, $InstalledAppVersion))
     }
 
     return ($reasons -join '; ')

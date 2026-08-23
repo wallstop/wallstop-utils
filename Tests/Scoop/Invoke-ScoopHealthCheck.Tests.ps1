@@ -31,16 +31,28 @@ BeforeAll {
         [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
     }
 
-    function ConvertTo-SingleQuotedLiteral {
-        # Escapes arbitrary text for safe embedding inside a single-quoted PowerShell literal and a
-        # single-quoted bash string: only the single quote needs doubling in both grammars.
+    function ConvertTo-BashSingleQuotedLiteral {
+        # Escapes text for a single-quoted bash string: bash has no in-quote escaping, so each
+        # literal single quote must close the string, insert an escaped quote, and reopen it.
         param(
             [Parameter(Mandatory = $true)]
             [AllowEmptyString()]
             [string]$Text
         )
 
-        return $Text -replace "'", "''"
+        $bashEscaped = $Text -replace "'", "'\\''"
+        return "'" + $bashEscaped + "'"
+    }
+
+    function ConvertTo-PowerShellSingleQuotedLiteral {
+        # Escapes text for a single-quoted PowerShell literal: double any embedded single quote.
+        param(
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyString()]
+            [string]$Text
+        )
+
+        return "'" + ($Text -replace "'", "''") + "'"
     }
 
     function New-FakeScoopCommandBin {
@@ -71,8 +83,12 @@ BeforeAll {
 
         [void][System.IO.Directory]::CreateDirectory($BinDirectory)
 
-        $escapedStatus = ConvertTo-SingleQuotedLiteral -Text ($StatusOutput -replace "`r`n", "`n")
-        $escapedExport = ConvertTo-SingleQuotedLiteral -Text ($ExportOutput -replace "`r`n", "`n")
+        $normalizedStatus = $StatusOutput -replace "`r`n", "`n"
+        $normalizedExport = $ExportOutput -replace "`r`n", "`n"
+        $escapedStatusBash = ConvertTo-BashSingleQuotedLiteral -Text $normalizedStatus
+        $escapedStatusPowerShell = ConvertTo-PowerShellSingleQuotedLiteral -Text $normalizedStatus
+        $escapedExportBash = ConvertTo-BashSingleQuotedLiteral -Text $normalizedExport
+        $escapedExportPowerShell = ConvertTo-PowerShellSingleQuotedLiteral -Text $normalizedExport
 
         $bashShimText = @"
 #!/usr/bin/env bash
@@ -80,11 +96,11 @@ set -u
 command="`${1:-}"
 case "`$command" in
   status)
-    printf '%s' '$escapedStatus'
+    printf '%s' $escapedStatusBash
     exit $StatusExitCode
     ;;
   export)
-    printf '%s' '$escapedExport'
+    printf '%s' $escapedExportBash
     exit $ExportExitCode
     ;;
 esac
@@ -101,11 +117,11 @@ switch (`$command) {
   'status' {
     # Pipeline output, never [Console]::Out: console writes bypass PowerShell's output
     # pipeline, so a caller capturing @(`$script 2>&1) would see nothing.
-    Write-Output '$escapedStatus'
+    Write-Output $escapedStatusPowerShell
     exit $StatusExitCode
   }
   'export' {
-    Write-Output '$escapedExport'
+    Write-Output $escapedExportPowerShell
     exit $ExportExitCode
   }
   default {
@@ -337,6 +353,11 @@ Describe "Get-ScoopMozillaChannelDriftReason" {
         @{ ProfileLastVersion = "139.14.0esr_20250601000000/20250601000000"; InstalledAppVersion = "140.14.0"; InstalledChannel = "esr"; ExpectChannelDrift = $false; ExpectDowngradeRisk = $false },
         # Patch-level regression also trips Mozilla's downgrade guard (not just major jumps).
         @{ ProfileLastVersion = "140.15_20250801000000/20250801000000"; InstalledAppVersion = "140.14.0"; InstalledChannel = "esr"; ExpectChannelDrift = $false; ExpectDowngradeRisk = $true },
+        # Profile carries MORE parsed segments than installed with an equal prefix -> newer build.
+        @{ ProfileLastVersion = "140.14.0.1_20250801000000/20250801000000"; InstalledAppVersion = "140.14.0"; InstalledChannel = "esr"; ExpectChannelDrift = $false; ExpectDowngradeRisk = $true },
+        # Profile FEWER segments with an equal prefix and matching channel is the stale-profile
+        # case: never warned.
+        @{ ProfileLastVersion = "140.14esr_20250601000000/20250601000000"; InstalledAppVersion = "140.14.0"; InstalledChannel = "esr"; ExpectChannelDrift = $false; ExpectDowngradeRisk = $false },
         # Channel switch (the audit's ESR -> release self-update).
         @{ ProfileLastVersion = "153.0.3_20250901000000/20250901000000"; InstalledAppVersion = "140.14.0"; InstalledChannel = "esr"; ExpectChannelDrift = $true; ExpectDowngradeRisk = $true },
         @{ ProfileLastVersion = "140.14.0esr_20250715141807/20250715141807"; InstalledAppVersion = "141.0"; InstalledChannel = "release"; ExpectChannelDrift = $true; ExpectDowngradeRisk = $false },
