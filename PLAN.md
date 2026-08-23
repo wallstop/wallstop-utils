@@ -1,6 +1,15 @@
 # Plan
 
-## Current milestone: scoop host-health tooling (issue #70)
+## Current milestone: backup upload diagnostics (issue #46)
+
+- [x] RCA the recurring `backup steps failed: 2` auto-backup commits from repository evidence: failing step names were console-only, so ten days of partial-failure uploads (2026-08-12..2026-08-22) were undiagnosable from git history.
+- [x] Name failing steps in the backup commit message (`(backup steps failed: N [StepA, StepB]; X/Y succeeded)`), policy-pinned in the conventions suite.
+- [x] Eliminate the daily whole-file `Config/scoopfile.json` churn caused by `scoop export`'s non-deterministic app-member ordering: opt-in `-SortObjectKeys` canonicalization (Ordinal member sort, arrays untouched, fail-closed duplicate handling), ScoopBackup opts in, committed artifact regenerated as a fixed point of both modes.
+- [ ] After the next host backup run: read the named failing steps from the commit message and continue the issue #46 investigation with that evidence.
+
+Evidence: [session-022](./progress/session-022-backup-upload-diagnostics.md)
+
+## Completed milestone: scoop host-health tooling (issue #70)
 
 - [x] Implement `Scripts/Scoop/Invoke-ScoopHealthCheck.ps1` covering every audited failure mode: `scoop status` anomalies (Install failed / Manifest removed / missing versions), installed-vs-bucket version inversion (the `2025 > 2.71.0` deadlock), junction integrity (`current` reparse-point checks), Mozilla channel drift against real `compatibility.ini` `LastVersion=<version>_<buildId>/<prev>` shapes, and orphaned Mozilla helper processes.
 - [x] Honor `$env:SCOOP_GLOBAL` (admin/global installs) in both the health check and ScoopRestore's Mozilla policy deployment, single-sourced through `Scripts/Utils/Common/ScoopInstallRootHelpers.ps1` (closes the gap noted during PR #69 review).
