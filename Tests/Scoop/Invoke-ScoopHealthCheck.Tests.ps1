@@ -264,11 +264,11 @@ Describe "Find-ScoopStatusAnomalies" {
         # A PowerShell script shim captured via @(& shim 2>&1) yields ONE string containing every
         # physical line; parsing must be invariant to that producer shape.
         $singleElementPayload = (@(
-            "Name        Installed Version    Latest Version",
-            "----        -----------------",
-            "megatools                        ???               innounp",
-            "7zip        24.09                25.00"
-        ) -join "`n")
+                "Name        Installed Version    Latest Version",
+                "----        -----------------",
+                "megatools                        ???               innounp",
+                "7zip        24.09                25.00"
+            ) -join "`n")
 
         $anomalies = @(Find-ScoopStatusAnomalies -StatusLines @($singleElementPayload))
         $actualSummary = (@($anomalies | ForEach-Object { "{0}|{1}" -f $_.App, $_.Reason }) -join ",")
