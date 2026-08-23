@@ -3,6 +3,12 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path -Path $PSScriptRoot -ChildPath "../Utils/Common/CompatibilityHelpers.ps1")
 
+$scoopInstallRootHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Utils/Common/ScoopInstallRootHelpers.ps1"
+if (-not (Test-Path -LiteralPath $scoopInstallRootHelpersPath -PathType Leaf)) {
+    throw "E_SCOOP_RESTORE_ROOT_HELPER_MISSING: scoop install root helper file not found at '$scoopInstallRootHelpersPath'."
+}
+. $scoopInstallRootHelpersPath
+
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 $configDirectory = Join-Path -Path $baseDirectory -ChildPath "Config"
@@ -35,104 +41,126 @@ finally {
 # from inside the apps\<name>\current junction it replaces the junction with a real
 # directory and corrupts Scoop's bookkeeping (issue #68). Deploy an update-blocking
 # distribution policy for every installed Mozilla app after import.
-function Install-MozillaUpdateBlockingPolicies {
-    $scoopRoot = if (-not [string]::IsNullOrWhiteSpace($env:SCOOP)) {
-        $env:SCOOP
-    }
-    elseif (Test-IsWindowsPlatform) {
-        Join-Path -Path $HOME -ChildPath "scoop"
-    }
-    else {
-        return
-    }
+function Get-ScoopRestoreInstallRoots {
+    # Thin Scoop-restore-facing wrapper over the shared install-root resolver, honoring per-user
+    # ($env:SCOOP) and admin/global ($env:SCOOP_GLOBAL) installs. Global coverage closes the gap
+    # noted during PR #69 review: admin-installed Mozilla apps previously never received a policy.
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param()
 
-    $appsRoot = Join-Path -Path $scoopRoot -ChildPath "apps"
-    if (-not (Test-Path -LiteralPath $appsRoot -PathType Container)) {
-        Write-Warning ("W_SCOOP_RESTORE_MOZILLA_POLICY_SKIPPED: Scoop apps root not found at '{0}'." -f $appsRoot)
-        return
-    }
+    return @(Get-ScoopInstallCandidateRoots)
+}
 
-    $mozillaAppDirectories = @(Get-ChildItem -LiteralPath $appsRoot -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^(thunderbird|firefox)' })
-    if ($mozillaAppDirectories.Count -eq 0) {
-        return
-    }
+function Install-MozillaUpdateBlockingPolicyForApp {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ScoopRoot,
 
-    foreach ($appDirectory in $mozillaAppDirectories) {
-        # Reset per app: an earlier app's merged document must not leak into
-        # this app's comparison baseline or written payload.
-        $policyPayload = '{"policies":{"DisableAppUpdate":true,"DisableTelemetry":true}}'
-        $distributionDirectory = Join-Path -Path $scoopRoot -ChildPath (
-            "persist/{0}/distribution" -f $appDirectory.Name
-        )
-        $policyPath = Join-Path -Path $distributionDirectory -ChildPath "policies.json"
-        try {
-            if (-not (Test-Path -LiteralPath $distributionDirectory -PathType Container)) {
-                [void][System.IO.Directory]::CreateDirectory($distributionDirectory)
-            }
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$AppName
+    )
 
-            $existingPayload = ''
-            if (Test-Path -LiteralPath $policyPath -PathType Leaf) {
-                $existingPayload = [System.IO.File]::ReadAllText($policyPath, [System.Text.Encoding]::UTF8).Trim()
-            }
+    # Reset per app: an earlier app's merged document must not leak into
+    # this app's comparison baseline or written payload.
+    $policyPayload = '{"policies":{"DisableAppUpdate":true,"DisableTelemetry":true}}'
+    $distributionDirectory = Join-Path -Path $ScoopRoot -ChildPath (
+        "persist/{0}/distribution" -f $AppName
+    )
+    $policyPath = Join-Path -Path $distributionDirectory -ChildPath "policies.json"
+    try {
+        if (-not (Test-Path -LiteralPath $distributionDirectory -PathType Container)) {
+            [void][System.IO.Directory]::CreateDirectory($distributionDirectory)
+        }
 
-            if ($existingPayload -eq $policyPayload) {
-                Write-Verbose ("Mozilla update-blocking policy already current: {0}" -f $policyPath)
-                continue
-            }
+        $existingPayload = ''
+        if (Test-Path -LiteralPath $policyPath -PathType Leaf) {
+            $existingPayload = [System.IO.File]::ReadAllText($policyPath, [System.Text.Encoding]::UTF8).Trim()
+        }
 
-            # Preserve any hand-set enterprise policies; only the update/telemetry
-            # switches are owned by this deployment step. Property access goes
-            # through PSObject.Properties so Set-StrictMode never throws on a
-            # missing member and custom sections are merged, never clobbered.
-            if (-not [string]::IsNullOrEmpty($existingPayload)) {
-                try {
-                    $existingPolicyDocument = ConvertFrom-Json -InputObject $existingPayload -ErrorAction Stop
+        if ($existingPayload -eq $policyPayload) {
+            Write-Verbose ("Mozilla update-blocking policy already current: {0}" -f $policyPath)
+            return
+        }
 
-                    $policiesProperty = $existingPolicyDocument.PSObject.Properties["policies"]
-                    if ($null -eq $policiesProperty) {
-                        $policiesSection = [pscustomobject]@{}
-                        $existingPolicyDocument | Add-Member -MemberType NoteProperty -Name "policies" -Value $policiesSection
+        # Preserve any hand-set enterprise policies; only the update/telemetry
+        # switches are owned by this deployment step. Property access goes
+        # through PSObject.Properties so Set-StrictMode never throws on a
+        # missing member and custom sections are merged, never clobbered.
+        if (-not [string]::IsNullOrEmpty($existingPayload)) {
+            try {
+                $existingPolicyDocument = ConvertFrom-Json -InputObject $existingPayload -ErrorAction Stop
+
+                $policiesProperty = $existingPolicyDocument.PSObject.Properties["policies"]
+                if ($null -eq $policiesProperty) {
+                    $policiesSection = [pscustomobject]@{}
+                    $existingPolicyDocument | Add-Member -MemberType NoteProperty -Name "policies" -Value $policiesSection
+                }
+                else {
+                    $policiesSection = $policiesProperty.Value
+                }
+
+                if ($policiesSection -isnot [System.Management.Automation.PSCustomObject]) {
+                    throw "The existing 'policies' section is not a JSON object, so it cannot be merged safely."
+                }
+
+                foreach ($policySwitchName in @("DisableAppUpdate", "DisableTelemetry")) {
+                    $switchProperty = $policiesSection.PSObject.Properties[$policySwitchName]
+                    if ($null -ne $switchProperty) {
+                        $switchProperty.Value = $true
                     }
                     else {
-                        $policiesSection = $policiesProperty.Value
+                        $policiesSection | Add-Member -MemberType NoteProperty -Name $policySwitchName -Value $true
                     }
-
-                    if ($policiesSection -isnot [System.Management.Automation.PSCustomObject]) {
-                        throw "The existing 'policies' section is not a JSON object, so it cannot be merged safely."
-                    }
-
-                    foreach ($policySwitchName in @("DisableAppUpdate", "DisableTelemetry")) {
-                        $switchProperty = $policiesSection.PSObject.Properties[$policySwitchName]
-                        if ($null -ne $switchProperty) {
-                            $switchProperty.Value = $true
-                        }
-                        else {
-                            $policiesSection | Add-Member -MemberType NoteProperty -Name $policySwitchName -Value $true
-                        }
-                    }
-
-                    $policyPayload = ConvertTo-Json -InputObject $existingPolicyDocument -Depth 10 -Compress
                 }
-                catch {
-                    Write-Warning (
-                        "W_SCOOP_RESTORE_MOZILLA_POLICY_UNPARSEABLE: Existing '{0}' is not valid JSON and will be replaced. Detail: {1}" -f
-                        $policyPath,
-                        [string]$_.Exception.Message
-                    )
-                }
+
+                $policyPayload = ConvertTo-Json -InputObject $existingPolicyDocument -Depth 10 -Compress
             }
+            catch {
+                Write-Warning (
+                    "W_SCOOP_RESTORE_MOZILLA_POLICY_UNPARSEABLE: Existing '{0}' is not valid JSON and will be replaced. Detail: {1}" -f
+                    $policyPath,
+                    [string]$_.Exception.Message
+                )
+            }
+        }
 
-            [System.IO.File]::WriteAllText($policyPath, $policyPayload + "`n", [System.Text.UTF8Encoding]::new($false))
-            Write-Host ("Deployed Mozilla update-blocking policy: {0}" -f $policyPath) -ForegroundColor Green
+        [System.IO.File]::WriteAllText($policyPath, $policyPayload + "`n", [System.Text.UTF8Encoding]::new($false))
+        Write-Host ("Deployed Mozilla update-blocking policy: {0}" -f $policyPath) -ForegroundColor Green
+    }
+    catch {
+        Write-Warning (
+            "W_SCOOP_RESTORE_MOZILLA_POLICY_FAILED: Failed to deploy '{0}'. Detail: {1}" -f
+            $policyPath,
+            [string]$_.Exception.Message
+        )
+    }
+}
+
+function Install-MozillaUpdateBlockingPolicies {
+    $scoopRoots = @(Get-ScoopRestoreInstallRoots)
+
+    $appsRootFound = $false
+    foreach ($scoopRoot in $scoopRoots) {
+        $appsRoot = Join-Path -Path $scoopRoot -ChildPath "apps"
+        if (-not (Test-Path -LiteralPath $appsRoot -PathType Container)) {
+            continue
         }
-        catch {
-            Write-Warning (
-                "W_SCOOP_RESTORE_MOZILLA_POLICY_FAILED: Failed to deploy '{0}'. Detail: {1}" -f
-                $policyPath,
-                [string]$_.Exception.Message
-            )
+
+        $appsRootFound = $true
+        $mozillaAppDirectories = @(Get-ChildItem -LiteralPath $appsRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^(thunderbird|firefox)' })
+        foreach ($appDirectory in $mozillaAppDirectories) {
+            Install-MozillaUpdateBlockingPolicyForApp -ScoopRoot $scoopRoot -AppName $appDirectory.Name
         }
+    }
+
+    if (-not $appsRootFound) {
+        $checkedRootsText = if (@($scoopRoots).Count -gt 0) { @($scoopRoots) -join ', ' } else { '(none resolved)' }
+        Write-Warning ("W_SCOOP_RESTORE_MOZILLA_POLICY_SKIPPED: Scoop apps root not found in any install root (checked: {0})." -f $checkedRootsText)
     }
 }
 

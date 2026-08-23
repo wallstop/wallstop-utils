@@ -137,6 +137,50 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         @($parseErrors).Count | Should -Be 0
     }
 
+    It "exits explicitly with success after a passing bootstrap (CI dot-source exit-code contract)" {
+        # GitHub Actions wraps `shell: powershell|pwsh` run blocks with an appended
+        # `if (Test-Path variable:\LASTEXITCODE) { exit $LASTEXITCODE }`, so a handled PSGallery
+        # setup degradation following nonzero-capable native invocations fails the lane via stale
+        # LASTEXITCODE even though bootstrap succeeded. The NoInvokeMain-guarded main path must end
+        # in an explicit `exit 0`, INSIDE the guard, so the process exits before that wrapper runs
+        # and dot-sourcing hosts (library/test consumers) never terminate.
+        $scriptText = (Get-Content -Path $script:bootstrapPath -Raw) -replace "`r", ""
+        $scriptLines = @($scriptText -split "`n")
+
+        $mainGuardLineIndex = -1
+        for ($lineIndex = 0; $lineIndex -lt $scriptLines.Count; $lineIndex++) {
+            if ($scriptLines[$lineIndex] -match '^\s*if\s*\(\s*-not\s+\$NoInvokeMain\s*\)\s*\{\s*$') {
+                $mainGuardLineIndex = $lineIndex
+                break
+            }
+        }
+        $mainGuardLineIndex | Should -BeGreaterThan -1 -Because "the NoInvokeMain-guarded entrypoint must exist"
+
+        $exitSuccessLineIndex = -1
+        for ($lineIndex = $mainGuardLineIndex + 1; $lineIndex -lt $scriptLines.Count; $lineIndex++) {
+            if ($scriptLines[$lineIndex] -match '^\s*exit\s+0\s*$') {
+                $exitSuccessLineIndex = $lineIndex
+                break
+            }
+
+            # The success exit must appear BEFORE the guard's closing brace: a trailing top-level
+            # `exit 0` would terminate dot-sourcing hosts (tests, library consumers).
+            if ($scriptLines[$lineIndex] -match '^\}\s*$') {
+                break
+            }
+        }
+
+        $exitSuccessLineIndex | Should -BeGreaterThan $mainGuardLineIndex -Because "the bootstrap must end in an explicit 'exit 0' inside the NoInvokeMain guard"
+
+        # The explicit success exit must be the final statement: only comments, blank lines, and the
+        # main guard's own closing brace may follow.
+        $trailingStatements = @(
+            $scriptLines[($exitSuccessLineIndex + 1)..($scriptLines.Count - 1)] |
+                Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*\}\s*;?\s*$' }
+        )
+        $trailingStatements.Count | Should -Be 0
+    }
+
     It "skips installation when the requirement is already satisfied: <Module>" -TestCases @(
         @{ Module = 'Pester'; Command = 'Invoke-Pester' }
         @{ Module = 'PSScriptAnalyzer'; Command = 'Invoke-ScriptAnalyzer' }
