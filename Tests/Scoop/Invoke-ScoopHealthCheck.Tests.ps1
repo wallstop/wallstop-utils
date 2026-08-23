@@ -355,6 +355,8 @@ Describe "Get-ScoopMozillaChannelDriftReason" {
         @{ ProfileLastVersion = "140.15_20250801000000/20250801000000"; InstalledAppVersion = "140.14.0"; InstalledChannel = "esr"; ExpectChannelDrift = $false; ExpectDowngradeRisk = $true },
         # Profile carries MORE parsed segments than installed with an equal prefix -> newer build.
         @{ ProfileLastVersion = "140.14.0.1_20250801000000/20250801000000"; InstalledAppVersion = "140.14.0"; InstalledChannel = "esr"; ExpectChannelDrift = $false; ExpectDowngradeRisk = $true },
+        # Longer-but-older profile: an older segment at any position means stale, never flagged.
+        @{ ProfileLastVersion = "140.13.0.1esr_20250601000000/20250601000000"; InstalledAppVersion = "140.14.0"; InstalledChannel = "esr"; ExpectChannelDrift = $false; ExpectDowngradeRisk = $false },
         # Profile FEWER segments with an equal prefix and matching channel is the stale-profile
         # case: never warned.
         @{ ProfileLastVersion = "140.14esr_20250601000000/20250601000000"; InstalledAppVersion = "140.14.0"; InstalledChannel = "esr"; ExpectChannelDrift = $false; ExpectDowngradeRisk = $false },

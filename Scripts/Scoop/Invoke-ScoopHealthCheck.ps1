@@ -387,6 +387,9 @@ function Get-ScoopMozillaChannelDriftReason {
 
     $comparedSegmentCount = [Math]::Min($profileMajorSegments.Count, $installedMajorSegments.Count)
     $isProfileNewer = $false
+    # Stays true only while every compared segment pair is exactly equal; an older segment at any
+    # position makes the profile stale regardless of how many segments follow.
+    $allComparedSegmentsEqual = $true
     for ($segmentIndex = 0; $segmentIndex -lt $comparedSegmentCount; $segmentIndex++) {
         if ($profileMajorSegments[$segmentIndex] -gt $installedMajorSegments[$segmentIndex]) {
             $isProfileNewer = $true
@@ -394,13 +397,16 @@ function Get-ScoopMozillaChannelDriftReason {
         }
 
         if ($profileMajorSegments[$segmentIndex] -lt $installedMajorSegments[$segmentIndex]) {
+            $allComparedSegmentsEqual = $false
             break
         }
     }
 
     # Equal through every compared segment but the profile carries MORE parsed segments (for example
-    # profile '140.14.0.1' vs installed '140.14.0'): the profile was written by a newer build.
-    if (-not $isProfileNewer -and $profileMajorSegments.Count -gt $installedMajorSegments.Count) {
+    # profile '140.14.0.1' vs installed '140.14.0'): the profile was written by a newer build. The
+    # equal-prefix precondition is mandatory here -- a longer-but-older profile ('140.13.0.1' vs
+    # '140.14.0') must never be flagged.
+    if (-not $isProfileNewer -and $allComparedSegmentsEqual -and $profileMajorSegments.Count -gt $installedMajorSegments.Count) {
         $isProfileNewer = $true
     }
 
