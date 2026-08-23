@@ -325,4 +325,10 @@ function Invoke-PowerShellQualityModuleBootstrap {
 
 if (-not $NoInvokeMain) {
     Invoke-PowerShellQualityModuleBootstrap -RequestedModules $Modules -SkipPSGalleryTrust:$SkipPSGalleryTrust
+    # Explicit success exit: handled PSGallery setup degradation (for example a transient trust
+    # update failure) leaves the bootstrap call's $? false even though bootstrap fully succeeded,
+    # and workflow invocation styles that derive the process exit code from script success state
+    # (powershell/pwsh -command dot-source wrappers in CI lanes) would otherwise report exit 1
+    # after a passing bootstrap. Failure paths above throw terminating errors and stay non-zero.
+    exit 0
 }

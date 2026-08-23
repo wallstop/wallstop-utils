@@ -137,6 +137,41 @@ Describe "Install-PowerShellQualityModules behavioral conventions" {
         @($parseErrors).Count | Should -Be 0
     }
 
+    It "exits explicitly with success after a passing bootstrap (CI dot-source exit-code contract)" {
+        # Workflow lanes invoke this script through `powershell`/`pwsh -command ". '<script>'"`, whose
+        # process exit code derives from the script's final success state. A handled PSGallery setup
+        # degradation leaves $? false even though bootstrap succeeded, so the main guard must end in
+        # an explicit `exit 0`; without it the winps51 lane fails after printing 'bootstrap passed.'
+        $scriptText = (Get-Content -Path $script:bootstrapPath -Raw) -replace "`r", ""
+        $scriptLines = @($scriptText -split "`n")
+
+        $mainGuardLineIndex = -1
+        for ($lineIndex = 0; $lineIndex -lt $scriptLines.Count; $lineIndex++) {
+            if ($scriptLines[$lineIndex] -match '^\s*if\s*\(\s*-not\s+\$NoInvokeMain\s*\)\s*\{\s*$') {
+                $mainGuardLineIndex = $lineIndex
+                break
+            }
+        }
+        $mainGuardLineIndex | Should -BeGreaterThan -1 -Because "the NoInvokeMain-guarded entrypoint must exist"
+
+        $exitSuccessLineIndex = -1
+        for ($lineIndex = $scriptLines.Count - 1; $lineIndex -gt $mainGuardLineIndex; $lineIndex--) {
+            if ($scriptLines[$lineIndex] -match '^\s*exit\s+0\s*$') {
+                $exitSuccessLineIndex = $lineIndex
+                break
+            }
+        }
+        $exitSuccessLineIndex | Should -BeGreaterThan $mainGuardLineIndex -Because "the bootstrap must end in an explicit 'exit 0'"
+
+        # The explicit success exit must be the final statement: only comments, blank lines, and the
+        # main guard's own closing brace may follow.
+        $trailingStatements = @(
+            $scriptLines[($exitSuccessLineIndex + 1)..($scriptLines.Count - 1)] |
+                Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*\}\s*;?\s*$' }
+        )
+        $trailingStatements.Count | Should -Be 0
+    }
+
     It "skips installation when the requirement is already satisfied: <Module>" -TestCases @(
         @{ Module = 'Pester'; Command = 'Invoke-Pester' }
         @{ Module = 'PSScriptAnalyzer'; Command = 'Invoke-ScriptAnalyzer' }
