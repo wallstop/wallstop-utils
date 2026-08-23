@@ -325,10 +325,10 @@ function Invoke-PowerShellQualityModuleBootstrap {
 
 if (-not $NoInvokeMain) {
     Invoke-PowerShellQualityModuleBootstrap -RequestedModules $Modules -SkipPSGalleryTrust:$SkipPSGalleryTrust
-    # Explicit success exit: handled PSGallery setup degradation (for example a transient trust
-    # update failure) leaves the bootstrap call's $? false even though bootstrap fully succeeded,
-    # and workflow invocation styles that derive the process exit code from script success state
-    # (powershell/pwsh -command dot-source wrappers in CI lanes) would otherwise report exit 1
-    # after a passing bootstrap. Failure paths above throw terminating errors and stay non-zero.
+    # Explicit success exit: GitHub Actions wraps `shell: powershell|pwsh` run blocks with an
+    # appended `if (Test-Path variable:\LASTEXITCODE) { exit $LASTEXITCODE }`, so a handled
+    # PSGallery setup degradation that follows nonzero-capable native invocations would fail the
+    # lane via stale LASTEXITCODE even though bootstrap fully succeeded. Exiting here short-circuits
+    # that wrapper. Failure paths above throw terminating errors and stay non-zero.
     exit 0
 }

@@ -74,3 +74,24 @@ green, zero rule-11/rule-18 violations).
 - Operator (host-side, stays in issue #70): redeploy v2 `window-control.ahk` over
   `%USERPROFILE%\.config\window-control.ahk`; confirm next backup shows no diff for that file.
 - Issue #46 remains blocked on a live Windows backup run capturing transport diagnostics.
+
+## Addendum: CI RCA during PR review
+
+1. **winps51 lane exit-1-after-success**: GitHub Actions wraps `shell: powershell|pwsh` run blocks
+   with `$ErrorActionPreference='stop'` plus an appended
+   `if (Test-Path variable:\LASTEXITCODE) { exit $LASTEXITCODE }`. On cache-miss runners the module
+   bootstrap's PSGallery/NuGet native invocations left stale non-zero `LASTEXITCODE`, failing the
+   step after "bootstrap passed." Fix: explicit `exit 0` inside the `-NoInvokeMain` guard
+   (`Install-PowerShellQualityModules.ps1`), pinned by a structural convention test. Codified as
+   context.md Authoritative Rule 29.
+2. **pwsh7 lane empty shim capture**: `.ps1` fake CLIs must emit through the pipeline;
+   `[Console]::Out.Write` bypasses it so `@(& shim 2>&1)` captures nothing. Shims now use
+   `Write-Output`; `Find-ScoopStatusAnomalies` expands multi-line capture elements. Codified in the
+   context.md PATH-shim bullet.
+3. Bugbot review loop drove three real fixes: real-world `LastVersion=<version>_<buildId>/<prev>`
+   parsing shape, per-shell quote escaping for shims, and equal-prefix precondition on the
+   longer-profile downgrade rule.
+
+Post-work self-improvement executed via proposer/adversarial-resolver loop; the adversarial pass
+corrected the initial `$?`-poisoning narrative to the runner's `LASTEXITCODE` wrapper mechanics and
+scoped Rule 29 forward-looking (five existing workflow-invoked scripts intentionally not swept).
