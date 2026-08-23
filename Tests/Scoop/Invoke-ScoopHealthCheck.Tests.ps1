@@ -31,93 +31,28 @@ BeforeAll {
         [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
     }
 
+    function ConvertTo-SingleQuotedLiteral {
+        # Escapes arbitrary text for safe embedding inside a single-quoted PowerShell literal and a
+        # single-quoted bash string: only the single quote needs doubling in both grammars.
+        param(
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyString()]
+            [string]$Text
+        )
+
+        return $Text -replace "'", "''"
+    }
+
     function New-FakeScoopCommandBin {
         # Writes fixture-driven fake `scoop` shims into an isolated bin directory: a bash shim for
         # Unix hosts and a scoop.ps1 shim for Windows hosts (PowerShell resolves PATH .ps1 files the
-        # same way real scoop's shim is resolved). Outputs come from <command>.out / <command>.code
-        # fixture files under $FixtureDir so each test controls payload and exit codes.
+        # same way real scoop's shim is resolved). Payloads and exit codes are embedded DIRECTLY in
+        # the shim source rather than read from fixture files at runtime: the extra file-read layer
+        # proved flaky under redirected child-process stdout on Windows CI, and embedding makes the
+        # fake fully self-contained and deterministic on every host.
         param(
             [Parameter(Mandatory = $true)]
             [string]$BinDirectory,
-
-            [Parameter(Mandatory = $true)]
-            [string]$FixtureDir
-        )
-
-        [void][System.IO.Directory]::CreateDirectory($BinDirectory)
-
-        $bashShimPath = Join-Path -Path $BinDirectory -ChildPath "scoop"
-        $bashShimText = @"
-#!/usr/bin/env bash
-set -u
-fixture="`$WALLSTOP_TEST_SCOOP_FIXTURE_DIR"
-command="`${1:-}"
-out_file="`$fixture/`$command.out"
-if [ -f "`$out_file" ]; then
-    cat "`$out_file"
-fi
-code_file="`$fixture/`$command.code"
-code=0
-if [ -f "`$code_file" ]; then
-    code="`$(cat "`$code_file")"
-fi
-exit "`$code"
-"@
-        New-Utf8NoBomTextFile -Path $bashShimPath -Text ($bashShimText -replace "`r`n", "`n")
-
-        $ps1ShimPath = Join-Path -Path $BinDirectory -ChildPath "scoop.ps1"
-        $ps1ShimText = @'
-$fixture = $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR
-$command = $args[0]
-$outFile = Join-Path -Path $fixture -ChildPath ("{0}.out" -f $command)
-if (Test-Path -LiteralPath $outFile -PathType Leaf) {
-    [Console]::Out.Write([System.IO.File]::ReadAllText($outFile))
-}
-$codeFile = Join-Path -Path $fixture -ChildPath ("{0}.code" -f $command)
-$code = 0
-if (Test-Path -LiteralPath $codeFile -PathType Leaf) {
-    [void][int]::TryParse([System.IO.File]::ReadAllText($codeFile).Trim(), [ref]$code)
-}
-exit $code
-'@
-        New-Utf8NoBomTextFile -Path $ps1ShimPath -Text ($ps1ShimText -replace "`r`n", "`n")
-
-        if (-not (Test-IsWindowsPlatform)) {
-            $chmodOutcome = @(& chmod "+x" $bashShimPath 2>&1)
-            $chmodExitVariable = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
-            $chmodExitCode = if ($null -ne $chmodExitVariable) { [int]$chmodExitVariable } else { 0 }
-            if ($chmodExitCode -ne 0) {
-                throw "Failed to mark the fake scoop bash shim executable: $($chmodOutcome -join ' ')"
-            }
-        }
-    }
-
-    function New-ScoopHealthHarness {
-        # Creates a fully self-contained fixture environment: fake scoop bin, fixture output dir,
-        # a scoop install root with buckets, and an APPDATA root for Thunderbird profiles.
-        param()
-
-        $harnessRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("scoop-health-{0}" -f [System.Guid]::NewGuid().ToString("N"))
-        $harness = [pscustomobject]@{
-            Root       = $harnessRoot
-            FakeBin    = (Join-Path -Path $harnessRoot -ChildPath "fake-bin")
-            FixtureDir = (Join-Path -Path $harnessRoot -ChildPath "fixtures")
-            ScoopRoot  = (Join-Path -Path $harnessRoot -ChildPath "scoop")
-            AppData    = (Join-Path -Path $harnessRoot -ChildPath "appdata")
-        }
-
-        foreach ($directoryToCreate in @($harness.ScoopRoot, $harness.AppData)) {
-            [void][System.IO.Directory]::CreateDirectory($directoryToCreate)
-        }
-
-        New-FakeScoopCommandBin -BinDirectory $harness.FakeBin -FixtureDir $harness.FixtureDir
-        return $harness
-    }
-
-    function Set-ScoopHealthHarnessFixtures {
-        param(
-            [Parameter(Mandatory = $true)]
-            [object]$Harness,
 
             [Parameter(Mandatory = $false)]
             [AllowEmptyString()]
@@ -134,10 +69,83 @@ exit $code
             [int]$ExportExitCode = 0
         )
 
-        New-Utf8NoBomTextFile -Path (Join-Path -Path $Harness.FixtureDir -ChildPath "status.out") -Text $StatusOutput
-        New-Utf8NoBomTextFile -Path (Join-Path -Path $Harness.FixtureDir -ChildPath "status.code") -Text ("{0}`n" -f $StatusExitCode)
-        New-Utf8NoBomTextFile -Path (Join-Path -Path $Harness.FixtureDir -ChildPath "export.out") -Text $ExportOutput
-        New-Utf8NoBomTextFile -Path (Join-Path -Path $Harness.FixtureDir -ChildPath "export.code") -Text ("{0}`n" -f $ExportExitCode)
+        [void][System.IO.Directory]::CreateDirectory($BinDirectory)
+
+        $escapedStatus = ConvertTo-SingleQuotedLiteral -Text ($StatusOutput -replace "`r`n", "`n")
+        $escapedExport = ConvertTo-SingleQuotedLiteral -Text ($ExportOutput -replace "`r`n", "`n")
+
+        $bashShimText = @"
+#!/usr/bin/env bash
+set -u
+command="`${1:-}"
+case "`$command" in
+  status)
+    printf '%s' '$escapedStatus'
+    exit $StatusExitCode
+    ;;
+  export)
+    printf '%s' '$escapedExport'
+    exit $ExportExitCode
+    ;;
+esac
+echo "unexpected fake scoop invocation: `$command" >&2
+exit 60
+"@
+        $bashShimPath = Join-Path -Path $BinDirectory -ChildPath "scoop"
+        New-Utf8NoBomTextFile -Path $bashShimPath -Text ($bashShimText -replace "`r`n", "`n")
+
+        $ps1ShimText = @"
+param()
+`$command = `$args[0]
+switch (`$command) {
+  'status' {
+    # Pipeline output, never [Console]::Out: console writes bypass PowerShell's output
+    # pipeline, so a caller capturing @(`$script 2>&1) would see nothing.
+    Write-Output '$escapedStatus'
+    exit $StatusExitCode
+  }
+  'export' {
+    Write-Output '$escapedExport'
+    exit $ExportExitCode
+  }
+  default {
+    Write-Error "unexpected fake scoop invocation: `$command"
+    exit 60
+  }
+}
+"@
+        $ps1ShimPath = Join-Path -Path $BinDirectory -ChildPath "scoop.ps1"
+        New-Utf8NoBomTextFile -Path $ps1ShimPath -Text ($ps1ShimText -replace "`r`n", "`n")
+
+        if (-not (Test-IsWindowsPlatform)) {
+            $chmodOutcome = @(& chmod "+x" $bashShimPath 2>&1)
+            $chmodExitVariable = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
+            $chmodExitCode = if ($null -ne $chmodExitVariable) { [int]$chmodExitVariable } else { 0 }
+            if ($chmodExitCode -ne 0) {
+                throw "Failed to mark the fake scoop bash shim executable: $($chmodOutcome -join ' ')"
+            }
+        }
+    }
+
+    function New-ScoopHealthHarness {
+        # Creates a self-contained fixture environment: fake scoop bin directory, a scoop install
+        # root with buckets, and an APPDATA root for Thunderbird profiles. Shim payloads are supplied
+        # per test through New-FakeScoopCommandBin.
+        param()
+
+        $harnessRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("scoop-health-{0}" -f [System.Guid]::NewGuid().ToString("N"))
+        $harness = [pscustomobject]@{
+            Root      = $harnessRoot
+            FakeBin   = (Join-Path -Path $harnessRoot -ChildPath "fake-bin")
+            ScoopRoot = (Join-Path -Path $harnessRoot -ChildPath "scoop")
+            AppData   = (Join-Path -Path $harnessRoot -ChildPath "appdata")
+        }
+
+        foreach ($directoryToCreate in @($harness.ScoopRoot, $harness.AppData)) {
+            [void][System.IO.Directory]::CreateDirectory($directoryToCreate)
+        }
+
+        return $harness
     }
 
     function Invoke-ScoopHealthCheckInChild {
@@ -160,7 +168,6 @@ exit $code
         $env:SCOOP = $Harness.ScoopRoot
         $env:SCOOP_GLOBAL = $Harness.ScoopRoot
         $env:APPDATA = $Harness.AppData
-        $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR = $Harness.FixtureDir
 
         $childOutput = @(& $script:pwshExecutable -NoLogo -NoProfile -File $script:healthCheckScriptPath 2>&1)
         $childExitVariable = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
@@ -251,6 +258,21 @@ Describe "Find-ScoopStatusAnomalies" {
     It "returns no anomalies for empty input" {
         $anomalies = @(Find-ScoopStatusAnomalies -StatusLines @())
         $anomalies.Count | Should -Be 0
+    }
+
+    It "expands a single multi-line capture element (script-shim output shape)" {
+        # A PowerShell script shim captured via @(& shim 2>&1) yields ONE string containing every
+        # physical line; parsing must be invariant to that producer shape.
+        $singleElementPayload = (@(
+            "Name        Installed Version    Latest Version",
+            "----        -----------------",
+            "megatools                        ???               innounp",
+            "7zip        24.09                25.00"
+        ) -join "`n")
+
+        $anomalies = @(Find-ScoopStatusAnomalies -StatusLines @($singleElementPayload))
+        $actualSummary = (@($anomalies | ForEach-Object { "{0}|{1}" -f $_.App, $_.Reason }) -join ",")
+        $actualSummary | Should -Be "megatools|MissingVersions"
     }
 }
 
@@ -473,13 +495,12 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
         # (real compatibility.ini shape: '<version>_<buildId>/<previousBuildId>').
         New-Utf8NoBomTextFile -Path (Join-Path -Path $harness.AppData -ChildPath "Thunderbird/Profiles/q9is9tba.default-esr/compatibility.ini") -Text "LastVersion=153.0.3_20250901000000/20250901000000`n"
 
-        Set-ScoopHealthHarnessFixtures -Harness $harness -StatusOutput $statusPayload -ExportOutput $exportPayload
+        New-FakeScoopCommandBin -BinDirectory $harness.FakeBin -StatusOutput $statusPayload -ExportOutput $exportPayload
 
         $originalPath = $env:PATH
         $originalScoop = $env:SCOOP
         $originalScoopGlobal = $env:SCOOP_GLOBAL
         $originalAppData = $env:APPDATA
-        $originalFixtureDir = $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR
         try {
             $childResult = Invoke-ScoopHealthCheckInChild -Harness $harness
 
@@ -497,7 +518,6 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
             $env:SCOOP = $originalScoop
             $env:SCOOP_GLOBAL = $originalScoopGlobal
             $env:APPDATA = $originalAppData
-            $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR = $originalFixtureDir
         }
     }
 
@@ -520,13 +540,12 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
         ) -join "`n"
         New-Utf8NoBomTextFile -Path (Join-Path -Path $harness.ScoopRoot -ChildPath "buckets/main/bucket/7zip.json") -Text '{"version": "25.00"}'
 
-        Set-ScoopHealthHarnessFixtures -Harness $harness -ExportOutput $exportPayload
+        New-FakeScoopCommandBin -BinDirectory $harness.FakeBin -ExportOutput $exportPayload
 
         $originalPath = $env:PATH
         $originalScoop = $env:SCOOP
         $originalScoopGlobal = $env:SCOOP_GLOBAL
         $originalAppData = $env:APPDATA
-        $originalFixtureDir = $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR
         try {
             $childResult = Invoke-ScoopHealthCheckInChild -Harness $harness
 
@@ -540,7 +559,6 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
             $env:SCOOP = $originalScoop
             $env:SCOOP_GLOBAL = $originalScoopGlobal
             $env:APPDATA = $originalAppData
-            $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR = $originalFixtureDir
         }
     }
 
@@ -552,10 +570,11 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
         $originalScoop = $env:SCOOP
         $originalScoopGlobal = $env:SCOOP_GLOBAL
         $originalAppData = $env:APPDATA
-        $originalFixtureDir = $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR
         try {
             # A PATH whose only entry cannot contain scoop makes the absence deterministic on every host.
-            $env:PATH = $harness.FixtureDir
+            $emptyPathDirectory = Join-Path -Path $harness.Root -ChildPath "empty-path"
+            [void][System.IO.Directory]::CreateDirectory($emptyPathDirectory)
+            $env:PATH = $emptyPathDirectory
 
             $childResult = Invoke-ScoopHealthCheckInChild -Harness $harness -WithoutFakeBin
 
@@ -568,7 +587,6 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
             $env:SCOOP = $originalScoop
             $env:SCOOP_GLOBAL = $originalScoopGlobal
             $env:APPDATA = $originalAppData
-            $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR = $originalFixtureDir
         }
     }
 
@@ -593,13 +611,12 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
         ) -join "`n"
         New-Utf8NoBomTextFile -Path (Join-Path -Path $harness.AppData -ChildPath "Thunderbird/Profiles/stale-esr/compatibility.ini") -Text "LastVersion=153.0.3_20250901000000/20250901000000`n"
 
-        Set-ScoopHealthHarnessFixtures -Harness $harness -ExportOutput $exportPayload
+        New-FakeScoopCommandBin -BinDirectory $harness.FakeBin -ExportOutput $exportPayload
 
         $originalPath = $env:PATH
         $originalScoop = $env:SCOOP
         $originalScoopGlobal = $env:SCOOP_GLOBAL
         $originalAppData = $env:APPDATA
-        $originalFixtureDir = $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR
         try {
             $childResult = Invoke-ScoopHealthCheckInChild -Harness $harness
 
@@ -611,7 +628,6 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
             $env:SCOOP = $originalScoop
             $env:SCOOP_GLOBAL = $originalScoopGlobal
             $env:APPDATA = $originalAppData
-            $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR = $originalFixtureDir
         }
     }
 
@@ -632,13 +648,12 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
         # Broken half-install: version directory left behind with no current link at all.
         [void][System.IO.Directory]::CreateDirectory((Join-Path -Path $harness.ScoopRoot -ChildPath "apps/halfapp/2025"))
 
-        Set-ScoopHealthHarnessFixtures -Harness $harness -ExportOutput '{"buckets":[],"apps":[]}'
+        New-FakeScoopCommandBin -BinDirectory $harness.FakeBin -ExportOutput '{"buckets":[],"apps":[]}'
 
         $originalPath = $env:PATH
         $originalScoop = $env:SCOOP
         $originalScoopGlobal = $env:SCOOP_GLOBAL
         $originalAppData = $env:APPDATA
-        $originalFixtureDir = $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR
         try {
             $childResult = Invoke-ScoopHealthCheckInChild -Harness $harness
 
@@ -654,7 +669,6 @@ Describe "Invoke-ScoopHealthCheck end-to-end (child process)" {
             $env:SCOOP = $originalScoop
             $env:SCOOP_GLOBAL = $originalScoopGlobal
             $env:APPDATA = $originalAppData
-            $env:WALLSTOP_TEST_SCOOP_FIXTURE_DIR = $originalFixtureDir
         }
     }
 }

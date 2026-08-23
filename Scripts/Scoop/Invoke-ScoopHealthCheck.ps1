@@ -108,43 +108,48 @@ function Find-ScoopStatusAnomalies {
 
     $anomalies = New-Object System.Collections.Generic.List[object]
     foreach ($statusLine in @($StatusLines)) {
-        $textLine = [string]$statusLine
-        if ([string]::IsNullOrWhiteSpace($textLine)) {
-            continue
-        }
+        # Captured command output may arrive as per-line strings (native commands) or as single
+        # multi-line elements (PowerShell script shims); expand every element into physical lines
+        # so table parsing is invariant to the producer.
+        foreach ($physicalLine in ([string]$statusLine -split "`r?`n")) {
+            $textLine = $physicalLine
+            if ([string]::IsNullOrWhiteSpace($textLine)) {
+                continue
+            }
 
-        $trimmedLine = $textLine.Trim()
-        if ($trimmedLine -match '^(Name\s+Installed|-{3,})') {
-            continue
-        }
+            $trimmedLine = $textLine.Trim()
+            if ($trimmedLine -match '^(Name\s+Installed|-{3,})') {
+                continue
+            }
 
-        $appName = ($trimmedLine -split '\s+')[0]
-        if ([string]::IsNullOrWhiteSpace($appName)) {
-            continue
-        }
+            $appName = ($trimmedLine -split '\s+')[0]
+            if ([string]::IsNullOrWhiteSpace($appName)) {
+                continue
+            }
 
-        # Wrapped Format-Table rows continue on their own line starting mid-column; such fragments
-        # cannot be attributed to an app, so they are ignored instead of misreported as app '???'.
-        if ($appName -match '\?') {
-            continue
-        }
+            # Wrapped Format-Table rows continue on their own line starting mid-column; such fragments
+            # cannot be attributed to an app, so they are ignored instead of misreported as app '???'.
+            if ($appName -match '\?') {
+                continue
+            }
 
-        $reason = $null
-        if ($textLine -match '(?i)install failed') {
-            $reason = "InstallFailed"
-        }
-        elseif ($textLine -match '(?i)manifest removed') {
-            $reason = "ManifestRemoved"
-        }
-        elseif ($textLine -match '\?\?\?') {
-            $reason = "MissingVersions"
-        }
+            $reason = $null
+            if ($textLine -match '(?i)install failed') {
+                $reason = "InstallFailed"
+            }
+            elseif ($textLine -match '(?i)manifest removed') {
+                $reason = "ManifestRemoved"
+            }
+            elseif ($textLine -match '\?\?\?') {
+                $reason = "MissingVersions"
+            }
 
-        if ($null -ne $reason) {
-            [void]$anomalies.Add([pscustomobject]@{
-                    App    = $appName
-                    Reason = $reason
-                })
+            if ($null -ne $reason) {
+                [void]$anomalies.Add([pscustomobject]@{
+                        App    = $appName
+                        Reason = $reason
+                    })
+            }
         }
     }
 
