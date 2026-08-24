@@ -5,9 +5,12 @@
 - [x] RCA the recurring `backup steps failed: 2` auto-backup commits from repository evidence: failing step names were console-only, so ten days of partial-failure uploads (2026-08-12..2026-08-22) were undiagnosable from git history.
 - [x] Name failing steps in the backup commit message (`(backup steps failed: N [StepA, StepB]; X/Y succeeded)`), policy-pinned in the conventions suite.
 - [x] Eliminate the daily whole-file `Config/scoopfile.json` churn caused by `scoop export`'s non-deterministic app-member ordering: opt-in `-SortObjectKeys` canonicalization (Ordinal member sort, arrays untouched, fail-closed duplicate handling), ScoopBackup opts in, committed artifact regenerated as a fixed point of both modes.
-- [ ] After the next host backup run: read the named failing steps from the commit message and continue the issue #46 investigation with that evidence.
+- [x] Read named failing steps from the 2026-08-23 backup commit: `PowershellBackup`, `WinGetUpdate` (`ScoopUpdate` now passes; issue #68 host fixes confirmed via scoopfile data: innounp 2.71.0, megatools installed, thunderbird migrated).
+- [x] RCA why uploads stayed partial: the same commit added `Config/.config/vllm/nccl/cu12/libnccl.so.2.18.1` (~278MB > GitHub's 100MiB blob limit), so every push since 2026-08-23 failed while later backups stacked on the unpushable commit. Repair: dropped the blob from the unpushed commit, restored the v2 AHK mirror it had regressed, pushed repaired main.
+- [x] Prevent recurrence repo-side: fail-closed oversize guard (`E_BACKUP_MANAGED_FILE_OVERSIZE` at 95MB, warn at 10MB) before staging; `Config/.config/vllm/` ignored as machine-generated cache; unattended path now self-heals `Config/.config/*.ahk` snapshot drift from v2 sources (same repair the attended pre-commit hook applies); persistent `Config/backup-step-failures.json` artifact records failed-step errors plus bounded output previews so future failures are diagnosable from git alone.
+- [ ] After the next host backup run: confirm main pushes cleanly with zero step failures or read `Config/backup-step-failures.json` for the `PowershellBackup`/`WinGetUpdate` reasons and continue RCA under issue #46.
 
-Evidence: [session-022](./progress/session-022-backup-upload-diagnostics.md)
+Evidence: [session-022](./progress/session-022-backup-upload-diagnostics.md), [session-023](./progress/session-023-backup-upload-rca.md)
 
 ## Completed milestone: scoop host-health tooling (issue #70)
 
