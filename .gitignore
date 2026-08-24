@@ -27,6 +27,10 @@ Extensions/**/out/
 Extensions/**/.npm-cache/
 Extensions/**/dist/
 
+# Machine-generated ML runtime/cache state (e.g. ~278MB libnccl binaries), not user configuration.
+# Committing these strands the entire backup push: GitHub rejects blobs over 100MiB.
+Config/.config/vllm/
+
 # Local agent planning and progress artifacts.
 /GOAL.md
 /PLAN.md

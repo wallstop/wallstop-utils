@@ -3702,6 +3702,49 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Not -Match 'E_BACKUP_GIT_COMMIT_RETRY_LIMIT:[\s\S]*autofix retry attempt\(s\)' -Because "Retry-limit wording must distinguish total attempts from retry count."
     }
 
+    It "captures step output and persists failure reasons into Config/backup-step-failures.json (issue #46)" {
+        $backupScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        # Step output capture: console-only output is lost on unattended hosts, so the runner must
+        # capture it for the persistent artifact while still echoing it for attended runs.
+        $backupScript | Should -Match '\$stepOutput\s*=\s*@\(&\s+\$pwshCommand\s+-NoLogo\s+-NoProfile\s+-File\s+\$scriptPath\s+2>&1' -Because "step output must be captured so failure reasons survive beyond the host console."
+        $backupScript | Should -Match 'foreach\s+\(\$outputLine\s+in\s+\$stepOutput\)\s*\{\s*Write-Host\s+\$outputLine' -Because "captured output must still be echoed to preserve attended-run visibility."
+        $backupScript | Should -Match 'E_BACKUP_STEP_FAILED\(\{0\}\): script ''\{1\}'' at ''\{2\}'' exited with code \{3\}\.' -Because "the step exit-code diagnostic format is relied upon by operators."
+        $backupScript | Should -Match 'OutputLines\s*=\s*@\(\$stepOutcome\.OutputLines\)'
+
+        # Persistent artifact: deterministic canonical JSON, written on failures, removed on success.
+        $backupScript | Should -Match 'function\s+Set-BackupStepFailuresArtifact'
+        $backupScript | Should -Match '"Config/backup-step-failures\.json"'
+        $backupScript | Should -Match 'failedSteps|phaseFailures|succeededSteps|totalSteps' -Because "the artifact schema must expose step names, reasons, and output previews."
+        $backupScript | Should -Match 'ConvertTo-CanonicalJsonText\s+-RawJson\s+\$rawJson' -Because "artifact bytes must match the repository canonical JSON form even though backup commits bypass formatting hooks."
+        $backupScript | Should -Match 'Remove-Item\s+-LiteralPath\s+\$artifactPath\s+-Force\s+-ErrorAction\s+Stop' -Because "a fully successful run must remove the stale failure artifact instead of leaving stale failure state behind."
+        $backupScript | Should -Match '-FailedEntries\s+@\(\$failedStepEntries\s+\+\s+@\(\$phaseFailures\)\)'
+        $backupScript | Should -Match 'Get-OutputPreview\s+-OutputLines\s+@\(\$_\.OutputLines\)\s+-MaxLines\s+40\s+-MaxCharacters\s+4000\s+-HeadTailWhenTruncated' -Because "per-step output previews embedded in git must be bounded."
+
+        # The artifact must be written before staging so a failing run's next successful run commits it.
+        $backupScript | Should -Match 'Set-BackupStepFailuresArtifact[\s\S]*?\$gitAddArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"add",\s*"--"\)' -Because "the failure artifact must be written before git add so the next successful run can persist it."
+    }
+
+    It "self-heals AutoHotkey snapshot drift and rejects oversize artifacts before staging" {
+        $backupScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Backup.ps1') -Raw) -replace "`r", ''
+
+        # Unattended commits use --no-verify and skip the pre-commit auto-repair hook, so Backup
+        # must run the same source-refresh itself or host drift regresses committed v2 snapshots.
+        $backupScript | Should -Match 'function\s+Repair-BackupManagedAhkSnapshots'
+        $backupScript | Should -Match '"Utils/Quality/Invoke-WindowsLanguageChecks\.ps1"'
+        $backupScript | Should -Match '\$windowsLanguageChecksPath\s+-TargetFiles\s+\$absoluteTargets\s+-Fix\s+-StaticOnly'
+        $backupScript | Should -Match '\(\?i\)\^Config/\\\.config/.\+\\.ahk\$'
+        $backupScript | Should -Match 'E_BACKUP_SNAPSHOT_REFRESH_FAILED:[\s\S]*exitCode=' -Because "snapshot-refresh failures must be diagnosable from the warning text persisted via the phase-failure artifact."
+        $backupScript | Should -Match '\$snapshotRefreshError[\s\S]*\[void\]\$phaseFailures\.Add\(\$snapshotRefreshError\)[\s\S]*\$hasGitFailure\s*=\s*\$true' -Because "snapshot-refresh failure must fail closed (skip commit/push) rather than publish CI-breaking AHK v1 regressions."
+
+        # Oversize guard: GitHub rejects >100MiB blobs at push time, which strands the whole push.
+        $backupScript | Should -Match 'function\s+Get-BackupOversizedManagedFileErrors'
+        $backupScript | Should -Match '-FailLimitBytes\s+\(95MB\)\s+-WarnLimitBytes\s+\(10MB\)'
+        $backupScript | Should -Match 'E_BACKUP_MANAGED_FILE_OVERSIZE:[\s\S]*GitHub rejects blobs over 100MiB'
+        $backupScript | Should -Match 'W_BACKUP_MANAGED_FILE_LARGE:'
+        $backupScript | Should -Match 'if\s*\(\$oversizeErrors\.Count\s*-gt\s*0\s*\)\s*\{\s*\$hasGitFailure\s*=\s*\$true' -Because "oversize findings must fail closed before staging so no unpushable commit is ever created."
+    }
+
     It "keeps Backup.ps1 free of unused local function definitions" {
         $backupPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Backup.ps1"
         $tokens = $null
