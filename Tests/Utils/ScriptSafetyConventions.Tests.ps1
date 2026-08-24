@@ -3711,18 +3711,27 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'foreach\s+\(\$outputLine\s+in\s+\$stepOutput\)\s*\{\s*Write-Host\s+\$outputLine' -Because "captured output must still be echoed to preserve attended-run visibility."
         $backupScript | Should -Match 'E_BACKUP_STEP_FAILED\(\{0\}\): script ''\{1\}'' at ''\{2\}'' exited with code \{3\}\.' -Because "the step exit-code diagnostic format is relied upon by operators."
         $backupScript | Should -Match 'OutputLines\s*=\s*@\(\$stepOutcome\.OutputLines\)'
+        # Redirected native stderr is a terminating error under EAP=Stop on Windows PowerShell 5.1.
+        $backupScript | Should -Match '\$PSNativeCommandUseErrorActionPreference\s*=\s*\$false'
+        $backupScript | Should -Match '\$ErrorActionPreference\s*=\s*"Continue"[\s\S]*?\$stepOutput\s*=' -Because "native stderr capture must not escalate under EAP=Stop."
 
         # Persistent artifact: deterministic canonical JSON, written on failures, removed on success.
         $backupScript | Should -Match 'function\s+Set-BackupStepFailuresArtifact'
         $backupScript | Should -Match '"Config/backup-step-failures\.json"'
-        $backupScript | Should -Match 'failedSteps|phaseFailures|succeededSteps|totalSteps' -Because "the artifact schema must expose step names, reasons, and output previews."
+        $backupScript | Should -Match 'failedSteps\s*=[\s\S]*?phaseFailures\s*=[\s\S]*?succeededSteps\s*=[\s\S]*?totalSteps\s*=' -Because "the artifact schema literal must expose step names, reasons, and output previews."
         $backupScript | Should -Match 'ConvertTo-CanonicalJsonText\s+-RawJson\s+\$rawJson' -Because "artifact bytes must match the repository canonical JSON form even though backup commits bypass formatting hooks."
         $backupScript | Should -Match 'Remove-Item\s+-LiteralPath\s+\$artifactPath\s+-Force\s+-ErrorAction\s+Stop' -Because "a fully successful run must remove the stale failure artifact instead of leaving stale failure state behind."
         $backupScript | Should -Match '-FailedEntries\s+@\(\$failedStepEntries\s+\+\s+@\(\$phaseFailures\)\)'
         $backupScript | Should -Match 'Get-OutputPreview\s+-OutputLines\s+@\(\$_\.OutputLines\)\s+-MaxLines\s+40\s+-MaxCharacters\s+4000\s+-HeadTailWhenTruncated' -Because "per-step output previews embedded in git must be bounded."
+        # Captured step output may contain secrets: the artifact itself passes secret hygiene.
+        $backupScript | Should -Match 'Invoke-BackupKnownSecretSanitization\s+-RepositoryRoot\s+\$repositoryRoot\s+-RelativePaths\s+@\(backupFailureArtifactRelativePath\)|Invoke-BackupKnownSecretSanitization\s+-RepositoryRoot\s+\$repositoryRoot\s+-RelativePaths\s+@\(\$backupFailureArtifactRelativePath\)' -Because "the artifact embeds raw captured output and must pass known-secret redaction."
+        $backupScript | Should -Match 'E_BACKUP_FAILURE_ARTIFACT_SECRETS_DETECTED:[\s\S]*the artifact was deleted instead of being committed' -Because "unknown secret patterns in the artifact must never reach the remote."
+        # Artifact write/remove faults fail open with stable diagnostics.
+        $backupScript | Should -Match 'W_BACKUP_FAILURE_ARTIFACT_REMOVE_FAILED:'
+        $backupScript | Should -Match 'E_BACKUP_FAILURE_ARTIFACT_WRITE_FAILED:' -Because "losing a diagnostics file must never abort the backup run."
 
-        # The artifact must be written before staging so a failing run's next successful run commits it.
-        $backupScript | Should -Match 'Set-BackupStepFailuresArtifact[\s\S]*?\$gitAddArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"add",\s*"--"\)' -Because "the failure artifact must be written before git add so the next successful run can persist it."
+        # The artifact call site must precede staging so a failing run's next successful run commits it.
+        $backupScript | Should -Match 'Set-BackupStepFailuresArtifact\s+-RepositoryRoot\s+\$repositoryRoot[\s\S]*?\$gitAddArgs\s*=\s*@\("-C",\s*\$repositoryRoot,\s*"add",\s*"--"\)' -Because "the failure artifact must be written before git add so the next successful run can persist it."
     }
 
     It "self-heals AutoHotkey snapshot drift and rejects oversize artifacts before staging" {
@@ -3732,10 +3741,13 @@ Describe "Backup script safety conventions" {
         # must run the same source-refresh itself or host drift regresses committed v2 snapshots.
         $backupScript | Should -Match 'function\s+Repair-BackupManagedAhkSnapshots'
         $backupScript | Should -Match '"Utils/Quality/Invoke-WindowsLanguageChecks\.ps1"'
-        $backupScript | Should -Match '\$windowsLanguageChecksPath\s+-TargetFiles\s+\$absoluteTargets\s+-Fix\s+-StaticOnly'
+        # pwsh -File misbinds a second array element positionally, so targets are ';'-joined.
+        $backupScript | Should -Match '\$windowsLanguageChecksPath\s+-TargetFiles\s+\(\$absoluteTargets\s+-join\s+'';''\)\s+-Fix\s+-StaticOnly'
         $backupScript | Should -Match '\(\?i\)\^Config/\\\.config/.\+\\.ahk\$'
         $backupScript | Should -Match 'E_BACKUP_SNAPSHOT_REFRESH_FAILED:[\s\S]*exitCode=' -Because "snapshot-refresh failures must be diagnosable from the warning text persisted via the phase-failure artifact."
-        $backupScript | Should -Match '\$snapshotRefreshError[\s\S]*\[void\]\$phaseFailures\.Add\(\$snapshotRefreshError\)[\s\S]*\$hasGitFailure\s*=\s*\$true' -Because "snapshot-refresh failure must fail closed (skip commit/push) rather than publish CI-breaking AHK v1 regressions."
+        $backupScript | Should -Match '\$snapshotRefreshError[\s\S]*\[void\]\$phaseFailures\.Add\(\$snapshotRefreshError\)[\s\S]*?\$hasGitFailure\s*=\s*\$true' -Because "snapshot-refresh failure must fail closed (skip commit/push) rather than publish CI-breaking AHK v1 regressions."
+        # Guards must see staged-only drift too: enumeration diffs against HEAD, not the index.
+        $backupScript | Should -Match '"diff",\s*"HEAD",\s*"--name-only",\s*"--diff-filter=AM"' -Because "staged managed changes survive preflight via stash --index and would bypass guards with index-relative diffs."
 
         # Oversize guard: GitHub rejects >100MiB blobs at push time, which strands the whole push.
         $backupScript | Should -Match 'function\s+Get-BackupOversizedManagedFileErrors'
@@ -3743,6 +3755,12 @@ Describe "Backup script safety conventions" {
         $backupScript | Should -Match 'E_BACKUP_MANAGED_FILE_OVERSIZE:[\s\S]*GitHub rejects blobs over 100MiB'
         $backupScript | Should -Match 'W_BACKUP_MANAGED_FILE_LARGE:'
         $backupScript | Should -Match 'if\s*\(\$oversizeErrors\.Count\s*-gt\s*0\s*\)\s*\{\s*\$hasGitFailure\s*=\s*\$true' -Because "oversize findings must fail closed before staging so no unpushable commit is ever created."
+
+        # Phase-failure persistence: guard failures commit the small artifact by itself so the
+        # reasons are not stranded on host disk until an eventually green run deletes them.
+        $backupScript | Should -Match 'if\s*\(\$hasGitFailure\s*-and\s+@\(\$phaseFailures\)\.Count\s*-gt\s*0\s*\)'
+        $backupScript | Should -Match 'Backup failure diagnostics for \$dateString \(git-phase guards failed:'
+        $backupScript | Should -Match 'if\s*\(\s*-not\s+\$artifactCommitPushed\s*\)[\s\S]*?reset\s+--quiet' -Because "a failed diagnostics push must restage cleanly for the next run."
     }
 
     It "keeps Backup.ps1 free of unused local function definitions" {

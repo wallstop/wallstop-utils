@@ -27,14 +27,17 @@ shows no failures after the bad run:
 git show HEAD:Config/backup-step-failures.json
 ```
 
-Git-phase guards also record into that artifact (recovered on a later
-successful run): `E_BACKUP_SNAPSHOT_REFRESH_FAILED` means a `Config/.config`
-AutoHotkey snapshot drifted to AHK v1 and could not be refreshed from its
-`Scripts/AutoHotKey` source (fix the source), and
-`E_BACKUP_MANAGED_FILE_OVERSIZE` means a managed file exceeded 95MB — GitHub
-rejects blobs over 100MiB, which would strand the entire backup push. Remove
-the offending host file or add a targeted `.gitignore` rule for genuine
-machine-generated state (see the `Config/.config/vllm/` rule for precedent).
+Git-phase guards also record into that artifact, and a guard-failing run commits and
+pushes the artifact by itself so the reasons are never stranded on host disk:
+`E_BACKUP_SNAPSHOT_REFRESH_FAILED` means a `Config/.config` AutoHotkey snapshot drifted
+to AHK v1 and could not be refreshed from its `Scripts/AutoHotKey` source (fix the
+source), and `E_BACKUP_MANAGED_FILE_OVERSIZE` means a managed file exceeded 95MB —
+GitHub rejects blobs over 100MiB, which would strand the entire backup push. Remove the
+offending host file or add a targeted `.gitignore` rule for genuine machine-generated
+state (see the `Config/.config/vllm/` rule for precedent). Captured step output in the
+artifact passes secret hygiene: known-secret fields are redacted and unknown-secret
+patterns replace previews with a redaction placeholder (the artifact is deleted instead
+of committed if patterns survive redaction).
 
 ## 1. Repair the PowerShell profile
 
