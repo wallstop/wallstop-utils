@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-08-21T23:30:40.4009344-07:00",
-      "Version": "2.36.29"
+      "Updated": "2026-08-24T23:32:18.6706895-07:00",
+      "Version": "2.36.30"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-08-20T23:32:52.6378638-07:00",
-      "Version": "3.17.8"
+      "Updated": "2026-08-24T23:33:56.8423525-07:00",
+      "Version": "3.17.19"
     },
     {
       "Info": "",
@@ -368,8 +368,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-08-20T23:33:08.5619665-07:00",
-      "Version": "2026.8.10"
+      "Updated": "2026-08-24T23:34:00.6612564-07:00",
+      "Version": "2026.8.12"
     },
     {
       "Info": "",
@@ -410,8 +410,8 @@
       "Info": "",
       "Name": "notepadplusplus",
       "Source": "extras",
-      "Updated": "2026-07-13T23:32:19.8334139-07:00",
-      "Version": "8.9.7"
+      "Updated": "2026-08-24T23:34:03.9020659-07:00",
+      "Version": "8.9.8"
     },
     {
       "Info": "",
@@ -451,16 +451,16 @@
     {
       "Info": "",
       "Name": "opencode",
-      "Source": "main",
-      "Updated": "2026-08-22T11:37:16.6645923-07:00",
-      "Version": "1.18.21"
+      "Source": "C:\\Users\\dbfsi\\scoop\\buckets\\main\\bucket\\opencode.json",
+      "Updated": "2026-08-24T14:30:14.4416949-07:00",
+      "Version": "1.18.22"
     },
     {
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-08-22T11:37:25.1188518-07:00",
-      "Version": "1.18.21"
+      "Updated": "2026-08-24T23:34:08.3429265-07:00",
+      "Version": "1.18.22"
     },
     {
       "Info": "",
@@ -696,16 +696,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1635,
+      "Manifests": 1636,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-08-22T21:31:23-07:00"
+      "Updated": "2026-08-24T23:18:48-07:00"
     },
     {
-      "Manifests": 2371,
+      "Manifests": 2372,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-08-22T21:30:52-07:00"
+      "Updated": "2026-08-24T23:31:02-07:00"
     },
     {
       "Manifests": 75,
@@ -717,13 +717,13 @@
       "Manifests": 132,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-08-22T13:44:10-07:00"
+      "Updated": "2026-08-24T13:53:09-07:00"
     },
     {
       "Manifests": 336,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-08-21T21:33:00-07:00"
+      "Updated": "2026-08-24T21:39:10-07:00"
     }
   ]
 }
