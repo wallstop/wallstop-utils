@@ -14,7 +14,9 @@ BeforeAll {
 
     function Invoke-RemediationScriptBounded {
         # Runs a remediation script in an isolated child pwsh with a bounded wait, avoiding both
-        # the Start-Process exit-code population race and an unbounded hang wedging CI.
+        # the Start-Process exit-code population race, its unbounded -Wait hang risk, and the
+        # -ArgumentList spaced-path mangling hazard (arguments go through
+        # Set-PortableProcessArguments on a ProcessStartInfo instead).
         param(
             [Parameter(Mandatory = $true)]
             [string[]]$ArgumentList,
@@ -23,7 +25,12 @@ BeforeAll {
             [int]$TimeoutSeconds = 60
         )
 
-        $childProcess = Start-Process -FilePath $script:pwshExecutable -ArgumentList $ArgumentList -PassThru
+        $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $processStartInfo.FileName = $script:pwshExecutable
+        $processStartInfo.UseShellExecute = $false
+        Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $ArgumentList
+
+        $childProcess = [System.Diagnostics.Process]::Start($processStartInfo)
         $didExit = $childProcess.WaitForExit($TimeoutSeconds * 1000)
         if (-not $didExit) {
             $childProcess.Kill()
