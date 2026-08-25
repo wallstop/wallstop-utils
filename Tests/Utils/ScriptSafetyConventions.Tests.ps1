@@ -3928,6 +3928,10 @@ Describe "Backup script safety conventions" {
         $powershellBackup | Should -Match 'function\s+Assert-PowerShellProfileBackupPortability'
         $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_PROFILE_PORTABILITY'
         $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_PROFILE_PARSE_FAILED'
+        # Host-side portability drift is self-healed from the validated repository profile
+        # before failing closed, mirroring the managed AutoHotkey snapshot self-heal.
+        $powershellBackup | Should -Match 'Restore-PowerShellProfileFromValidatedSource\s+-ProfilePath\s+\$resolvedPath\s+-RepositoryProfilePath\s+\$repositoryCanonicalProfilePath'
+        $powershellBackup | Should -Match 'W_POWERSHELL_BACKUP_PROFILE_AUTOREPAIRED'
         $powershellBackup | Should -Match 'Assert-PowerShellProfileBackupPortability\s+-ProfileName\s+\$candidate\.Name\s+-Path\s+\$candidate\.Path'
         $powershellBackup | Should -Match 'PSReadLineProfilePortabilityHelpers\.ps1'
         $powershellBackup | Should -Match 'Get-PSReadLineProfilePortabilityViolation\s+-Path\s+\$resolvedPath'
@@ -3939,6 +3943,9 @@ Describe "Backup script safety conventions" {
         $psReadLineHelper | Should -Match 'Test-PSReadLineAstContainsHostUISupportsVirtualTerminalAccess'
         $psReadLineHelper | Should -Match 'Test-PSReadLineCompatibilityFindingGuarded'
         $psReadLineHelper | Should -Match 'E_PSREADLINE_PROFILE_PARSE_FAILED'
+        $psReadLineHelper | Should -Match 'function\s+Restore-PowerShellProfileFromValidatedSource'
+        $psReadLineHelper | Should -Match 'E_PSREADLINE_PROFILE_REPAIR_SOURCE_NOT_PORTABLE'
+        $psReadLineHelper | Should -Match 'pre-portability-repair-'
         $powershellBackup | Should -Not -Match '\$backupFolder\s*=\s*"\$baseDirectory\\Config\\Powershell"'
         $powershellBackup | Should -Not -Match '\$HOME\\Documents\\PowerShell'
         $powershellBackup | Should -Not -Match '\$HOME\\Documents\\WindowsPowerShell'

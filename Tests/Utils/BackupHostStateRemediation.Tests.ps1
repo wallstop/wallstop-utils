@@ -47,6 +47,54 @@ Describe "Backup host-state remediation" {
         }
     }
 
+    It "replaces a drifted host profile from the validated repository source and preserves a timestamped backup" {
+        . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1")
+
+        $destination = Join-Path -Path $script:tempRoot -ChildPath "self-heal/Documents/PowerShell/Microsoft.PowerShell_profile.ps1"
+        $driftedContent = "Set-PSReadLineOption -PredictionSource History`nSet-PSReadLineOption -PredictionViewStyle InlineView`n"
+        $destinationDirectory = [System.IO.Path]::GetDirectoryName($destination)
+        [void][System.IO.Directory]::CreateDirectory($destinationDirectory)
+        [System.IO.File]::WriteAllText($destination, $driftedContent, [System.Text.UTF8Encoding]::new($false))
+
+        $repositorySource = Join-Path -Path $script:repoRoot -ChildPath "Config/Powershell/CurrentUserCurrentHost_Microsoft.PowerShell_profile.ps1"
+        $repairResult = Restore-PowerShellProfileFromValidatedSource -ProfilePath $destination -RepositoryProfilePath $repositorySource
+
+        $repairResult.Repaired | Should -BeTrue
+        @(Get-PSReadLineProfilePortabilityViolation -Path $destination) | Should -HaveCount 0
+
+        $backupFiles = @(Get-ChildItem -LiteralPath $destinationDirectory -Filter "*.pre-portability-repair-*.bak" -File)
+        $backupFiles.Count | Should -Be 1
+        $repairResult.BackupPath | Should -Be $backupFiles[0].FullName
+        (Get-Content -LiteralPath $backupFiles[0].FullName -Raw) | Should -Be $driftedContent
+    }
+
+    It "fails closed when the repository repair source is itself non-portable" {
+        . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1")
+
+        $destination = Join-Path -Path $script:tempRoot -ChildPath "bad-source/profile.ps1"
+        $originalDestinationContent = "# untouched destination`n"
+        [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($destination))
+        [System.IO.File]::WriteAllText($destination, $originalDestinationContent, [System.Text.UTF8Encoding]::new($false))
+        $nonPortableSource = Join-Path -Path $script:tempRoot -ChildPath "bad-source/non-portable-repo-profile.ps1"
+        [System.IO.File]::WriteAllText($nonPortableSource, "Set-PSReadLineOption -PredictionSource History`n", [System.Text.UTF8Encoding]::new($false))
+
+        { Restore-PowerShellProfileFromValidatedSource -ProfilePath $destination -RepositoryProfilePath $nonPortableSource } |
+            Should -Throw "E_PSREADLINE_PROFILE_REPAIR_SOURCE_NOT_PORTABLE*"
+        (Get-Content -LiteralPath $destination -Raw) | Should -Be $originalDestinationContent
+    }
+
+    It "declines to repair a profile from itself instead of looping on an unfixable target" {
+        . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1")
+
+        $repositorySource = Join-Path -Path $script:repoRoot -ChildPath "Config/Powershell/CurrentUserCurrentHost_Microsoft.PowerShell_profile.ps1"
+        $sourceContent = Get-Content -LiteralPath $repositorySource -Raw
+
+        $repairResult = Restore-PowerShellProfileFromValidatedSource -ProfilePath $repositorySource -RepositoryProfilePath $repositorySource
+
+        $repairResult.Repaired | Should -BeFalse
+        (Get-Content -LiteralPath $repositorySource -Raw) | Should -Be $sourceContent
+    }
+
     It "repairs a selected profile only when explicitly applied and preserves the old file" {
         $destination = Join-Path -Path $script:tempRoot -ChildPath "PowerShell/Microsoft.PowerShell_profile.ps1"
         $destinationDirectory = [System.IO.Path]::GetDirectoryName($destination)

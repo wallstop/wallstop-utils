@@ -41,6 +41,16 @@ of committed if patterns survive redaction).
 
 ## 1. Repair the PowerShell profile
 
+Backups self-heal this failure class automatically: when `PowershellBackup` finds
+a drifted profile, it replaces it with the validated repository profile, keeps a
+timestamped copy of the previous content beside it
+(`*.pre-portability-repair-<timestamp>.bak`), and emits
+`W_POWERSHELL_BACKUP_PROFILE_AUTOREPAIRED(<profile>)`. Review that backup if the
+live profile contained custom commands that need to be merged manually.
+
+The manual tool remains available when you want explicit control, for example to
+repair a profile outside a backup run.
+
 Preview the repair first. The default destination is the current user's
 current-host profile, and preview mode does not write anything:
 
@@ -66,7 +76,10 @@ pwsh -NoLogo -NoProfile -File .\Scripts\Powershell\Repair-PowerShellProfilePorta
 
 This replaces the selected profile with the repository's guarded PSReadLine
 profile. Review the timestamped backup if the live profile contained custom
-commands that need to be merged manually.
+commands that need to be merged manually. The same repair semantic is
+single-sourced in `Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1`
+(`Restore-PowerShellProfileFromValidatedSource`) so the manual tool and the
+backup self-heal can never drift apart.
 
 ## 2. Restore a Komorebi source profile
 
