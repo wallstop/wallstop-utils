@@ -3868,10 +3868,19 @@ Describe "Backup script safety conventions" {
         $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
 
         $winGetUpdateScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WinGet/WinGetUpdate.ps1') -Raw) -replace "`r", ''
-        $winGetUpdateScript | Should -Match 'winget\s+upgrade\s+--all\s+--silent'
-        $winGetUpdateScript | Should -Match '\$wingetExitCode\s*=\s*\$LASTEXITCODE'
+        $winGetUpdateScript | Should -Match 'winget\s+upgrade\s+--all\s+--silent\s+--disable-interactivity'
+        $winGetUpdateScript | Should -Match '\$LASTEXITCODE'
         $winGetUpdateScript | Should -Match '-1978335189'
-        $winGetUpdateScript | Should -Match 'exit\s+0'
+        $winGetUpdateScript | Should -Match '-1978335188'
+        # Partial bulk-upgrade failures are classified, not blindly passed through: consent-blocked
+        # installers defer with a warning while genuine failures and unattributable aggregates fail closed.
+        $winGetUpdateScript | Should -Match 'W_WINGET_UPGRADE_DEFERRED_INTERACTIVE'
+        $winGetUpdateScript | Should -Match 'E_WINGET_UPDATE_PACKAGE_INSTALL_FAILED'
+        $winGetUpdateScript | Should -Match 'E_WINGET_UPDATE_UNATTRIBUTED_FAILURE'
+        $winGetUpdateScript | Should -Match 'E_WINGET_UPDATE_FAILED'
+        $winGetUpdateScript | Should -Match 'E_WINGET_UPDATE_NOT_AVAILABLE'
+        $winGetUpdateScript | Should -Match 'function\s+Resolve-WinGetUpdateOutcome'
+        $winGetUpdateScript | Should -Match '\$MyInvocation\.InvocationName\s+-ne\s*"\."'
     }
 
     It "validates Config backup source before destructive clear" {

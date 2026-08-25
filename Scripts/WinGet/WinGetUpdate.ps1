@@ -1,11 +1,228 @@
-winget upgrade --all --silent
-$wingetExitCode = $LASTEXITCODE
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
-# WinGet reports "no applicable upgrade found" as a non-zero HRESULT even
-# though the requested no-op update completed successfully.
-if ($wingetExitCode -eq -1978335189) {
-    Write-Host "WinGet: no applicable upgrades found; treating the no-op as successful."
-    exit 0
+# WinGet aggregate exit codes (microsoft/winget-cli doc/windows/package-manager/winget/returnCodes.md):
+#   0x8A15002B (-1978335189) APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE
+#   0x8A15002C (-1978335188) APPINSTALLER_CLI_ERROR_UPDATE_ALL_HAS_FAILURE
+$script:WinGetUpdateNotApplicableExitCode = -1978335189
+$script:WinGetUpgradeAllHasFailureExitCode = -1978335188
+
+$diagnosticsHelpersPath = Join-Path -Path $PSScriptRoot -ChildPath "../Utils/Common/DiagnosticsHelpers.ps1"
+if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
+    throw "E_CONFIG_ERROR: Diagnostics helper file not found at '$diagnosticsHelpersPath' (PSScriptRoot='$PSScriptRoot')."
 }
 
-exit $wingetExitCode
+. $diagnosticsHelpersPath
+
+function Get-WinGetInstallerFailureAttributions {
+    # Pairs each "(N/M) Found <Name> [<Id>] ..." progress block with its subsequent
+    # "Installer failed with exit code: <code>" line so per-package installer failures stay
+    # attributable from `winget upgrade --all` output: the aggregate
+    # APPINSTALLER_CLI_ERROR_UPDATE_ALL_HAS_FAILURE HRESULT alone cannot distinguish
+    # consent/elevation-blocked installers from genuine ones.
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyCollection()]
+        [object[]]$OutputLines = @()
+    )
+
+    $attributions = New-Object System.Collections.Generic.List[object]
+    $currentPackageId = $null
+    foreach ($outputLine in @($OutputLines)) {
+        # Captured external output can arrive as one multi-line element (script-shim shape)
+        # or per-line elements (native-command shape); expand physical lines either way.
+        foreach ($physicalLine in @(([string]$outputLine) -split "\r?\n")) {
+            if ($physicalLine -match '^\s*\(\d+/\d+\)\s+Found\s+.*\[(?<id>[^\]]+)\]') {
+                $currentPackageId = $Matches['id']
+                continue
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($currentPackageId) -and
+                $physicalLine -match '^\s*Installer failed with exit code:\s*(?<code>[^\s:,]+)') {
+                [void]$attributions.Add([pscustomobject]@{
+                        PackageId         = $currentPackageId
+                        InstallerExitCode = $Matches['code']
+                    })
+                $currentPackageId = $null
+            }
+        }
+    }
+
+    return $attributions.ToArray() # array-unwrap-safe: callers wrap in @(...).
+}
+
+function Test-WinGetInstallerExitCodeIsConsentBlocked {
+    # Installer exit codes that mean the package needs interactive elevation or consent,
+    # which a silent unattended run can never satisfy: 1602 (ERROR_INSTALL_USEREXIT) and
+    # 1223 (ERROR_CANCELLED) are the UAC-declined/suppressed shapes, and 0x80073d28 is the
+    # winget-reported "administrator privileges are required" failure.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$InstallerExitCode
+    )
+
+    $normalizedCode = $InstallerExitCode.Trim()
+    if ($normalizedCode -match '^0[xX][0-9a-fA-F]+$') {
+        return ($normalizedCode.ToLowerInvariant() -eq '0x80073d28')
+    }
+
+    return (@('1602', '1223') -contains $normalizedCode)
+}
+
+function Resolve-WinGetUpdateOutcome {
+    # Pure classification of a completed `winget upgrade --all --silent --disable-interactivity`
+    # invocation so every branch is unit-testable without synthesizing winget's int32 exit
+    # codes (which POSIX child processes truncate to 8 bits).
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$WingetExitCode,
+
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyCollection()]
+        [object[]]$OutputLines = @()
+    )
+
+    if ($WingetExitCode -eq 0) {
+        return [pscustomobject]@{ ExitZero = $true; ExitCode = 0; WarningDiagnostic = ""; ErrorDiagnostic = ""; NoApplicable = $false }
+    }
+
+    # WinGet reports "no applicable upgrade found" as a non-zero HRESULT even
+    # though the requested no-op update completed successfully.
+    if ($WingetExitCode -eq $script:WinGetUpdateNotApplicableExitCode) {
+        return [pscustomobject]@{
+            ExitZero          = $true
+            ExitCode          = 0
+            WarningDiagnostic = ""
+            ErrorDiagnostic   = ""
+            NoApplicable      = $true
+        }
+    }
+
+    if ($WingetExitCode -ne $script:WinGetUpgradeAllHasFailureExitCode) {
+        $failurePreview = Get-OutputPreview -OutputLines $OutputLines -MaxLines 10 -MaxCharacters 640 -HeadTailWhenTruncated
+        return [pscustomobject]@{
+            ExitZero          = $false
+            ExitCode          = $WingetExitCode
+            WarningDiagnostic = ""
+            ErrorDiagnostic   = (
+                "E_WINGET_UPDATE_FAILED: 'winget upgrade --all' exited with code {0}. outputPreview={1}" -f
+                $WingetExitCode,
+                $failurePreview
+            )
+            NoApplicable      = $false
+        }
+    }
+
+    # --all completed with at least one package failure while other packages may have
+    # upgraded fine; classify the attributed failures before deciding the outcome.
+    $attributions = @(Get-WinGetInstallerFailureAttributions -OutputLines $OutputLines)
+    $consentBlockedEntries = New-Object System.Collections.Generic.List[string]
+    $genuineFailureEntries = New-Object System.Collections.Generic.List[string]
+    foreach ($attribution in $attributions) {
+        $entry = "{0} (installer exit {1})" -f $attribution.PackageId, $attribution.InstallerExitCode
+        if (Test-WinGetInstallerExitCodeIsConsentBlocked -InstallerExitCode $attribution.InstallerExitCode) {
+            [void]$consentBlockedEntries.Add($entry)
+        }
+        else {
+            [void]$genuineFailureEntries.Add($entry)
+        }
+    }
+
+    $warningDiagnostic = ""
+    if ($consentBlockedEntries.Count -gt 0) {
+        $warningDiagnostic = (
+            "W_WINGET_UPGRADE_DEFERRED_INTERACTIVE: {0} package(s) require interactive elevation or consent and were not upgraded by the silent run: {1}. Run 'winget upgrade' in an interactive session to complete them." -f
+            $consentBlockedEntries.Count,
+            ($consentBlockedEntries -join '; ')
+        )
+    }
+
+    if ($genuineFailureEntries.Count -gt 0) {
+        return [pscustomobject]@{
+            ExitZero          = $false
+            ExitCode          = $WingetExitCode
+            WarningDiagnostic = $warningDiagnostic
+            ErrorDiagnostic   = (
+                "E_WINGET_UPDATE_PACKAGE_INSTALL_FAILED: {0} package(s) failed to upgrade: {1}." -f
+                $genuineFailureEntries.Count,
+                ($genuineFailureEntries -join '; ')
+            )
+            NoApplicable      = $false
+        }
+    }
+
+    if ($attributions.Count -gt 0) {
+        return [pscustomobject]@{ ExitZero = $true; ExitCode = 0; WarningDiagnostic = $warningDiagnostic; ErrorDiagnostic = ""; NoApplicable = $false }
+    }
+
+    # Aggregate failure with no parseable per-package attribution (unexpected output format
+    # or locale drift): fail closed with a bounded preview instead of silently treating an
+    # unknown failure mode as success.
+    $failurePreview = Get-OutputPreview -OutputLines $OutputLines -MaxLines 10 -MaxCharacters 640 -HeadTailWhenTruncated
+    return [pscustomobject]@{
+        ExitZero          = $false
+        ExitCode          = $WingetExitCode
+        WarningDiagnostic = $warningDiagnostic
+        ErrorDiagnostic   = (
+            "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE: 'winget upgrade --all' reported failures (exitCode={0}) but no per-package installer failures could be attributed from its output. outputPreview={1}" -f
+            $WingetExitCode,
+            $failurePreview
+        )
+        NoApplicable      = $false
+    }
+}
+
+function Invoke-WinGetUpgradeStep {
+    $wingetCommand = Get-Command -Name "winget" -ErrorAction SilentlyContinue
+    if ($null -eq $wingetCommand) {
+        [Console]::Error.WriteLine("E_WINGET_UPDATE_NOT_AVAILABLE: winget CLI was not found on PATH. Install the Windows Package Manager (App Installer) and retry.")
+        exit 1
+    }
+
+    Write-Verbose ("WinGet update diagnostics: winget='{0}'." -f $wingetCommand.Source)
+
+    # --disable-interactivity keeps unattended runs bounded: consent/elevation prompts fail
+    # fast instead of stalling the backup step waiting on an operator that never arrives.
+    # Redirected native stderr becomes a terminating NativeCommandError under EAP=Stop on
+    # Windows PowerShell 5.1, so scope the capture to EAP=Continue.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $upgradeOutput = @(& $wingetCommand.Source upgrade --all --silent --disable-interactivity 2>&1 | ForEach-Object { [string]$_ })
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    foreach ($upgradeLine in $upgradeOutput) {
+        Write-Host $upgradeLine
+    }
+
+    $outcome = Resolve-WinGetUpdateOutcome -WingetExitCode $LASTEXITCODE -OutputLines $upgradeOutput
+
+    if ($outcome.NoApplicable) {
+        Write-Host "WinGet: no applicable upgrades found; treating the no-op as successful."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($outcome.WarningDiagnostic)) {
+        Write-Warning $outcome.WarningDiagnostic
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($outcome.ErrorDiagnostic)) {
+        [Console]::Error.WriteLine($outcome.ErrorDiagnostic)
+    }
+
+    exit $outcome.ExitCode
+}
+
+# Allow tests to dot-source the classifiers without executing the live upgrade.
+if ($MyInvocation.InvocationName -ne ".") {
+    Invoke-WinGetUpgradeStep
+}
