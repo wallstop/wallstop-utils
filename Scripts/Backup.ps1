@@ -5,6 +5,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+# Redirected native stderr must never escalate to a terminating error during output capture
+# (no-op on Windows PowerShell 5.1, which lacks this preference variable).
+$PSNativeCommandUseErrorActionPreference = $false
 
 $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
 $diagnosticsHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/DiagnosticsHelpers.ps1"
@@ -27,6 +30,13 @@ if (-not (Test-Path -LiteralPath $backupSecretHygieneHelpersPath -PathType Leaf)
 }
 
 . $backupSecretHygieneHelpersPath
+
+$canonicalJsonHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/CanonicalJsonHelpers.ps1"
+if (-not (Test-Path -LiteralPath $canonicalJsonHelpersPath -PathType Leaf)) {
+    throw "E_BACKUP_CANONICAL_JSON_HELPER_MISSING: canonical JSON helper file not found at '$canonicalJsonHelpersPath'."
+}
+
+. $canonicalJsonHelpersPath
 
 $pwshCommand = Resolve-PowerShellExecutablePath
 
@@ -476,7 +486,10 @@ function Get-BackupManagedChangedFilesOrThrow {
         [string[]]$ManagedPathspecs
     )
 
-    $trackedChangedArgs = @("-C", $RepositoryRoot, "diff", "--name-only", "--diff-filter=AM", "--")
+    # Diff against HEAD (not the index): pre-existing STAGED managed changes survive the pull
+    # via stash --index, so index-relative diffs would hide them from oversize/AHK/secret
+    # guards while `git add Config/` would happily commit them.
+    $trackedChangedArgs = @("-C", $RepositoryRoot, "diff", "HEAD", "--name-only", "--diff-filter=AM", "--")
     $trackedChangedArgs += $ManagedPathspecs
     $trackedChangedOutput = @(& $GitExecutable @trackedChangedArgs 2>$null)
     $trackedChangedExitCode = Get-LastExitCodeOrDefault
@@ -532,6 +545,255 @@ function Get-BackupManagedChangedFilesOrThrow {
     return $managedChangedFiles.ToArray()
 }
 
+function Repair-BackupManagedAhkSnapshots {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$ManagedChangedFiles = @()
+    )
+
+    # Unattended backup commits bypass pre-commit hooks (--no-verify), including the auto-repair
+    # hook that keeps Config/.config AutoHotkey snapshots synced to their Scripts/AutoHotKey v2
+    # sources. Without this gate, host-side drift regresses committed snapshots to AHK v1
+    # (observed twice: session-020 and the 2026-08-23 backup), breaking main CI even though the
+    # attended commit path self-heals the same drift.
+    $snapshotPattern = '(?i)^Config/\.config/.+\.ahk$'
+    $snapshotTargets = @($ManagedChangedFiles | Where-Object { $_ -match $snapshotPattern } | Sort-Object -Unique)
+    if ($snapshotTargets.Count -eq 0) {
+        return ""
+    }
+
+    $windowsLanguageChecksPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Quality/Invoke-WindowsLanguageChecks.ps1"
+    if (-not (Test-Path -LiteralPath $windowsLanguageChecksPath -PathType Leaf)) {
+        throw "E_BACKUP_SNAPSHOT_REFRESH_CHECKER_MISSING: Windows language checker not found at '$windowsLanguageChecksPath'."
+    }
+
+    $absoluteTargets = @($snapshotTargets | ForEach-Object { Join-Path -Path $RepositoryRoot -ChildPath $_ })
+    # `pwsh -File` misbinds a second array element to a positional parameter, so pass the
+    # targets as one semicolon-joined token; the checker splits inputs on ';' and newlines.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $checkerOutput = @(& $pwshCommand -NoLogo -NoProfile -File $windowsLanguageChecksPath -TargetFiles ($absoluteTargets -join ';') -Fix -StaticOnly 2>&1 | ForEach-Object { [string]$_ })
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    foreach ($outputLine in $checkerOutput) {
+        Write-Host $outputLine
+    }
+
+    $checkerExitCode = Get-LastExitCodeOrDefault
+    if ($checkerExitCode -ne 0) {
+        return (
+            "E_BACKUP_SNAPSHOT_REFRESH_FAILED: AutoHotkey snapshot source-refresh failed (exitCode={0}; targets={1}; outputPreview={2})." -f
+            $checkerExitCode,
+            (Get-PathspecDiagnosticsText -Pathspec $snapshotTargets),
+            (Get-OutputPreview -OutputLines $checkerOutput -MaxLines 20 -MaxCharacters 2000 -HeadTailWhenTruncated)
+        )
+    }
+
+    Write-Verbose ("Backup snapshot refresh diagnostics: refreshedTargets={0}." -f (Get-PathspecDiagnosticsText -Pathspec $snapshotTargets))
+    return ""
+}
+
+function Get-BackupOversizedManagedFileErrors {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$RelativePaths = @(),
+
+        [Parameter(Mandatory = $true)]
+        [long]$FailLimitBytes,
+
+        [Parameter(Mandatory = $true)]
+        [long]$WarnLimitBytes
+    )
+
+    $errors = New-Object System.Collections.Generic.List[string]
+    foreach ($relativePath in @($RelativePaths)) {
+        if ([string]::IsNullOrWhiteSpace($relativePath)) {
+            continue
+        }
+
+        $fullPath = Join-Path -Path $RepositoryRoot -ChildPath $relativePath
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            continue
+        }
+
+        $length = (Get-Item -LiteralPath $fullPath -Force).Length
+        if ($length -gt $FailLimitBytes) {
+            # GitHub hard-rejects blobs above 100MiB at push time, which strands the entire
+            # backup push while every later backup stacks on top of the unpushable commit.
+            # Fail closed here so oversize artifacts never enter a commit.
+            $errors.Add((
+                    "E_BACKUP_MANAGED_FILE_OVERSIZE: '{0}' is {1} bytes which exceeds the {2}-byte backup fail limit; GitHub rejects blobs over 100MiB, which would strand the whole backup push." -f
+                    $relativePath,
+                    $length,
+                    $FailLimitBytes
+                ))
+            continue
+        }
+
+        if ($length -gt $WarnLimitBytes) {
+            Write-Warning (
+                "W_BACKUP_MANAGED_FILE_LARGE: '{0}' is {1} bytes (above the {2}-byte advisory limit)." -f
+                $relativePath,
+                $length,
+                $WarnLimitBytes
+            )
+        }
+    }
+
+    return $errors.ToArray()
+}
+
+function ConvertTo-BackupFailureArtifactEscapedString {
+    # Scalar-string JSON encoding that behaves identically on Windows PowerShell 5.1 and
+    # PowerShell 7+: ConvertTo-Json only ever sees a single string, so quoting/escaping never
+    # hits the 5.1 single-element-collection collapse quirk.
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    return ([string]($Value | ConvertTo-Json -Compress))
+}
+
+function ConvertTo-BackupFailureArtifactJson {
+    # Whole-document serializer for Config/backup-step-failures.json built from
+    # ConvertTo-Json'd scalars plus hand-joined arrays: passing the full document through
+    # ConvertTo-Json would let Windows PowerShell 5.1 collapse single-element arrays
+    # (one failed step -> bare object), making the committed schema unstable across hosts.
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$FailedStepEntries,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$PhaseFailureTexts,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$SucceededStepNames,
+
+        [Parameter(Mandatory = $true)]
+        [int]$TotalSteps,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$RedactOutputPreviews
+    )
+
+    $failedStepsMembers = @(
+        foreach ($failedEntry in @($FailedStepEntries)) {
+            '{{ "name": {0}, "error": {1}, "outputPreview": {2} }}' -f `
+            (ConvertTo-BackupFailureArtifactEscapedString -Value ([string]$failedEntry.Name)),
+            (ConvertTo-BackupFailureArtifactEscapedString -Value ([string]$failedEntry.Error)),
+            (ConvertTo-BackupFailureArtifactEscapedString -Value $(if ($RedactOutputPreviews) { "(redacted: secret pattern detected in captured output)" } else { [string]$failedEntry.OutputPreview }))
+        }
+    )
+
+    $phaseMembers = @(
+        foreach ($phaseFailureText in @($PhaseFailureTexts)) {
+            ConvertTo-BackupFailureArtifactEscapedString -Value $phaseFailureText
+        }
+    )
+
+    $succeededMembers = @(
+        foreach ($succeededStepName in @($SucceededStepNames)) {
+            ConvertTo-BackupFailureArtifactEscapedString -Value $succeededStepName
+        }
+    )
+
+    $formatArgs = @(
+        ("[{0}]" -f ($failedStepsMembers -join ", ")),
+        ("[{0}]" -f ($phaseMembers -join ", ")),
+        ("[{0}]" -f ($succeededMembers -join ", ")),
+        ([string]$TotalSteps)
+    )
+    return ("{{`n  `"failedSteps`": {0},`n  `"phaseFailures`": {1},`n  `"succeededSteps`": {2},`n  `"totalSteps`": {3}`n}}" -f $formatArgs)
+}
+
+function Set-BackupStepFailuresArtifact {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyCollection()]
+        [object[]]$FailedEntries = @(),
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$SucceededStepNames = @(),
+
+        [Parameter(Mandatory = $true)]
+        [int]$TotalSteps,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$RedactOutputPreviews
+    )
+
+    # Persistent counterpart to the console-only backup summary: partial-failure runs record the
+    # failing step names, error messages, and bounded output previews under Config/ so future
+    # failures are diagnosable from git history alone (issue #46). The document carries no
+    # timestamps (the commit date provides timing) so schema/order stay deterministic; volatile
+    # preview text updates on each failing run by design. It is removed again after a fully
+    # successful run. I/O faults here fail OPEN with stable diagnostics: losing or failing to
+    # remove a diagnostics file must never abort the backup run itself.
+    $artifactPath = Join-Path -Path $RepositoryRoot -ChildPath "Config/backup-step-failures.json"
+    if (@($FailedEntries).Count -eq 0) {
+        if (Test-Path -LiteralPath $artifactPath -PathType Leaf) {
+            try {
+                Remove-Item -LiteralPath $artifactPath -Force -ErrorAction Stop
+                Write-Host "Removed stale backup failure artifact after a fully successful run: '$artifactPath'." -ForegroundColor Green
+            }
+            catch {
+                Write-Warning (
+                    "W_BACKUP_FAILURE_ARTIFACT_REMOVE_FAILED: a fully successful run could not remove the stale failure artifact '{0}' ({1}); it will be retried on the next run." -f
+                    $artifactPath,
+                    $_.Exception.Message
+                )
+            }
+        }
+        return
+    }
+
+    $failedStepEntries = @(@($FailedEntries) | Where-Object { $_ -isnot [string] })
+    $phaseFailureTexts = @(@($FailedEntries) | Where-Object { $_ -is [string] })
+
+    $rawJson = ConvertTo-BackupFailureArtifactJson `
+        -FailedStepEntries $failedStepEntries `
+        -PhaseFailureTexts @([string[]]$phaseFailureTexts) `
+        -SucceededStepNames @([string[]]$SucceededStepNames) `
+        -TotalSteps $TotalSteps `
+        -RedactOutputPreviews:$RedactOutputPreviews
+    $canonicalJson = ConvertTo-CanonicalJsonText -RawJson $rawJson
+    try {
+        [System.IO.File]::WriteAllText($artifactPath, $canonicalJson, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch {
+        Write-Warning (
+            "E_BACKUP_FAILURE_ARTIFACT_WRITE_FAILED: could not persist failure reasons to '{0}' ({1})." -f
+            $artifactPath,
+            $_.Exception.Message
+        )
+        return
+    }
+
+    Write-Warning (
+        "W_BACKUP_FAILURE_ARTIFACT_WRITTEN: recorded {0} failure entr(y|ies) in persistent artifact '{1}' so the reasons are diagnosable from git history." -f
+        @($FailedEntries).Count,
+        $artifactPath
+    )
+}
+
 function Invoke-BackupKnownSecretSanitization {
     param(
         [Parameter(Mandatory = $true)]
@@ -570,15 +832,40 @@ function Invoke-BackupStep {
         throw "E_BACKUP_STEP_SCRIPT_MISSING: Backup step '$Name' script not found at '$scriptPath'."
     }
 
+    # Step output is captured and then echoed so failed-step diagnostics can be persisted into
+    # Config/backup-step-failures.json. Unattended hosts lose console-only output, which is the
+    # same diagnosability gap that issue #46 identified for step names: without capture, the
+    # reason a step failed (for example winget's failing package output) never reaches git history.
     Write-Host ("Starting: {0}" -f $Name) -ForegroundColor Cyan
-    & $pwshCommand -NoLogo -NoProfile -File $scriptPath
-
-    $exitCode = Get-LastExitCodeOrDefault
-    if ($exitCode -ne 0) {
-        throw ("E_BACKUP_STEP_FAILED({0}): script '{1}' at '{2}' exited with code {3}." -f $Name, $RelativeScriptPath, $scriptPath, $exitCode)
+    # Redirected native stderr becomes a terminating NativeCommandError under EAP=Stop on
+    # Windows PowerShell 5.1, so scope the capture to EAP=Continue.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $stepOutput = @(& $pwshCommand -NoLogo -NoProfile -File $scriptPath 2>&1 | ForEach-Object { [string]$_ })
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    foreach ($outputLine in $stepOutput) {
+        Write-Host $outputLine
     }
 
-    Write-Host ("Completed: {0}" -f $Name) -ForegroundColor Green
+    $exitCode = Get-LastExitCodeOrDefault
+    $failureMessage = $null
+    if ($exitCode -ne 0) {
+        $failureMessage = ("E_BACKUP_STEP_FAILED({0}): script '{1}' at '{2}' exited with code {3}." -f $Name, $RelativeScriptPath, $scriptPath, $exitCode)
+        Write-Warning ("{0}: {1}" -f $Name, $failureMessage)
+    }
+    else {
+        Write-Host ("Completed: {0}" -f $Name) -ForegroundColor Green
+    }
+
+    return [pscustomobject]@{
+        Succeeded    = ($null -eq $failureMessage)
+        Error        = $(if ($null -eq $failureMessage) { "" } else { $failureMessage })
+        OutputLines  = $stepOutput
+    }
 }
 
 function Assert-BackupStepScriptsExist {
@@ -714,6 +1001,7 @@ Write-Verbose (
 )
 
 $stepResults = New-Object System.Collections.Generic.List[object]
+$phaseFailures = New-Object System.Collections.Generic.List[string]
 $steps = @(
     @{ Name = "ConfigBackup"; RelativeScriptPath = "Config/ConfigBackup.ps1"; SupportedPlatforms = @("All") },
     @{ Name = "WindowsTerminalBackup"; RelativeScriptPath = "WindowsTerminal/WindowsTerminalBackup.ps1"; SupportedPlatforms = @("Windows") },
@@ -785,20 +1073,22 @@ try {
 
     foreach ($step in $applicableSteps) {
         try {
-            Invoke-BackupStep -Name $step.Name -RelativeScriptPath $step.RelativeScriptPath
+            $stepOutcome = Invoke-BackupStep -Name $step.Name -RelativeScriptPath $step.RelativeScriptPath
             [void]$stepResults.Add([pscustomobject]@{
-                    Name    = $step.Name
-                    Success = $true
-                    Error   = ""
+                    Name        = $step.Name
+                    Success     = [bool]$stepOutcome.Succeeded
+                    Error       = [string]$stepOutcome.Error
+                    OutputLines = @($stepOutcome.OutputLines)
                 })
         }
         catch {
             $errorMessage = $_.Exception.Message
             Write-Warning ("{0}: {1}" -f $step.Name, $errorMessage)
             [void]$stepResults.Add([pscustomobject]@{
-                    Name    = $step.Name
-                    Success = $false
-                    Error   = $errorMessage
+                    Name        = $step.Name
+                    Success     = $false
+                    Error       = $errorMessage
+                    OutputLines = @()
                 })
         }
     }
@@ -864,7 +1154,28 @@ try {
             (Get-PathspecDiagnosticsText -Pathspec $managedPathspecs)
         )
 
-        if ($managedChangedFiles.Count -gt 0) {
+        $snapshotRefreshError = Repair-BackupManagedAhkSnapshots -RepositoryRoot $repositoryRoot -ManagedChangedFiles $managedChangedFiles
+        if (-not [string]::IsNullOrWhiteSpace($snapshotRefreshError)) {
+            Write-Warning $snapshotRefreshError
+            [void]$phaseFailures.Add($snapshotRefreshError)
+            $hasGitFailure = $true
+        }
+
+        if (-not $hasGitFailure) {
+            # Fail closed before staging: an oversize artifact can never be pushed, so committing it
+            # would strand the whole backup push while later backups stack on the unpushable commit.
+            $oversizeErrors = @(Get-BackupOversizedManagedFileErrors -RepositoryRoot $repositoryRoot -RelativePaths $managedChangedFiles -FailLimitBytes (95MB) -WarnLimitBytes (10MB))
+            foreach ($oversizeError in $oversizeErrors) {
+                Write-Warning $oversizeError
+                [void]$phaseFailures.Add($oversizeError)
+            }
+
+            if ($oversizeErrors.Count -gt 0) {
+                $hasGitFailure = $true
+            }
+        }
+
+        if (-not $hasGitFailure) {
             $sanitizationResult = Invoke-BackupKnownSecretSanitization -RepositoryRoot $repositoryRoot -RelativePaths $managedChangedFiles
             $redactedFiles = @($sanitizationResult.RedactedFiles)
             $skippedBinaryFiles = @($sanitizationResult.SkippedBinaryFiles)
@@ -912,6 +1223,148 @@ try {
 
     $date = Get-Date
     $dateString = "{0:yyyy/MM/dd HH:mm:ss zzz}" -f $date
+
+    $failedStepEntries = @(
+        $stepResults |
+            Where-Object { -not $_.Success } |
+            ForEach-Object {
+                [pscustomobject]@{
+                    Name          = $_.Name
+                    Error         = $_.Error
+                    OutputPreview = (Get-OutputPreview -OutputLines @($_.OutputLines) -MaxLines 40 -MaxCharacters 4000 -HeadTailWhenTruncated)
+                }
+            }
+    )
+    Set-BackupStepFailuresArtifact -RepositoryRoot $repositoryRoot `
+        -FailedEntries @($failedStepEntries + @($phaseFailures)) `
+        -SucceededStepNames @($stepResults | Where-Object { $_.Success } | ForEach-Object { $_.Name }) `
+        -TotalSteps $stepResults.Count
+
+    $backupFailureArtifactRelativePath = "Config/backup-step-failures.json"
+    $backupFailureArtifactPath = Join-Path -Path $repositoryRoot -ChildPath $backupFailureArtifactRelativePath
+    if (Test-Path -LiteralPath $backupFailureArtifactPath -PathType Leaf) {
+        # The artifact embeds captured step output, so it must pass the same secret hygiene as
+        # any other managed file: known-secret fields are redacted in place, and if an unknown
+        # secret pattern survives, previews are rewritten redacted; a second finding deletes the
+        # artifact rather than ever committing suspected secrets.
+        $artifactKnownRedactions = Invoke-BackupKnownSecretSanitization -RepositoryRoot $repositoryRoot -RelativePaths @($backupFailureArtifactRelativePath)
+        if (@($artifactKnownRedactions.RedactedFiles).Count -gt 0) {
+            Write-Warning (
+                "W_BACKUP_FAILURE_ARTIFACT_SECRET_SANITIZED: redacted known secret field(s) in '{0}'." -f
+                $backupFailureArtifactRelativePath
+            )
+        }
+
+        $artifactSecretFindings = @(Find-BackupUnknownSecretFindings -RepositoryRoot $repositoryRoot -RelativePaths @($backupFailureArtifactRelativePath))
+        if ($artifactSecretFindings.Count -gt 0) {
+            Set-BackupStepFailuresArtifact -RepositoryRoot $repositoryRoot `
+                -FailedEntries @($failedStepEntries + @($phaseFailures)) `
+                -SucceededStepNames @($stepResults | Where-Object { $_.Success } | ForEach-Object { $_.Name }) `
+                -TotalSteps $stepResults.Count `
+                -RedactOutputPreviews
+            # The hygiene reader caches file text; reset so the rescan sees the rewritten bytes.
+            Reset-BackupSecretHygieneState
+            $artifactSecretFindingsAfterRedaction = @(Find-BackupUnknownSecretFindings -RepositoryRoot $repositoryRoot -RelativePaths @($backupFailureArtifactRelativePath))
+            if ($artifactSecretFindingsAfterRedaction.Count -gt 0) {
+                Remove-Item -LiteralPath $backupFailureArtifactPath -Force -ErrorAction SilentlyContinue
+                Reset-BackupSecretHygieneState
+                Write-Warning (
+                    "E_BACKUP_FAILURE_ARTIFACT_SECRETS_DETECTED: unknown secret patterns remained in '{0}' even after preview redaction; the artifact was deleted instead of being committed. fileCount={1}." -f
+                    $backupFailureArtifactRelativePath,
+                    $artifactSecretFindingsAfterRedaction.Count
+                )
+            }
+            else {
+                Write-Warning (
+                    "W_BACKUP_FAILURE_ARTIFACT_PREVIEWS_REDACTED: output previews in '{0}' were replaced with a redaction placeholder because captured step output matched unknown secret patterns." -f
+                    $backupFailureArtifactRelativePath
+                )
+            }
+        }
+    }
+
+    if ($hasGitFailure -and @($phaseFailures).Count -gt 0 -and (Test-Path -LiteralPath $backupFailureArtifactPath -PathType Leaf)) {
+        # Git-phase guards (oversize / snapshot refresh) fail closed without staging managed
+        # outputs, so persist the failure artifact BY ITSELF: it is small pushable JSON, which
+        # keeps the failure reasons in history instead of stranding them on host disk until a
+        # fully green run would delete them uncommitted. Skipped when hygiene deleted the
+        # artifact, and the commit is path-limited so pre-existing staged managed changes
+        # (preserved through preflight stash --index) are never swept into history.
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $artifactAddArgs = @("-C", $repositoryRoot, "add", "--", $backupFailureArtifactRelativePath)
+            $artifactAddOutput = @(& $gitExecutable @artifactAddArgs 2>&1 | ForEach-Object { [string]$_ })
+            $artifactAddExitCode = Get-LastExitCodeOrDefault
+            $artifactCommitPushed = $false
+            if ($artifactAddExitCode -eq 0) {
+                $artifactStagedArgs = @("-C", $repositoryRoot, "diff", "--cached", "--name-only", "--", $backupFailureArtifactRelativePath)
+                $artifactStagedFiles = @(& $gitExecutable @artifactStagedArgs 2>$null)
+                $artifactStagedExitCode = Get-LastExitCodeOrDefault
+                if ($artifactStagedExitCode -eq 0 -and @($artifactStagedFiles).Count -gt 0) {
+                    $phaseGuardNames = @($phaseFailures | ForEach-Object { ($_ -split ':')[0] })
+                    $artifactCommitMessage = "Backup failure diagnostics for $dateString (git-phase guards failed: [$($phaseGuardNames -join ', ')])"
+                    $artifactCommitArgs = @("-C", $repositoryRoot, "commit")
+                    if ($isUnattendedMode) {
+                        $artifactCommitArgs += "--no-verify"
+                    }
+
+                    # Path-limited commit: the index may still hold pre-existing staged managed
+                    # changes (restored via stash pop --index), and committing those here would
+                    # defeat exactly the guards that just failed closed.
+                    $artifactCommitArgs += @("-m", $artifactCommitMessage, "--", $backupFailureArtifactRelativePath)
+                    $artifactCommitOutput = @(& $gitExecutable @artifactCommitArgs 2>&1 | ForEach-Object { [string]$_ })
+                    $artifactCommitExitCode = Get-LastExitCodeOrDefault
+                    if ($artifactCommitExitCode -eq 0) {
+                        Assert-BackupGitBranchOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ExpectedBranch "main"
+                        $artifactPushOutput = @(& $gitExecutable -C $repositoryRoot push origin main 2>&1 | ForEach-Object { [string]$_ })
+                        $artifactPushExitCode = Get-LastExitCodeOrDefault
+                        if ($artifactPushExitCode -eq 0) {
+                            try {
+                                Assert-BackupGitRemoteHeadOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -RemoteName "origin" -BranchName "main"
+                                $artifactCommitPushed = $true
+                                Write-Host "Backup failure diagnostics committed and pushed." -ForegroundColor Yellow
+                            }
+                            catch {
+                                Write-Warning ("W_BACKUP_GIT_REMOTE_VERIFY_FAILED: {0}" -f $_.Exception.Message)
+                            }
+                        }
+                        else {
+                            Write-Warning (
+                                "E_BACKUP_GIT_PUSH_FAILED: git push origin main exited with code {0} while persisting failure diagnostics (outputPreview={1})." -f
+                                $artifactPushExitCode,
+                                (Get-OutputPreview -OutputLines $artifactPushOutput)
+                            )
+                        }
+                    }
+                    else {
+                        Write-Warning (
+                            "E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0} while persisting failure diagnostics (outputPreview={1})." -f
+                            $artifactCommitExitCode,
+                            (Get-OutputPreview -OutputLines $artifactCommitOutput)
+                        )
+                    }
+                }
+            }
+            else {
+                Write-Warning (
+                    "E_BACKUP_GIT_ADD_FAILED: git add of the failure artifact exited with code {0} (pathspec='{1}'; outputPreview={2})." -f
+                    $artifactAddExitCode,
+                    $backupFailureArtifactRelativePath,
+                    (Get-OutputPreview -OutputLines $artifactAddOutput)
+                )
+            }
+
+            if (-not $artifactCommitPushed) {
+                # Keep the working tree consistent for the next run: unstage the artifact so the
+                # managed-preflight stash/pull path continues to behave predictably.
+                & $gitExecutable -C $repositoryRoot reset --quiet -- $backupFailureArtifactRelativePath 2>$null
+            }
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+    }
 
     if (-not $hasGitFailure) {
         $gitAddArgs = @("-C", $repositoryRoot, "add", "--")

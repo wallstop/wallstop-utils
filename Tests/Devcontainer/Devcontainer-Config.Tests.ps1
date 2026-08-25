@@ -31,14 +31,14 @@ Describe "devcontainer.json image-first contract" {
 
     It "allows only the Node.js feature and pins it to latest so devcontainers ship current Node.js/npm" {
         # Image-first contract: arbitrary feature mutation is forbidden; the single
-        # sanctioned exception is ghcr.io/devcontainers/features/node:1 pinned to
+        # sanctioned exception is ghcr.io/devcontainers/features/node:2 pinned to
         # version=latest (kept fresh by the weekly Dependabot devcontainers lane).
         $featuresProperty = $script:devcontainer.PSObject.Properties["features"]
         $null -eq $featuresProperty | Should -BeFalse -Because "the Node.js feature is required for latest Node.js/npm in devcontainers"
 
         $features = @($featuresProperty.Value.PSObject.Properties)
         $features.Count | Should -Be 1
-        $features[0].Name | Should -Be 'ghcr.io/devcontainers/features/node:1'
+        $features[0].Name | Should -Be 'ghcr.io/devcontainers/features/node:2'
 
         $nodeOptions = $features[0].Value
         $nodeOptions.version | Should -Be "latest"
@@ -157,7 +157,7 @@ Describe "devcontainer-lock.json feature pinning contract" {
         $lockedFeatures = @($script:lock.PSObject.Properties["features"].Value.PSObject.Properties)
         $configuredFeatures = @($script:devcontainer.PSObject.Properties["features"].Value.PSObject.Properties)
         $lockedFeatures[0].Name | Should -Be $configuredFeatures[0].Name
-        $lockedFeatures[0].Name | Should -Be 'ghcr.io/devcontainers/features/node:1'
+        $lockedFeatures[0].Name | Should -Be 'ghcr.io/devcontainers/features/node:2'
     }
 
     It "records version plus sha256 digest integrity for the locked feature" {

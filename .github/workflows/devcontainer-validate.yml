@@ -63,7 +63,7 @@ jobs:
               raise SystemExit("ERROR: image-first policy forbids a build block in devcontainer.json.")
 
           features = config.get("features") or {}
-          allowed_features = {"ghcr.io/devcontainers/features/node:1"}
+          allowed_features = {"ghcr.io/devcontainers/features/node:2"}
           if not isinstance(features, dict) or not features:
               raise SystemExit("ERROR: devcontainer contract requires the Node.js feature entry.")
 
@@ -76,10 +76,10 @@ jobs:
                   f"ERROR: image-first policy only allows {sorted(allowed_features)}, found disallowed entries: {disallowed}."
               )
 
-          node_options = features.get("ghcr.io/devcontainers/features/node:1")
+          node_options = features.get("ghcr.io/devcontainers/features/node:2")
           if not isinstance(node_options, dict) or node_options.get("version") != "latest":
               raise SystemExit(
-                  "ERROR: ghcr.io/devcontainers/features/node:1 must set version=latest so devcontainers ship current Node.js/npm."
+                  "ERROR: ghcr.io/devcontainers/features/node:2 must set version=latest so devcontainers ship current Node.js/npm."
               )
 
           lock_path = ".devcontainer/devcontainer-lock.json"
@@ -99,7 +99,7 @@ jobs:
                   f"ERROR: devcontainer-lock.json locks {sorted(locked_features)}; expected {sorted(allowed_features)} to mirror devcontainer.json."
               )
 
-          locked_node = locked_features["ghcr.io/devcontainers/features/node:1"]
+          locked_node = locked_features["ghcr.io/devcontainers/features/node:2"]
           if not isinstance(locked_node, dict) or not str(locked_node.get("version") or "").strip():
               raise SystemExit("ERROR: devcontainer-lock.json node feature entry must record a resolved version.")
 

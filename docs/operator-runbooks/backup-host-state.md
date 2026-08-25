@@ -9,6 +9,36 @@ Run these commands from the repository root in an elevated or normal Windows
 PowerShell session as appropriate for the destination paths. `pwsh` is
 preferred; use `powershell.exe` when PowerShell 7 is unavailable.
 
+## Reading failure reasons after an unattended run
+
+Unattended backups commit with `--no-verify`, so console output is lost on the
+host. Two persistent diagnostics survive in git history instead:
+
+- The commit message names failing steps:
+  `(backup steps failed: N [StepA, StepB]; X/Y succeeded)`.
+- `Config/backup-step-failures.json` records each failed step's error message
+  plus a bounded output preview, and is committed alongside the snapshot on the
+  next successful run. A fully successful run deletes it again.
+
+To diagnose a partial backup, read the artifact from the first commit that
+shows no failures after the bad run:
+
+```powershell
+git show HEAD:Config/backup-step-failures.json
+```
+
+Git-phase guards also record into that artifact, and a guard-failing run commits and
+pushes the artifact by itself so the reasons are never stranded on host disk:
+`E_BACKUP_SNAPSHOT_REFRESH_FAILED` means a `Config/.config` AutoHotkey snapshot drifted
+to AHK v1 and could not be refreshed from its `Scripts/AutoHotKey` source (fix the
+source), and `E_BACKUP_MANAGED_FILE_OVERSIZE` means a managed file exceeded 95MB —
+GitHub rejects blobs over 100MiB, which would strand the entire backup push. Remove the
+offending host file or add a targeted `.gitignore` rule for genuine machine-generated
+state (see the `Config/.config/vllm/` rule for precedent). Captured step output in the
+artifact passes secret hygiene: known-secret fields are redacted and unknown-secret
+patterns replace previews with a redaction placeholder (the artifact is deleted instead
+of committed if patterns survive redaction).
+
 ## 1. Repair the PowerShell profile
 
 Preview the repair first. The default destination is the current user's
