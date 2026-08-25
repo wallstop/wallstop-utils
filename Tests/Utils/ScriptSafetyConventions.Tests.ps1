@@ -3718,7 +3718,7 @@ Describe "Backup script safety conventions" {
         # Persistent artifact: deterministic canonical JSON, written on failures, removed on success.
         $backupScript | Should -Match 'function\s+Set-BackupStepFailuresArtifact'
         $backupScript | Should -Match '"Config/backup-step-failures\.json"'
-        $backupScript | Should -Match 'failedSteps\s*=[\s\S]*?phaseFailures\s*=[\s\S]*?succeededSteps\s*=[\s\S]*?totalSteps\s*=' -Because "the artifact schema literal must expose step names, reasons, and output previews."
+        $backupScript | Should -Match 'failedSteps`": \{0\}.*phaseFailures`": \{1\}.*succeededSteps`": \{2\}.*totalSteps`": \{3\}' -Because "the artifact schema must expose step names, reasons, and output previews."
         $backupScript | Should -Match 'ConvertTo-CanonicalJsonText\s+-RawJson\s+\$rawJson' -Because "artifact bytes must match the repository canonical JSON form even though backup commits bypass formatting hooks."
         $backupScript | Should -Match 'Remove-Item\s+-LiteralPath\s+\$artifactPath\s+-Force\s+-ErrorAction\s+Stop' -Because "a fully successful run must remove the stale failure artifact instead of leaving stale failure state behind."
         $backupScript | Should -Match '-FailedEntries\s+@\(\$failedStepEntries\s+\+\s+@\(\$phaseFailures\)\)'
@@ -3726,6 +3726,10 @@ Describe "Backup script safety conventions" {
         # Captured step output may contain secrets: the artifact itself passes secret hygiene.
         $backupScript | Should -Match 'Invoke-BackupKnownSecretSanitization\s+-RepositoryRoot\s+\$repositoryRoot\s+-RelativePaths\s+@\(backupFailureArtifactRelativePath\)|Invoke-BackupKnownSecretSanitization\s+-RepositoryRoot\s+\$repositoryRoot\s+-RelativePaths\s+@\(\$backupFailureArtifactRelativePath\)' -Because "the artifact embeds raw captured output and must pass known-secret redaction."
         $backupScript | Should -Match 'E_BACKUP_FAILURE_ARTIFACT_SECRETS_DETECTED:[\s\S]*the artifact was deleted instead of being committed' -Because "unknown secret patterns in the artifact must never reach the remote."
+        $backupScript | Should -Match 'Reset-BackupSecretHygieneState[\s\S]*?artifactSecretFindingsAfterRedaction\s*=' -Because "the hygiene reader caches file text; without a reset the post-redaction rescan sees stale pre-redaction bytes and always deletes the artifact."
+        # Artifact serialization must be stable across PowerShell 5.1 and 7+.
+        $backupScript | Should -Match 'function\s+ConvertTo-BackupFailureArtifactJson' -Because "ConvertTo-Json collapses single-element arrays on Windows PowerShell 5.1, so the document is composed from scalar-only serializations."
+        $backupScript | Should -Not -Match 'ConvertTo-Json\s+-InputObject\s+\$artifactDocument'
         # Artifact write/remove faults fail open with stable diagnostics.
         $backupScript | Should -Match 'W_BACKUP_FAILURE_ARTIFACT_REMOVE_FAILED:'
         $backupScript | Should -Match 'E_BACKUP_FAILURE_ARTIFACT_WRITE_FAILED:' -Because "losing a diagnostics file must never abort the backup run."
@@ -3758,7 +3762,8 @@ Describe "Backup script safety conventions" {
 
         # Phase-failure persistence: guard failures commit the small artifact by itself so the
         # reasons are not stranded on host disk until an eventually green run deletes them.
-        $backupScript | Should -Match 'if\s*\(\$hasGitFailure\s*-and\s+@\(\$phaseFailures\)\.Count\s*-gt\s*0\s*\)'
+        $backupScript | Should -Match 'if\s*\(\$hasGitFailure\s*-and\s+@\(\$phaseFailures\)\.Count\s*-gt\s*0\s*-and\s+\(Test-Path\s+-LiteralPath\s+\$backupFailureArtifactPath\s+-PathType\s+Leaf\)\)' -Because "a hygiene-deleted artifact must never be re-added (which would fail or stage a deletion)."
+        $backupScript | Should -Match '"-m",\s*\$artifactCommitMessage,\s*"--",\s*\$backupFailureArtifactRelativePath' -Because "the diagnostics commit must be path-limited so pre-existing staged managed changes are never swept into history."
         $backupScript | Should -Match 'Backup failure diagnostics for \$dateString \(git-phase guards failed:'
         $backupScript | Should -Match 'if\s*\(\s*-not\s+\$artifactCommitPushed\s*\)[\s\S]*?reset\s+--quiet' -Because "a failed diagnostics push must restage cleanly for the next run."
     }

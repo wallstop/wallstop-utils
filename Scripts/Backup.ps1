@@ -652,6 +652,74 @@ function Get-BackupOversizedManagedFileErrors {
     return $errors.ToArray()
 }
 
+function ConvertTo-BackupFailureArtifactEscapedString {
+    # Scalar-string JSON encoding that behaves identically on Windows PowerShell 5.1 and
+    # PowerShell 7+: ConvertTo-Json only ever sees a single string, so quoting/escaping never
+    # hits the 5.1 single-element-collection collapse quirk.
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    return ([string]($Value | ConvertTo-Json -Compress))
+}
+
+function ConvertTo-BackupFailureArtifactJson {
+    # Whole-document serializer for Config/backup-step-failures.json built from
+    # ConvertTo-Json'd scalars plus hand-joined arrays: passing the full document through
+    # ConvertTo-Json would let Windows PowerShell 5.1 collapse single-element arrays
+    # (one failed step -> bare object), making the committed schema unstable across hosts.
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$FailedStepEntries,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$PhaseFailureTexts,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$SucceededStepNames,
+
+        [Parameter(Mandatory = $true)]
+        [int]$TotalSteps,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$RedactOutputPreviews
+    )
+
+    $failedStepsMembers = @(
+        foreach ($failedEntry in @($FailedStepEntries)) {
+            '{{ "name": {0}, "error": {1}, "outputPreview": {2} }}' -f `
+            (ConvertTo-BackupFailureArtifactEscapedString -Value ([string]$failedEntry.Name)),
+            (ConvertTo-BackupFailureArtifactEscapedString -Value ([string]$failedEntry.Error)),
+            (ConvertTo-BackupFailureArtifactEscapedString -Value $(if ($RedactOutputPreviews) { "(redacted: secret pattern detected in captured output)" } else { [string]$failedEntry.OutputPreview }))
+        }
+    )
+
+    $phaseMembers = @(
+        foreach ($phaseFailureText in @($PhaseFailureTexts)) {
+            ConvertTo-BackupFailureArtifactEscapedString -Value $phaseFailureText
+        }
+    )
+
+    $succeededMembers = @(
+        foreach ($succeededStepName in @($SucceededStepNames)) {
+            ConvertTo-BackupFailureArtifactEscapedString -Value $succeededStepName
+        }
+    )
+
+    $formatArgs = @(
+        ("[{0}]" -f ($failedStepsMembers -join ", ")),
+        ("[{0}]" -f ($phaseMembers -join ", ")),
+        ("[{0}]" -f ($succeededMembers -join ", ")),
+        ([string]$TotalSteps)
+    )
+    return ("{{`n  `"failedSteps`": {0},`n  `"phaseFailures`": {1},`n  `"succeededSteps`": {2},`n  `"totalSteps`": {3}`n}}" -f $formatArgs)
+}
+
 function Set-BackupStepFailuresArtifact {
     param(
         [Parameter(Mandatory = $true)]
@@ -700,22 +768,12 @@ function Set-BackupStepFailuresArtifact {
     $failedStepEntries = @(@($FailedEntries) | Where-Object { $_ -isnot [string] })
     $phaseFailureTexts = @(@($FailedEntries) | Where-Object { $_ -is [string] })
 
-    $artifactDocument = [ordered]@{
-        failedSteps = @(
-            foreach ($failedEntry in $failedStepEntries) {
-                [ordered]@{
-                    name          = [string]$failedEntry.Name
-                    error         = [string]$failedEntry.Error
-                    outputPreview = $(if ($RedactOutputPreviews) { "(redacted: secret pattern detected in captured output)" } else { [string]$failedEntry.OutputPreview })
-                }
-            }
-        )
-        phaseFailures  = @($phaseFailureTexts)
-        succeededSteps = @($SucceededStepNames)
-        totalSteps     = $TotalSteps
-    }
-
-    $rawJson = ConvertTo-Json -InputObject $artifactDocument -Depth 6
+    $rawJson = ConvertTo-BackupFailureArtifactJson `
+        -FailedStepEntries $failedStepEntries `
+        -PhaseFailureTexts @([string[]]$phaseFailureTexts) `
+        -SucceededStepNames @([string[]]$SucceededStepNames) `
+        -TotalSteps $TotalSteps `
+        -RedactOutputPreviews:$RedactOutputPreviews
     $canonicalJson = ConvertTo-CanonicalJsonText -RawJson $rawJson
     try {
         [System.IO.File]::WriteAllText($artifactPath, $canonicalJson, [System.Text.UTF8Encoding]::new($false))
@@ -1204,9 +1262,12 @@ try {
                 -SucceededStepNames @($stepResults | Where-Object { $_.Success } | ForEach-Object { $_.Name }) `
                 -TotalSteps $stepResults.Count `
                 -RedactOutputPreviews
+            # The hygiene reader caches file text; reset so the rescan sees the rewritten bytes.
+            Reset-BackupSecretHygieneState
             $artifactSecretFindingsAfterRedaction = @(Find-BackupUnknownSecretFindings -RepositoryRoot $repositoryRoot -RelativePaths @($backupFailureArtifactRelativePath))
             if ($artifactSecretFindingsAfterRedaction.Count -gt 0) {
                 Remove-Item -LiteralPath $backupFailureArtifactPath -Force -ErrorAction SilentlyContinue
+                Reset-BackupSecretHygieneState
                 Write-Warning (
                     "E_BACKUP_FAILURE_ARTIFACT_SECRETS_DETECTED: unknown secret patterns remained in '{0}' even after preview redaction; the artifact was deleted instead of being committed. fileCount={1}." -f
                     $backupFailureArtifactRelativePath,
@@ -1222,74 +1283,86 @@ try {
         }
     }
 
-    if ($hasGitFailure -and @($phaseFailures).Count -gt 0) {
+    if ($hasGitFailure -and @($phaseFailures).Count -gt 0 -and (Test-Path -LiteralPath $backupFailureArtifactPath -PathType Leaf)) {
         # Git-phase guards (oversize / snapshot refresh) fail closed without staging managed
         # outputs, so persist the failure artifact BY ITSELF: it is small pushable JSON, which
         # keeps the failure reasons in history instead of stranding them on host disk until a
-        # fully green run would delete them uncommitted.
-        $artifactAddArgs = @("-C", $repositoryRoot, "add", "--", $backupFailureArtifactRelativePath)
-        $artifactAddOutput = @(& $gitExecutable @artifactAddArgs 2>&1 | ForEach-Object { [string]$_ })
-        $artifactAddExitCode = Get-LastExitCodeOrDefault
-        $artifactCommitPushed = $false
-        if ($artifactAddExitCode -eq 0) {
-            $artifactStagedArgs = @("-C", $repositoryRoot, "diff", "--cached", "--name-only", "--", $backupFailureArtifactRelativePath)
-            $artifactStagedFiles = @(& $gitExecutable @artifactStagedArgs 2>$null)
-            $artifactStagedExitCode = Get-LastExitCodeOrDefault
-            if ($artifactStagedExitCode -eq 0 -and @($artifactStagedFiles).Count -gt 0) {
-                $phaseGuardNames = @($phaseFailures | ForEach-Object { ($_ -split ':')[0] })
-                $artifactCommitMessage = "Backup failure diagnostics for $dateString (git-phase guards failed: [$($phaseGuardNames -join ', ')])"
-                $artifactCommitArgs = @("-C", $repositoryRoot, "commit")
-                if ($isUnattendedMode) {
-                    $artifactCommitArgs += "--no-verify"
-                }
+        # fully green run would delete them uncommitted. Skipped when hygiene deleted the
+        # artifact, and the commit is path-limited so pre-existing staged managed changes
+        # (preserved through preflight stash --index) are never swept into history.
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $artifactAddArgs = @("-C", $repositoryRoot, "add", "--", $backupFailureArtifactRelativePath)
+            $artifactAddOutput = @(& $gitExecutable @artifactAddArgs 2>&1 | ForEach-Object { [string]$_ })
+            $artifactAddExitCode = Get-LastExitCodeOrDefault
+            $artifactCommitPushed = $false
+            if ($artifactAddExitCode -eq 0) {
+                $artifactStagedArgs = @("-C", $repositoryRoot, "diff", "--cached", "--name-only", "--", $backupFailureArtifactRelativePath)
+                $artifactStagedFiles = @(& $gitExecutable @artifactStagedArgs 2>$null)
+                $artifactStagedExitCode = Get-LastExitCodeOrDefault
+                if ($artifactStagedExitCode -eq 0 -and @($artifactStagedFiles).Count -gt 0) {
+                    $phaseGuardNames = @($phaseFailures | ForEach-Object { ($_ -split ':')[0] })
+                    $artifactCommitMessage = "Backup failure diagnostics for $dateString (git-phase guards failed: [$($phaseGuardNames -join ', ')])"
+                    $artifactCommitArgs = @("-C", $repositoryRoot, "commit")
+                    if ($isUnattendedMode) {
+                        $artifactCommitArgs += "--no-verify"
+                    }
 
-                $artifactCommitArgs += @("-m", $artifactCommitMessage)
-                $artifactCommitOutput = @(& $gitExecutable @artifactCommitArgs 2>&1 | ForEach-Object { [string]$_ })
-                $artifactCommitExitCode = Get-LastExitCodeOrDefault
-                if ($artifactCommitExitCode -eq 0) {
-                    Assert-BackupGitBranchOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ExpectedBranch "main"
-                    $artifactPushOutput = @(& $gitExecutable -C $repositoryRoot push origin main 2>&1 | ForEach-Object { [string]$_ })
-                    $artifactPushExitCode = Get-LastExitCodeOrDefault
-                    if ($artifactPushExitCode -eq 0) {
-                        try {
-                            Assert-BackupGitRemoteHeadOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -RemoteName "origin" -BranchName "main"
-                            $artifactCommitPushed = $true
-                            Write-Host "Backup failure diagnostics committed and pushed." -ForegroundColor Yellow
+                    # Path-limited commit: the index may still hold pre-existing staged managed
+                    # changes (restored via stash pop --index), and committing those here would
+                    # defeat exactly the guards that just failed closed.
+                    $artifactCommitArgs += @("-m", $artifactCommitMessage, "--", $backupFailureArtifactRelativePath)
+                    $artifactCommitOutput = @(& $gitExecutable @artifactCommitArgs 2>&1 | ForEach-Object { [string]$_ })
+                    $artifactCommitExitCode = Get-LastExitCodeOrDefault
+                    if ($artifactCommitExitCode -eq 0) {
+                        Assert-BackupGitBranchOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -ExpectedBranch "main"
+                        $artifactPushOutput = @(& $gitExecutable -C $repositoryRoot push origin main 2>&1 | ForEach-Object { [string]$_ })
+                        $artifactPushExitCode = Get-LastExitCodeOrDefault
+                        if ($artifactPushExitCode -eq 0) {
+                            try {
+                                Assert-BackupGitRemoteHeadOrThrow -GitExecutable $gitExecutable -RepositoryRoot $repositoryRoot -RemoteName "origin" -BranchName "main"
+                                $artifactCommitPushed = $true
+                                Write-Host "Backup failure diagnostics committed and pushed." -ForegroundColor Yellow
+                            }
+                            catch {
+                                Write-Warning ("W_BACKUP_GIT_REMOTE_VERIFY_FAILED: {0}" -f $_.Exception.Message)
+                            }
                         }
-                        catch {
-                            Write-Warning ("W_BACKUP_GIT_REMOTE_VERIFY_FAILED: {0}" -f $_.Exception.Message)
+                        else {
+                            Write-Warning (
+                                "E_BACKUP_GIT_PUSH_FAILED: git push origin main exited with code {0} while persisting failure diagnostics (outputPreview={1})." -f
+                                $artifactPushExitCode,
+                                (Get-OutputPreview -OutputLines $artifactPushOutput)
+                            )
                         }
                     }
                     else {
                         Write-Warning (
-                            "E_BACKUP_GIT_PUSH_FAILED: git push origin main exited with code {0} while persisting failure diagnostics (outputPreview={1})." -f
-                            $artifactPushExitCode,
-                            (Get-OutputPreview -OutputLines $artifactPushOutput)
+                            "E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0} while persisting failure diagnostics (outputPreview={1})." -f
+                            $artifactCommitExitCode,
+                            (Get-OutputPreview -OutputLines $artifactCommitOutput)
                         )
                     }
                 }
-                else {
-                    Write-Warning (
-                        "E_BACKUP_GIT_COMMIT_FAILED: git commit exited with code {0} while persisting failure diagnostics (outputPreview={1})." -f
-                        $artifactCommitExitCode,
-                        (Get-OutputPreview -OutputLines $artifactCommitOutput)
-                    )
-                }
+            }
+            else {
+                Write-Warning (
+                    "E_BACKUP_GIT_ADD_FAILED: git add of the failure artifact exited with code {0} (pathspec='{1}'; outputPreview={2})." -f
+                    $artifactAddExitCode,
+                    $backupFailureArtifactRelativePath,
+                    (Get-OutputPreview -OutputLines $artifactAddOutput)
+                )
+            }
+
+            if (-not $artifactCommitPushed) {
+                # Keep the working tree consistent for the next run: unstage the artifact so the
+                # managed-preflight stash/pull path continues to behave predictably.
+                & $gitExecutable -C $repositoryRoot reset --quiet -- $backupFailureArtifactRelativePath 2>$null
             }
         }
-        else {
-            Write-Warning (
-                "E_BACKUP_GIT_ADD_FAILED: git add of the failure artifact exited with code {0} (pathspec='{1}'; outputPreview={2})." -f
-                $artifactAddExitCode,
-                $backupFailureArtifactRelativePath,
-                (Get-OutputPreview -OutputLines $artifactAddOutput)
-            )
-        }
-
-        if (-not $artifactCommitPushed) {
-            # Keep the working tree consistent for the next run: unstage the artifact so the
-            # managed-preflight stash/pull path continues to behave predictably.
-            & $gitExecutable -C $repositoryRoot reset --quiet -- $backupFailureArtifactRelativePath 2>$null
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
         }
     }
 

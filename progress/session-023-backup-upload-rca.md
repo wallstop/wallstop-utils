@@ -50,11 +50,38 @@ first to name its failing steps. Also drive open dependency PR #73 and keep main
 
 ## Validation
 
-- Pester: ScriptSafetyConventions 278/278, Devcontainer-Config 22/22.
+- Pester: ScriptSafetyConventions 278/278, Devcontainer-Config 22/22, CanonicalJson/ScoopBackup/BackupDxMessaging/BackupHostStateRemediation 60/60.
 - PSScriptAnalyzer (repo settings): Backup.ps1 zero findings; AST unused-function check passes.
-- Artifact pipeline probe: single-entry arrays preserved, escaping correct, canonicalizer fixed point.
-- Refresh-gate probe inside a scratch pair of repo files: v1 mirror auto-refreshed from v2 source
-  (`snapshot-source-refresh`), checker exit clean, probe files removed.
+- Behavioral probes: canonical artifact JSON round-trip/fixed-point verified; scratch in-repo drift pair refreshed from v2 source via the exact checker invocation Backup now uses; staged-only drift proven visible to HEAD-relative enumeration but invisible to index-relative diffs.
+
+## Review loops
+
+1. **Adversarial reviewer** (sub-agent) found 4 MAJOR + minors; all fixed in `26db3d8`:
+   `-File` array misbinding broke the refresh gate for >=2 drifted snapshots (targets now
+   ';'-joined into one argument); index-relative enumeration let staged-only drift bypass
+   oversize/AHK/secret guards (now diffs against HEAD); the artifact bypassed secret hygiene
+   (now sanitized/scanned/redacted before any commit); git-phase reasons were stranded when
+   guards failed closed (artifact now committed and pushed by itself, path-limited).
+2. **Cursor Bugbot** round 1 reviewed the pre-fix commit with 5 findings; all fixed in
+   `369a7ce`: path-limited diagnostics commit (index-wide commit would have published exactly
+   what guards rejected), hygiene text-cache reset before re-scan (stale cache always deleted
+   the redacted artifact), scalar-composed JSON serialization (5.1 collapses single-element
+   arrays), skip persistence when hygiene deleted the artifact, EAP=Continue scoping for
+   artifact git captures. **Bugbot round 2 on `369a7ce`: success, zero findings.**
+3. Sub-agent verifier was unavailable twice (provider outage); verification ran on the main
+   thread per GOAL fallback, including empirical probes of each claimed fix.
+
+## Final state
+
+- PR [#75](https://github.com/wallstop/wallstop-utils/pull/75): all workflow checks green
+  (PS 5.1, PS 7+, pre-commit Linux, devcontainer post-create, Windows language fast lane,
+  compat gate, validation summary); Cursor Bugbot clean; PR mergeable. The only non-success
+  check is `copilot-pull-request-reviewer`, which reports a Copilot quota limit on the
+  account ("unable to review... reached their quota limit") - external bot limitation, not a
+  code check, and it does not gate mergeability.
+- Main repaired and pushed ahead of this branch (`50f345b`) so tonight's scheduled host
+  backup can push again.
+- Issue #46 RCA comment posted linking evidence and fixes.
 
 ## Open items
 
@@ -62,3 +89,5 @@ first to name its failing steps. Also drive open dependency PR #73 and keep main
   the new artifact (PLAN tracks this).
 - Issue #70 operator action (redeploy v2 `window-control.ahk` on the host) still pending; until
   then each backup shows a transient mirror diff that self-heals before commit.
+- Copilot code review never ran on PR #75 due to account quota; if a human review is desired
+  later, re-request once quota resets.
