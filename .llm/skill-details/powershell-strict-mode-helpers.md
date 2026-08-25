@@ -15,6 +15,15 @@ $lecValue = Get-Variable -Name 'LASTEXITCODE' -ValueOnly -ErrorAction SilentlyCo
 $exitCode = if ($null -ne $lecValue) { [int]$lecValue } else { -1 }
 ```
 
+## Native Exit Codes Are Truncated To 8 Bits On POSIX Children
+
+POSIX child processes truncate int32 exit codes to 8 bits, so negative Windows HRESULT exit
+codes (for example winget's `-1978335188`) can never be observed verbatim from a non-Windows
+test child. Do not synthesize aggregate exit codes via shims on POSIX; extract the decision
+logic into a pure resolver function taking `[int]$ExitCode` plus captured output lines, unit-test
+it cross-platform, and gate any true end-to-end negative-HRESULT behavioral assertion to Windows
+(precedent: `Resolve-WinGetUpdateOutcome` in `Scripts/WinGet/WinGetUpdate.ps1`).
+
 ## Optional Module Resolution Helpers
 
 Resolve optional quality dependencies through helper-based imports before failing configuration checks.

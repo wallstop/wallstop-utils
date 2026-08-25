@@ -11,7 +11,7 @@ This file is generated. Do not edit generated sections manually.
 | --- | --- | --- | --- |
 | [Config Snapshot Safety](./skills/config-snapshot-safety/SKILL.md) | [Expanded Guide](./skill-details/config-snapshot-safety.md) | config snapshots, encrypted payloads, json validation exclusions | Keep encrypted configuration snapshots and validation exclusions safe when backing up or restoring machine configuration. |
 | [Cross Language Quality Gate](./skills/cross-language-quality-gate/SKILL.md) | [Expanded Guide](./skill-details/cross-language-quality-gate.md) | quality gate, pre-commit, ci parity, clean tree, full validation, session close | Apply the repository's cross-language validation and CI-parity workflow before completing quality, pre-commit, or release work. |
-| [PowerShell Strict Mode Helpers](./skills/powershell-strict-mode-helpers/SKILL.md) | [Expanded Guide](./skill-details/powershell-strict-mode-helpers.md) | powershell, strict mode, lastexitcode, helper function | Implement strict-mode-safe PowerShell behavior with portable helper functions, reliable error handling, and correct exit-code propagation. |
+| [PowerShell Strict Mode Helpers](./skills/powershell-strict-mode-helpers/SKILL.md) | [Expanded Guide](./skill-details/powershell-strict-mode-helpers.md) | powershell, strict mode, lastexitcode, helper function, native exit codes, exit code truncation | Implement strict-mode-safe PowerShell behavior with portable helper functions, reliable error handling, and correct exit-code propagation. |
 
 ## Quality
 

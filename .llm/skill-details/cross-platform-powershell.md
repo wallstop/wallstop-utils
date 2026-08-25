@@ -145,8 +145,10 @@ platform-appropriate.
 
 When creating files programmatically, use consistent lowercase or match existing conventions exactly.
 File permission differences: Unix requires `chmod +x` for executable scripts; use platform checks before setting permissions.
-When resolving POSIX/native tools from PowerShell (`chmod`, `readlink`, `test`), use
-`Get-Command -CommandType Application` and invoke `.Path` with `.Source` fallback; do not
+When resolving POSIX/native tools from PowerShell (`chmod`, `readlink`, `test`, `winget`), use
+`Get-Command -CommandType Application` (add `ExternalScript` only when PATH-shim `.ps1` harnesses
+must resolve) and wrap candidates in `@(...)`, then invoke `[0].Path`/`.Source`: with multiple
+matches, a scalar `.Source` collapses into one space-joined string that cannot be invoked. Do not
 allow functions, aliases, or Pester helpers to shadow the external executable.
 
 Environment variable `$env:PATH` uses `;` as separator on Windows and `:` on Unix:
