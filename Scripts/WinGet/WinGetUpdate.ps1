@@ -32,10 +32,18 @@ function Get-WinGetInstallerFailureAttributions {
     $currentPackageId = $null
     foreach ($outputLine in @($OutputLines)) {
         # Captured external output can arrive as one multi-line element (script-shim shape)
-        # or per-line elements (native-command shape); expand physical lines either way.
-        foreach ($physicalLine in @(([string]$outputLine) -split "\r?\n")) {
+        # or per-line elements (native-command shape); expand physical lines either way,
+        # including lone-CR progress-redraw frames.
+        foreach ($physicalLine in @(([string]$outputLine) -split "\r\n|\r|\n")) {
             if ($physicalLine -match '^\s*\(\d+/\d+\)\s+Found\s+.*\[(?<id>[^\]]+)\]') {
                 $currentPackageId = $Matches['id']
+                continue
+            }
+
+            # Section boundaries: dependency installers and summary lines carry no Found block
+            # of their own, so a failure there must not pair with the preceding package.
+            if ($physicalLine -match '^\s*(Installing dependencies:|Successfully installed|Summary)') {
+                $currentPackageId = $null
                 continue
             }
 
@@ -180,7 +188,11 @@ function Resolve-WinGetUpdateOutcome {
 }
 
 function Invoke-WinGetUpgradeStep {
-    $wingetCommand = Get-Command -Name "winget" -ErrorAction SilentlyContinue
+    # Application covers the real winget (an app-execution alias); ExternalScript keeps the
+    # PATH-shim test harness (winget.ps1 on Windows) resolvable. Multiple candidates can match
+    # a single PATH directory (for example the bash and .ps1 test shims); invoke the first.
+    $wingetCommandCandidates = @(Get-Command -Name "winget" -CommandType Application, ExternalScript -ErrorAction SilentlyContinue)
+    $wingetCommand = if ($wingetCommandCandidates.Count -gt 0) { $wingetCommandCandidates[0] } else { $null }
     if ($null -eq $wingetCommand) {
         [Console]::Error.WriteLine("E_WINGET_UPDATE_NOT_AVAILABLE: winget CLI was not found on PATH. Install the Windows Package Manager (App Installer) and retry.")
         exit 1

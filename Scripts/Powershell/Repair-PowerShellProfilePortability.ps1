@@ -45,6 +45,10 @@ if ($repositoryViolations.Count -gt 0) {
 }
 
 $destinationPath = [System.IO.Path]::GetFullPath($ProfilePath)
+$destinationDirectory = [System.IO.Path]::GetDirectoryName($destinationPath)
+if ([string]::IsNullOrWhiteSpace($destinationDirectory)) {
+    throw "E_PROFILE_REPAIR_DESTINATION_INVALID: Could not resolve a parent directory for '$destinationPath'. See $operatorRunbookUrl"
+}
 
 Write-Host "PowerShell profile repair preview" -ForegroundColor Cyan
 Write-Host ("  Source:      {0}" -f $resolvedRepositoryProfilePath)

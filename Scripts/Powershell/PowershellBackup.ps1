@@ -51,15 +51,18 @@ function Assert-PowerShellProfileBackupPortability {
         # self-heal) so a drifted profile cannot fail every future daily backup. The previous
         # content is preserved in a timestamped backup beside the profile.
         $repairOutcome = $null
+        $selfHealUnavailableDetail = ""
         try {
             $repairOutcome = Restore-PowerShellProfileFromValidatedSource -ProfilePath $resolvedPath -RepositoryProfilePath $repositoryCanonicalProfilePath
         }
         catch {
+            # Precomputed so helper failures cannot mask the primary diagnostic code.
+            $selfHealUnavailableDetail = $_.Exception.Message
             Write-Verbose (
                 "PowerShell backup profile self-heal unavailable diagnostics: profile='{0}'; path='{1}'; reason={2}" -f
                 $ProfileName,
                 $resolvedPath,
-                $_.Exception.Message
+                $selfHealUnavailableDetail
             )
         }
 
@@ -75,10 +78,11 @@ function Assert-PowerShellProfileBackupPortability {
         }
 
         throw (
-            "E_POWERSHELL_BACKUP_PROFILE_PORTABILITY: PowerShell profile '{0}' at '{1}' contains PSReadLine setup that is not guarded for Windows PowerShell 5.1 and older PSReadLine versions. violations={2}. Run Repair-PowerShellProfilePortability.ps1 -ProfilePath '{1}' -Apply to repair this specific failing profile, or restore the repository profile. See {3}" -f
+            "E_POWERSHELL_BACKUP_PROFILE_PORTABILITY: PowerShell profile '{0}' at '{1}' contains PSReadLine setup that is not guarded for Windows PowerShell 5.1 and older PSReadLine versions. violations={2}. Run Repair-PowerShellProfilePortability.ps1 -ProfilePath '{1}' -Apply to repair this specific failing profile, or restore the repository profile. selfHealUnavailable={3}. See {4}" -f
             $ProfileName,
             $resolvedPath,
             ($violations -join ','),
+            $(if ([string]::IsNullOrWhiteSpace($selfHealUnavailableDetail)) { "not-attempted" } else { $selfHealUnavailableDetail }),
             $operatorRunbookUrl
         )
     }

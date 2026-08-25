@@ -8,6 +8,30 @@ BeforeAll {
     $script:komorebiRepairPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Komorebi/Repair-KomorebiBackupSource.ps1"
     $script:tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-backup-remediation-tests-" + [guid]::NewGuid().ToString("N"))
     [System.IO.Directory]::CreateDirectory($script:tempRoot) | Out-Null
+
+    . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1")
+    $script:pwshExecutable = Resolve-PowerShellExecutablePath
+
+    function Invoke-RemediationScriptBounded {
+        # Runs a remediation script in an isolated child pwsh with a bounded wait, avoiding both
+        # the Start-Process exit-code population race and an unbounded hang wedging CI.
+        param(
+            [Parameter(Mandatory = $true)]
+            [string[]]$ArgumentList,
+
+            [Parameter(Mandatory = $false)]
+            [int]$TimeoutSeconds = 60
+        )
+
+        $childProcess = Start-Process -FilePath $script:pwshExecutable -ArgumentList $ArgumentList -PassThru
+        $didExit = $childProcess.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $didExit) {
+            $childProcess.Kill()
+            throw "Remediation script did not exit within ${TimeoutSeconds}s: $($ArgumentList -join ' ')"
+        }
+
+        return $childProcess.ExitCode
+    }
 }
 
 AfterAll {
@@ -101,12 +125,11 @@ Describe "Backup host-state remediation" {
         [System.IO.Directory]::CreateDirectory($destinationDirectory) | Out-Null
         [System.IO.File]::WriteAllText($destination, "# old profile`n", [System.Text.UTF8Encoding]::new($false))
 
-        $pwshPath = if (Test-Path -LiteralPath "/usr/bin/pwsh" -PathType Leaf) { "/usr/bin/pwsh" } else { "pwsh" }
-        $childProcess = Start-Process -FilePath $pwshPath -ArgumentList @(
+        $repairExitCode = Invoke-RemediationScriptBounded -ArgumentList @(
             "-NoLogo", "-NoProfile", "-File", $script:profileRepairPath,
             "-ProfilePath", $destination, "-Apply"
-        ) -Wait -PassThru
-        $childProcess.ExitCode | Should -Be 0
+        )
+        $repairExitCode | Should -Be 0
         Test-Path -LiteralPath $destination -PathType Leaf | Should -BeTrue
         @(Get-ChildItem -LiteralPath $destinationDirectory -Filter "*.pre-portability-repair-*.bak" -File) | Should -HaveCount 1
         (Get-Content -LiteralPath $destination -Raw) | Should -Match "Parameters\.ContainsKey\('PredictionSource'\)"
@@ -116,12 +139,11 @@ Describe "Backup host-state remediation" {
         $destination = Join-Path -Path $script:tempRoot -ChildPath "komorebi-user"
         [System.IO.Directory]::CreateDirectory($destination) | Out-Null
 
-        $pwshPath = if (Test-Path -LiteralPath "/usr/bin/pwsh" -PathType Leaf) { "/usr/bin/pwsh" } else { "pwsh" }
-        $childProcess = Start-Process -FilePath $pwshPath -ArgumentList @(
+        $komorebiExitCode = Invoke-RemediationScriptBounded -ArgumentList @(
             "-NoLogo", "-NoProfile", "-File", $script:komorebiRepairPath,
             "-ProfileName", "default", "-UserProfileRoot", $destination, "-Apply"
-        ) -Wait -PassThru
-        $childProcess.ExitCode | Should -Be 0
+        )
+        $komorebiExitCode | Should -Be 0
         foreach ($fileName in @("applications.json", "komorebi.bar.json", "komorebi.json")) {
             Test-Path -LiteralPath (Join-Path -Path $destination -ChildPath $fileName) -PathType Leaf | Should -BeTrue
         }

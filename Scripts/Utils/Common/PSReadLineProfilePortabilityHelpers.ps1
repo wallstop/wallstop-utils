@@ -35,6 +35,9 @@ function Restore-PowerShellProfileFromValidatedSource {
     if ([string]::IsNullOrWhiteSpace($destinationDirectory)) {
         throw "E_PSREADLINE_PROFILE_REPAIR_DESTINATION_INVALID: Could not resolve a parent directory for '$destinationPath'."
     }
+    if (Test-Path -LiteralPath $destinationPath -PathType Container) {
+        throw "E_PSREADLINE_PROFILE_REPAIR_DESTINATION_INVALID: Destination '$destinationPath' is a directory, not a PowerShell profile file."
+    }
 
     # Repairing a profile from itself cannot resolve drift; report it as not repaired so the
     # caller keeps failing closed instead of looping on an unfixable target.

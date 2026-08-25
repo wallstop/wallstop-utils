@@ -336,13 +336,27 @@ Describe "Resolve-WinGetUpdateOutcome" {
             if ($ExpectErrorCode -eq "E_WINGET_UPDATE_PACKAGE_INSTALL_FAILED") {
                 $outcome.ErrorDiagnostic | Should -Match "Broken\.Publisher \(installer exit 1603\)"
             }
-            elseif ($ExpectErrorCode -ne "E_WINGET_UPDATE_PACKAGE_INSTALL_FAILED" -and $Description -eq "mixed consent-blocked and genuine failures keep both diagnostics") {
-                $outcome.WarningDiagnostic | Should -Match "Plex\.Plex"
-            }
         }
         else {
             $outcome.ErrorDiagnostic | Should -Be ""
         }
+    }
+
+    It "does not attribute dependency-section failures to the preceding package" {
+        # The observed issue #46 output lists dependencies (for example
+        # Microsoft.VCRedist.2015+.x64) under "Installing dependencies:" with no Found block of
+        # their own; pairing their failures with the parent package would misname the culprit.
+        $attributions = @(Get-WinGetInstallerFailureAttributions -OutputLines @(
+                "(1/1) Found Focusrite Control 2 [FocusriteAudioEngineeringLtd.FocusriteControl2] Version 1.1108.0.0",
+                "Successfully verified installer hash",
+                "Installing dependencies:",
+                "This package requires the following dependencies:",
+                "- Packages",
+                "Microsoft.VCRedist.2015+.x64",
+                "Installer failed with exit code: 1602"
+            ))
+
+        $attributions.Count | Should -Be 0
     }
 }
 
@@ -363,6 +377,7 @@ Describe "WinGetUpdate step behavior" {
     It "treats the winget no-applicable-upgrade no-op as success" {
         if (-not (Test-IsWindowsPlatform)) {
             Set-ItResult -Skipped -Because "POSIX children truncate winget's int32 aggregate HRESULT to 8 bits; resolver branches are unit-covered."
+            return
         }
 
         $harnessRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("winget-update-{0}" -f [System.Guid]::NewGuid().ToString("N"))
@@ -394,6 +409,7 @@ Describe "WinGetUpdate step behavior" {
     It "greens consent-blocked partial failures with an explicit warning" {
         if (-not (Test-IsWindowsPlatform)) {
             Set-ItResult -Skipped -Because "POSIX children truncate winget's int32 aggregate HRESULT to 8 bits; resolver branches are unit-covered."
+            return
         }
 
         $harnessRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("winget-update-{0}" -f [System.Guid]::NewGuid().ToString("N"))
@@ -421,6 +437,7 @@ Describe "WinGetUpdate step behavior" {
     It "fails non-consent package failures with attributable diagnostics" {
         if (-not (Test-IsWindowsPlatform)) {
             Set-ItResult -Skipped -Because "POSIX children truncate winget's int32 aggregate HRESULT to 8 bits; resolver branches are unit-covered."
+            return
         }
 
         $harnessRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("winget-update-{0}" -f [System.Guid]::NewGuid().ToString("N"))
@@ -444,6 +461,7 @@ Describe "WinGetUpdate step behavior" {
     It "fails closed when aggregate failures cannot be attributed" {
         if (-not (Test-IsWindowsPlatform)) {
             Set-ItResult -Skipped -Because "POSIX children truncate winget's int32 aggregate HRESULT to 8 bits; resolver branches are unit-covered."
+            return
         }
 
         $harnessRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("winget-update-{0}" -f [System.Guid]::NewGuid().ToString("N"))
