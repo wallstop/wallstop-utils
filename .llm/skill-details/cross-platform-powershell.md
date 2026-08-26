@@ -119,6 +119,8 @@ When reading redirected native process stderr from a temp file, use `Read-Redire
 from `CompatibilityHelpers.ps1` instead of fixed UTF-8 `ReadAllText`; Windows PowerShell 5.1
 can write UTF-16LE with a BOM while PowerShell 7+ normally writes UTF-8.
 
+When composing generated payload text token-by-token, build templates in single-quoted here-strings and substitute with `.Replace('<TOKEN>', $value)`; `String.Replace` inserts replacements literally (no regex semantics). Double-quoted here-strings are unsafe for verbatim templates: they interpolate `$values` (a leading backslash stays literal while interpolation still fires, and undefined names throw under strict mode) and expand backtick escapes.
+
 ## Case Sensitivity And File System Differences
 
 Linux file systems are typically case-sensitive; Windows NTFS and default macOS APFS volumes are usually case-insensitive, though macOS can be configured as case-sensitive.
@@ -202,6 +204,7 @@ $collection | Where-Object { $_.Status -eq 'Active' }
 Avoid `+=` on arrays; use `[System.Collections.Generic.List[T]]` or collect from `foreach` output.
 Use `-join` operator or `StringBuilder` for string assembly instead of `+=` concatenation.
 Suppress unneeded method return values with `$null = $list.Add($x)` or `[void]$list.Add($x)` (faster than `Out-Null`).
+Enumerate list-typed values directly (`foreach` / `.ToArray()`); avoid unnecessary `@(...)` re-wraps: wrapping a `New-Object`-constructed `System.Collections.Generic.List[object]` (observed when empty or holding pscustomobject items) throws `ArgumentException` "Argument types do not match" on pwsh 7.4, while primitive-element generic lists wrap fine. Do not blanket-prefer `::new()` over `New-Object` for the same reason asymmetric capture behavior runs the other way: bare-returned `::new()` lists unroll at call sites on current builds (identity lost; match context.md comma-wrap container rules), so transfer containers deliberately and document the chosen contract.
 Prefer `[pscustomobject]@{}` over `New-Object` for dynamic object creation.
 
 Avoid `Invoke-Expression`; it is slow, unsafe, and breaks static analysis.
@@ -262,7 +265,7 @@ try {
 Return empty arrays safely with the comma operator: `return , @()`.
 
 Use `CmdletBinding` and parameter validation on all functions.
-Prefer `[Parameter(Mandatory)]` over manual null checks.
+Prefer `[Parameter(Mandatory)]` over manual null checks; pair it with `[AllowEmptyCollection()]` when a mandatory array legitimately allows zero applicable entries after filtering (precedent `Scripts/Update.ps1`).
 
 Emit structured error codes (`E_PREFIX_DETAIL`) for actionable diagnostics.
 
