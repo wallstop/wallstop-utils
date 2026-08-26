@@ -29,6 +29,13 @@ function Get-WinGetUpgradePackageOutcomes {
     # Naive enqueueing turns each reprint into a phantom second block and shifts every later
     # terminal onto the wrong package, so a Found line whose position AND package id already
     # match an open block is treated as a continuation of that same block instead of a new one.
+    #
+    # Known limit (fail-closed by design): a DIFFERENT package's Found line appearing while
+    # another block is still open still shifts FIFO pairing; such runs cannot self-consistently
+    # account every terminal and end as Unresolved/UnownedFailure rather than false-green.
+    # Post-terminal stale redraws of an already-closed block behave the same way - re-enqueued,
+    # then left Unresolved. Correctness never depends on the pairing because Status comes from
+    # the terminal marker itself, not the matched block.
     [CmdletBinding()]
     [OutputType([object[]])]
     param(

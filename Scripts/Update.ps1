@@ -89,12 +89,52 @@ function Get-UpdateSelfRelaunchArguments {
     return @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $ScriptPath, "-WithAdmin") # array-unwrap-safe: callers wrap in @(...).
 }
 
+function Resolve-UpdateElevationStartFailure {
+    # Pure seam for Process.Start failures so decline-vs-environment triage stays testable
+    # without spawning UAC prompts. ERROR_CANCELLED (1223) is the operator-declining-UAC
+    # shape; everything else is E_UPDATE_ELEVATION_START_FAILED.
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$IsWin32Exception,
+
+        # Meaningful only when $IsWin32Exception is $true.
+        [Parameter(Mandatory = $true)]
+        [int]$NativeErrorCode,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$ExceptionTypeName,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$ExceptionMessage
+    )
+
+    if ($IsWin32Exception -and $NativeErrorCode -eq 1223) {
+        return [pscustomobject]@{
+            Code   = "E_UPDATE_ELEVATION_DECLINED"
+            Detail = ("uacDeclined=true win32Error={0}" -f $NativeErrorCode)
+        }
+    }
+
+    return [pscustomobject]@{
+        Code   = "E_UPDATE_ELEVATION_START_FAILED"
+        Detail = ("exceptionType='{0}' win32Error={1} message={2}" -f $ExceptionTypeName, $(if ($IsWin32Exception) { [string]$NativeErrorCode } else { "n/a" }), $ExceptionMessage)
+    }
+}
+
 function Invoke-UpdateElevatedRelaunch {
     # Re-launches this exact script file with -WithAdmin through the shell elevation verb.
     # ProcessStartInfo + Set-PortableProcessArguments per repo conventions (Start-Process
     # mangles argument shapes); UseShellExecute is mandatory for Verb='runas'. The parent
     # process intentionally does not wait: once the UAC prompt accepts, the elevated child
-    # owns the flow. A declined/cancelled prompt fails closed with a stable diagnostic.
+    # owns the flow, so a successful hand-off reports exit 0 ("relay succeeded"), not
+    # "update completed" - the elevated session re-runs every step from scratch. A declined
+    # or failed launch fails closed with a stable diagnostic. Set-PortableProcessArguments
+    # carries the relay arguments through Verb='runas' on .NET 6+ (ShellExecute reads
+    # ArgumentList via BuildArguments) and through the .Arguments fallback on 5.1.
     [CmdletBinding()]
     param()
 
@@ -113,8 +153,29 @@ function Invoke-UpdateElevatedRelaunch {
         [void][System.Diagnostics.Process]::Start($startInfo)
     }
     catch {
-        $relaunchFailureDetail = $_.Exception.Message
-        throw ("E_UPDATE_ELEVATION_DECLINED: could not start an elevated update session ({0}). Run 'Update.ps1 -WithAdmin' from an already-elevated console to complete consent-gated upgrades." -f $relaunchFailureDetail)
+        # Distinguish the operator-declining UAC from every other launch failure so triage
+        # does not blame the user for policy/config/environment breakage.
+        $isWin32Exception = $false
+        $failureNativeErrorCode = 0
+        $failureTypeName = $_.Exception.GetType().FullName
+        $exceptionToInspect = $_.Exception
+        while ($null -ne $exceptionToInspect) {
+            if ($exceptionToInspect -is [System.ComponentModel.Win32Exception]) {
+                $isWin32Exception = $true
+                $failureNativeErrorCode = [int]$exceptionToInspect.NativeErrorCode
+                break
+            }
+
+            $exceptionToInspect = $exceptionToInspect.InnerException
+        }
+
+        $relaunchFailure = Resolve-UpdateElevationStartFailure `
+            -IsWin32Exception $isWin32Exception `
+            -NativeErrorCode $failureNativeErrorCode `
+            -ExceptionTypeName $failureTypeName `
+            -ExceptionMessage $_.Exception.Message
+
+        throw ("{0}: could not start an elevated update session ({1}). Run 'Update.ps1 -WithAdmin' from an already-elevated console to complete consent-gated upgrades." -f $relaunchFailure.Code, $relaunchFailure.Detail)
     }
 }
 
@@ -307,4 +368,10 @@ if ($MyInvocation.InvocationName -ne ".") {
     finally {
         Pop-Location
     }
+}
+else {
+    # The dot-source contract intentionally skips orchestration, but a silent no-op used to
+    # be "run everything" for out-of-tree callers - make the semantics loud so nobody
+    # dot-sources this file expecting steps to execute.
+    Write-Warning "W_UPDATE_DOT_SOURCE_NO_OP: Update.ps1 was dot-sourced; orchestration is intentionally skipped (helper/test-harness contract). Execute it with 'pwsh -File Scripts/Update.ps1' to run update steps."
 }

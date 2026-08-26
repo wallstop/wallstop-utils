@@ -84,6 +84,48 @@ Describe "Resolve-UpdateElevationAction" {
     }
 }
 
+Describe "Resolve-UpdateElevationStartFailure" {
+    It "maps a Process.Start failure of kind '<Description>' to <ExpectedCode>" -ForEach @(
+        @{
+            Description      = "operator declining UAC (ERROR_CANCELLED)"
+            IsWin32Exception = $true
+            NativeErrorCode  = 1223
+            ExceptionMessage = "The operation was canceled by the user"
+            ExpectedCode     = "E_UPDATE_ELEVATION_DECLINED"
+        },
+        @{
+            Description      = "UAC disabled by policy (generic win32)"
+            IsWin32Exception = $true
+            NativeErrorCode  = 1260
+            ExceptionMessage = "This program is blocked by group policy"
+            ExpectedCode     = "E_UPDATE_ELEVATION_START_FAILED"
+        },
+        @{
+            Description      = "resolver returned an unusable executable (non-win32)"
+            IsWin32Exception = $false
+            NativeErrorCode  = 0
+            ExceptionMessage = "Cannot find the requested file"
+            ExpectedCode     = "E_UPDATE_ELEVATION_START_FAILED"
+        }
+    ) {
+        param($Description, $IsWin32Exception, $NativeErrorCode, $ExceptionMessage, $ExpectedCode)
+
+        $failure = Resolve-UpdateElevationStartFailure `
+            -IsWin32Exception $IsWin32Exception `
+            -NativeErrorCode $NativeErrorCode `
+            -ExceptionTypeName "System.Exception" `
+            -ExceptionMessage $ExceptionMessage
+
+        $failure.Code | Should -Be $ExpectedCode -Because $Description
+        if ($ExpectedCode -eq "E_UPDATE_ELEVATION_DECLINED") {
+            $failure.Detail | Should -Match "win32Error=1223"
+        }
+        else {
+            $failure.Detail | Should -Match ([regex]::Escape($ExceptionMessage))
+        }
+    }
+}
+
 Describe "Test-UpdateRunningElevated" {
     It "answers without throwing and reports elevation state per platform" {
         $isElevated = Test-UpdateRunningElevated
@@ -111,6 +153,11 @@ Describe "Get-UpdateSelfRelaunchArguments" {
 
 Describe "Update orchestrator behavior" {
     BeforeAll {
+        # Seeded up front so AfterAll stays safe even if this block throws before creating
+        # the sandbox (Pester 5 still runs AfterAll on BeforeAll failure; binding errors are
+        # not suppressed by -ErrorAction SilentlyContinue under Set-StrictMode Latest).
+        $script:sandboxRoot = $null
+
         # Sandbox copy of the repository's Scripts tree: Update.ps1 verbatim beside stub
         # step scripts and a deterministic pseudo-helper. The parent passes its own resolved
         # PowerShell executable into the pseudo-helper so stub steps launch portably. No real
@@ -163,7 +210,9 @@ function Resolve-PowerShellExecutablePath {
     }
 
     AfterAll {
-        Remove-Item -LiteralPath $script:sandboxRoot -Recurse -Force -ErrorAction SilentlyContinue
+        if ($script:sandboxRoot -and (Test-Path -LiteralPath $script:sandboxRoot -PathType Container)) {
+            Remove-Item -LiteralPath $script:sandboxRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "runs fully headless with no arguments and exits clean" {
