@@ -242,6 +242,24 @@ Describe "Get-WinGetUpgradePackageOutcomes" {
     It "returns no outcomes for empty input" {
         @(Get-WinGetUpgradePackageOutcomes -OutputLines @()).Count | Should -Be 0
     }
+
+    It "surfaces unownable failure terminals when a dependency success steals the parent slot" {
+        # Cursor Bugbot round 2 on PR #76: a dependency's "Successfully installed" inside the
+        # parent's block consumes the parent's FIFO slot, so the parent's own later installer
+        # failure arrives with no open block. That orphan terminal must poison the run.
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines @(
+                "(1/1) Found Parent App [Parent.Publisher] Version 1.0.0",
+                "Installing dependencies:",
+                "Successfully installed",
+                "Installer failed with exit code: 1603"
+            ))
+
+        $outcomes.Count | Should -Be 2
+        $outcomes[0].PackageId | Should -Be "Parent.Publisher"
+        $outcomes[0].Status | Should -Be "Upgraded"
+        $outcomes[1].Status | Should -Be "UnownedFailure"
+        $outcomes[1].InstallerExitCode | Should -Be "1603"
+    }
 }
 
 Describe "Test-WinGetInstallerExitCodeIsConsentBlocked" {
@@ -372,8 +390,8 @@ Describe "Resolve-WinGetUpdateOutcome" {
     }
 
     It "fails closed when an unparsed failure rides along behind consent-blocked deferrals" {
-        # Bugbot round on PR #76: an aggregate failure whose Found blocks include one consent
-        # attribution and one block with no terminal marker must NOT green the step.
+        # Cursor Bugbot round on PR #76: an aggregate failure whose Found blocks include one
+        # consent attribution and one block with no terminal marker must NOT green the step.
         $outcome = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines @(
             "(1/2) Found Plex [Plex.Plex] Version 1.115.0",
             "Installer failed with exit code: 1223",
@@ -386,6 +404,22 @@ Describe "Resolve-WinGetUpdateOutcome" {
         $outcome.ErrorDiagnostic | Should -Match "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE"
         $outcome.ErrorDiagnostic | Should -Match "Silent\.Publisher"
         $outcome.WarningDiagnostic | Should -Match "W_WINGET_UPGRADE_DEFERRED_INTERACTIVE"
+    }
+
+    It "fails closed when a stolen parent slot orphans its installer failure" {
+        # Cursor Bugbot round 2 on PR #76: dependency success markers can steal the parent's
+        # FIFO slot; the orphaned parent failure must force the run red, never green.
+        $outcome = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines @(
+            "(1/1) Found Parent App [Parent.Publisher] Version 1.0.0",
+            "Installing dependencies:",
+            "Successfully installed",
+            "Installer failed with exit code: 1603"
+        )
+
+        $outcome.ExitZero | Should -BeFalse
+        $outcome.ExitCode | Should -Be -1978335188
+        $outcome.ErrorDiagnostic | Should -Match "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE"
+        $outcome.ErrorDiagnostic | Should -Match "unowned failure \(installer exit 1603\)"
     }
 
     It "greens a mixed run where every Found block reaches a terminal marker" {

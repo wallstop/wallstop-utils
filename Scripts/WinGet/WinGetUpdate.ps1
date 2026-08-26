@@ -17,9 +17,11 @@ if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
 function Get-WinGetUpgradePackageOutcomes {
     # Walks `winget upgrade --all` progress output sequentially and accounts for EVERY
     # "(N/M) Found <Name> [<Id>]" block: each must reach a terminal marker - either
-    # "Installer failed with exit code: <code>" (attributable) or "Successfully installed".
-    # Blocks left without a terminal marker surface as Unresolved so an unparsed failure
-    # phrasing can never ride along behind consent-blocked deferrals as a false green.
+    # "Installer failed with exit code: <code>" or "Successfully installed". Blocks left
+    # without a terminal marker surface as Unresolved, and a failure terminal arriving with
+    # NO open block (for example a parent failure whose slot was stolen by an earlier
+    # dependency success marker) surfaces as UnownedFailure, so neither ambiguity can ride
+    # along behind consent-blocked deferrals as a false green.
     [CmdletBinding()]
     [OutputType([object[]])]
     param(
@@ -47,6 +49,14 @@ function Get-WinGetUpgradePackageOutcomes {
             }
 
             if ($openPackageIds.Count -eq 0) {
+                if ($isFailureLine) {
+                    [void]$outcomes.Add([pscustomobject]@{
+                            PackageId         = "<unowned>"
+                            Status            = "UnownedFailure"
+                            InstallerExitCode = $Matches['code']
+                        })
+                }
+
                 continue
             }
 
@@ -157,6 +167,10 @@ function Resolve-WinGetUpdateOutcome {
             }
             "Unresolved" {
                 [void]$unresolvedEntries.Add($packageOutcome.PackageId)
+            }
+
+            "UnownedFailure" {
+                [void]$unresolvedEntries.Add("<unowned failure (installer exit {0})>" -f $packageOutcome.InstallerExitCode)
             }
         }
     }
