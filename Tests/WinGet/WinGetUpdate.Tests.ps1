@@ -148,8 +148,8 @@ AfterAll {
     }
 }
 
-Describe "Get-WinGetInstallerFailureAttributions" {
-    It "attributes installer failures from the observed issue #46 upgrade output" {
+Describe "Get-WinGetUpgradePackageOutcomes" {
+    It "accounts every Found block from the observed issue #46 upgrade output" {
         # Shapes taken verbatim from the Config/backup-step-failures.json outputPreview of the
         # 2026-08-25 backup run (issue #46): three failing packages between successful blocks.
         $observedLines = @(
@@ -157,7 +157,6 @@ Describe "Get-WinGetInstallerFailureAttributions" {
             "------------------------------------------------------------------------------------------------------",
             "Focusrite Control 2 1.1081.0.0     FocusriteAudioEngineeringLtd.FocusriteControl2 1.1081.0.0     1.1108.0.0     winget",
             "9 upgrades available.",
-            "Installing dependencies:",
             "(1/7) Found Focusrite Control 2 [FocusriteAudioEngineeringLtd.FocusriteControl2] Version 1.1108.0.0",
             "Successfully verified installer hash",
             "Starting package install...",
@@ -176,42 +175,72 @@ Describe "Get-WinGetInstallerFailureAttributions" {
             ""
         )
 
-        $attributions = @(Get-WinGetInstallerFailureAttributions -OutputLines $observedLines)
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines $observedLines)
 
-        $attributions.Count | Should -Be 3
-        $attributions[0].PackageId | Should -Be "FocusriteAudioEngineeringLtd.FocusriteControl2"
-        $attributions[0].InstallerExitCode | Should -Be "1602"
-        $attributions[1].PackageId | Should -Be "Plex.Plex"
-        $attributions[1].InstallerExitCode | Should -Be "1223"
-        $attributions[2].PackageId | Should -Be "Microsoft.WSL"
-        $attributions[2].InstallerExitCode | Should -Be "0x80073d28"
+        $outcomes.Count | Should -Be 3
+        $outcomes[0].PackageId | Should -Be "FocusriteAudioEngineeringLtd.FocusriteControl2"
+        $outcomes[0].Status | Should -Be "Failed"
+        $outcomes[0].InstallerExitCode | Should -Be "1602"
+        $outcomes[1].PackageId | Should -Be "Plex.Plex"
+        $outcomes[1].Status | Should -Be "Failed"
+        $outcomes[1].InstallerExitCode | Should -Be "1223"
+        $outcomes[2].PackageId | Should -Be "Microsoft.WSL"
+        $outcomes[2].Status | Should -Be "Failed"
+        $outcomes[2].InstallerExitCode | Should -Be "0x80073d28"
     }
 
     It "expands a single multi-line capture element (script-shim output shape)" {
         $singleElementPayload = (@(
                 "(1/2) Found Example App [Example.Publisher] Version 1.0.0",
-                "Installer failed with exit code: 1602"
+                "Installer failed with exit code: 1602",
+                "(2/2) Found Other App [Other.Publisher] Version 2.0.0",
+                "Successfully installed"
             ) -join "`n")
 
-        $attributions = @(Get-WinGetInstallerFailureAttributions -OutputLines @($singleElementPayload))
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines @($singleElementPayload))
 
-        $attributions.Count | Should -Be 1
-        $attributions[0].PackageId | Should -Be "Example.Publisher"
-        $attributions[0].InstallerExitCode | Should -Be "1602"
+        $outcomes.Count | Should -Be 2
+        $outcomes[0].PackageId | Should -Be "Example.Publisher"
+        $outcomes[0].Status | Should -Be "Failed"
+        $outcomes[1].PackageId | Should -Be "Other.Publisher"
+        $outcomes[1].Status | Should -Be "Upgraded"
     }
 
-    It "ignores failure lines that no active Found block owns" {
-        $attributions = @(Get-WinGetInstallerFailureAttributions -OutputLines @(
-                "Installer failed with exit code: 1603",
-                "(2/2) Found Other [Other.Publisher] Version 2.0.0",
-                "Installation completed successfully"
+    It "marks Found blocks without a terminal marker as Unresolved so unparsed failures cannot hide" {
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines @(
+                "(1/2) Found Healthy App [Healthy.Publisher] Version 2.0.0",
+                "Successfully installed",
+                "(2/2) Found Silent Failure [Silent.Publisher] Version 1.0.0",
+                "Some unrecognized failure phrasing."
             ))
 
-        $attributions.Count | Should -Be 0
+        $outcomes.Count | Should -Be 2
+        $outcomes[0].PackageId | Should -Be "Healthy.Publisher"
+        $outcomes[0].Status | Should -Be "Upgraded"
+        $outcomes[1].PackageId | Should -Be "Silent.Publisher"
+        $outcomes[1].Status | Should -Be "Unresolved"
     }
 
-    It "returns no attributions for empty input" {
-        @(Get-WinGetInstallerFailureAttributions -OutputLines @()).Count | Should -Be 0
+    It "attributes in-block dependency installer failures to the owning package block" {
+        # Dependency installers run inside the parent's numbered progress block; winget fails
+        # the parent when its dependency fails, so parent ownership is the truthful pairing.
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines @(
+                "(1/1) Found Focusrite Control 2 [FocusriteAudioEngineeringLtd.FocusriteControl2] Version 1.1108.0.0",
+                "Installing dependencies:",
+                "This package requires the following dependencies:",
+                "- Packages",
+                "Microsoft.VCRedist.2015+.x64",
+                "Installer failed with exit code: 1602"
+            ))
+
+        $outcomes.Count | Should -Be 1
+        $outcomes[0].PackageId | Should -Be "FocusriteAudioEngineeringLtd.FocusriteControl2"
+        $outcomes[0].Status | Should -Be "Failed"
+        $outcomes[0].InstallerExitCode | Should -Be "1602"
+    }
+
+    It "returns no outcomes for empty input" {
+        @(Get-WinGetUpgradePackageOutcomes -OutputLines @()).Count | Should -Be 0
     }
 }
 
@@ -342,21 +371,34 @@ Describe "Resolve-WinGetUpdateOutcome" {
         }
     }
 
-    It "does not attribute dependency-section failures to the preceding package" {
-        # The observed issue #46 output lists dependencies (for example
-        # Microsoft.VCRedist.2015+.x64) under "Installing dependencies:" with no Found block of
-        # their own; pairing their failures with the parent package would misname the culprit.
-        $attributions = @(Get-WinGetInstallerFailureAttributions -OutputLines @(
-                "(1/1) Found Focusrite Control 2 [FocusriteAudioEngineeringLtd.FocusriteControl2] Version 1.1108.0.0",
-                "Successfully verified installer hash",
-                "Installing dependencies:",
-                "This package requires the following dependencies:",
-                "- Packages",
-                "Microsoft.VCRedist.2015+.x64",
-                "Installer failed with exit code: 1602"
-            ))
+    It "fails closed when an unparsed failure rides along behind consent-blocked deferrals" {
+        # Bugbot round on PR #76: an aggregate failure whose Found blocks include one consent
+        # attribution and one block with no terminal marker must NOT green the step.
+        $outcome = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines @(
+            "(1/2) Found Plex [Plex.Plex] Version 1.115.0",
+            "Installer failed with exit code: 1223",
+            "(2/2) Found Silent Failure [Silent.Publisher] Version 1.0.0",
+            "Some unrecognized failure phrasing."
+        )
 
-        $attributions.Count | Should -Be 0
+        $outcome.ExitZero | Should -BeFalse
+        $outcome.ExitCode | Should -Be -1978335188
+        $outcome.ErrorDiagnostic | Should -Match "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE"
+        $outcome.ErrorDiagnostic | Should -Match "Silent\.Publisher"
+        $outcome.WarningDiagnostic | Should -Match "W_WINGET_UPGRADE_DEFERRED_INTERACTIVE"
+    }
+
+    It "greens a mixed run where every Found block reaches a terminal marker" {
+        $outcome = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines @(
+            "(1/2) Found Plex [Plex.Plex] Version 1.115.0",
+            "Installer failed with exit code: 1223",
+            "(2/2) Found Healthy App [Healthy.Publisher] Version 2.0.0",
+            "Successfully installed"
+        )
+
+        $outcome.ExitZero | Should -BeTrue
+        $outcome.WarningDiagnostic | Should -Match "Plex\.Plex \(installer exit 1223\)"
+        $outcome.ErrorDiagnostic | Should -Be ""
     }
 }
 

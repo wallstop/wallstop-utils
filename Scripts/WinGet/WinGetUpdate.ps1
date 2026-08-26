@@ -14,12 +14,12 @@ if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
 
 . $diagnosticsHelpersPath
 
-function Get-WinGetInstallerFailureAttributions {
-    # Pairs each "(N/M) Found <Name> [<Id>] ..." progress block with its subsequent
-    # "Installer failed with exit code: <code>" line so per-package installer failures stay
-    # attributable from `winget upgrade --all` output: the aggregate
-    # APPINSTALLER_CLI_ERROR_UPDATE_ALL_HAS_FAILURE HRESULT alone cannot distinguish
-    # consent/elevation-blocked installers from genuine ones.
+function Get-WinGetUpgradePackageOutcomes {
+    # Walks `winget upgrade --all` progress output sequentially and accounts for EVERY
+    # "(N/M) Found <Name> [<Id>]" block: each must reach a terminal marker - either
+    # "Installer failed with exit code: <code>" (attributable) or "Successfully installed".
+    # Blocks left without a terminal marker surface as Unresolved so an unparsed failure
+    # phrasing can never ride along behind consent-blocked deferrals as a false green.
     [CmdletBinding()]
     [OutputType([object[]])]
     param(
@@ -28,37 +28,47 @@ function Get-WinGetInstallerFailureAttributions {
         [object[]]$OutputLines = @()
     )
 
-    $attributions = New-Object System.Collections.Generic.List[object]
-    $currentPackageId = $null
+    $outcomes = New-Object System.Collections.Generic.List[object]
+    $openPackageIds = New-Object System.Collections.Generic.Queue[string]
     foreach ($outputLine in @($OutputLines)) {
         # Captured external output can arrive as one multi-line element (script-shim shape)
         # or per-line elements (native-command shape); expand physical lines either way,
         # including lone-CR progress-redraw frames.
         foreach ($physicalLine in @(([string]$outputLine) -split "\r\n|\r|\n")) {
             if ($physicalLine -match '^\s*\(\d+/\d+\)\s+Found\s+.*\[(?<id>[^\]]+)\]') {
-                $currentPackageId = $Matches['id']
+                [void]$openPackageIds.Enqueue($Matches['id'])
                 continue
             }
 
-            # Section boundaries: dependency installers and summary lines carry no Found block
-            # of their own, so a failure there must not pair with the preceding package.
-            if ($physicalLine -match '^\s*(Installing dependencies:|Successfully installed|Summary)') {
-                $currentPackageId = $null
+            $isFailureLine = $physicalLine -match '^\s*Installer failed with exit code:\s*(?<code>[^\s:,]+)'
+            $isSuccessLine = $physicalLine -match '^\s*Successfully installed'
+            if (-not $isFailureLine -and -not $isSuccessLine) {
                 continue
             }
 
-            if (-not [string]::IsNullOrWhiteSpace($currentPackageId) -and
-                $physicalLine -match '^\s*Installer failed with exit code:\s*(?<code>[^\s:,]+)') {
-                [void]$attributions.Add([pscustomobject]@{
-                        PackageId         = $currentPackageId
-                        InstallerExitCode = $Matches['code']
-                    })
-                $currentPackageId = $null
+            if ($openPackageIds.Count -eq 0) {
+                continue
             }
+
+            $packageId = $openPackageIds.Dequeue()
+            [void]$outcomes.Add([pscustomobject]@{
+                    PackageId         = $packageId
+                    Status            = $(if ($isFailureLine) { "Failed" } else { "Upgraded" })
+                    InstallerExitCode = $(if ($isFailureLine) { $Matches['code'] } else { "" })
+                })
         }
     }
 
-    return $attributions.ToArray() # array-unwrap-safe: callers wrap in @(...).
+    # Any Found block that never reached a terminal marker is an unaccounted package.
+    while ($openPackageIds.Count -gt 0) {
+        [void]$outcomes.Add([pscustomobject]@{
+                PackageId         = $openPackageIds.Dequeue()
+                Status            = "Unresolved"
+                InstallerExitCode = ""
+            })
+    }
+
+    return $outcomes.ToArray() # array-unwrap-safe: callers wrap in @(...).
 }
 
 function Test-WinGetInstallerExitCodeIsConsentBlocked {
@@ -129,17 +139,25 @@ function Resolve-WinGetUpdateOutcome {
     }
 
     # --all completed with at least one package failure while other packages may have
-    # upgraded fine; classify the attributed failures before deciding the outcome.
-    $attributions = @(Get-WinGetInstallerFailureAttributions -OutputLines $OutputLines)
+    # upgraded fine; classify the accounted package outcomes before deciding the outcome.
+    $packageOutcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines $OutputLines)
     $consentBlockedEntries = New-Object System.Collections.Generic.List[string]
     $genuineFailureEntries = New-Object System.Collections.Generic.List[string]
-    foreach ($attribution in $attributions) {
-        $entry = "{0} (installer exit {1})" -f $attribution.PackageId, $attribution.InstallerExitCode
-        if (Test-WinGetInstallerExitCodeIsConsentBlocked -InstallerExitCode $attribution.InstallerExitCode) {
-            [void]$consentBlockedEntries.Add($entry)
-        }
-        else {
-            [void]$genuineFailureEntries.Add($entry)
+    $unresolvedEntries = New-Object System.Collections.Generic.List[string]
+    foreach ($packageOutcome in $packageOutcomes) {
+        $entry = "{0} (installer exit {1})" -f $packageOutcome.PackageId, $packageOutcome.InstallerExitCode
+        switch ($packageOutcome.Status) {
+            "Failed" {
+                if (Test-WinGetInstallerExitCodeIsConsentBlocked -InstallerExitCode $packageOutcome.InstallerExitCode) {
+                    [void]$consentBlockedEntries.Add($entry)
+                }
+                else {
+                    [void]$genuineFailureEntries.Add($entry)
+                }
+            }
+            "Unresolved" {
+                [void]$unresolvedEntries.Add($packageOutcome.PackageId)
+            }
         }
     }
 
@@ -166,25 +184,27 @@ function Resolve-WinGetUpdateOutcome {
         }
     }
 
-    if ($attributions.Count -gt 0) {
-        return [pscustomobject]@{ ExitZero = $true; ExitCode = 0; WarningDiagnostic = $warningDiagnostic; ErrorDiagnostic = ""; NoApplicable = $false }
+    if ($packageOutcomes.Count -eq 0 -or $unresolvedEntries.Count -gt 0) {
+        # Aggregate failure with unaccounted packages (Found blocks that never reached a
+        # terminal marker, or no parseable per-package output at all): fail closed instead of
+        # letting an unparsed failure ride along behind consent-blocked deferrals.
+        $unaccountedDetail = $(if ($unresolvedEntries.Count -gt 0) { ($unresolvedEntries -join '; ') } else { "none-attributed" })
+        $failurePreview = Get-OutputPreview -OutputLines $OutputLines -MaxLines 10 -MaxCharacters 640 -HeadTailWhenTruncated
+        return [pscustomobject]@{
+            ExitZero          = $false
+            ExitCode          = $WingetExitCode
+            WarningDiagnostic = $warningDiagnostic
+            ErrorDiagnostic   = (
+                "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE: 'winget upgrade --all' reported failures (exitCode={0}) but not every package outcome could be accounted from its output. unaccounted={1}. outputPreview={2}" -f
+                $WingetExitCode,
+                $unaccountedDetail,
+                $failurePreview
+            )
+            NoApplicable      = $false
+        }
     }
 
-    # Aggregate failure with no parseable per-package attribution (unexpected output format
-    # or locale drift): fail closed with a bounded preview instead of silently treating an
-    # unknown failure mode as success.
-    $failurePreview = Get-OutputPreview -OutputLines $OutputLines -MaxLines 10 -MaxCharacters 640 -HeadTailWhenTruncated
-    return [pscustomobject]@{
-        ExitZero          = $false
-        ExitCode          = $WingetExitCode
-        WarningDiagnostic = $warningDiagnostic
-        ErrorDiagnostic   = (
-            "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE: 'winget upgrade --all' reported failures (exitCode={0}) but no per-package installer failures could be attributed from its output. outputPreview={1}" -f
-            $WingetExitCode,
-            $failurePreview
-        )
-        NoApplicable      = $false
-    }
+    return [pscustomobject]@{ ExitZero = $true; ExitCode = 0; WarningDiagnostic = $warningDiagnostic; ErrorDiagnostic = ""; NoApplicable = $false }
 }
 
 function Invoke-WinGetUpgradeStep {
