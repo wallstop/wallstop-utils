@@ -14,6 +14,31 @@ if (-not (Test-Path -LiteralPath $diagnosticsHelpersPath -PathType Leaf)) {
 
 . $diagnosticsHelpersPath
 
+function Remove-UnsafeControlCharactersFromCapturedLines {
+    # Captured winget output feeds re-echo, previews, and Pester/CI artifacts; strip ANSI/VT
+    # escapes so recorded text can never smuggle raw ESC bytes into XML report writers.
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyCollection()]
+        [AllowNull()]
+        [object[]]$OutputLines = @()
+    )
+
+    return , @(
+        $OutputLines |
+            ForEach-Object {
+                if ($null -eq $_) {
+                    ""
+                }
+                else {
+                    Remove-UnsafeControlCharactersFromText -Text ([string]$_)
+                }
+            }
+    )
+}
+
 function Get-WinGetUpgradePackageOutcomes {
     # Walks `winget upgrade --all` progress output sequentially and accounts for EVERY
     # "(N/M) Found <Name> [<Id>]" block: each must reach a terminal marker - either
@@ -282,6 +307,8 @@ function Invoke-WinGetUpgradeStep {
     finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
+
+    $upgradeOutput = @(Remove-UnsafeControlCharactersFromCapturedLines -OutputLines $upgradeOutput)
 
     foreach ($upgradeLine in $upgradeOutput) {
         Write-Host $upgradeLine

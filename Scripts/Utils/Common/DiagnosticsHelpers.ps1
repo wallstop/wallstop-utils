@@ -1,3 +1,26 @@
+function Remove-UnsafeControlCharactersFromText {
+    # Strips ANSI/VT escape sequences (CSI introductions and 7-bit C0 controls) from captured
+    # output so the result is safe for assertion messages, NUnit/Pester XML export, JSON
+    # artifacts, and console re-echo. Tab/LF/CR are preserved. Anything that renders
+    # "Argument types do not match"-style host colorization on Windows runners would
+    # otherwise carry raw ESC bytes into recorded failure text and crash Pester's NUnit
+    # writer mid-export ("hexadecimal value 0x1B is an invalid character").
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrEmpty($Text)) {
+        return ""
+    }
+
+    $noCsiSequences = $Text -replace "\x1b\[[0-9;?]*[ -/]*[@-~]", ""
+    return ($noCsiSequences -replace "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "")
+}
+
 function Get-OutputPreview {
     [CmdletBinding()]
     param(
@@ -37,7 +60,7 @@ function Get-OutputPreview {
                     return ""
                 }
 
-                return [string]$_
+                return (Remove-UnsafeControlCharactersFromText -Text ([string]$_))
             }
     )
 

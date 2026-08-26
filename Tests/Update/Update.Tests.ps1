@@ -7,6 +7,7 @@ BeforeAll {
     . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Update.ps1")
 
     . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/CompatibilityHelpers.ps1")
+    . (Join-Path -Path $PSScriptRoot -ChildPath "../../Scripts/Utils/Common/DiagnosticsHelpers.ps1")
 
     $script:repoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "../..") -ErrorAction Stop).Path
 
@@ -26,6 +27,18 @@ BeforeAll {
         }
 
         [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
+    }
+
+    function ConvertTo-SandboxChildText {
+        # Windows runners colorize native stderr records with VT escapes; those bytes must
+        # never reach assertion messages (Pester NUnit export dies on 0x1B mid-write).
+        param(
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyCollection()]
+            [object[]]$ChildOutput
+        )
+
+        return Remove-UnsafeControlCharactersFromText -Text ((@($ChildOutput) | ForEach-Object { [string]$_ }) -join "`n")
     }
 }
 
@@ -175,11 +188,14 @@ Describe "Update orchestrator behavior" {
 
         # Stub every SupportedPlatforms=@("Windows") step target so nothing outside the
         # sandbox executes even on the primary Windows host.
-        $stubStepContent = @"
-if (\$env:WALLSTOP_UPDATE_SANDBOX_RECEIPT) { Add-Content -LiteralPath \$env:WALLSTOP_UPDATE_SANDBOX_RECEIPT -Value \$MyInvocation.MyCommand.Name }
-Write-Output ('sandbox-step-ok:' + \$MyInvocation.MyCommand.Name)
+        # Single-quoted here-string on purpose: this text must reach disk exactly as written
+        # (a prior double-quoted variant shipped literal "\$" bytes that parsed as errors
+        # whenever Windows runners actually executed these stubs).
+        $stubStepContent = @'
+if ($env:WALLSTOP_UPDATE_SANDBOX_RECEIPT) { Add-Content -LiteralPath $env:WALLSTOP_UPDATE_SANDBOX_RECEIPT -Value $MyInvocation.MyCommand.Name }
+Write-Output ('sandbox-step-ok:' + $MyInvocation.MyCommand.Name)
 exit 0
-"@
+'@
         foreach ($stubStepPath in @(
                 (Join-Path -Path $script:sandboxScriptsDirectory -ChildPath "Komorebi/StopKomorebi.ps1"),
                 (Join-Path -Path $script:sandboxScriptsDirectory -ChildPath "Scoop/ScoopUpdate.ps1"),
@@ -234,11 +250,21 @@ function Resolve-PowerShellExecutablePath {
         $childExitVariable = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
         $childExitCode = if ($null -ne $childExitVariable) { [int]$childExitVariable } else { -1 }
 
-        $childText = (($childOutput | ForEach-Object { [string]$_ }) -join "`n")
+        $childText = (ConvertTo-SandboxChildText -ChildOutput $childOutput)
+        $lastExitDiagnostics = (
+            "receiptPathExists={0} receiptLineCount={1} childOutputElements={2} " +
+            "head='{3}' tail='{4}'" -f
+            @(
+                [string](Test-Path -LiteralPath $receiptPath -PathType Leaf),
+                [string]$(if (Test-Path -LiteralPath $receiptPath -PathType Leaf) { @(Get-Content -LiteralPath $receiptPath).Count } else { 0 }),
+                [string]@($childOutput).Count,
+                [string]$childText.Substring(0, [Math]::Min(300, $childText.Length)),
+                [string]$childText.Substring([Math]::Max(0, $childText.Length - 400))
+            )
+        )
 
-        $childExitContext = $childText.Substring([Math]::Max(0, $childText.Length - 400))
-
-        $childExitCode | Should -Be 0 -Because ("sandbox child exit context: {0}" -f $childExitContext)
+        $childExitCode | Should -Be 0 -Because ("sandbox child exit context: {0}; diagnostics: {1}" -f
+            ($childText.Substring([Math]::Max(0, $childText.Length - 400))), $lastExitDiagnostics)
         $childText | Should -Match "UPDATE SUMMARY"
         $childText | Should -Match "Planned steps: 3"
 
@@ -262,8 +288,7 @@ function Resolve-PowerShellExecutablePath {
         $childExitVariable = Get-Variable -Name "LASTEXITCODE" -ValueOnly -ErrorAction SilentlyContinue
         $childExitCode = if ($null -ne $childExitVariable) { [int]$childExitVariable } else { -1 }
 
-        $childText = (($childOutput | ForEach-Object { [string]$_ }) -join "`n")
-
+        $childText = (ConvertTo-SandboxChildText -ChildOutput $childOutput)
         $childExitContext = $childText.Substring([Math]::Max(0, $childText.Length - 400))
 
         $childExitCode | Should -Be 0 -Because ("sandbox child exit context: {0}" -f $childExitContext)
