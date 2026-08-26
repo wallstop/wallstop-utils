@@ -1,3 +1,9 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $false)]
+    [switch]$WithAdmin
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -15,6 +21,101 @@ function Get-CurrentPlatformName {
     }
 
     return "Unknown"
+}
+
+function Test-UpdateRunningElevated {
+    # Administrator detection is meaningful only on Windows; POSIX hosts report $false and
+    # callers treat elevation as unsupported there instead of probing sudo interactively.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    if (-not (Test-IsWindowsPlatform)) {
+        return $false
+    }
+
+    $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [System.Security.Principal.WindowsPrincipal]::new($currentIdentity)
+    return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Resolve-UpdateElevationAction {
+    # Pure decision for the -WithAdmin contract so every branch stays unit-testable without
+    # spawning a UAC prompt: default runs stay headless/no-prompt; -WithAdmin relaunches the
+    # script elevated exactly once on Windows and degrades to a platform warning elsewhere.
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$WithAdmin,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$IsWindowsPlatform,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$IsRunningElevated
+    )
+
+    if (-not $WithAdmin) {
+        return [pscustomobject]@{ Action = "Proceed"; Reason = "default-headless-run" }
+    }
+
+    if (-not $IsWindowsPlatform) {
+        return [pscustomobject]@{
+            Action   = "WarnUnsupportedPlatform"
+            Reason   = "elevation-is-windows-only"
+            Code     = "W_UPDATE_ELEVATION_UNSUPPORTED_PLATFORM"
+            Detail   = "-WithAdmin requires Windows UAC elevation; continuing headless without it."
+        }
+    }
+
+    if ($IsRunningElevated) {
+        return [pscustomobject]@{ Action = "Proceed"; Reason = "already-running-elevated" }
+    }
+
+    return [pscustomobject]@{ Action = "RelaunchElevated"; Reason = "admin-opt-in-relaunch" }
+}
+
+function Get-UpdateSelfRelaunchArguments {
+    # Token list handed to Set-PortableProcessArguments when re-spawning this script under
+    # elevation. Kept pure and argument-shaped so tests can pin the exact relay contract.
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptPath
+    )
+
+    return @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $ScriptPath, "-WithAdmin") # array-unwrap-safe: callers wrap in @(...).
+}
+
+function Invoke-UpdateElevatedRelaunch {
+    # Re-launches this exact script file with -WithAdmin through the shell elevation verb.
+    # ProcessStartInfo + Set-PortableProcessArguments per repo conventions (Start-Process
+    # mangles argument shapes); UseShellExecute is mandatory for Verb='runas'. The parent
+    # process intentionally does not wait: once the UAC prompt accepts, the elevated child
+    # owns the flow. A declined/cancelled prompt fails closed with a stable diagnostic.
+    [CmdletBinding()]
+    param()
+
+    $powerShellExecutable = Resolve-PowerShellExecutablePath
+    $resolvedScriptPath = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "Update.ps1") -ErrorAction Stop).Path
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $powerShellExecutable
+    $startInfo.UseShellExecute = $true
+    $startInfo.Verb = "runas"
+    Set-PortableProcessArguments -StartInfo $startInfo -ArgumentList (
+        Get-UpdateSelfRelaunchArguments -ScriptPath $resolvedScriptPath
+    )
+
+    try {
+        [void][System.Diagnostics.Process]::Start($startInfo)
+    }
+    catch {
+        $relaunchFailureDetail = $_.Exception.Message
+        throw ("E_UPDATE_ELEVATION_DECLINED: could not start an elevated update session ({0}). Run 'Update.ps1 -WithAdmin' from an already-elevated console to complete consent-gated upgrades." -f $relaunchFailureDetail)
+    }
 }
 
 function Get-ApplicableUpdateSteps {
@@ -51,12 +152,15 @@ function Get-ApplicableUpdateSteps {
         )
     }
 
-    return $applicableSteps.ToArray()
+    return $applicableSteps.ToArray() # array-unwrap-safe: callers wrap in @(...).
 }
 
 function Assert-ApplicableUpdateStepsFlat {
     param(
-        [Parameter(Mandatory = $true)]
+        # Zero applicable steps is a valid shape (for example every step is Windows-only
+        # while running headless on POSIX); reject only nested containers below.
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyCollection()]
         [object[]]$ApplicableSteps,
 
         [Parameter(Mandatory = $true)]
@@ -112,69 +216,95 @@ function Invoke-UpdateStep {
     }
 }
 
-$scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
-$compatibilityHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/CompatibilityHelpers.ps1"
-if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
-    throw "E_UPDATE_COMPATIBILITY_HELPER_MISSING: compatibility helper file not found at '$compatibilityHelpersPath'."
-}
+# Allow tests to dot-source this orchestrator's helpers without executing any steps.
+if ($MyInvocation.InvocationName -ne ".") {
+    $scriptsDirectory = (Resolve-Path -LiteralPath $PSScriptRoot -ErrorAction Stop).Path
+    $compatibilityHelpersPath = Join-Path -Path $scriptsDirectory -ChildPath "Utils/Common/CompatibilityHelpers.ps1"
+    if (-not (Test-Path -LiteralPath $compatibilityHelpersPath -PathType Leaf)) {
+        throw "E_UPDATE_COMPATIBILITY_HELPER_MISSING: compatibility helper file not found at '$compatibilityHelpersPath'."
+    }
 
-. $compatibilityHelpersPath
-$steps = @(
-    @{ Name = "StopKomorebi"; RelativeScriptPath = "Komorebi/StopKomorebi.ps1"; SupportedPlatforms = @("Windows") },
-    @{ Name = "ScoopUpdate"; RelativeScriptPath = "Scoop/ScoopUpdate.ps1"; SupportedPlatforms = @("Windows") },
-    @{ Name = "WinGetUpdate"; RelativeScriptPath = "WinGet/WinGetUpdate.ps1"; SupportedPlatforms = @("Windows") }
-)
+    . $compatibilityHelpersPath
 
-$currentPlatformName = Get-CurrentPlatformName
-$applicableSteps = @(Get-ApplicableUpdateSteps -Steps $steps -CurrentPlatformName $currentPlatformName)
-Assert-ApplicableUpdateStepsFlat -ApplicableSteps $applicableSteps -CurrentPlatformName $currentPlatformName
-
-Write-Verbose ("Update platform diagnostics: currentPlatform='{0}', totalSteps={1}, applicableSteps={2}" -f $currentPlatformName, $steps.Count, $applicableSteps.Count)
-Write-Host "INFO_UPDATE_FORMATTER_BOUNDARY: FormatPowershellScripts is no longer run automatically by Update.ps1. Source code formatting is enforced by pre-commit hooks. Run 'pre-commit run --all-files' when manual formatting is needed." -ForegroundColor DarkYellow
-
-Push-Location -LiteralPath $scriptsDirectory
-try {
-    $stepResults = New-Object System.Collections.Generic.List[object]
-    foreach ($step in $applicableSteps) {
-        $stepPath = Join-Path -Path $scriptsDirectory -ChildPath $step.RelativeScriptPath
-        try {
-            Invoke-UpdateStep -ScriptPath $stepPath -StepName $step.Name
-            [void]$stepResults.Add([pscustomobject]@{
-                    Name    = $step.Name
-                    Success = $true
-                    Error   = ""
-                })
+    $elevationDecision = Resolve-UpdateElevationAction `
+        -WithAdmin ([bool]$WithAdmin) `
+        -IsWindowsPlatform (Test-IsWindowsPlatform) `
+        -IsRunningElevated (Test-UpdateRunningElevated)
+    switch ($elevationDecision.Action) {
+        "RelaunchElevated" {
+            Write-Host "INFO_UPDATE_ELEVATION_RELAY: re-launching this update session with administrator rights (-WithAdmin opt-in)." -ForegroundColor DarkYellow
+            Invoke-UpdateElevatedRelaunch
+            exit 0
         }
-        catch {
-            $errorMessage = $_.Exception.Message
-            Write-Warning ("{0}: {1}" -f $step.Name, $errorMessage)
-            [void]$stepResults.Add([pscustomobject]@{
-                    Name    = $step.Name
-                    Success = $false
-                    Error   = $errorMessage
-                })
+
+        "WarnUnsupportedPlatform" {
+            Write-Warning ("W_UPDATE_ELEVATION_UNSUPPORTED_PLATFORM: {0}" -f $elevationDecision.Detail)
+            break
+        }
+
+        default {
+            Write-Verbose ("Update elevation diagnostics: action='{0}', reason='{1}'." -f $elevationDecision.Action, $elevationDecision.Reason)
+            break
         }
     }
 
-    $failedSteps = @($stepResults | Where-Object { -not $_.Success })
-    $failedCount = $failedSteps.Count
-    $totalCount = $stepResults.Count
-    $succeededCount = $totalCount - $failedCount
+    $steps = @(
+        @{ Name = "StopKomorebi"; RelativeScriptPath = "Komorebi/StopKomorebi.ps1"; SupportedPlatforms = @("Windows") },
+        @{ Name = "ScoopUpdate"; RelativeScriptPath = "Scoop/ScoopUpdate.ps1"; SupportedPlatforms = @("Windows") },
+        @{ Name = "WinGetUpdate"; RelativeScriptPath = "WinGet/WinGetUpdate.ps1"; SupportedPlatforms = @("Windows") }
+    )
 
-    Write-Host ""
-    Write-Host "========== UPDATE SUMMARY ==========" -ForegroundColor Cyan
-    Write-Host ("Planned steps: {0}, Applicable on {1}: {2}, Skipped by platform: {3}" -f $steps.Count, $currentPlatformName, $applicableSteps.Count, ($steps.Count - $applicableSteps.Count))
-    Write-Host ("Total steps: {0}, Successful: {1}, Failed: {2}" -f $totalCount, $succeededCount, $failedCount)
+    $currentPlatformName = Get-CurrentPlatformName
+    $applicableSteps = @(Get-ApplicableUpdateSteps -Steps $steps -CurrentPlatformName $currentPlatformName)
+    Assert-ApplicableUpdateStepsFlat -ApplicableSteps $applicableSteps -CurrentPlatformName $currentPlatformName
 
-    if ($failedCount -gt 0) {
-        Write-Host "Failed steps:" -ForegroundColor Yellow
-        foreach ($failedStep in $failedSteps) {
-            Write-Host ("  - {0}: {1}" -f $failedStep.Name, $failedStep.Error) -ForegroundColor Yellow
+    Write-Verbose ("Update platform diagnostics: currentPlatform='{0}', totalSteps={1}, applicableSteps={2}" -f $currentPlatformName, $steps.Count, $applicableSteps.Count)
+    Write-Host "INFO_UPDATE_FORMATTER_BOUNDARY: FormatPowershellScripts is no longer run automatically by Update.ps1. Source code formatting is enforced by pre-commit hooks. Run 'pre-commit run --all-files' when manual formatting is needed." -ForegroundColor DarkYellow
+
+    Push-Location -LiteralPath $scriptsDirectory
+    try {
+        $stepResults = New-Object System.Collections.Generic.List[object]
+        foreach ($step in $applicableSteps) {
+            $stepPath = Join-Path -Path $scriptsDirectory -ChildPath $step.RelativeScriptPath
+            try {
+                Invoke-UpdateStep -ScriptPath $stepPath -StepName $step.Name
+                [void]$stepResults.Add([pscustomobject]@{
+                        Name    = $step.Name
+                        Success = $true
+                        Error   = ""
+                    })
+            }
+            catch {
+                $errorMessage = $_.Exception.Message
+                Write-Warning ("{0}: {1}" -f $step.Name, $errorMessage)
+                [void]$stepResults.Add([pscustomobject]@{
+                        Name    = $step.Name
+                        Success = $false
+                        Error   = $errorMessage
+                    })
+            }
         }
 
-        throw ("E_UPDATE_PARTIAL_FAILURE: One or more update steps failed ({0}/{1} succeeded)." -f $succeededCount, $totalCount)
+        $failedSteps = @($stepResults | Where-Object { -not $_.Success })
+        $failedCount = $failedSteps.Count
+        $totalCount = $stepResults.Count
+        $succeededCount = $totalCount - $failedCount
+
+        Write-Host ""
+        Write-Host "========== UPDATE SUMMARY ==========" -ForegroundColor Cyan
+        Write-Host ("Planned steps: {0}, Applicable on {1}: {2}, Skipped by platform: {3}" -f $steps.Count, $currentPlatformName, $applicableSteps.Count, ($steps.Count - $applicableSteps.Count))
+        Write-Host ("Total steps: {0}, Successful: {1}, Failed: {2}" -f $totalCount, $succeededCount, $failedCount)
+
+        if ($failedCount -gt 0) {
+            Write-Host "Failed steps:" -ForegroundColor Yellow
+            foreach ($failedStep in $failedSteps) {
+                Write-Host ("  - {0}: {1}" -f $failedStep.Name, $failedStep.Error) -ForegroundColor Yellow
+            }
+
+            throw ("E_UPDATE_PARTIAL_FAILURE: One or more update steps failed ({0}/{1} succeeded)." -f $succeededCount, $totalCount)
+        }
     }
-}
-finally {
-    Pop-Location
+    finally {
+        Pop-Location
+    }
 }

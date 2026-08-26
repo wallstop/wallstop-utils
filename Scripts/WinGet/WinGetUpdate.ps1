@@ -22,6 +22,13 @@ function Get-WinGetUpgradePackageOutcomes {
     # NO open block (for example a parent failure whose slot was stolen by an earlier
     # dependency success marker) surfaces as UnownedFailure, so neither ambiguity can ride
     # along behind consent-blocked deferrals as a false green.
+    #
+    # Winget re-prints a package's Found line at its own (N/M) position while dependency
+    # resolution runs inside its block (observed 2026-08-26 on issue #46 hosts: Focusrite's
+    # "(1/7) Found ..." repeated around the Microsoft.VCRedist.2015+.x64 dependency install).
+    # Naive enqueueing turns each reprint into a phantom second block and shifts every later
+    # terminal onto the wrong package, so a Found line whose position AND package id already
+    # match an open block is treated as a continuation of that same block instead of a new one.
     [CmdletBinding()]
     [OutputType([object[]])]
     param(
@@ -31,14 +38,34 @@ function Get-WinGetUpgradePackageOutcomes {
     )
 
     $outcomes = New-Object System.Collections.Generic.List[object]
-    $openPackageIds = New-Object System.Collections.Generic.Queue[string]
+    $openPackageBlocks = New-Object System.Collections.Generic.List[object]
     foreach ($outputLine in @($OutputLines)) {
         # Captured external output can arrive as one multi-line element (script-shim shape)
         # or per-line elements (native-command shape); expand physical lines either way,
         # including lone-CR progress-redraw frames.
         foreach ($physicalLine in @(([string]$outputLine) -split "\r\n|\r|\n")) {
-            if ($physicalLine -match '^\s*\(\d+/\d+\)\s+Found\s+.*\[(?<id>[^\]]+)\]') {
-                [void]$openPackageIds.Enqueue($Matches['id'])
+            if ($physicalLine -match '^\s*\((?<ordinal>\d+/\d+)\)\s+Found\s+.*\[(?<id>[^\]]+)\]') {
+                $foundOrdinal = $Matches['ordinal']
+                $foundId = $Matches['id']
+                $isContinuationReprint = $false
+                # Enumerate the list directly: wrapping it in @() trips pwsh 7's
+                # "Argument types do not match" array-subexpression copy.
+                foreach ($openBlock in $openPackageBlocks) {
+                    if ($openBlock.Ordinal -eq $foundOrdinal -and $openBlock.PackageId -eq $foundId) {
+                        # Reprint of a block still awaiting its terminal marker: same progress
+                        # slot, same package. Consume nothing; the next terminal owns it.
+                        $isContinuationReprint = $true
+                        break
+                    }
+                }
+
+                if (-not $isContinuationReprint) {
+                    [void]$openPackageBlocks.Add([pscustomobject]@{
+                            Ordinal   = $foundOrdinal
+                            PackageId = $foundId
+                        })
+                }
+
                 continue
             }
 
@@ -48,7 +75,7 @@ function Get-WinGetUpgradePackageOutcomes {
                 continue
             }
 
-            if ($openPackageIds.Count -eq 0) {
+            if ($openPackageBlocks.Count -eq 0) {
                 if ($isFailureLine) {
                     [void]$outcomes.Add([pscustomobject]@{
                             PackageId         = "<unowned>"
@@ -60,9 +87,10 @@ function Get-WinGetUpgradePackageOutcomes {
                 continue
             }
 
-            $packageId = $openPackageIds.Dequeue()
+            $packageBlock = $openPackageBlocks[0]
+            $openPackageBlocks.RemoveAt(0)
             [void]$outcomes.Add([pscustomobject]@{
-                    PackageId         = $packageId
+                    PackageId         = $packageBlock.PackageId
                     Status            = $(if ($isFailureLine) { "Failed" } else { "Upgraded" })
                     InstallerExitCode = $(if ($isFailureLine) { $Matches['code'] } else { "" })
                 })
@@ -70,12 +98,13 @@ function Get-WinGetUpgradePackageOutcomes {
     }
 
     # Any Found block that never reached a terminal marker is an unaccounted package.
-    while ($openPackageIds.Count -gt 0) {
+    while ($openPackageBlocks.Count -gt 0) {
         [void]$outcomes.Add([pscustomobject]@{
-                PackageId         = $openPackageIds.Dequeue()
+                PackageId         = $openPackageBlocks[0].PackageId
                 Status            = "Unresolved"
                 InstallerExitCode = ""
             })
+        $openPackageBlocks.RemoveAt(0)
     }
 
     return $outcomes.ToArray() # array-unwrap-safe: callers wrap in @(...).

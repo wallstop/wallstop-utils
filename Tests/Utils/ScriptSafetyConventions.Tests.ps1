@@ -3863,6 +3863,17 @@ Describe "Backup script safety conventions" {
         $updateScript | Should -Match 'E_UPDATE_PARTIAL_FAILURE'
         $updateScript | Should -Match 'Resolve-PowerShellExecutablePath\s*\r?\n\s*&\s*\$powerShellExecutable\s+-NoLogo\s+-NoProfile\s+-File\s+\$ScriptPath'
         $updateScript | Should -Match 'Failed steps:'
+        # Issue #77: default runs must stay headless/no-prompt; the -WithAdmin opt-in is an
+        # explicit, single relaunch that fails closed with a stable diagnostic on decline.
+        $updateScript | Should -Match '\[switch\]\$WithAdmin'
+        $updateScript | Should -Match 'function\s+Resolve-UpdateElevationAction'
+        $updateScript | Should -Match 'function\s+Test-UpdateRunningElevated'
+        $updateScript | Should -Match 'W_UPDATE_ELEVATION_UNSUPPORTED_PLATFORM'
+        $updateScript | Should -Match 'E_UPDATE_ELEVATION_DECLINED'
+        $updateScript | Should -Match '\$MyInvocation\.InvocationName\s+-ne\s*"\."'
+        $updateScript | Should -Match '\$startInfo\.UseShellExecute\s*=\s*\$true'
+        $updateScript | Should -Match '\$startInfo\.Verb\s*=\s*"runas"'
+        $updateScript | Should -Match 'Set-PortableProcessArguments\s+-StartInfo\s+\$startInfo'
         $updateScript | Should -Not -Match 'RelativeScriptPath\s*=\s*"Utils/FormatPowershellScripts\.ps1"'
         $updateScript | Should -Not -Match 'return\s*,\s*\$applicableSteps\.ToArray\(\)'
         $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
