@@ -19,6 +19,7 @@ if (-not (Test-Path -LiteralPath $psReadLineProfilePortabilityHelpersPath -PathT
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..") -ErrorAction Stop).Path
 $baseDirectory = (Resolve-Path -LiteralPath (Join-Path -Path $baseDirectory -ChildPath "..") -ErrorAction Stop).Path
 $backupFolder = Join-Path -Path (Join-Path -Path $baseDirectory -ChildPath "Config") -ChildPath "Powershell"
+$repositoryCanonicalProfilePath = Join-Path -Path $backupFolder -ChildPath "CurrentUserCurrentHost_Microsoft.PowerShell_profile.ps1"
 Push-Location -LiteralPath $baseDirectory
 
 function Assert-PowerShellProfileBackupPortability {
@@ -45,11 +46,43 @@ function Assert-PowerShellProfileBackupPortability {
     }
 
     if ($violations.Count -gt 0) {
+        # Self-heal host-side drift from the validated repository profile (the same repair the
+        # operator runbook prescribes manually, mirroring the managed AutoHotkey snapshot
+        # self-heal) so a drifted profile cannot fail every future daily backup. The previous
+        # content is preserved in a timestamped backup beside the profile.
+        $repairOutcome = $null
+        $selfHealUnavailableDetail = ""
+        try {
+            $repairOutcome = Restore-PowerShellProfileFromValidatedSource -ProfilePath $resolvedPath -RepositoryProfilePath $repositoryCanonicalProfilePath
+        }
+        catch {
+            # Precomputed so helper failures cannot mask the primary diagnostic code.
+            $selfHealUnavailableDetail = $_.Exception.Message
+            Write-Verbose (
+                "PowerShell backup profile self-heal unavailable diagnostics: profile='{0}'; path='{1}'; reason={2}" -f
+                $ProfileName,
+                $resolvedPath,
+                $selfHealUnavailableDetail
+            )
+        }
+
+        if ($null -ne $repairOutcome -and $repairOutcome.Repaired) {
+            Write-Warning (
+                "W_POWERSHELL_BACKUP_PROFILE_AUTOREPAIRED({0}): PowerShell profile '{1}' was not portable (violations={2}) and has been replaced with the validated repository profile; previous content backed up to '{3}'. Review the backup if it contained custom commands to merge." -f
+                $ProfileName,
+                $resolvedPath,
+                ($violations -join ','),
+                $repairOutcome.BackupPath
+            )
+            return
+        }
+
         throw (
-            "E_POWERSHELL_BACKUP_PROFILE_PORTABILITY: PowerShell profile '{0}' at '{1}' contains PSReadLine setup that is not guarded for Windows PowerShell 5.1 and older PSReadLine versions. violations={2}. Run Repair-PowerShellProfilePortability.ps1 -ProfilePath '{1}' -Apply to repair this specific failing profile, or restore the repository profile. See {3}" -f
+            "E_POWERSHELL_BACKUP_PROFILE_PORTABILITY: PowerShell profile '{0}' at '{1}' contains PSReadLine setup that is not guarded for Windows PowerShell 5.1 and older PSReadLine versions. violations={2}. Run Repair-PowerShellProfilePortability.ps1 -ProfilePath '{1}' -Apply to repair this specific failing profile, or restore the repository profile. selfHealUnavailable={3}. See {4}" -f
             $ProfileName,
             $resolvedPath,
             ($violations -join ','),
+            $(if ([string]::IsNullOrWhiteSpace($selfHealUnavailableDetail)) { "not-attempted" } else { $selfHealUnavailableDetail }),
             $operatorRunbookUrl
         )
     }

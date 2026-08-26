@@ -4,6 +4,90 @@
 # from user machines, so backup and CI both need to reject unguarded PSReadLine 2.2+
 # options that break Windows PowerShell 5.1 or redirected hosts.
 
+function Restore-PowerShellProfileFromValidatedSource {
+    # Single-sourced portability repair semantic: replace a drifted PowerShell profile with a
+    # validated repository profile, preserving a timestamped backup of the previous content
+    # beside it and rolling back if the result still fails validation. Used by both the manual
+    # Repair-PowerShellProfilePortability.ps1 tool and the PowershellBackup self-heal path so
+    # the two can never drift apart.
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProfilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryProfilePath
+    )
+
+    $resolvedRepositoryProfilePath = (Resolve-Path -LiteralPath $RepositoryProfilePath -ErrorAction Stop).Path
+    $repositoryViolations = @(Get-PSReadLineProfilePortabilityViolation -Path $resolvedRepositoryProfilePath)
+    if ($repositoryViolations.Count -gt 0) {
+        throw (
+            "E_PSREADLINE_PROFILE_REPAIR_SOURCE_NOT_PORTABLE: Repository profile '{0}' is not portable. violations={1}. Repair the repository profile before changing a user profile." -f
+            $resolvedRepositoryProfilePath,
+            ($repositoryViolations -join ',')
+        )
+    }
+
+    $destinationPath = [System.IO.Path]::GetFullPath($ProfilePath)
+    $destinationDirectory = [System.IO.Path]::GetDirectoryName($destinationPath)
+    if ([string]::IsNullOrWhiteSpace($destinationDirectory)) {
+        throw "E_PSREADLINE_PROFILE_REPAIR_DESTINATION_INVALID: Could not resolve a parent directory for '$destinationPath'."
+    }
+    if (Test-Path -LiteralPath $destinationPath -PathType Container) {
+        throw "E_PSREADLINE_PROFILE_REPAIR_DESTINATION_INVALID: Destination '$destinationPath' is a directory, not a PowerShell profile file."
+    }
+
+    # Repairing a profile from itself cannot resolve drift; report it as not repaired so the
+    # caller keeps failing closed instead of looping on an unfixable target.
+    $sameDestination = [string]::Equals($destinationPath, $resolvedRepositoryProfilePath, [System.StringComparison]::OrdinalIgnoreCase) -or
+    [string]::Equals($destinationPath, $resolvedRepositoryProfilePath, [System.StringComparison]::Ordinal)
+    if ($sameDestination) {
+        return [pscustomobject]@{ Repaired = $false; BackupPath = "" }
+    }
+
+    $backupPath = $null
+    [void][System.IO.Directory]::CreateDirectory($destinationDirectory)
+    if (Test-Path -LiteralPath $destinationPath -PathType Leaf) {
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $backupPath = "{0}.pre-portability-repair-{1}.bak" -f $destinationPath, $timestamp
+        Copy-Item -LiteralPath $destinationPath -Destination $backupPath -Force -ErrorAction Stop
+    }
+
+    $temporaryPath = Join-Path -Path $destinationDirectory -ChildPath (".{0}.{1}.tmp" -f [System.IO.Path]::GetFileName($destinationPath), [guid]::NewGuid().ToString("N"))
+    try {
+        Copy-Item -LiteralPath $resolvedRepositoryProfilePath -Destination $temporaryPath -Force -ErrorAction Stop
+        Move-Item -LiteralPath $temporaryPath -Destination $destinationPath -Force -ErrorAction Stop
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $remainingViolations = @()
+    try {
+        $remainingViolations = @(Get-PSReadLineProfilePortabilityViolation -Path $destinationPath)
+    }
+    catch {
+        $remainingViolations = @("parse-failed")
+    }
+
+    if ($remainingViolations.Count -gt 0) {
+        if ($null -ne $backupPath -and (Test-Path -LiteralPath $backupPath -PathType Leaf)) {
+            Copy-Item -LiteralPath $backupPath -Destination $destinationPath -Force -ErrorAction SilentlyContinue
+        }
+        throw (
+            "E_PSREADLINE_PROFILE_REPAIR_INCOMPLETE: Repaired profile '{0}' still failed portability validation. violations={1}" -f
+            $destinationPath,
+            ($remainingViolations -join ',')
+        )
+    }
+
+    return [pscustomobject]@{ Repaired = $true; BackupPath = $(if ($null -eq $backupPath) { "" } else { $backupPath }) }
+}
+
 function Test-PSReadLineAstExtentContainsAst {
     [CmdletBinding()]
     [OutputType([bool])]

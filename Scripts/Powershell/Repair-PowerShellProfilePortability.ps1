@@ -65,45 +65,18 @@ if (-not $PSCmdlet.ShouldProcess($destinationPath, "replace with the validated r
 }
 
 try {
-    [System.IO.Directory]::CreateDirectory($destinationDirectory) | Out-Null
-    $backupPath = $null
-    if (Test-Path -LiteralPath $destinationPath -PathType Leaf) {
-        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        $backupPath = "{0}.pre-portability-repair-{1}.bak" -f $destinationPath, $timestamp
-        Copy-Item -LiteralPath $destinationPath -Destination $backupPath -Force -ErrorAction Stop
-    }
-
-    $temporaryPath = Join-Path -Path $destinationDirectory -ChildPath (".{0}.{1}.tmp" -f [System.IO.Path]::GetFileName($destinationPath), [guid]::NewGuid().ToString("N"))
-    try {
-        Copy-Item -LiteralPath $resolvedRepositoryProfilePath -Destination $temporaryPath -Force -ErrorAction Stop
-        Move-Item -LiteralPath $temporaryPath -Destination $destinationPath -Force -ErrorAction Stop
-    }
-    finally {
-        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
-            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    $destinationViolations = @(Get-PSReadLineProfilePortabilityViolation -Path $destinationPath)
-    if ($destinationViolations.Count -gt 0) {
-        if ($null -ne $backupPath -and (Test-Path -LiteralPath $backupPath -PathType Leaf)) {
-            Copy-Item -LiteralPath $backupPath -Destination $destinationPath -Force -ErrorAction SilentlyContinue
-        }
-        throw (
-            "E_PROFILE_REPAIR_RESULT_NOT_PORTABLE: Repaired profile '{0}' still failed portability validation. violations={1}. See {2}" -f
-            $destinationPath,
-            ($destinationViolations -join ','),
-            $operatorRunbookUrl
-        )
+    $repairResult = Restore-PowerShellProfileFromValidatedSource -ProfilePath $destinationPath -RepositoryProfilePath $resolvedRepositoryProfilePath
+    if (-not $repairResult.Repaired) {
+        throw "E_PROFILE_REPAIR_SAME_FILE: Destination profile '$destinationPath' is the repository profile source; repairing it from itself cannot resolve drift."
     }
 
     Write-Host ("PowerShell profile repaired successfully: {0}" -f $destinationPath) -ForegroundColor Green
-    if ($null -ne $backupPath) {
-        Write-Host ("Previous profile backed up to: {0}" -f $backupPath) -ForegroundColor DarkGray
+    if (-not [string]::IsNullOrWhiteSpace($repairResult.BackupPath)) {
+        Write-Host ("Previous profile backed up to: {0}" -f $repairResult.BackupPath) -ForegroundColor DarkGray
     }
 }
 catch {
-    if ($_.Exception.Message -match '^E_PROFILE_REPAIR_') {
+    if ($_.Exception.Message -match '^(E_PROFILE_REPAIR_|E_PSREADLINE_PROFILE_REPAIR_)') {
         throw
     }
 

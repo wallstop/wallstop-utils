@@ -8,6 +8,37 @@ BeforeAll {
     $script:komorebiRepairPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Komorebi/Repair-KomorebiBackupSource.ps1"
     $script:tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("wallstop-backup-remediation-tests-" + [guid]::NewGuid().ToString("N"))
     [System.IO.Directory]::CreateDirectory($script:tempRoot) | Out-Null
+
+    . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1")
+    $script:pwshExecutable = Resolve-PowerShellExecutablePath
+
+    function Invoke-RemediationScriptBounded {
+        # Runs a remediation script in an isolated child pwsh with a bounded wait, avoiding both
+        # the Start-Process exit-code population race, its unbounded -Wait hang risk, and the
+        # -ArgumentList spaced-path mangling hazard (arguments go through
+        # Set-PortableProcessArguments on a ProcessStartInfo instead).
+        param(
+            [Parameter(Mandatory = $true)]
+            [string[]]$ArgumentList,
+
+            [Parameter(Mandatory = $false)]
+            [int]$TimeoutSeconds = 60
+        )
+
+        $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $processStartInfo.FileName = $script:pwshExecutable
+        $processStartInfo.UseShellExecute = $false
+        Set-PortableProcessArguments -StartInfo $processStartInfo -ArgumentList $ArgumentList
+
+        $childProcess = [System.Diagnostics.Process]::Start($processStartInfo)
+        $didExit = $childProcess.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $didExit) {
+            $childProcess.Kill()
+            throw "Remediation script did not exit within ${TimeoutSeconds}s: $($ArgumentList -join ' ')"
+        }
+
+        return $childProcess.ExitCode
+    }
 }
 
 AfterAll {
@@ -47,18 +78,65 @@ Describe "Backup host-state remediation" {
         }
     }
 
+    It "replaces a drifted host profile from the validated repository source and preserves a timestamped backup" {
+        . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1")
+
+        $destination = Join-Path -Path $script:tempRoot -ChildPath "self-heal/Documents/PowerShell/Microsoft.PowerShell_profile.ps1"
+        $driftedContent = "Set-PSReadLineOption -PredictionSource History`nSet-PSReadLineOption -PredictionViewStyle InlineView`n"
+        $destinationDirectory = [System.IO.Path]::GetDirectoryName($destination)
+        [void][System.IO.Directory]::CreateDirectory($destinationDirectory)
+        [System.IO.File]::WriteAllText($destination, $driftedContent, [System.Text.UTF8Encoding]::new($false))
+
+        $repositorySource = Join-Path -Path $script:repoRoot -ChildPath "Config/Powershell/CurrentUserCurrentHost_Microsoft.PowerShell_profile.ps1"
+        $repairResult = Restore-PowerShellProfileFromValidatedSource -ProfilePath $destination -RepositoryProfilePath $repositorySource
+
+        $repairResult.Repaired | Should -BeTrue
+        @(Get-PSReadLineProfilePortabilityViolation -Path $destination) | Should -HaveCount 0
+
+        $backupFiles = @(Get-ChildItem -LiteralPath $destinationDirectory -Filter "*.pre-portability-repair-*.bak" -File)
+        $backupFiles.Count | Should -Be 1
+        $repairResult.BackupPath | Should -Be $backupFiles[0].FullName
+        (Get-Content -LiteralPath $backupFiles[0].FullName -Raw) | Should -Be $driftedContent
+    }
+
+    It "fails closed when the repository repair source is itself non-portable" {
+        . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1")
+
+        $destination = Join-Path -Path $script:tempRoot -ChildPath "bad-source/profile.ps1"
+        $originalDestinationContent = "# untouched destination`n"
+        [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($destination))
+        [System.IO.File]::WriteAllText($destination, $originalDestinationContent, [System.Text.UTF8Encoding]::new($false))
+        $nonPortableSource = Join-Path -Path $script:tempRoot -ChildPath "bad-source/non-portable-repo-profile.ps1"
+        [System.IO.File]::WriteAllText($nonPortableSource, "Set-PSReadLineOption -PredictionSource History`n", [System.Text.UTF8Encoding]::new($false))
+
+        { Restore-PowerShellProfileFromValidatedSource -ProfilePath $destination -RepositoryProfilePath $nonPortableSource } |
+            Should -Throw "E_PSREADLINE_PROFILE_REPAIR_SOURCE_NOT_PORTABLE*"
+        (Get-Content -LiteralPath $destination -Raw) | Should -Be $originalDestinationContent
+    }
+
+    It "declines to repair a profile from itself instead of looping on an unfixable target" {
+        . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/PSReadLineProfilePortabilityHelpers.ps1")
+
+        $repositorySource = Join-Path -Path $script:repoRoot -ChildPath "Config/Powershell/CurrentUserCurrentHost_Microsoft.PowerShell_profile.ps1"
+        $sourceContent = Get-Content -LiteralPath $repositorySource -Raw
+
+        $repairResult = Restore-PowerShellProfileFromValidatedSource -ProfilePath $repositorySource -RepositoryProfilePath $repositorySource
+
+        $repairResult.Repaired | Should -BeFalse
+        (Get-Content -LiteralPath $repositorySource -Raw) | Should -Be $sourceContent
+    }
+
     It "repairs a selected profile only when explicitly applied and preserves the old file" {
         $destination = Join-Path -Path $script:tempRoot -ChildPath "PowerShell/Microsoft.PowerShell_profile.ps1"
         $destinationDirectory = [System.IO.Path]::GetDirectoryName($destination)
         [System.IO.Directory]::CreateDirectory($destinationDirectory) | Out-Null
         [System.IO.File]::WriteAllText($destination, "# old profile`n", [System.Text.UTF8Encoding]::new($false))
 
-        $pwshPath = if (Test-Path -LiteralPath "/usr/bin/pwsh" -PathType Leaf) { "/usr/bin/pwsh" } else { "pwsh" }
-        $childProcess = Start-Process -FilePath $pwshPath -ArgumentList @(
+        $repairExitCode = Invoke-RemediationScriptBounded -ArgumentList @(
             "-NoLogo", "-NoProfile", "-File", $script:profileRepairPath,
             "-ProfilePath", $destination, "-Apply"
-        ) -Wait -PassThru
-        $childProcess.ExitCode | Should -Be 0
+        )
+        $repairExitCode | Should -Be 0
         Test-Path -LiteralPath $destination -PathType Leaf | Should -BeTrue
         @(Get-ChildItem -LiteralPath $destinationDirectory -Filter "*.pre-portability-repair-*.bak" -File) | Should -HaveCount 1
         (Get-Content -LiteralPath $destination -Raw) | Should -Match "Parameters\.ContainsKey\('PredictionSource'\)"
@@ -68,12 +146,11 @@ Describe "Backup host-state remediation" {
         $destination = Join-Path -Path $script:tempRoot -ChildPath "komorebi-user"
         [System.IO.Directory]::CreateDirectory($destination) | Out-Null
 
-        $pwshPath = if (Test-Path -LiteralPath "/usr/bin/pwsh" -PathType Leaf) { "/usr/bin/pwsh" } else { "pwsh" }
-        $childProcess = Start-Process -FilePath $pwshPath -ArgumentList @(
+        $komorebiExitCode = Invoke-RemediationScriptBounded -ArgumentList @(
             "-NoLogo", "-NoProfile", "-File", $script:komorebiRepairPath,
             "-ProfileName", "default", "-UserProfileRoot", $destination, "-Apply"
-        ) -Wait -PassThru
-        $childProcess.ExitCode | Should -Be 0
+        )
+        $komorebiExitCode | Should -Be 0
         foreach ($fileName in @("applications.json", "komorebi.bar.json", "komorebi.json")) {
             Test-Path -LiteralPath (Join-Path -Path $destination -ChildPath $fileName) -PathType Leaf | Should -BeTrue
         }

@@ -3868,10 +3868,19 @@ Describe "Backup script safety conventions" {
         $updateScript | Should -Not -Match 'Push-Location\s+"\$baseDirectory/Scripts/"'
 
         $winGetUpdateScript = (Get-Content -Path (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/WinGet/WinGetUpdate.ps1') -Raw) -replace "`r", ''
-        $winGetUpdateScript | Should -Match 'winget\s+upgrade\s+--all\s+--silent'
-        $winGetUpdateScript | Should -Match '\$wingetExitCode\s*=\s*\$LASTEXITCODE'
+        $winGetUpdateScript | Should -Match 'winget\s+upgrade\s+--all\s+--silent\s+--disable-interactivity'
+        $winGetUpdateScript | Should -Match '\$LASTEXITCODE'
         $winGetUpdateScript | Should -Match '-1978335189'
-        $winGetUpdateScript | Should -Match 'exit\s+0'
+        $winGetUpdateScript | Should -Match '-1978335188'
+        # Partial bulk-upgrade failures are classified, not blindly passed through: consent-blocked
+        # installers defer with a warning while genuine failures and unattributable aggregates fail closed.
+        $winGetUpdateScript | Should -Match 'W_WINGET_UPGRADE_DEFERRED_INTERACTIVE'
+        $winGetUpdateScript | Should -Match 'E_WINGET_UPDATE_PACKAGE_INSTALL_FAILED'
+        $winGetUpdateScript | Should -Match 'E_WINGET_UPDATE_UNATTRIBUTED_FAILURE'
+        $winGetUpdateScript | Should -Match 'E_WINGET_UPDATE_FAILED'
+        $winGetUpdateScript | Should -Match 'E_WINGET_UPDATE_NOT_AVAILABLE'
+        $winGetUpdateScript | Should -Match 'function\s+Resolve-WinGetUpdateOutcome'
+        $winGetUpdateScript | Should -Match '\$MyInvocation\.InvocationName\s+-ne\s*"\."'
     }
 
     It "validates Config backup source before destructive clear" {
@@ -3919,6 +3928,10 @@ Describe "Backup script safety conventions" {
         $powershellBackup | Should -Match 'function\s+Assert-PowerShellProfileBackupPortability'
         $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_PROFILE_PORTABILITY'
         $powershellBackup | Should -Match 'E_POWERSHELL_BACKUP_PROFILE_PARSE_FAILED'
+        # Host-side portability drift is self-healed from the validated repository profile
+        # before failing closed, mirroring the managed AutoHotkey snapshot self-heal.
+        $powershellBackup | Should -Match 'Restore-PowerShellProfileFromValidatedSource\s+-ProfilePath\s+\$resolvedPath\s+-RepositoryProfilePath\s+\$repositoryCanonicalProfilePath'
+        $powershellBackup | Should -Match 'W_POWERSHELL_BACKUP_PROFILE_AUTOREPAIRED'
         $powershellBackup | Should -Match 'Assert-PowerShellProfileBackupPortability\s+-ProfileName\s+\$candidate\.Name\s+-Path\s+\$candidate\.Path'
         $powershellBackup | Should -Match 'PSReadLineProfilePortabilityHelpers\.ps1'
         $powershellBackup | Should -Match 'Get-PSReadLineProfilePortabilityViolation\s+-Path\s+\$resolvedPath'
@@ -3930,6 +3943,9 @@ Describe "Backup script safety conventions" {
         $psReadLineHelper | Should -Match 'Test-PSReadLineAstContainsHostUISupportsVirtualTerminalAccess'
         $psReadLineHelper | Should -Match 'Test-PSReadLineCompatibilityFindingGuarded'
         $psReadLineHelper | Should -Match 'E_PSREADLINE_PROFILE_PARSE_FAILED'
+        $psReadLineHelper | Should -Match 'function\s+Restore-PowerShellProfileFromValidatedSource'
+        $psReadLineHelper | Should -Match 'E_PSREADLINE_PROFILE_REPAIR_SOURCE_NOT_PORTABLE'
+        $psReadLineHelper | Should -Match 'pre-portability-repair-'
         $powershellBackup | Should -Not -Match '\$backupFolder\s*=\s*"\$baseDirectory\\Config\\Powershell"'
         $powershellBackup | Should -Not -Match '\$HOME\\Documents\\PowerShell'
         $powershellBackup | Should -Not -Match '\$HOME\\Documents\\WindowsPowerShell'

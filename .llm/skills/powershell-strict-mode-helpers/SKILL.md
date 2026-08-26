@@ -3,7 +3,7 @@ name: powershell-strict-mode-helpers
 description: Implement strict-mode-safe PowerShell behavior with portable helper functions, reliable error handling, and correct exit-code propagation.
 metadata:
   category: Core
-  keywords: powershell, strict mode, lastexitcode, helper function
+  keywords: powershell, strict mode, lastexitcode, helper function, native exit codes, exit code truncation
   details: ../../skill-details/powershell-strict-mode-helpers.md
 ---
 
