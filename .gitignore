@@ -40,4 +40,4 @@ Config/.config/vllm/
 # these patterns keep accidental copies out even if generated inside a checkout.
 agent-notify.env
 agent-notify.env.tmp.*
-*.agent-notify.bak.*
+*.bak.agent-notify.*

@@ -49,11 +49,7 @@ Describe 'AgentNotify bash offline suite' -Skip:(-not $script:bashToolingAvailab
 
         $psi = [System.Diagnostics.ProcessStartInfo]::new()
         $psi.FileName = (Get-Command -Name 'bash' -ErrorAction Stop).Source
-        $suiteArgument = $suitePath
-        if ($suiteArgument -match '[[:space:]]') {
-            $suiteArgument = '"' + ($suiteArgument -replace '"', '\"') + '"'
-        }
-        $psi.Arguments = $suiteArgument
+        Set-PortableProcessArguments -StartInfo $psi -ArgumentList @($suitePath)
         $psi.WorkingDirectory = $script:repoRoot
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true

@@ -63,7 +63,8 @@ Scripts/AgentNotify/install.sh --audit     # E_AGENT_NOTIFY_SECRET_IN_TREE fails
 
 The private topic lives **only** in `$HOME/.config/agent-notify/agent-notify.env`
 (chmod 600) outside the repository; `.gitignore` guards reject accidental copies,
-and `--audit` re-proves it over tracked files whenever you want certainty.
+and `--audit` re-proves it over the whole tracked tree (docs/images excluded)
+whenever you want certainty.
 
 `agent-notify.env` is auto-sourced on every invocation and wins over ambient
 environment, so one synced file is authoritative per machine
@@ -71,12 +72,18 @@ environment, so one synced file is authoritative per machine
 
 ### Resilience contract
 
-`bin/agent-notify` and the nanocoder shim deliberately use `set -uo pipefail`
-without `-e`: they execute **inside other tools' hook loops**, where an unexpected
-nonzero must never abort a host agent session mid-task. Every failure mode ends
-in a logged JSONL entry plus `exit 0` (regression-pinned in `tests/run.sh`).
-`install.sh`, which owns real mutations and has no host to protect, follows the
-repository baseline `set -euo pipefail`.
+`bin/agent-notify`, the nanocoder shim, and the offline runner
+(`tests/run.sh`) deliberately use `set -uo pipefail` without `-e`: they execute
+**inside other tools' hook loops or assertion flows**, where an unexpected
+nonzero must never abort a host agent session mid-task (the runner continues
+past individual assertion failures by design and reports totals). Every core
+failure mode ends in a logged JSONL entry plus `exit 0` (regression-pinned in
+`tests/run.sh`). `install.sh`, which owns real mutations and has no host to
+protect, follows the repository baseline `set -euo pipefail`.
+
+Note: `bin/agent-notify` is intentionally extension-less, so repo hook globs
+(`Scripts/**/*.sh`) never route it through shfmt/shellcheck; it is instead
+covered by the suite's own `bash -n` lane plus locally-run pinned shellcheck.
 
 ## Wiring the harnesses
 
