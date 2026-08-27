@@ -1,0 +1,17 @@
+{
+  "session_id": "sess-77",
+  "turn_id": "turn-9",
+  "hook_event_name": "Stop",
+  "permission_mode": "default",
+  "model": "gpt-5.6",
+  "cwd": "/work/buildsys",
+  "last_message": "Build finished and 3 flaky tests fixed",
+  "x_expect": {
+    "harness": "codex",
+    "state": "done",
+    "priority": "default",
+    "tag_present": "heavy_check_mark",
+    "title_re": "^\\[testbox\\] Codex: DONE$",
+    "body_re": "buildsys · Build finished and 3 flaky tests fixed"
+  }
+}

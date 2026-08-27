@@ -1,0 +1,14 @@
+{
+  "session_id": "a1b2c3",
+  "hook_event_name": "SessionEnd",
+  "reason": "clear",
+  "cwd": "/home/dev/projects/toolsmith",
+  "x_expect": {
+    "harness": "claude",
+    "state": "ended",
+    "priority": "low",
+    "tag_present": "zzz",
+    "title_re": "^\\[testbox\\] Claude: ENDED$",
+    "body_re": "toolsmith · clear"
+  }
+}

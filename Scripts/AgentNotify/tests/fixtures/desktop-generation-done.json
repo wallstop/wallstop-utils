@@ -1,0 +1,13 @@
+{
+  "summary": "Response ready in helper-project",
+  "body": "",
+  "urgency": "low",
+  "x_expect": {
+    "harness": "desktop",
+    "state": "done",
+    "priority": "default",
+    "tag_present": "heavy_check_mark",
+    "title_re": "^\\[testbox\\] Nanocoder: DONE$",
+    "body_re": "Response ready in helper-project"
+  }
+}

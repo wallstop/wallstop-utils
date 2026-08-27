@@ -1,0 +1,15 @@
+{
+  "session_id": "a1b2c3",
+  "hook_event_name": "StopFailure",
+  "error_type": "rate_limit",
+  "reason": "usage limit reached, resets tomorrow 08:00 UTC",
+  "cwd": "/home/dev/projects/api",
+  "x_expect": {
+    "harness": "claude",
+    "state": "blocked",
+    "priority": "max",
+    "tag_present": "rotating_light",
+    "title_re": "^\\[testbox\\] Claude: BLOCKED$",
+    "body_re": "api · rate_limit.*usage limit reached"
+  }
+}

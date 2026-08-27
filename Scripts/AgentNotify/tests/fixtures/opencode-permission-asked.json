@@ -1,0 +1,14 @@
+{
+  "event": "permission.asked",
+  "type": "bash",
+  "message": "Allow npm install?",
+  "directory": "/opt/cli-app",
+  "x_expect": {
+    "harness": "opencode",
+    "state": "waiting",
+    "priority": "high",
+    "tag_present": "bell",
+    "title_re": "^\\[testbox\\] OpenCode: WAITING$",
+    "body_re": "cli-app · Allow npm install\\?"
+  }
+}

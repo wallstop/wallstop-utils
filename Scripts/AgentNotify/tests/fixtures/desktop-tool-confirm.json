@@ -1,0 +1,13 @@
+{
+  "summary": "Action Required in my-project",
+  "body": "Nanocoder needs your approval",
+  "urgency": "normal",
+  "x_expect": {
+    "harness": "desktop",
+    "state": "waiting",
+    "priority": "high",
+    "tag_present": "bell",
+    "title_re": "^\\[testbox\\] Nanocoder: WAITING$",
+    "body_re": "my-project - Nanocoder needs your approval"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "hooks": {
+    "Notification": [
+      {
+        "type": "command",
+        "bash": "~/.local/bin/agent-notify copilot",
+        "timeoutSec": 10
+      }
+    ],
+    "AgentStop": [
+      {
+        "type": "command",
+        "bash": "~/.local/bin/agent-notify copilot",
+        "timeoutSec": 10
+      }
+    ],
+    "ErrorOccurred": [
+      {
+        "type": "command",
+        "bash": "~/.local/bin/agent-notify copilot",
+        "timeoutSec": 10
+      }
+    ],
+    "SessionEnd": [
+      {
+        "type": "command",
+        "bash": "~/.local/bin/agent-notify copilot",
+        "timeoutSec": 8
+      }
+    ]
+  }
+}

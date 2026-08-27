@@ -1,0 +1,16 @@
+{
+  "session_id": "sess-77",
+  "turn_id": "turn-9",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Bash",
+  "tool_input": { "command": "rm -rf dist/" },
+  "cwd": "/work/buildsys",
+  "x_expect": {
+    "harness": "codex",
+    "state": "waiting",
+    "priority": "high",
+    "tag_present": "bell",
+    "title_re": "^\\[testbox\\] Codex: WAITING$",
+    "body_re": "buildsys · .*rm -rf dist/"
+  }
+}

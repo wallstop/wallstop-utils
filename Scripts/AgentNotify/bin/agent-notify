@@ -1,0 +1,511 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+VERSION="1.1.0"
+PROG="agent-notify"
+
+if ((BASH_VERSINFO[0] < 4)); then
+  printf '%s: requires bash >= 4\n' "$PROG" >&2
+  exit 1
+fi
+
+DEBUG="${AGENT_NOTIFY_DEBUG:-0}"
+dbg() {
+  if [[ "$DEBUG" == "1" ]]; then
+    printf '%s: %s\n' "$PROG" "$*" >&2
+  fi
+}
+usage() {
+  cat << EOF
+$PROG $VERSION - push AI-agent lifecycle events to ntfy.
+
+Usage: $PROG [--print] HARNESS < hook-payload.json
+
+Harnesses: claude | codex | copilot | opencode | desktop
+
+Reads a harness hook payload (JSON) on stdin, maps it to a normalized
+{state, detail} pair, applies a per-(machine,harness,state) cooldown,
+and publishes an ntfy notification. Designed never to fail or block the
+calling harness hook; problems are recorded in the log instead.
+
+Modes:
+  (default)   publish. Requires AGENT_NOTIFY_TOPIC.
+  --print     emit the would-be ntfy request as one JSON object on stdout.
+              No network access, no dedup side effects. Used by tests.
+
+Environment:
+  AGENT_NOTIFY_URL            ntfy base URL            default: https://ntfy.sh
+  AGENT_NOTIFY_TOPIC          target topic             required to publish
+  AGENT_NOTIFY_TOKEN          bearer token             optional (self-hosted ACLs)
+  AGENT_NOTIFY_MACHINE_LABEL  machine identity         default: CODESPACE_NAME or hostname
+  AGENT_NOTIFY_COOLDOWN_SECS  dedup window seconds     default: 90 (0 disables)
+  AGENT_NOTIFY_SNIPPET_MAX    detail truncation chars  default: 160
+  AGENT_NOTIFY_DEBUG          set to 1 for stderr diagnostics
+
+Config file: ~/.config/agent-notify/agent-notify.env is sourced automatically
+when present; entries there take precedence over ambient environment so the
+same file can be synced across machines. See README.md.
+
+State model: waiting (input needed, high) > blocked (error, max) >
+done (turn finished, default) > ended (session closed, low).
+Unrecognized events are dropped silently and logged as skipped.
+EOF
+}
+
+die_usage() {
+  usage >&2
+  exit 2
+}
+
+ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/agent-notify/agent-notify.env"
+if [[ -r "$ENV_FILE" ]]; then
+  ENV_CLEAN=$(mktemp "${TMPDIR:-/tmp}/an-env.XXXXXX") || {
+    printf '%s: mktemp failed; skipping %s\n' "$PROG" "$ENV_FILE" >&2
+    ENV_CLEAN=""
+  }
+  if [[ -n "$ENV_CLEAN" ]]; then
+    sed 's/\r$//' "$ENV_FILE" > "$ENV_CLEAN" 2> /dev/null
+    chmod 600 "$ENV_CLEAN" 2> /dev/null || true
+    LOADED="$( (
+      set -a
+      # shellcheck disable=SC1090
+      # Dynamic source by design: generated+chmod-600 by install.sh, CRLF-stripped; values re-import via declare -p capture.
+      . "$ENV_CLEAN"
+      declare -p AGENT_NOTIFY_URL AGENT_NOTIFY_TOPIC AGENT_NOTIFY_TOKEN \
+        AGENT_NOTIFY_MACHINE_LABEL AGENT_NOTIFY_COOLDOWN_SECS \
+        AGENT_NOTIFY_SNIPPET_MAX AGENT_NOTIFY_DEBUG
+      true
+    ) 2> /dev/null)"
+    if [[ -n "$LOADED" ]]; then
+      eval "$LOADED"
+    else
+      printf '%s: ignoring unreadable/unparseable %s\n' "$PROG" "$ENV_FILE" >&2
+    fi
+    rm -f "$ENV_CLEAN" 2> /dev/null || true
+  fi
+fi
+
+CFG_URL="${AGENT_NOTIFY_URL:-https://ntfy.sh}"
+CFG_TOPIC="${AGENT_NOTIFY_TOPIC:-}"
+CFG_TOKEN="${AGENT_NOTIFY_TOKEN:-}"
+CFG_COOLDOWN="${AGENT_NOTIFY_COOLDOWN_SECS:-90}"
+CFG_SNIPPET_MAX="${AGENT_NOTIFY_SNIPPET_MAX:-160}"
+
+DEBUG="${AGENT_NOTIFY_DEBUG:-${DEBUG:-0}}"
+
+normalize_num() {
+  local v=$1 dflt=$2
+  local vv
+  vv=${v//$'\r'/}
+  vv=${vv//$'\n'/ }
+  if [[ ! "$v" =~ ^[0-9]+$ ]]; then
+    dbg "invalid numeric config '$vv', using $dflt"
+    printf '%s' "$dflt"
+    return
+  fi
+  if ((${#v} > 12)); then
+    dbg "numeric config '$vv' implausibly large, using $dflt"
+    printf '%s' "$dflt"
+    return
+  fi
+  v=$((10#$v))
+  if ((v > 86400)); then
+    v=86400
+  fi
+  printf '%s' "$v"
+}
+
+CFG_COOLDOWN=$(normalize_num "${AGENT_NOTIFY_COOLDOWN_SECS:-90}" 90)
+CFG_SNIPPET_MAX=$(normalize_num "${AGENT_NOTIFY_SNIPPET_MAX:-160}" 160)
+
+STATE_DIR_BASE="${XDG_STATE_HOME:-$HOME/.local/state}/$PROG"
+LOG_FILE="$STATE_DIR_BASE/log.jsonl"
+COOLDOWN_DIR="$STATE_DIR_BASE/cooldown"
+
+mkdir -p "$STATE_DIR_BASE" "$COOLDOWN_DIR" 2> /dev/null
+chmod 700 "$STATE_DIR_BASE" 2> /dev/null
+dbg "state_dir=$STATE_DIR_BASE"
+
+PRINT=false
+while (($#)); do
+  case "$1" in
+    --print) PRINT=true ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -*) die_usage ;;
+    *) break ;;
+  esac
+  shift
+done
+(($# == 1)) || die_usage
+HARNESS=$1
+case "$HARNESS" in
+  claude | codex | copilot | opencode | desktop) ;;
+  *) die_usage ;;
+esac
+
+RAW="$(cat 2> /dev/null || true)"
+J='{}'
+if [[ -n "$RAW" ]]; then
+  PARSED="$(printf '%s' "$RAW" | jq -c '.' 2> /dev/null)" || PARSED=''
+  [[ -n "$PARSED" ]] && J="$PARSED"
+fi
+dbg "harness=$HARNESS json=${#J}B"
+
+machine_label() {
+  if [[ -n "${AGENT_NOTIFY_MACHINE_LABEL:-}" ]]; then
+    printf '%s' "$AGENT_NOTIFY_MACHINE_LABEL"
+  elif [[ -n "${CODESPACE_NAME:-}" ]]; then
+    printf '%s' "${CODESPACE_NAME%%-*}"
+  else
+    hostname 2> /dev/null || printf 'localhost'
+  fi
+}
+MACHINE="$(machine_label)"
+MACHINE=${MACHINE//$'\r'/}
+MACHINE=${MACHINE//$'\n'/}
+
+ev_of() {
+  printf '%s' "$J" | jq -r '.hook_event_name // .event // .type // ""' 2> /dev/null
+}
+EV="$(ev_of)"
+
+pick() {
+  printf '%s' "$J" | jq -r "$1 // \"\"" 2> /dev/null
+}
+
+combine() {
+  printf '%s' "$J" | jq -r "([$1] | map(select(. != null) | tostring | select(length > 0)) | join(\" \")) // \"\"" 2> /dev/null
+}
+
+squash() {
+  local s sq
+  s=$(printf '%s' "$1" | tr '\t\r\n' '   ' | tr -s ' ')
+  sq=$(printf '%s' "$s" | jq -Rj --argjson n "$CFG_SNIPPET_MAX" \
+    'if length > $n then .[0:$n] + "…" else . end' 2> /dev/null)
+  if [[ -n "$sq" ]]; then
+    printf '%s' "$sq"
+  else
+    printf '%s' "$s"
+  fi
+}
+
+state_meta() {
+  case "$1" in
+    waiting)
+      PRI_NUM=4
+      PRI_NAME=high
+      STATE_TAG=bell
+      ;;
+    blocked)
+      PRI_NUM=5
+      PRI_NAME=max
+      STATE_TAG=rotating_light
+      ;;
+    done)
+      PRI_NUM=3
+      PRI_NAME=default
+      STATE_TAG=heavy_check_mark
+      ;;
+    ended)
+      PRI_NUM=2
+      PRI_NAME=low
+      STATE_TAG=zzz
+      ;;
+  esac
+}
+
+STATE=info
+PRI_NUM=3
+PRI_NAME=default
+STATE_TAG=information_source
+DETAIL=''
+SKIP=false
+
+case "$HARNESS" in
+  claude)
+    case "$EV" in
+      Notification)
+        STATE=waiting
+        DETAIL=$(combine '.notification_type, .message, .messageType')
+        ;;
+      Stop)
+        STATE='done'
+        DETAIL=$(pick '.last_assistant_message')
+        ;;
+      StopFailure)
+        STATE=blocked
+        DETAIL=$(combine '.error_type, .error_type_reason, .error, .reason, .matcher')
+        ;;
+      SessionEnd)
+        STATE=ended
+        DETAIL=$(pick '.reason')
+        ;;
+      *)
+        SKIP=true
+        ;;
+    esac
+    ;;
+  codex)
+    case "$EV" in
+      PermissionRequest)
+        STATE=waiting
+        DETAIL=$(combine '.tool_name, .tool, .tool_input.command, .tool_input.file_path, .tool_input.path')
+        ;;
+      Stop)
+        STATE='done'
+        DETAIL=$(combine '.last_assistant_message, .last_message')
+        ;;
+      SessionEnd)
+        STATE=ended
+        DETAIL=$(combine '.reason, .source, .end_reason')
+        ;;
+      *)
+        SKIP=true
+        ;;
+    esac
+    ;;
+  copilot)
+    case "$EV" in
+      Notification | notification)
+        STATE=waiting
+        DETAIL=$(combine '.notification_type, .notificationType, .message, .text')
+        ;;
+      Stop | AgentStop | agentStop)
+        STATE='done'
+        DETAIL=$(combine '.last_assistant_message, .response')
+        ;;
+      ErrorOccurred | errorOccurred)
+        STATE=blocked
+        DETAIL=$(combine '.error.message, .error_message, .recoverable_error_hint')
+        ;;
+      SessionEnd | sessionEnd)
+        STATE=ended
+        DETAIL=$(pick '.reason')
+        ;;
+      *)
+        SKIP=true
+        ;;
+    esac
+    ;;
+  opencode)
+    case "$EV" in
+      permission.asked)
+        STATE=waiting
+        DETAIL=$(combine '.message, .permission, .type, .pattern')
+        ;;
+      session.idle)
+        STATE='done'
+        DETAIL=$(combine '.snippet, .message')
+        ;;
+      session.error)
+        STATE=blocked
+        DETAIL=$(combine '.message, .error')
+        ;;
+      *)
+        SKIP=true
+        ;;
+    esac
+    ;;
+  desktop)
+    S_TITLE=$(pick '.summary')
+    S_BODY=$(pick '.body')
+    COMBINED="$S_TITLE $S_BODY"
+    if printf '%s' "$COMBINED" | grep -qiE 'confirm|approv|question|required'; then
+      STATE=waiting
+    else
+      STATE='done'
+    fi
+    DETAIL=$(squash "$S_TITLE ${S_BODY:+- }$S_BODY")
+    ;;
+esac
+
+dbg "event=$EV state=$STATE skip=$SKIP"
+
+CWD_INPUT=$(printf '%s' "$J" | jq -r '.cwd // .directory // .project // .projectPath // ""' 2> /dev/null)
+
+compute_git_context() {
+  PROJ_PART=""
+  BRANCH_PART=""
+  [[ -n "$CWD_INPUT" && "$CWD_INPUT" != "/" ]] && PROJ_PART=$(basename -- "$CWD_INPUT")
+  if [[ -n "$CWD_INPUT" && "$STATE" != "ended" && -d "$CWD_INPUT" ]]; then
+    if command -v timeout > /dev/null 2>&1; then
+      BRANCH_PART=$(timeout 1 git -C "$CWD_INPUT" --no-optional-locks branch --show-current 2> /dev/null || true)
+    else
+      BRANCH_PART=$(git -C "$CWD_INPUT" --no-optional-locks branch --show-current 2> /dev/null || true)
+    fi
+  fi
+}
+
+state_meta "$STATE"
+compute_git_context
+UPPER_STATE=$(printf '%s' "$STATE" | tr '[:lower:]' '[:upper:]')
+
+pretty_harness() {
+  case "$1" in
+    claude) printf 'Claude' ;;
+    codex) printf 'Codex' ;;
+    copilot) printf 'Copilot' ;;
+    opencode) printf 'OpenCode' ;;
+    desktop) printf 'Nanocoder' ;;
+  esac
+}
+PRETTY=$(pretty_harness "$HARNESS")
+
+TITLE="[$MACHINE] $PRETTY: $UPPER_STATE"
+TAGS="$STATE_TAG,$MACHINE"
+
+SNIPPET=$(squash "$DETAIL")
+
+BODY=""
+for part in "$PROJ_PART" "$BRANCH_PART" "$SNIPPET"; do
+  [[ -z "$part" ]] && continue
+  [[ -z "$BODY" ]] && BODY="$part" || BODY="$BODY · $part"
+done
+[[ -z "$BODY" ]] && BODY="-"
+
+URL="${CFG_URL%/}/$CFG_TOPIC"
+
+emit_request_json() {
+  jq -cn \
+    --arg url "$URL" \
+    --arg topic "$CFG_TOPIC" \
+    --arg title "$TITLE" \
+    --arg priName "$PRI_NAME" \
+    --argjson priNum "$PRI_NUM" \
+    --arg tags "$TAGS" \
+    --arg body "$BODY" \
+    --arg state "$STATE" \
+    --arg harness "$HARNESS" \
+    --arg event "$EV" \
+    --arg machine "$MACHINE" \
+    '{url:$url, topic:$topic, title:$title, priority:$priName, priority_num:$priNum,
+      tags:$tags, body:$body, state:$state, harness:$harness, event:(if $event=="" then null else $event end), machine:$machine}'
+}
+
+log_entry() {
+  local ts result code deduped entry_body locked
+  ts=$(date '+%Y-%m-%dT%H:%M:%S%z')
+  result=$1
+  code=${2:-}
+  deduped=${3:-false}
+  entry_body=$(jq -cn \
+    --arg ts "$ts" \
+    --arg ver "$VERSION" \
+    --arg machine "$MACHINE" \
+    --arg harness "$HARNESS" \
+    --arg ev "$EV" \
+    --arg st "$STATE" \
+    --arg pri "$PRI_NAME" \
+    --arg res "$result" \
+    --arg proj "$PROJ_PART" \
+    --arg br "$BRANCH_PART" \
+    --arg det "$DETAIL" \
+    --arg code "$code" \
+    --argjson dd "$deduped" \
+    '{ts:$ts, v:$ver, machine:$machine, harness:$harness, event:(if $ev=="" then null else $ev end),
+      state:$st, priority:$pri, project:(if $proj=="" then null else $proj end),
+      branch:(if $br=="" then null else $br end),
+      detail:(if $det=="" then null else $det end), deduped:$dd,
+      result:$res, http_code:(if $code=="" then null else ($code|tonumber) end)}' 2> /dev/null) || return 0
+  locked=false
+  if command -v flock > /dev/null 2>&1 && exec 9>> "$STATE_DIR_BASE/.log.lock" 2> /dev/null; then
+    if flock -w 3 9 2> /dev/null; then
+      locked=true
+    fi
+  fi
+  if (($(wc -c < "$LOG_FILE" 2> /dev/null || echo 0) >= 5000000)); then
+    mv -f "$LOG_FILE" "$LOG_FILE.1" 2> /dev/null || true
+  fi
+  printf '%s\n' "$entry_body" >> "$LOG_FILE" 2> /dev/null || true
+  if [[ "$locked" == "true" ]]; then
+    flock -u 9 2> /dev/null || true
+  fi
+  exec 9>&- 2> /dev/null || true
+}
+
+DEDUPED=false
+KF=""
+NOW=0
+
+if [[ "$SKIP" == "true" ]]; then
+  log_entry skipped
+  dbg "skipped unknown event"
+  exit 0
+fi
+
+if $PRINT; then
+  emit_request_json
+  exit 0
+fi
+
+if [[ -z "$CFG_TOPIC" ]]; then
+  log_entry no-topic
+  dbg "AGENT_NOTIFY_TOPIC unset; nothing sent"
+  exit 0
+fi
+
+if [[ ! "$CFG_TOPIC" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+  log_entry bad-topic
+  dbg "invalid AGENT_NOTIFY_TOPIC; nothing sent"
+  exit 0
+fi
+
+if ((CFG_COOLDOWN > 0)); then
+  KEY_SANITIZED=$(printf '%s' "${MACHINE}_${HARNESS}_${STATE}" | tr -c 'A-Za-z0-9._-' '_')
+  KF="$COOLDOWN_DIR/$KEY_SANITIZED.ts"
+  NOW=$(date +%s)
+  PREV=0
+  LOCKED_KF=false
+  if command -v flock > /dev/null 2>&1 && exec 8>> "$COOLDOWN_DIR/.lock" 2> /dev/null; then
+    if flock -w 3 8 2> /dev/null; then
+      LOCKED_KF=true
+    fi
+  fi
+  if [[ -r "$KF" ]] && read -r PREV < "$KF" 2> /dev/null; then
+    :
+  else
+    PREV=0
+  fi
+  [[ "$PREV" =~ ^[0-9]+$ ]] || PREV=0
+  if ((NOW - PREV < CFG_COOLDOWN)); then
+    DEDUPED=true
+  fi
+  if [[ "$LOCKED_KF" == "true" ]]; then
+    flock -u 8 2> /dev/null || true
+  fi
+  exec 8>&- 2> /dev/null || true
+fi
+
+if [[ "$DEDUPED" == "true" ]]; then
+  log_entry deduped "" true
+  dbg "deduped within cooldown window"
+  exit 0
+fi
+
+CURL_ARGS=(-sS -m 4 --connect-timeout 2 -o /dev/null -w '%{http_code}')
+CURL_ARGS+=(-H "Title: $TITLE" -H "Priority: $PRI_NAME" -H "Tags: $TAGS")
+if [[ -n "$CFG_TOKEN" ]]; then
+  CURL_ARGS+=(-H "Authorization: Bearer $CFG_TOKEN")
+fi
+CURL_ARGS+=(--data-binary "$BODY" "$URL")
+
+HTTP_CODE=$(curl "${CURL_ARGS[@]}" 2> "$STATE_DIR_BASE/curl.err")
+RC=$?
+
+if ((RC == 0)) && [[ "$HTTP_CODE" =~ ^2 ]]; then
+  if [[ -n "$KF" ]] && ((CFG_COOLDOWN > 0)); then
+    printf '%s\n' "$NOW" > "$KF" 2> /dev/null || true
+  fi
+  log_entry sent "$HTTP_CODE" false
+  dbg "sent http=$HTTP_CODE"
+else
+  rm -f "$KF" 2> /dev/null || true
+  ERRSUM=$(head -c 200 "$STATE_DIR_BASE/curl.err" 2> /dev/null | tr '\r\n' '  ' || true)
+  log_entry "failed curl_rc=$RC http=$HTTP_CODE $ERRSUM" "$HTTP_CODE" false
+  dbg "send failed rc=$RC http=$HTTP_CODE err=$ERRSUM"
+fi
+
+exit 0

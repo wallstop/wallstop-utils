@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+SELF="$(realpath "${BASH_SOURCE[0]}" 2> /dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+HERE="$(dirname "$SELF")"
+AG=""
+for cand in "$HERE/../../bin/agent-notify" "$HERE/agent-notify" "$HOME/.local/bin/agent-notify" "/usr/local/bin/agent-notify"; do
+  if [[ -x "$cand" ]]; then
+    AG="$cand"
+    break
+  fi
+done
+
+REAL=""
+for cand in /usr/bin/notify-send /usr/local/bin/notify-send /bin/notify-send; do
+  if [[ -x "$cand" ]]; then
+    R="$(realpath "$cand" 2> /dev/null || printf '%s' "$cand")"
+    if [[ "$R" != "$SELF" ]]; then
+      REAL="$cand"
+      break
+    fi
+  fi
+done
+
+POSITIONAL=()
+while (($#)); do
+  case "$1" in
+    -u | -t | -i | -a | --urgency | --icon | --app-name | --expire-time)
+      if (($# >= 2)); then
+        shift 2
+      else
+        shift
+      fi
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+SUMMARY="${POSITIONAL[0]:-}"
+BODY="${POSITIONAL[1]:-}"
+
+if [[ -n "$AG" ]]; then
+  PAYLOAD=$(jq -cn --arg s "$SUMMARY" --arg b "$BODY" '{summary:$s, body:$b}' 2> /dev/null)
+  if [[ -n "$PAYLOAD" ]]; then
+    printf '%s' "$PAYLOAD" | "$AG" desktop > /dev/null 2>&1 &
+  fi
+fi
+
+if [[ -n "$REAL" ]]; then
+  exec "$REAL" "$@"
+fi
+
+wait 2> /dev/null || true
+exit 0

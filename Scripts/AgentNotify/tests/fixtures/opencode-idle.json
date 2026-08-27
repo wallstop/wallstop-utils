@@ -1,0 +1,12 @@
+{
+  "event": "session.idle",
+  "sessionID": "oc-sid-1",
+  "directory": "/opt/cli-app",
+  "x_expect": {
+    "harness": "opencode",
+    "state": "done",
+    "priority": "default",
+    "tag_present": "heavy_check_mark",
+    "title_re": "^\\[testbox\\] OpenCode: DONE$"
+  }
+}
