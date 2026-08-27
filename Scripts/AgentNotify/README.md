@@ -33,39 +33,58 @@ logged), so adding a new hook source can never spam you by accident.
 ## Requirements
 
 - bash >= 4 (macOS ships 3.x — install via Homebrew if needed)
-- jq, curl (git optional: adds branch names to messages)
+- jq (curl only needed on hosts that actually publish)
+- git (used by `--audit` to prove no secrets are tracked)
 
-## Quickstart (once, per account)
+## Quickstart
 
-1. Generate a private topic. The topic name *is* the credential:
+From any checkout of this repository:
 
-       TOPIC="agent-alerts-$(openssl rand -hex 12)"
+```bash
+Scripts/AgentNotify/install.sh --install --all --dry-run    # review plan
+Scripts/AgentNotify/install.sh --install --all              # binaries + env bootstrap + wiring
+```
 
-2. Install the **ntfy Android app**, add server `https://ntfy.sh`, subscribe to
-   `$TOPIC`. Play Store build = instant FCM delivery; F-Droid build = battery
-   exemption recommended, works fully Google-free (UnifiedPush-compatible).
-3. Copy `bin/*` somewhere on PATH and make them executable:
+The install prints `TOPIC_NAME=<agent-alerts-…>` exactly once — subscribe your
+phone's ntfy app to that topic on https://ntfy.sh (step one-time per device).
 
-       mkdir -p ~/.local/bin
-       cp agent-notify/bin/agent-notify ~/.local/bin/
-       chmod +x ~/.local/bin/agent-notify
+Smoke test end-to-end from anywhere:
 
-4. Create `~/.config/agent-notify/agent-notify.env` (chmod 600). The core
-   sources this file automatically on every invocation, so hooks inherit config
-   without any shell-profile wiring. Entries in the file win over ambient
-   environment, which makes one synced file authoritative per machine:
+```bash
+echo '{"hook_event_name":"Stop","cwd":"'"$PWD"'"}' \
+  | ~/.local/bin/agent-notify claude
+```
 
-       export AGENT_NOTIFY_TOPIC="<$TOPIC from step 1>"
-       export AGENT_NOTIFY_MACHINE_LABEL=work-laptop   # short, stable, yours
+Secrets posture check (offline):
 
-5. Smoke test end-to-end:
+```bash
+Scripts/AgentNotify/install.sh --audit     # E_AGENT_NOTIFY_SECRET_IN_TREE fails loud on leaks
+```
 
-       echo '{"hook_event_name":"Stop","cwd":"'"$PWD"'"}' \
-         | ~/.local/bin/agent-notify claude
+The private topic lives **only** in `$HOME/.config/agent-notify/agent-notify.env`
+(chmod 600) outside the repository; `.gitignore` guards reject accidental copies,
+and `--audit` re-proves it over tracked files whenever you want certainty.
 
-   Your phone should buzz within seconds: `[work-laptop] Claude: DONE`.
+`agent-notify.env` is auto-sourced on every invocation and wins over ambient
+environment, so one synced file is authoritative per machine
+(`AGENT_NOTIFY_MACHINE_LABEL=work-laptop` style overrides belong there).
+
+### Resilience contract
+
+`bin/agent-notify` and the nanocoder shim deliberately use `set -uo pipefail`
+without `-e`: they execute **inside other tools' hook loops**, where an unexpected
+nonzero must never abort a host agent session mid-task. Every failure mode ends
+in a logged JSONL entry plus `exit 0` (regression-pinned in `tests/run.sh`).
+`install.sh`, which owns real mutations and has no host to protect, follows the
+repository baseline `set -euo pipefail`.
 
 ## Wiring the harnesses
+
+`install.sh --all` performs these copies/merges automatically with no-clobber
+semantics (`W_AGENT_NOTIFY_DEST_EXISTS` diagnostics point at manual reconciliation).
+The snippets below stay authoritative when editing configs by hand or reviewing
+what landed:
+
 
 Drop-in configs live in `adapters/`. User-level installs survive tool updates;
 project-level copies get committed to repos instead.

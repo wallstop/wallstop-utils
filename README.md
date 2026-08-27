@@ -108,8 +108,24 @@ Scripts/          # Backup and restore scripts
   Wezterm/        # WezTerm scripts (Linux/macOS)
   Mac/            # macOS-specific scripts
   Powershell/     # PowerShell profile scripts
+  AgentNotify/    # Push notifications when AI agent sessions finish/block/wait (see Scripts/AgentNotify/README.md)
   ...
 ```
+
+## Agent Session Notifications
+
+Working across several machines and several terminal AI agents
+(Claude Code, Codex, Copilot CLI, opencode, nanocoder)? `Scripts/AgentNotify`
+sends structured ntfy pushes to your phone the moment any session finishes,
+errors, or waits for your input — installed in one command:
+
+```bash
+Scripts/AgentNotify/install.sh --install --all   # mints a private topic; prints it once
+Scripts/AgentNotify/install.sh --audit           # offline secrets-hygiene proof
+```
+
+See [Scripts/AgentNotify/README.md](Scripts/AgentNotify/README.md) for the full
+setup, adapter mapping, and tuning guide.
 
 ## Usage
 
