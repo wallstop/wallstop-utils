@@ -239,6 +239,43 @@ Describe "Get-WinGetUpgradePackageOutcomes" {
         $outcomes[0].InstallerExitCode | Should -Be "1602"
     }
 
+    It "merges dependency-resolution reprints of an open Found block instead of shifting later terminals" {
+        # Production evidence from the 2026-08-26 backup (issue #46): winget re-printed
+        # Focusrite's "(1/7) Found ..." around its Microsoft.VCRedist dependency install.
+        # Treating the reprint as a new block shifted every later terminal onto the wrong
+        # package - the run attributed WSL's 0x80073d28 failure to Plex. The reprint must
+        # merge into the still-open block so each terminal pairs with its own package.
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines @(
+                "(1/7) Found Focusrite Control 2 [FocusriteAudioEngineeringLtd.FocusriteControl2] Version 1.1108.0.0",
+                "This application is licensed to you by its owner.",
+                "Installing dependencies:",
+                "This package requires the following dependencies:",
+                "- Packages",
+                "Microsoft.VCRedist.2015+.x64",
+                "(1/7) Found Focusrite Control 2 [FocusriteAudioEngineeringLtd.FocusriteControl2] Version 1.1108.0.0",
+                "Successfully verified installer hash",
+                "Starting package install...",
+                "Installer failed with exit code: 1602",
+                "",
+                "(6/7) Found Plex [Plex.Plex] Version 1.115.0",
+                "Installer failed with exit code: 1223",
+                "",
+                "(7/7) Found Windows Subsystem for Linux [Microsoft.WSL] Version 2.7.12",
+                "Installer failed with exit code: 0x80073d28 : The package installation failed because administrator privileges are required."
+            ))
+
+        $outcomes.Count | Should -Be 3
+        $outcomes[0].PackageId | Should -Be "FocusriteAudioEngineeringLtd.FocusriteControl2"
+        $outcomes[0].Status | Should -Be "Failed"
+        $outcomes[0].InstallerExitCode | Should -Be "1602"
+        $outcomes[1].PackageId | Should -Be "Plex.Plex"
+        $outcomes[1].Status | Should -Be "Failed"
+        $outcomes[1].InstallerExitCode | Should -Be "1223"
+        $outcomes[2].PackageId | Should -Be "Microsoft.WSL"
+        $outcomes[2].Status | Should -Be "Failed"
+        $outcomes[2].InstallerExitCode | Should -Be "0x80073d28"
+    }
+
     It "returns no outcomes for empty input" {
         @(Get-WinGetUpgradePackageOutcomes -OutputLines @()).Count | Should -Be 0
     }
@@ -433,6 +470,31 @@ Describe "Resolve-WinGetUpdateOutcome" {
         $outcome.ExitZero | Should -BeTrue
         $outcome.WarningDiagnostic | Should -Match "Plex\.Plex \(installer exit 1223\)"
         $outcome.ErrorDiagnostic | Should -Be ""
+    }
+
+    It "defers dependency-reprint runs with each failure attributed to its own package" {
+        # Resolver-level guard for the 2026-08-26 misattribution: the deferred warning must
+        # carry WSL's 0x80073d28 (the historically correct owner) and must NOT attach it to
+        # Plex the way the pre-merge classifier did.
+        $outcome = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines @(
+            "(1/7) Found Focusrite Control 2 [FocusriteAudioEngineeringLtd.FocusriteControl2] Version 1.1108.0.0",
+            "Installing dependencies:",
+            "(1/7) Found Focusrite Control 2 [FocusriteAudioEngineeringLtd.FocusriteControl2] Version 1.1108.0.0",
+            "Starting package install...",
+            "Installer failed with exit code: 1602",
+            "(6/7) Found Plex [Plex.Plex] Version 1.115.0",
+            "Installer failed with exit code: 1223",
+            "(7/7) Found Windows Subsystem for Linux [Microsoft.WSL] Version 2.7.12",
+            "Installer failed with exit code: 0x80073d28 : administrator privileges are required."
+        )
+
+        $outcome.ExitZero | Should -BeTrue
+        $outcome.ErrorDiagnostic | Should -Be ""
+        $outcome.WarningDiagnostic | Should -Match "W_WINGET_UPGRADE_DEFERRED_INTERACTIVE"
+        $outcome.WarningDiagnostic | Should -Match "FocusriteAudioEngineeringLtd\.FocusriteControl2 \(installer exit 1602\)"
+        $outcome.WarningDiagnostic | Should -Match "Plex\.Plex \(installer exit 1223\)"
+        $outcome.WarningDiagnostic | Should -Match "Microsoft\.WSL \(installer exit 0x80073d28\)"
+        $outcome.WarningDiagnostic | Should -Not -Match "Plex\.Plex \(installer exit 0x80073d28\)"
     }
 }
 

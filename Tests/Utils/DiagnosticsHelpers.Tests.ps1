@@ -258,3 +258,51 @@ Describe "Invoke-SafeGitIndexLockRecovery" {
         $result.ElapsedMilliseconds | Should -BeGreaterOrEqual 100
     }
 }
+
+Describe "Remove-UnsafeControlCharactersFromText" {
+    It "sanitizes '<Description>' safely" -ForEach @(
+        @{
+            Description = "plain text untouched"
+            InputText   = "hello world"
+            Expected    = "hello world"
+        },
+        @{
+            Description = "ANSI CSI colorization stripped"
+            InputText   = "$([char]27)[33;1mWARNING: colored$([char]27)[0m"
+            Expected    = "WARNING: colored"
+        },
+        @{
+            Description = "ANSI cursor sequences stripped"
+            InputText   = "$([char]27)[2Kprogress $([char]27)[6nprobe"
+            Expected    = "progress probe"
+        },
+        @{
+            Description = "C0 control bytes removed while tab/newline survive"
+            InputText   = "a$([char]1)b$([char]9)c$([char]13)$([char]10)d"
+            Expected    = "ab`tc`r`nd"
+        },
+        @{
+            Description = "DEL byte removed"
+            InputText   = "cleaned$([char]127)text"
+            Expected    = "cleanedtext"
+        },
+        @{
+            Description = "empty string stays empty"
+            InputText   = ""
+            Expected    = ""
+        }
+    ) {
+        param($Description, $InputText, $Expected)
+
+        Remove-UnsafeControlCharactersFromText -Text $InputText | Should -Be ($Expected -replace '`r', "`r" -replace '`n', "`n") -Because $Description
+    }
+
+    It "keeps Get-OutputPreview free of raw escape bytes even when inputs carry them" {
+        $previewWithEscapes = Get-OutputPreview -OutputLines @(
+            "$([char]27)[31;1mE_SOMETHING_FAILED:$([char]27)[0m details here"
+        ) -MaxLines 5 -MaxCharacters 200
+
+        $previewWithEscapes | Should -Not -Match [regex]::Escape([string][char]27)
+        $previewWithEscapes | Should -Match "E_SOMETHING_FAILED: details here"
+    }
+}
