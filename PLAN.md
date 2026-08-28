@@ -7,7 +7,7 @@
 - [x] Address all three Cursor review findings with regression coverage: make the Pester gate discoverable from the actual repository root, preserve Nanocoder's original desktop-notification arguments, and stream leading-`@` bodies to curl literally through stdin.
 - [x] Run the full repository validation loop after incorporating current `main`.
 - [x] Complete the three-round adversarial/self-improvement protocol and resolve every reported finding with regression coverage; the final independent pass found eight additional issues that were fixed after the protocol cap.
-- [ ] Push the updated branch and drive PR #79 checks and review threads to green.
+- [x] Push the updated branch and drive PR #79 required checks to green; Cursor completed neutral with no new findings, while Copilot's non-code review check remains externally quota-failed.
 
 Evidence: [PR #79](https://github.com/wallstop/wallstop-utils/pull/79)
 
