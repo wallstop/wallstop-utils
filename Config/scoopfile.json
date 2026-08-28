@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-08-25T23:32:44.299498-07:00",
-      "Version": "2.36.31"
+      "Updated": "2026-08-27T23:32:43.7269211-07:00",
+      "Version": "2.36.33"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-08-24T23:33:56.8423525-07:00",
-      "Version": "3.17.19"
+      "Updated": "2026-08-26T22:42:15.3531468-07:00",
+      "Version": "3.17.21"
     },
     {
       "Info": "",
@@ -151,8 +151,8 @@
       "Info": "",
       "Name": "deno",
       "Source": "main",
-      "Updated": "2026-08-09T20:02:06.7360085-07:00",
-      "Version": "2.9.5"
+      "Updated": "2026-08-27T23:32:47.308567-07:00",
+      "Version": "2.9.6"
     },
     {
       "Info": "",
@@ -268,6 +268,13 @@
     },
     {
       "Info": "",
+      "Name": "hadolint",
+      "Source": "main",
+      "Updated": "2026-08-27T11:39:28.2384562-07:00",
+      "Version": "2.15.1"
+    },
+    {
+      "Info": "",
       "Name": "httrack",
       "Source": "extras",
       "Updated": "2025-06-09T17:44:52.9519505-07:00",
@@ -312,29 +319,29 @@
       "Info": "",
       "Name": "lazygit",
       "Source": "extras",
-      "Updated": "2026-07-15T10:02:19.6621991-07:00",
-      "Version": "0.63.1"
+      "Updated": "2026-08-26T22:46:57.2206945-07:00",
+      "Version": "0.64.1"
     },
     {
       "Info": "",
       "Name": "libreoffice",
       "Source": "extras",
-      "Updated": "2026-07-30T20:28:23.7949499-07:00",
-      "Version": "26.2.5"
+      "Updated": "2026-08-27T23:35:21.2518806-07:00",
+      "Version": "26.8.0"
     },
     {
       "Info": "",
       "Name": "linqpad",
       "Source": "extras",
-      "Updated": "2026-08-12T23:32:50.5926952-07:00",
-      "Version": "9.10.19"
+      "Updated": "2026-08-27T23:35:23.7596889-07:00",
+      "Version": "9.10.20"
     },
     {
       "Info": "",
       "Name": "llvm",
       "Source": "main",
-      "Updated": "2026-06-17T23:33:10.2844864-07:00",
-      "Version": "22.1.8"
+      "Updated": "2026-08-27T23:36:02.9529402-07:00",
+      "Version": "23.1.0"
     },
     {
       "Info": "",
@@ -382,8 +389,8 @@
       "Info": "",
       "Name": "mp3tag",
       "Source": "extras",
-      "Updated": "2026-07-01T23:31:00.9526221-07:00",
-      "Version": "3.35.1"
+      "Updated": "2026-08-27T23:36:16.8775689-07:00",
+      "Version": "3.36"
     },
     {
       "Info": "",
@@ -431,15 +438,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-08-25T23:34:13.0683349-07:00",
-      "Version": "0.33.0"
+      "Updated": "2026-08-27T23:36:42.5957767-07:00",
+      "Version": "0.33.1"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-08-25T23:35:36.8969632-07:00",
-      "Version": "0.33.0"
+      "Updated": "2026-08-27T23:38:05.7739774-07:00",
+      "Version": "0.33.1"
     },
     {
       "Info": "",
@@ -562,6 +569,13 @@
     },
     {
       "Info": "",
+      "Name": "shellcheck",
+      "Source": "main",
+      "Updated": "2026-08-27T11:39:09.5095789-07:00",
+      "Version": "0.11.0"
+    },
+    {
+      "Info": "",
       "Name": "shfmt",
       "Source": "main",
       "Updated": "2026-04-19T12:21:46.7157801-07:00",
@@ -571,8 +585,8 @@
       "Info": "",
       "Name": "signal",
       "Source": "extras",
-      "Updated": "2026-08-20T23:36:53.410341-07:00",
-      "Version": "8.24.1"
+      "Updated": "2026-08-27T23:38:11.3292114-07:00",
+      "Version": "8.25.0"
     },
     {
       "Info": "",
@@ -620,8 +634,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-08-25T23:36:04.5328805-07:00",
-      "Version": "0.12.6"
+      "Updated": "2026-08-27T23:38:27.383796-07:00",
+      "Version": "0.12.7"
     },
     {
       "Info": "",
@@ -696,34 +710,34 @@
   ],
   "buckets": [
     {
-      "Manifests": 1639,
+      "Manifests": 1640,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-08-25T23:05:22-07:00"
+      "Updated": "2026-08-27T20:26:50-07:00"
     },
     {
       "Manifests": 2373,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-08-25T22:51:36-07:00"
+      "Updated": "2026-08-27T16:31:40-07:00"
     },
     {
       "Manifests": 75,
       "Name": "sysinternals",
       "Source": "https://github.com/niheaven/scoop-sysinternals",
-      "Updated": "2026-08-19T18:54:57-07:00"
+      "Updated": "2026-08-27T12:55:26-07:00"
     },
     {
       "Manifests": 132,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-08-25T22:00:04-07:00"
+      "Updated": "2026-08-27T03:01:43-07:00"
     },
     {
       "Manifests": 336,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-08-25T21:39:39-07:00"
+      "Updated": "2026-08-27T21:05:10-07:00"
     }
   ]
 }
