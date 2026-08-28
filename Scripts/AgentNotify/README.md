@@ -84,9 +84,9 @@ failure mode ends in a logged JSONL entry plus `exit 0` (regression-pinned in
 `tests/run.sh`). `install.sh`, which owns real mutations and has no host to
 protect, follows the repository baseline `set -euo pipefail`.
 
-Note: `bin/agent-notify` is intentionally extension-less, so repo hook globs
-(`Scripts/**/*.sh`) never route it through shfmt/shellcheck; it is instead
-covered by the suite's own `bash -n` lane plus locally-run pinned shellcheck.
+Note: `bin/agent-notify` and the Nanocoder shim are intentionally extension-less.
+The repository's shell-quality target matcher, pre-commit hooks, and CI list both
+paths explicitly so pinned shfmt/ShellCheck coverage cannot silently skip them.
 
 ## Wiring the harnesses
 

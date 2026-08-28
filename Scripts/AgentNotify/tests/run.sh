@@ -332,9 +332,23 @@ assert_eq "removed audit fixture is absent from index" \
 HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
   "$AR/Scripts/AgentNotify/install.sh" --audit > "$AUDIT_HOME/clean.out" 2> "$AUDIT_HOME/clean.err"
 RC=$?
-assert_eq "audit passes for a clean tracked index" "$RC" "0"
-assert_match "clean audit proves tracked scan" "$(cat "$AUDIT_HOME/clean.out")" \
-  "audit ok: no tracked secrets in repository"
+KERNEL_NAME=$(uname -s 2> /dev/null || printf 'unknown')
+if ((RC == 0)); then
+  note_pass
+  assert_match "clean audit proves tracked scan" "$(cat "$AUDIT_HOME/clean.out")" \
+    "audit ok: no tracked secrets in repository"
+elif [[ "$KERNEL_NAME" == MINGW* || "$KERNEL_NAME" == MSYS* || "$KERNEL_NAME" == CYGWIN* ]] &&
+  grep -qF -- 'E_AGENT_NOTIFY_ENV_PERMS' "$AUDIT_HOME/clean.err"; then
+  # Git Bash on NTFS cannot always prove chmod 600 through POSIX mode bits. The audit must
+  # remain fail-closed there, while still proving that the tracked-index scan itself ran.
+  note_pass
+  assert_match "Windows clean audit still proves tracked scan" "$(cat "$AUDIT_HOME/clean.out")" \
+    "audit ok: no tracked secrets in repository"
+else
+  note_fail "audit passes for a clean tracked index: exit=$RC stderr=[$(head -c 300 "$AUDIT_HOME/clean.err")]"
+  assert_match "clean audit proves tracked scan" "$(cat "$AUDIT_HOME/clean.out")" \
+    "audit ok: no tracked secrets in repository"
+fi
 INVALID_TOPIC_SHORT="agent-alerts-$(printf '%s' '12345678')"
 INVALID_TOPIC_NONHEX="agent-alerts-$(printf '%s' '0123456789abcdef0123456g')"
 for invalid_topic in "$INVALID_TOPIC_SHORT" "$INVALID_TOPIC_NONHEX"; do
