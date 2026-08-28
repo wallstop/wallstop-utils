@@ -490,9 +490,9 @@ CURL_ARGS+=(-H "Title: $TITLE" -H "Priority: $PRI_NAME" -H "Tags: $TAGS")
 if [[ -n "$CFG_TOKEN" ]]; then
   CURL_ARGS+=(-H "Authorization: Bearer $CFG_TOKEN")
 fi
-CURL_ARGS+=(--data-binary "$BODY" "$URL")
+CURL_ARGS+=(--data-binary @- "$URL")
 
-HTTP_CODE=$(curl "${CURL_ARGS[@]}" 2> "$STATE_DIR_BASE/curl.err")
+HTTP_CODE=$(printf '%s' "$BODY" | curl "${CURL_ARGS[@]}" 2> "$STATE_DIR_BASE/curl.err")
 RC=$?
 
 if ((RC == 0)) && [[ "$HTTP_CODE" =~ ^2 ]]; then

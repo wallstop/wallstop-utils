@@ -1,17 +1,21 @@
 Set-StrictMode -Version Latest
 
-BeforeAll {
-    $script:repoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath '..')).Path
-    . (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/CompatibilityHelpers.ps1')
-
-    $script:agentNotifyDir = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/AgentNotify'
-    $script:bashToolingAvailable = $true
+BeforeDiscovery {
+    $bashToolingAvailableForDiscovery = $true
     foreach ($tool in @('bash', 'jq')) {
         if (-not (Get-Command -Name $tool -ErrorAction SilentlyContinue)) {
-            $script:bashToolingAvailable = $false
+            $bashToolingAvailableForDiscovery = $false
             Write-Verbose "AgentNotify Pester gate: '$tool' unavailable on this host; skipping runtime lane."
         }
     }
+}
+
+BeforeAll {
+    $testsRoot = Join-Path -Path $PSScriptRoot -ChildPath '..'
+    $script:repoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $testsRoot -ChildPath '..')).Path
+    . (Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Common/CompatibilityHelpers.ps1')
+
+    $script:agentNotifyDir = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/AgentNotify'
 }
 
 Describe 'AgentNotify repository layout contract' {
@@ -43,7 +47,7 @@ Describe 'AgentNotify repository layout contract' {
     }
 }
 
-Describe 'AgentNotify bash offline suite' -Skip:(-not $script:bashToolingAvailable) {
+Describe 'AgentNotify bash offline suite' -Skip:(-not $bashToolingAvailableForDiscovery) {
     It 'passes the full data-driven assertion run' {
         $suitePath = Join-Path -Path $script:agentNotifyDir -ChildPath 'tests/run.sh'
 

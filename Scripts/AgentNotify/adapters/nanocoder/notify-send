@@ -11,8 +11,12 @@ for cand in "$HERE/../../bin/agent-notify" "$HERE/agent-notify" "$HOME/.local/bi
   fi
 done
 
+ORIGINAL_ARGS=("$@")
 REAL=""
-for cand in /usr/bin/notify-send /usr/local/bin/notify-send /bin/notify-send; do
+IFS=: read -r -a PATH_DIRS <<< "${PATH:-}"
+for path_dir in "${PATH_DIRS[@]}"; do
+  [[ -n "$path_dir" ]] || path_dir=.
+  cand="$path_dir/notify-send"
   if [[ -x "$cand" ]]; then
     R="$(realpath "$cand" 2> /dev/null || printf '%s' "$cand")"
     if [[ "$R" != "$SELF" ]]; then
@@ -53,7 +57,7 @@ if [[ -n "$AG" ]]; then
 fi
 
 if [[ -n "$REAL" ]]; then
-  exec "$REAL" "$@"
+  exec "$REAL" "${ORIGINAL_ARGS[@]}"
 fi
 
 wait 2> /dev/null || true

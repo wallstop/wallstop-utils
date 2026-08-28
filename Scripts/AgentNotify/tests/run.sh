@@ -67,14 +67,23 @@ SB=$(mktemp -d)
 trap 'rm -rf "$SB"' EXIT
 mkdir -p "$SB/bin"
 FAKE_CURL_LOG="$SB/curl-calls.log"
-export FAKE_CURL_LOG
+FAKE_CURL_BODY_LOG="$SB/curl-body.log"
+FAKE_NOTIFY_SEND_LOG="$SB/notify-send-args.json"
+export FAKE_CURL_LOG FAKE_CURL_BODY_LOG FAKE_NOTIFY_SEND_LOG
 
 cat > "$SB/bin/curl" << 'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${FAKE_CURL_LOG:?}"
+cat >"${FAKE_CURL_BODY_LOG:?}"
 printf '%s' "200"
 STUB
 chmod +x "$SB/bin/curl"
+mkdir -p "$SB/realbin"
+cat > "$SB/realbin/notify-send" << 'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" | jq -Rsc 'split("\n")[:-1]' >"${FAKE_NOTIFY_SEND_LOG:?}"
+STUB
+chmod +x "$SB/realbin/notify-send"
 export PATH="$SB/bin:$PATH"
 
 unset AGENT_NOTIFY_URL AGENT_NOTIFY_TOPIC AGENT_NOTIFY_TOKEN \
@@ -226,6 +235,16 @@ assert_match "publish includes bearer token when configured" "$CURLLINE" "Author
 rm -rf "$H"
 
 H=$(mktemp -d "$SB/home.XXXXXX")
+printf '%s' '{"summary":"@owner","body":"review needed"}' |
+  HOME="$H" XDG_STATE_HOME='' AGENT_NOTIFY_TOPIC=test-topic AGENT_NOTIFY_COOLDOWN_SECS=0 \
+    "$BIN" desktop > /dev/null 2>&1
+assert_eq "leading-at body is streamed literally to curl" \
+  "$(cat "$FAKE_CURL_BODY_LOG")" "@owner - review needed"
+assert_match "publish reads the body from stdin" \
+  "$(tail -n 1 "$FAKE_CURL_LOG")" "--data-binary @-"
+rm -rf "$H"
+
+H=$(mktemp -d "$SB/home.XXXXXX")
 N3=$(curl_calls)
 HOME="$H" XDG_STATE_HOME='' "$BIN" claude < "$CLAUDE_STOP_FIXTURE" > /dev/null 2>&1
 RC=$?
@@ -368,10 +387,13 @@ rm -f "$SB/config/agent-notify/agent-notify.env"
 rm -rf "$H"
 
 H=$(mktemp -d "$SB/home.XXXXXX")
-HOME="$H" XDG_STATE_HOME='' AGENT_NOTIFY_TOPIC=test-topic \
+PATH="$SB/bin:$SB/realbin:$PATH" HOME="$H" XDG_STATE_HOME='' AGENT_NOTIFY_TOPIC=test-topic \
   "$SHIM" -u critical "Action Required in my-project" "Nanocoder needs your approval" > /dev/null 2>&1
 RC=$?
 assert_eq "shim invocation completes cleanly" "$RC" "0"
+FORWARDED_ARGS=$(jq -c '.' "$FAKE_NOTIFY_SEND_LOG" 2> /dev/null || printf 'missing')
+assert_eq "shim preserves original desktop notification arguments" "$FORWARDED_ARGS" \
+  '["-u","critical","Action Required in my-project","Nanocoder needs your approval"]'
 LASTLOG=$(log_field "$H" '.result')
 assert_eq "shim forwarded notification logged sent-or-no-topic" "$LASTLOG" "sent"
 STATE_LOGGED=$(log_field "$H" '.state')
