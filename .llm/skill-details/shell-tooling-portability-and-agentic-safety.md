@@ -52,6 +52,19 @@ awk -F: '$3 > 1000 {print $1}' /etc/passwd
 
 - Use `"$var"` and `"$@"`.
 - Avoid unquoted expansions that trigger word-splitting or globbing.
+- If a wrapper inspects arguments with `shift` but must preserve the wrapped invocation,
+  snapshot `original_args=("$@")` before the first shift and forward `"${original_args[@]}"`.
+- For arbitrary literal curl bodies, use `printf '%s' "$body" | curl --data-binary @-`;
+  `--data-raw "$body"` is also leading-`@` safe when its non-binary semantics are sufficient.
+
+### Guard installer mutations and proof modes
+
+- Prove a destination is tool-owned before overwriting or deleting it; foreign files and
+  symlinks must be left untouched with an actionable diagnostic.
+- Build, permission, and validate replacements before atomic publication, retaining a
+  recoverable backup when replacing user configuration.
+- Render user-selected install paths into every generated/copied launcher configuration.
+- Audit/proof modes fail closed when a prerequisite, enumeration, or content scan fails.
 
 ### Use null-delimited file flows
 

@@ -1476,7 +1476,7 @@ try {
     $komorebiProfilePattern = '^(Scripts/Komorebi/.+\.ps1|Tests/Utils/KomorebiProfileHelpers\.Tests\.ps1)$'
     $komorebiPolicyPattern = '^(Scripts/Komorebi/.+\.ps1|Scripts/Utils/Run-PreCommitValidation\.ps1|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1|\.pre-commit-config\.yaml)$'
     $scriptPattern = '^Scripts/.+\.ps1$'
-    $shellQualityPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push))$'
+    $shellQualityPattern = '^(Scripts/.+\.sh|Scripts/AgentNotify/(bin/agent-notify|adapters/nanocoder/notify-send)|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push))$'
     $shellSafetyTriggerPattern = '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push)|Tests/Utils/ScriptSafetyConventions\.Tests\.ps1)$'
     $nativeQualityPattern = '^(Config/Wezterm/wezterm\.lua|\.github/workflows/.+\.(yml|yaml))$'
     $windowsLanguagePattern = '^(Scripts/AutoHotKey/.+\.ahk|Config/\.config/.+\.ahk|Scripts/.+\.bat)$'

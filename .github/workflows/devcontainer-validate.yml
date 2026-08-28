@@ -127,7 +127,7 @@ jobs:
       - name: Lint post-create.sh, post-start.sh, and githook scripts
         shell: pwsh
         run: |
-          ./Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All .devcontainer/post-create.sh .devcontainer/post-start.sh .devcontainer/initialize-host.sh .devcontainer/build-wallstop-pr-comments-vsix.sh .githooks/pre-commit .githooks/pre-push
+          ./Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool All .devcontainer/post-create.sh .devcontainer/post-start.sh .devcontainer/initialize-host.sh .devcontainer/build-wallstop-pr-comments-vsix.sh .githooks/pre-commit .githooks/pre-push Scripts/AgentNotify/bin/agent-notify Scripts/AgentNotify/adapters/nanocoder/notify-send Scripts/AgentNotify/install.sh Scripts/AgentNotify/tests/run.sh
 
       - name: Build Wallstop PR Comments VSIX
         shell: bash

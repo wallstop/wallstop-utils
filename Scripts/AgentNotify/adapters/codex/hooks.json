@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.local/bin/agent-notify codex",
+            "async": true,
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.local/bin/agent-notify codex",
+            "async": true,
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.local/bin/agent-notify codex",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

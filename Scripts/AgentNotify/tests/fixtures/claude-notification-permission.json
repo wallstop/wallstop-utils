@@ -1,0 +1,15 @@
+{
+  "session_id": "a1b2c3",
+  "hook_event_name": "Notification",
+  "notification_type": "permission_prompt",
+  "message": "Claude needs your permission to use Bash",
+  "cwd": "/home/dev/projects/webapp",
+  "x_expect": {
+    "harness": "claude",
+    "state": "waiting",
+    "priority": "high",
+    "tag_present": "bell",
+    "title_re": "^\\[testbox\\] Claude: WAITING$",
+    "body_re": "webapp · permission_prompt Claude needs your permission"
+  }
+}

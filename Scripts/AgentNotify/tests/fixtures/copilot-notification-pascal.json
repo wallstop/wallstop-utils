@@ -1,0 +1,16 @@
+{
+  "hook_event_name": "Notification",
+  "session_id": "copilot-guid-42",
+  "timestamp": "2026-08-26T12:00:00Z",
+  "cwd": "/srv/services/billing",
+  "notification_type": "permission_prompt",
+  "message": "Copilot wants to edit src/pay.ts",
+  "x_expect": {
+    "harness": "copilot",
+    "state": "waiting",
+    "priority": "high",
+    "tag_present": "bell",
+    "title_re": "^\\[testbox\\] Copilot: WAITING$",
+    "body_re": "billing · .*Copilot wants to edit src/pay\\.ts"
+  }
+}

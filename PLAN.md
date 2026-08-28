@@ -1,5 +1,16 @@
 # Plan
 
+## Current milestone: agent notification integration (PR #79)
+
+- [x] Add a secrets-safe, local-first `agent-notify` toolkit with adapters for Claude, Codex, Copilot, OpenCode, and Nanocoder; keep offline tests hermetic and notification hooks best-effort.
+- [x] Add idempotent machine bootstrap/audit tooling and repository documentation without committing ntfy topics or tokens.
+- [x] Address all four Cursor review findings with regression coverage: make the Pester gate discoverable from the actual repository root, preserve Nanocoder's original desktop-notification arguments, stream leading-`@` bodies to curl literally through stdin, and make the installed Nanocoder shim prefer only its managed sibling instead of an unrelated parent-derived core.
+- [x] Run the full repository validation loop after incorporating current `main`.
+- [x] Complete the three-round adversarial/self-improvement protocol and resolve every reported finding with regression coverage; the final independent pass found eight additional issues that were fixed after the protocol cap.
+- [x] Push the updated branch and drive PR #79 required checks to green; Cursor completed neutral with no new findings, while Copilot's non-code review check remains externally quota-failed.
+
+Evidence: [PR #79](https://github.com/wallstop/wallstop-utils/pull/79)
+
 ## Current milestone: backup upload diagnostics (issue #46)
 
 - [x] RCA the recurring `backup steps failed: 2` auto-backup commits from repository evidence: failing step names were console-only, so ten days of partial-failure uploads (2026-08-12..2026-08-22) were undiagnosable from git history.
@@ -8,11 +19,13 @@
 - [x] Read named failing steps from the 2026-08-23 backup commit: `PowershellBackup`, `WinGetUpdate` (`ScoopUpdate` now passes; issue #68 host fixes confirmed via scoopfile data: innounp 2.71.0, megatools installed, thunderbird migrated).
 - [x] RCA why uploads stayed partial: the same commit added `Config/.config/vllm/nccl/cu12/libnccl.so.2.18.1` (~278MB > GitHub's 100MiB blob limit), so every push since 2026-08-23 failed while later backups stacked on the unpushable commit. Repair: dropped the blob from the unpushed commit, restored the v2 AHK mirror it had regressed, pushed repaired main.
 - [x] Prevent recurrence repo-side: fail-closed oversize guard (`E_BACKUP_MANAGED_FILE_OVERSIZE` at 95MB, warn at 10MB) before staging; `Config/.config/vllm/` ignored as machine-generated cache; unattended path now self-heals `Config/.config/*.ahk` snapshot drift from v2 sources (same repair the attended pre-commit hook applies); persistent `Config/backup-step-failures.json` artifact records failed-step errors plus bounded output previews so future failures are diagnosable from git alone, passes secret hygiene, and is committed+pushed by itself when git-phase guards fail closed.
-- [x] Read failure reasons from the 2026-08-25 backup commit's artifact and fix both failing steps by design ([session-024](./progress/session-024-backup-step-green-fixes.md)): `WinGetUpdate` now classifies `UPDATE_ALL_HAS_FAILURE` aggregates — consent/elevation-blocked installers (1602/1223/0x80073d28 observed) defer with `W_WINGET_UPGRADE_DEFERRED_INTERACTIVE` while genuine/unattributable failures stay fail-closed; `PowershellBackup` self-heals drifted host profiles from the validated repository profile via the single-sourced `Restore-PowerShellProfileFromValidatedSource` helper (timestamped backup preserved; manual repair tool consumes the same semantic).
-- [x] Fix the classifier misattribution proven by the 2026-08-26 artifact ([session-025](./progress/session-025-winget-attribution-and-update-admin.md)): winget dependency-resolution reprints of an open `(N/M) Found <id>` block no longer enqueue a phantom duplicate that shifted every later terminal onto the wrong package (WSL's 0x80073d28 had been attributed to Plex); regression tests pin per-package attribution over the verbatim production shape.
+- [x] Read failure reasons from the 2026-08-25 backup commit's artifact and fix both failing steps by design (session 024 / PR #76): `WinGetUpdate` now classifies `UPDATE_ALL_HAS_FAILURE` aggregates — consent/elevation-blocked installers (1602/1223/0x80073d28 observed) defer with `W_WINGET_UPGRADE_DEFERRED_INTERACTIVE` while genuine/unattributable failures stay fail-closed; `PowershellBackup` self-heals drifted host profiles from the validated repository profile via the single-sourced `Restore-PowerShellProfileFromValidatedSource` helper (timestamped backup preserved; manual repair tool consumes the same semantic).
+- [x] Fix the classifier misattribution proven by the 2026-08-26 artifact (session 025 / PR #78): winget dependency-resolution reprints of an open `(N/M) Found <id>` block no longer enqueue a phantom duplicate that shifted every later terminal onto the wrong package (WSL's 0x80073d28 had been attributed to Plex); regression tests pin per-package attribution over the verbatim production shape.
+- [x] Read the next two host runs: 2026-08-27 improved to `10/12` (temporary `ScoopUpdate` plus `WinGetUpdate`), and 2026-08-28 improved to `11/12` with only `WinGetUpdate`; Scoop and PowerShell profile recovery are now confirmed green.
+- [x] Fix the 2026-08-28 WinGet attribution failure: Windows PowerShell flattened redirected progress markers into one space-joined physical line, so line-anchored parsing found zero outcomes. Enumerate ordered markers within each physical line; the persisted production artifact now resolves Plex as upgraded and WSL's `0x80073d28` as deferred interactive.
 - [ ] After the next host backup run: confirm main pushes cleanly with zero step failures (`12/12 succeeded`) or read `Config/backup-step-failures.json` for remaining reasons and continue RCA under issue #46.
 
-Evidence: [session-022](./progress/session-022-backup-upload-diagnostics.md), [session-023](./progress/session-023-backup-upload-rca.md), [session-024](./progress/session-024-backup-step-green-fixes.md), [session-025](./progress/session-025-winget-attribution-and-update-admin.md)
+Evidence: [session-022](./progress/session-022-backup-upload-diagnostics.md), [session-023](./progress/session-023-backup-upload-rca.md), [PR #76](https://github.com/wallstop/wallstop-utils/pull/76), [PR #78](https://github.com/wallstop/wallstop-utils/pull/78)
 
 ## Completed milestone: headless Update with elevation opt-in (issue #77)
 

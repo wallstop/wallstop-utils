@@ -43,7 +43,7 @@ repos:
         name: shfmt
         entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool shfmt -Fix
         language: system
-        files: '^(Scripts/.*\.sh|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push))$'
+        files: '^(Scripts/.*\.sh|Scripts/AgentNotify/(bin/agent-notify|adapters/nanocoder/notify-send)|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push))$'
         pass_filenames: true
         require_serial: true
         stages: [pre-commit]
@@ -51,7 +51,7 @@ repos:
         name: shellcheck
         entry: pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-ShellQualityChecks.ps1 -Tool shellcheck
         language: system
-        files: '^(Scripts/.*\.sh|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push))$'
+        files: '^(Scripts/.*\.sh|Scripts/AgentNotify/(bin/agent-notify|adapters/nanocoder/notify-send)|\.devcontainer/.*\.sh|\.githooks/(pre-commit|pre-push))$'
         pass_filenames: true
         require_serial: true
         stages: [pre-commit]

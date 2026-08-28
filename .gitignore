@@ -35,3 +35,9 @@ Config/.config/vllm/
 /GOAL.md
 /PLAN.md
 /progress/
+
+# agent-notify credentials live outside this repo (~/.config/agent-notify);
+# these patterns keep accidental copies out even if generated inside a checkout.
+agent-notify.env
+agent-notify.env.tmp.*
+*.bak.agent-notify.*

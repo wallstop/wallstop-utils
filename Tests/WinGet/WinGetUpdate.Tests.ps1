@@ -276,6 +276,142 @@ Describe "Get-WinGetUpgradePackageOutcomes" {
         $outcomes[2].InstallerExitCode | Should -Be "0x80073d28"
     }
 
+    It "fails closed when an interleaved Found marker differs by <Mismatch>" -ForEach @(
+        @{
+            Mismatch      = "package id only"
+            FirstOrdinal  = "1/2"
+            FirstId       = "First.App"
+            SecondOrdinal = "1/2"
+            SecondId      = "Second.App"
+        },
+        @{
+            Mismatch      = "ordinal only"
+            FirstOrdinal  = "1/2"
+            FirstId       = "Shared.App"
+            SecondOrdinal = "2/2"
+            SecondId      = "Shared.App"
+        }
+    ) {
+        param($Mismatch, $FirstOrdinal, $FirstId, $SecondOrdinal, $SecondId)
+
+        # FIFO alone can consume both later terminals and falsely green the aggregate run by
+        # assigning the consent failure to the first block and success to the second. Their
+        # actual ownership is unknowable unless both the ordinal and package id match.
+        $interleavedLines = @(
+            "($FirstOrdinal) Found First App [$FirstId] Version 1.0.0",
+            "($SecondOrdinal) Found Second App [$SecondId] Version 2.0.0",
+            "Installer failed with exit code: 1223",
+            "Successfully installed"
+        )
+
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines $interleavedLines)
+
+        $outcomes.Count | Should -Be 2
+        $outcomes[0].PackageId | Should -Be $FirstId
+        $outcomes[0].Status | Should -Be "Unresolved"
+        $outcomes[1].PackageId | Should -Be $SecondId
+        $outcomes[1].Status | Should -Be "Unresolved"
+
+        $resolved = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines $interleavedLines
+        $resolved.ExitZero | Should -BeFalse
+        $resolved.WarningDiagnostic | Should -Be ""
+        $resolved.ErrorDiagnostic | Should -Match "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE"
+        $resolved.ErrorDiagnostic | Should -Match ([regex]::Escape("$FirstId; $SecondId"))
+    }
+
+    It "fails closed when a completed package Found marker is redrawn before another terminal" {
+        $staleRedrawLines = @(
+            "(1/1) Found Parent App [Parent.App] Version 1.0.0",
+            "Installer failed with exit code: 1223",
+            "(1/1) Found Parent App [Parent.App] Version 1.0.0",
+            "Successfully installed"
+        )
+
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines $staleRedrawLines)
+
+        $outcomes.Count | Should -Be 2
+        $outcomes[0].Status | Should -Be "Failed"
+        $outcomes[1].Status | Should -Be "Unresolved"
+
+        $resolved = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines $staleRedrawLines
+        $resolved.ExitZero | Should -BeFalse
+        $resolved.WarningDiagnostic | Should -Match "W_WINGET_UPGRADE_DEFERRED_INTERACTIVE"
+        $resolved.ErrorDiagnostic | Should -Match "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE"
+        $resolved.ErrorDiagnostic | Should -Match "Parent\.App"
+    }
+
+    It "fails closed when a success terminal has no open package block" {
+        $unmatchedSuccessLines = @(
+            "(1/1) Found App [Vendor.App] Version 1.0",
+            "Installer failed with exit code: 1223",
+            "Successfully installed"
+        )
+
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines $unmatchedSuccessLines)
+
+        $outcomes.Count | Should -Be 2
+        $outcomes[0].PackageId | Should -Be "Vendor.App"
+        $outcomes[0].Status | Should -Be "Failed"
+        $outcomes[1].PackageId | Should -Be "<unowned>"
+        $outcomes[1].Status | Should -Be "Unresolved"
+
+        $resolved = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines $unmatchedSuccessLines
+        $resolved.ExitZero | Should -BeFalse
+        $resolved.WarningDiagnostic | Should -Match "W_WINGET_UPGRADE_DEFERRED_INTERACTIVE"
+        $resolved.ErrorDiagnostic | Should -Match "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE"
+        $resolved.ErrorDiagnostic | Should -Match "<unowned>"
+    }
+
+    It "takes the package id from the bracketed field immediately before Version" {
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines @(
+                "(1/1) Found Tool [Preview] [Vendor.Tool] Version 3.0.0",
+                "Installer failed with exit code: 1603"
+            ))
+
+        $outcomes.Count | Should -Be 1
+        $outcomes[0].PackageId | Should -Be "Vendor.Tool"
+        $outcomes[0].Status | Should -Be "Failed"
+        $outcomes[0].InstallerExitCode | Should -Be "1603"
+    }
+
+    It "fails closed when an incomplete Found marker precedes a valid collapsed package marker" {
+        $collapsedOutput = "(1/2) Found Broken [Broken.Id] malformed (2/2) Found Good [Good.Id] Version 2.0 Successfully installed"
+
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines @($collapsedOutput))
+
+        $outcomes.Count | Should -Be 2
+        $outcomes[0].PackageId | Should -Be "<unparsed found 1/2>"
+        $outcomes[0].Status | Should -Be "Unresolved"
+        $outcomes[1].PackageId | Should -Be "Good.Id"
+        $outcomes[1].Status | Should -Be "Upgraded"
+
+        $resolved = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines @($collapsedOutput)
+        $resolved.ExitZero | Should -BeFalse
+        $resolved.ErrorDiagnostic | Should -Match "E_WINGET_UPDATE_UNATTRIBUTED_FAILURE"
+        $resolved.ErrorDiagnostic | Should -Match "<unparsed found 1/2>"
+    }
+
+    It "parses sequential package markers collapsed into one captured physical line" {
+        # Production evidence from the 2026-08-28 backup (issue #46): Windows PowerShell's
+        # redirected winget progress stream arrived as one space-joined line, so line-anchored
+        # markers found zero outcomes even though Plex succeeded and WSL requested elevation.
+        $collapsedOutput = "Installing dependencies: Microsoft.VCRedist.2015+.x64 (1/2) Found Plex [Plex.Plex] Version 1.115.0 Successfully verified installer hash Starting package install... Successfully installed  (2/2) Found Windows Subsystem for Linux [Microsoft.WSL] Version 2.7.12 Successfully verified installer hash Starting package install... Installer failed with exit code: 0x80073d28 : The package installation failed because administrator privileges are required."
+
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines @($collapsedOutput))
+
+        $outcomes.Count | Should -Be 2
+        $outcomes[0].PackageId | Should -Be "Plex.Plex"
+        $outcomes[0].Status | Should -Be "Upgraded"
+        $outcomes[1].PackageId | Should -Be "Microsoft.WSL"
+        $outcomes[1].Status | Should -Be "Failed"
+        $outcomes[1].InstallerExitCode | Should -Be "0x80073d28"
+
+        $resolved = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines @($collapsedOutput)
+        $resolved.ExitZero | Should -BeTrue
+        $resolved.ErrorDiagnostic | Should -Be ""
+        $resolved.WarningDiagnostic | Should -Match "Microsoft\.WSL \(installer exit 0x80073d28\)"
+    }
+
     It "returns no outcomes for empty input" {
         @(Get-WinGetUpgradePackageOutcomes -OutputLines @()).Count | Should -Be 0
     }

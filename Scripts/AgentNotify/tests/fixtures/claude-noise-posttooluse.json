@@ -1,0 +1,12 @@
+{
+  "session_id": "a1b2c3",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": { "command": "npm run build" },
+  "tool_response": { "stdout": "built ok" },
+  "cwd": "/home/dev/projects/webapp",
+  "x_expect": {
+    "harness": "claude",
+    "skip": true
+  }
+}

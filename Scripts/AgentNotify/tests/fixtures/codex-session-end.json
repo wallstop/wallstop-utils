@@ -1,0 +1,14 @@
+{
+  "session_id": "sess-77",
+  "hook_event_name": "SessionEnd",
+  "reason": "other",
+  "end_reason": "other",
+  "cwd": "/work/buildsys",
+  "x_expect": {
+    "harness": "codex",
+    "state": "ended",
+    "priority": "low",
+    "tag_present": "zzz",
+    "title_re": "^\\[testbox\\] Codex: ENDED$"
+  }
+}

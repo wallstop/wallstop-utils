@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# agent-notify-managed: nanocoder-shim
+set -uo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+if ! HERE=$(cd -P -- "$(dirname -- "$SELF")" 2> /dev/null && pwd); then
+  HERE=$(dirname -- "$SELF")
+fi
+AG=""
+declare -a AG_CANDIDATES=()
+# Recognize the source layout by managed markers in both its installer and core;
+# a directory name alone must not make an installed copy infer ../../bin.
+SOURCE_CORE="$HERE/../../bin/agent-notify"
+SOURCE_INSTALLER="$HERE/../../install.sh"
+if [[ "$HERE" == */adapters/nanocoder && -f "$SOURCE_INSTALLER" && -f "$SOURCE_CORE" && -x "$SOURCE_CORE" ]] &&
+  grep -qF 'readonly SOURCE_SHIM=' "$SOURCE_INSTALLER" 2> /dev/null &&
+  grep -qF 'adapters/nanocoder/notify-send' "$SOURCE_INSTALLER" 2> /dev/null &&
+  grep -qF '# agent-notify-managed: core' "$SOURCE_CORE" 2> /dev/null; then
+  AG_CANDIDATES+=("$SOURCE_CORE")
+fi
+AG_CANDIDATES+=("$HERE/agent-notify")
+AG_CANDIDATES+=("$HOME/.local/bin/agent-notify" "/usr/local/bin/agent-notify")
+for cand in "${AG_CANDIDATES[@]}"; do
+  if [[ -f "$cand" && -x "$cand" ]]; then
+    AG="$cand"
+    break
+  fi
+done
+
+ORIGINAL_ARGS=("$@")
+REAL=""
+IFS=: read -r -a PATH_DIRS <<< "${PATH:-}"
+for path_dir in "${PATH_DIRS[@]}"; do
+  [[ -n "$path_dir" ]] || path_dir=.
+  cand="$path_dir/notify-send"
+  if [[ -f "$cand" && -x "$cand" ]] && ! [[ "$cand" -ef "$SELF" ]]; then
+    REAL="$cand"
+    break
+  fi
+done
+
+POSITIONAL=()
+while (($#)); do
+  case "$1" in
+    -u | -t | -i | -a | --urgency | --icon | --app-name | --expire-time)
+      if (($# >= 2)); then
+        shift 2
+      else
+        shift
+      fi
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+SUMMARY="${POSITIONAL[0]:-}"
+BODY="${POSITIONAL[1]:-}"
+
+if [[ -n "$AG" ]]; then
+  PAYLOAD=$(jq -cn --arg s "$SUMMARY" --arg b "$BODY" '{summary:$s, body:$b}' 2> /dev/null)
+  if [[ -n "$PAYLOAD" ]]; then
+    printf '%s' "$PAYLOAD" | "$AG" desktop > /dev/null 2>&1 &
+  fi
+fi
+
+if [[ -n "$REAL" ]]; then
+  exec "$REAL" "${ORIGINAL_ARGS[@]}"
+fi
+
+wait 2> /dev/null || true
+exit 0

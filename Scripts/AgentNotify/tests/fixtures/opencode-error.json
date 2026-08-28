@@ -1,0 +1,13 @@
+{
+  "event": "session.error",
+  "message": "provider rate limited",
+  "directory": "/opt/cli-app",
+  "x_expect": {
+    "harness": "opencode",
+    "state": "blocked",
+    "priority": "max",
+    "tag_present": "rotating_light",
+    "title_re": "^\\[testbox\\] OpenCode: BLOCKED$",
+    "body_re": "cli-app · provider rate limited"
+  }
+}

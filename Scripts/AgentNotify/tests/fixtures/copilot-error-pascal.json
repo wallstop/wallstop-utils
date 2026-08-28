@@ -1,0 +1,16 @@
+{
+  "hook_event_name": "ErrorOccurred",
+  "session_id": "copilot-guid-42",
+  "error": { "message": "model call failed with HTTP 502", "name": "HTTPError" },
+  "error_context": "model_call",
+  "recoverable": false,
+  "cwd": "/srv/services/billing",
+  "x_expect": {
+    "harness": "copilot",
+    "state": "blocked",
+    "priority": "max",
+    "tag_present": "rotating_light",
+    "title_re": "^\\[testbox\\] Copilot: BLOCKED$",
+    "body_re": "billing · model call failed with HTTP 502"
+  }
+}

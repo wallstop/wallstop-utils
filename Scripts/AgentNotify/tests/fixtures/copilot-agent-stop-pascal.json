@@ -1,0 +1,16 @@
+{
+  "hook_event_name": "Stop",
+  "session_id": "copilot-guid-42",
+  "stop_reason": "end_turn",
+  "transcript_path": "/tmp/copilot/transcript.jsonl",
+  "cwd": "/srv/services/billing",
+  "last_assistant_message": "Invoice exporter rewritten with pagination support",
+  "x_expect": {
+    "harness": "copilot",
+    "state": "done",
+    "priority": "default",
+    "tag_present": "heavy_check_mark",
+    "title_re": "^\\[testbox\\] Copilot: DONE$",
+    "body_re": "billing · Invoice exporter rewritten"
+  }
+}

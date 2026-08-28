@@ -1,0 +1,14 @@
+{
+  "session_id": "a1b2c3",
+  "hook_event_name": "Stop",
+  "cwd": "/home/dev/projects/api",
+  "last_assistant_message": "Refactored the entire authentication middleware layer across eleven files, migrated all callers to the new token verification helper, updated the integration suite with fresh fixtures covering expired-token refresh paths, and added regression coverage for the previously unguarded nil-pointer dereference discovered during review of the OAuth callback handler.",
+  "x_expect": {
+    "harness": "claude",
+    "state": "done",
+    "priority": "default",
+    "tag_present": "heavy_check_mark",
+    "title_re": "^\\[testbox\\] Claude: DONE$",
+    "truncated": true
+  }
+}
