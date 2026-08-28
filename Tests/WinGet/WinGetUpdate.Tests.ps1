@@ -276,6 +276,27 @@ Describe "Get-WinGetUpgradePackageOutcomes" {
         $outcomes[2].InstallerExitCode | Should -Be "0x80073d28"
     }
 
+    It "parses sequential package markers collapsed into one captured physical line" {
+        # Production evidence from the 2026-08-28 backup (issue #46): Windows PowerShell's
+        # redirected winget progress stream arrived as one space-joined line, so line-anchored
+        # markers found zero outcomes even though Plex succeeded and WSL requested elevation.
+        $collapsedOutput = "Installing dependencies: Microsoft.VCRedist.2015+.x64 (1/2) Found Plex [Plex.Plex] Version 1.115.0 Successfully verified installer hash Starting package install... Successfully installed  (2/2) Found Windows Subsystem for Linux [Microsoft.WSL] Version 2.7.12 Successfully verified installer hash Starting package install... Installer failed with exit code: 0x80073d28 : The package installation failed because administrator privileges are required."
+
+        $outcomes = @(Get-WinGetUpgradePackageOutcomes -OutputLines @($collapsedOutput))
+
+        $outcomes.Count | Should -Be 2
+        $outcomes[0].PackageId | Should -Be "Plex.Plex"
+        $outcomes[0].Status | Should -Be "Upgraded"
+        $outcomes[1].PackageId | Should -Be "Microsoft.WSL"
+        $outcomes[1].Status | Should -Be "Failed"
+        $outcomes[1].InstallerExitCode | Should -Be "0x80073d28"
+
+        $resolved = Resolve-WinGetUpdateOutcome -WingetExitCode -1978335188 -OutputLines @($collapsedOutput)
+        $resolved.ExitZero | Should -BeTrue
+        $resolved.ErrorDiagnostic | Should -Be ""
+        $resolved.WarningDiagnostic | Should -Match "Microsoft\.WSL \(installer exit 0x80073d28\)"
+    }
+
     It "returns no outcomes for empty input" {
         @(Get-WinGetUpgradePackageOutcomes -OutputLines @()).Count | Should -Be 0
     }

@@ -71,61 +71,62 @@ function Get-WinGetUpgradePackageOutcomes {
 
     $outcomes = New-Object System.Collections.Generic.List[object]
     $openPackageBlocks = New-Object System.Collections.Generic.List[object]
+    $markerPattern = '(?<!\S)(?:(?<found>\((?<ordinal>\d+/\d+)\)\s+Found\s+.*?\[(?<id>[^\]\r\n]+)\])|(?<failure>Installer failed with exit code:\s*(?<code>[^\s:,]+))|(?<success>Successfully installed\b))'
     foreach ($outputLine in @($OutputLines)) {
         # Captured external output can arrive as one multi-line element (script-shim shape)
         # or per-line elements (native-command shape); expand physical lines either way,
-        # including lone-CR progress-redraw frames.
+        # including lone-CR progress-redraw frames. Windows PowerShell can also flatten
+        # redirected winget progress into one space-joined physical line, so enumerate every
+        # marker within each line instead of requiring markers to start the line.
         foreach ($physicalLine in @(([string]$outputLine) -split "\r\n|\r|\n")) {
-            if ($physicalLine -match '^\s*\((?<ordinal>\d+/\d+)\)\s+Found\s+.*\[(?<id>[^\]]+)\]') {
-                $foundOrdinal = $Matches['ordinal']
-                $foundId = $Matches['id']
-                $isContinuationReprint = $false
-                # Enumerate the list directly: wrapping it in @() trips pwsh 7's
-                # "Argument types do not match" array-subexpression copy.
-                foreach ($openBlock in $openPackageBlocks) {
-                    if ($openBlock.Ordinal -eq $foundOrdinal -and $openBlock.PackageId -eq $foundId) {
-                        # Reprint of a block still awaiting its terminal marker: same progress
-                        # slot, same package. Consume nothing; the next terminal owns it.
-                        $isContinuationReprint = $true
-                        break
+            $markerMatches = [regex]::Matches($physicalLine, $markerPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            foreach ($markerMatch in $markerMatches) {
+                if ($markerMatch.Groups['found'].Success) {
+                    $foundOrdinal = $markerMatch.Groups['ordinal'].Value
+                    $foundId = $markerMatch.Groups['id'].Value
+                    $isContinuationReprint = $false
+                    # Enumerate the list directly: wrapping it in @() trips pwsh 7's
+                    # "Argument types do not match" array-subexpression copy.
+                    foreach ($openBlock in $openPackageBlocks) {
+                        if ($openBlock.Ordinal -eq $foundOrdinal -and $openBlock.PackageId -eq $foundId) {
+                            # Reprint of a block still awaiting its terminal marker: same progress
+                            # slot, same package. Consume nothing; the next terminal owns it.
+                            $isContinuationReprint = $true
+                            break
+                        }
                     }
+
+                    if (-not $isContinuationReprint) {
+                        [void]$openPackageBlocks.Add([pscustomobject]@{
+                                Ordinal   = $foundOrdinal
+                                PackageId = $foundId
+                            })
+                    }
+
+                    continue
                 }
 
-                if (-not $isContinuationReprint) {
-                    [void]$openPackageBlocks.Add([pscustomobject]@{
-                            Ordinal   = $foundOrdinal
-                            PackageId = $foundId
-                        })
+                $isFailureMarker = $markerMatch.Groups['failure'].Success
+                if ($openPackageBlocks.Count -eq 0) {
+                    if ($isFailureMarker) {
+                        [void]$outcomes.Add([pscustomobject]@{
+                                PackageId         = "<unowned>"
+                                Status            = "UnownedFailure"
+                                InstallerExitCode = $markerMatch.Groups['code'].Value
+                            })
+                    }
+
+                    continue
                 }
 
-                continue
+                $packageBlock = $openPackageBlocks[0]
+                $openPackageBlocks.RemoveAt(0)
+                [void]$outcomes.Add([pscustomobject]@{
+                        PackageId         = $packageBlock.PackageId
+                        Status            = $(if ($isFailureMarker) { "Failed" } else { "Upgraded" })
+                        InstallerExitCode = $(if ($isFailureMarker) { $markerMatch.Groups['code'].Value } else { "" })
+                    })
             }
-
-            $isFailureLine = $physicalLine -match '^\s*Installer failed with exit code:\s*(?<code>[^\s:,]+)'
-            $isSuccessLine = $physicalLine -match '^\s*Successfully installed'
-            if (-not $isFailureLine -and -not $isSuccessLine) {
-                continue
-            }
-
-            if ($openPackageBlocks.Count -eq 0) {
-                if ($isFailureLine) {
-                    [void]$outcomes.Add([pscustomobject]@{
-                            PackageId         = "<unowned>"
-                            Status            = "UnownedFailure"
-                            InstallerExitCode = $Matches['code']
-                        })
-                }
-
-                continue
-            }
-
-            $packageBlock = $openPackageBlocks[0]
-            $openPackageBlocks.RemoveAt(0)
-            [void]$outcomes.Add([pscustomobject]@{
-                    PackageId         = $packageBlock.PackageId
-                    Status            = $(if ($isFailureLine) { "Failed" } else { "Upgraded" })
-                    InstallerExitCode = $(if ($isFailureLine) { $Matches['code'] } else { "" })
-                })
         }
     }
 
