@@ -294,9 +294,11 @@ cp "$INSTALLER" "$AR/Scripts/AgentNotify/install.sh"
 git -C "$AR" init -q
 git -C "$AR" config user.email agent-notify-tests@example.invalid
 git -C "$AR" config user.name agent-notify-tests
+git -C "$AR" add -- 'Scripts/AgentNotify/install.sh'
+git -C "$AR" commit -q -m 'audit fixture baseline'
 SECRET_TOPIC="agent-alerts-$(printf '%s' '0123456789abcdef01234567')"
 printf 'AGENT_NOTIFY_TOPIC=%s\n' "$SECRET_TOPIC" > "$AR/--leak.md"
-git -C "$AR" add -- '--leak.md' 'Scripts/AgentNotify/install.sh'
+git -C "$AR" add -- '--leak.md'
 AUDIT_HOME=$(mktemp -d "$SB/audit-home.XXXXXX")
 mkdir -p "$AUDIT_HOME/config/agent-notify"
 printf 'export AGENT_NOTIFY_TOPIC=%s\n' "$SECRET_TOPIC" \
@@ -325,6 +327,8 @@ assert_eq "audit rejects tracked standalone topic" "$RC" "1"
 assert_match "standalone topic audit reports tracked file" "$(cat "$AUDIT_HOME/standalone.err")" \
   "violation: --leak.md"
 git -C "$AR" rm --cached -q -- '--leak.md'
+assert_eq "removed audit fixture is absent from index" \
+  "$(git -C "$AR" ls-files -- '--leak.md')" ""
 HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
   "$AR/Scripts/AgentNotify/install.sh" --audit > "$AUDIT_HOME/clean.out" 2> "$AUDIT_HOME/clean.err"
 RC=$?
@@ -365,7 +369,12 @@ assert_match "git scan failure is actionable" "$(cat "$AUDIT_HOME/git-fail.err")
 NO_GIT_BIN="$SB/no-git-bin"
 mkdir -p "$NO_GIT_BIN"
 for required_tool in dirname stat grep tail cut; do
-  ln -s "$(command -v "$required_tool")" "$NO_GIT_BIN/$required_tool"
+  required_tool_path=$(command -v "$required_tool")
+  {
+    printf '#!/usr/bin/bash\n'
+    printf 'exec %q "$@"\n' "$required_tool_path"
+  } > "$NO_GIT_BIN/$required_tool"
+  chmod 755 "$NO_GIT_BIN/$required_tool"
 done
 PATH="$NO_GIT_BIN" HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
   /usr/bin/bash "$AR/Scripts/AgentNotify/install.sh" --audit \
