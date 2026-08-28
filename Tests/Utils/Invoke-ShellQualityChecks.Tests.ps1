@@ -77,12 +77,23 @@ Describe "Invoke-ShellQualityChecks target scoping" {
 
     It "filters resolved targets to the managed shell quality scope" {
         $shellPath = Join-Path -Path $script:repoRoot -ChildPath ".devcontainer/post-create.sh"
+        $extensionlessCorePath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/AgentNotify/bin/agent-notify"
+        $extensionlessShimPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/AgentNotify/adapters/nanocoder/notify-send"
         $nonShellPath = Join-Path -Path $script:repoRoot -ChildPath "README.md"
 
-        $targets = @(Select-ShellQualityTargetFiles -RepositoryRoot $script:repoRoot -Files @($shellPath, $nonShellPath))
+        $targets = @(Select-ShellQualityTargetFiles -RepositoryRoot $script:repoRoot -Files @(
+                $shellPath,
+                $extensionlessCorePath,
+                $extensionlessShimPath,
+                $nonShellPath
+            ))
 
-        $targets.Count | Should -Be 1
+        $targets.Count | Should -Be 3
         (ConvertTo-ShellQualityRelativePath -RepositoryRoot $script:repoRoot -Path $targets[0]) | Should -Be ".devcontainer/post-create.sh"
+        (ConvertTo-ShellQualityRelativePath -RepositoryRoot $script:repoRoot -Path $targets[1]) |
+            Should -Be "Scripts/AgentNotify/bin/agent-notify"
+        (ConvertTo-ShellQualityRelativePath -RepositoryRoot $script:repoRoot -Path $targets[2]) |
+            Should -Be "Scripts/AgentNotify/adapters/nanocoder/notify-send"
     }
 
     It "skips zero selected targets before reading the manifest or resolving tools" {

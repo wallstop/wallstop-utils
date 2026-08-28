@@ -43,10 +43,9 @@ function Get-WinGetUpgradePackageOutcomes {
     # Walks `winget upgrade --all` progress output sequentially and accounts for EVERY
     # "(N/M) Found <Name> [<Id>]" block: each must reach a terminal marker - either
     # "Installer failed with exit code: <code>" or "Successfully installed". Blocks left
-    # without a terminal marker surface as Unresolved, and a failure terminal arriving with
-    # NO open block (for example a parent failure whose slot was stolen by an earlier
-    # dependency success marker) surfaces as UnownedFailure, so neither ambiguity can ride
-    # along behind consent-blocked deferrals as a false green.
+    # without a terminal marker surface as Unresolved, and ANY terminal arriving with no open
+    # block surfaces as an unowned outcome, so neither ambiguity can ride along behind
+    # consent-blocked deferrals as a false green.
     #
     # Winget re-prints a package's Found line at its own (N/M) position while dependency
     # resolution runs inside its block (observed 2026-08-26 on issue #46 hosts: Focusrite's
@@ -55,12 +54,11 @@ function Get-WinGetUpgradePackageOutcomes {
     # terminal onto the wrong package, so a Found line whose position AND package id already
     # match an open block is treated as a continuation of that same block instead of a new one.
     #
-    # Known limit (fail-closed by design): a DIFFERENT package's Found line appearing while
-    # another block is still open still shifts FIFO pairing; such runs cannot self-consistently
-    # account every terminal and end as Unresolved/UnownedFailure rather than false-green.
-    # Post-terminal stale redraws of an already-closed block behave the same way - re-enqueued,
-    # then left Unresolved. Correctness never depends on the pairing because Status comes from
-    # the terminal marker itself, not the matched block.
+    # A DIFFERENT package's Found line while another block is open makes later FIFO terminal
+    # ownership ambiguous. Likewise, a Found line reprinted after its block already reached a
+    # terminal marker is a stale redraw. Mark every block involved in either shape unresolved,
+    # even if enough later terminal markers exist to empty the queue, so ambiguity cannot turn
+    # an aggregate failure into a false green.
     [CmdletBinding()]
     [OutputType([object[]])]
     param(
@@ -71,7 +69,15 @@ function Get-WinGetUpgradePackageOutcomes {
 
     $outcomes = New-Object System.Collections.Generic.List[object]
     $openPackageBlocks = New-Object System.Collections.Generic.List[object]
-    $markerPattern = '(?<!\S)(?:(?<found>\((?<ordinal>\d+/\d+)\)\s+Found\s+.*?\[(?<id>[^\]\r\n]+)\])|(?<failure>Installer failed with exit code:\s*(?<code>[^\s:,]+))|(?<success>Successfully installed\b))'
+    $closedPackageBlocks = New-Object System.Collections.Generic.List[object]
+    # The package id is the bracketed field immediately before "Version". Display names can
+    # themselves contain bracketed qualifiers (for example "Tool [Preview]"), so stopping at
+    # the first brackets would attribute the result to the display-name qualifier. The tempered
+    # payload also prevents a malformed Found marker from consuming a later Found marker on a
+    # collapsed physical line while looking for a matching id/version suffix. Keep the incomplete
+    # Found alternative last so a syntactically incomplete header poisons the run as unresolved
+    # instead of disappearing, while a complete marker is consumed by the richer alternative.
+    $markerPattern = '(?<!\S)(?:(?<found>\((?<ordinal>\d+/\d+)\)\s+Found\s+(?:(?!\(\d+/\d+\)\s+Found\b)[^\r\n])*?\[(?<id>[^\[\]\r\n]+)\]\s+Version\b)|(?<failure>Installer failed with exit code:\s*(?<code>[^\s:,]+))|(?<success>Successfully installed\b)|(?<incompleteFound>\((?<incompleteOrdinal>\d+/\d+)\)\s+Found\b))'
     foreach ($outputLine in @($OutputLines)) {
         # Captured external output can arrive as one multi-line element (script-shim shape)
         # or per-line elements (native-command shape); expand physical lines either way,
@@ -81,6 +87,19 @@ function Get-WinGetUpgradePackageOutcomes {
         foreach ($physicalLine in @(([string]$outputLine) -split "\r\n|\r|\n")) {
             $markerMatches = [regex]::Matches($physicalLine, $markerPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
             foreach ($markerMatch in $markerMatches) {
+                if ($markerMatch.Groups['incompleteFound'].Success) {
+                    foreach ($openBlock in $openPackageBlocks) {
+                        $openBlock.PairingAmbiguous = $true
+                    }
+
+                    [void]$outcomes.Add([pscustomobject]@{
+                            PackageId         = "<unparsed found {0}>" -f $markerMatch.Groups['incompleteOrdinal'].Value
+                            Status            = "Unresolved"
+                            InstallerExitCode = ""
+                        })
+                    continue
+                }
+
                 if ($markerMatch.Groups['found'].Success) {
                     $foundOrdinal = $markerMatch.Groups['ordinal'].Value
                     $foundId = $markerMatch.Groups['id'].Value
@@ -97,9 +116,25 @@ function Get-WinGetUpgradePackageOutcomes {
                     }
 
                     if (-not $isContinuationReprint) {
+                        $isStaleReprint = $false
+                        foreach ($closedBlock in $closedPackageBlocks) {
+                            if ($closedBlock.Ordinal -eq $foundOrdinal -and $closedBlock.PackageId -eq $foundId) {
+                                $isStaleReprint = $true
+                                break
+                            }
+                        }
+
+                        $hasDifferentOpenBlock = ($openPackageBlocks.Count -gt 0)
+                        if ($hasDifferentOpenBlock) {
+                            foreach ($openBlock in $openPackageBlocks) {
+                                $openBlock.PairingAmbiguous = $true
+                            }
+                        }
+
                         [void]$openPackageBlocks.Add([pscustomobject]@{
-                                Ordinal   = $foundOrdinal
-                                PackageId = $foundId
+                                Ordinal          = $foundOrdinal
+                                PackageId        = $foundId
+                                PairingAmbiguous = ($hasDifferentOpenBlock -or $isStaleReprint)
                             })
                     }
 
@@ -108,23 +143,23 @@ function Get-WinGetUpgradePackageOutcomes {
 
                 $isFailureMarker = $markerMatch.Groups['failure'].Success
                 if ($openPackageBlocks.Count -eq 0) {
-                    if ($isFailureMarker) {
-                        [void]$outcomes.Add([pscustomobject]@{
-                                PackageId         = "<unowned>"
-                                Status            = "UnownedFailure"
-                                InstallerExitCode = $markerMatch.Groups['code'].Value
-                            })
-                    }
+                    [void]$outcomes.Add([pscustomobject]@{
+                            PackageId         = "<unowned>"
+                            Status            = $(if ($isFailureMarker) { "UnownedFailure" } else { "Unresolved" })
+                            InstallerExitCode = $(if ($isFailureMarker) { $markerMatch.Groups['code'].Value } else { "" })
+                        })
 
                     continue
                 }
 
                 $packageBlock = $openPackageBlocks[0]
                 $openPackageBlocks.RemoveAt(0)
+                [void]$closedPackageBlocks.Add($packageBlock)
+                $pairingWasAmbiguous = [bool]$packageBlock.PairingAmbiguous
                 [void]$outcomes.Add([pscustomobject]@{
                         PackageId         = $packageBlock.PackageId
-                        Status            = $(if ($isFailureMarker) { "Failed" } else { "Upgraded" })
-                        InstallerExitCode = $(if ($isFailureMarker) { $markerMatch.Groups['code'].Value } else { "" })
+                        Status            = $(if ($pairingWasAmbiguous) { "Unresolved" } elseif ($isFailureMarker) { "Failed" } else { "Upgraded" })
+                        InstallerExitCode = $(if (-not $pairingWasAmbiguous -and $isFailureMarker) { $markerMatch.Groups['code'].Value } else { "" })
                     })
             }
         }

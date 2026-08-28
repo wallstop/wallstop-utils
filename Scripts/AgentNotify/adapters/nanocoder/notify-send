@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# agent-notify-managed: nanocoder-shim
 set -uo pipefail
 
 SELF="$(realpath "${BASH_SOURCE[0]}" 2> /dev/null || printf '%s' "${BASH_SOURCE[0]}")"

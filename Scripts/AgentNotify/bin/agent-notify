@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# agent-notify-managed: core
 set -uo pipefail
 
 VERSION="1.1.0"
@@ -429,6 +430,75 @@ log_entry() {
 DEDUPED=false
 KF=""
 NOW=0
+COOLDOWN_LOCK_MODE=""
+COOLDOWN_LOCK_FILE=""
+COOLDOWN_LOCK_DIR=""
+
+cooldown_lock_dir_mtime() {
+  local lock_dir=$1
+  if stat -c '%Y' "$lock_dir" > /dev/null 2>&1; then
+    stat -c '%Y' "$lock_dir"
+  elif stat -f '%m' "$lock_dir" > /dev/null 2>&1; then
+    stat -f '%m' "$lock_dir"
+  else
+    printf '0'
+  fi
+}
+
+acquire_cooldown_lock() {
+  local attempt owner_pid lock_mtime lock_age
+  if command -v flock > /dev/null 2>&1 && exec 8>> "$COOLDOWN_LOCK_FILE" 2> /dev/null; then
+    if flock -w 6 8 2> /dev/null; then
+      COOLDOWN_LOCK_MODE=flock
+      return 0
+    fi
+    exec 8>&- 2> /dev/null || true
+    return 1
+  fi
+  for ((attempt = 0; attempt < 120; attempt++)); do
+    if mkdir "$COOLDOWN_LOCK_DIR" 2> /dev/null; then
+      if printf '%s\n' "$$" > "$COOLDOWN_LOCK_DIR/owner" 2> /dev/null; then
+        COOLDOWN_LOCK_MODE=directory
+        return 0
+      fi
+      rmdir "$COOLDOWN_LOCK_DIR" 2> /dev/null || true
+      return 1
+    fi
+    owner_pid=""
+    read -r owner_pid < "$COOLDOWN_LOCK_DIR/owner" 2> /dev/null || true
+    if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2> /dev/null; then
+      rm -f "$COOLDOWN_LOCK_DIR/owner" 2> /dev/null || true
+      rmdir "$COOLDOWN_LOCK_DIR" 2> /dev/null || true
+    elif [[ -z "$owner_pid" ]]; then
+      lock_mtime=$(cooldown_lock_dir_mtime "$COOLDOWN_LOCK_DIR")
+      [[ "$lock_mtime" =~ ^[0-9]+$ ]] || lock_mtime=0
+      lock_age=$(($(date +%s) - lock_mtime))
+      if ((lock_mtime > 0 && lock_age >= 2)); then
+        rmdir "$COOLDOWN_LOCK_DIR" 2> /dev/null || true
+      fi
+    fi
+    sleep 0.05
+  done
+  return 1
+}
+
+release_cooldown_lock() {
+  local owner_pid=""
+  case "$COOLDOWN_LOCK_MODE" in
+    flock)
+      flock -u 8 2> /dev/null || true
+      exec 8>&- 2> /dev/null || true
+      ;;
+    directory)
+      read -r owner_pid < "$COOLDOWN_LOCK_DIR/owner" 2> /dev/null || true
+      if [[ "$owner_pid" == "$$" ]]; then
+        rm -f "$COOLDOWN_LOCK_DIR/owner" 2> /dev/null || true
+        rmdir "$COOLDOWN_LOCK_DIR" 2> /dev/null || true
+      fi
+      ;;
+  esac
+  COOLDOWN_LOCK_MODE=""
+}
 
 if [[ "$SKIP" == "true" ]]; then
   log_entry skipped
@@ -456,14 +526,16 @@ fi
 if ((CFG_COOLDOWN > 0)); then
   KEY_SANITIZED=$(printf '%s' "${MACHINE}_${HARNESS}_${STATE}" | tr -c 'A-Za-z0-9._-' '_')
   KF="$COOLDOWN_DIR/$KEY_SANITIZED.ts"
-  NOW=$(date +%s)
+  COOLDOWN_LOCK_FILE="$COOLDOWN_DIR/$KEY_SANITIZED.lock"
+  COOLDOWN_LOCK_DIR="$COOLDOWN_DIR/$KEY_SANITIZED.lock.d"
   PREV=0
-  LOCKED_KF=false
-  if command -v flock > /dev/null 2>&1 && exec 8>> "$COOLDOWN_DIR/.lock" 2> /dev/null; then
-    if flock -w 3 8 2> /dev/null; then
-      LOCKED_KF=true
-    fi
+  if ! acquire_cooldown_lock; then
+    log_entry cooldown-lock-timeout
+    dbg "cooldown lock acquisition timed out; nothing sent"
+    exit 0
   fi
+  trap 'release_cooldown_lock' EXIT
+  NOW=$(date +%s)
   if [[ -r "$KF" ]] && read -r PREV < "$KF" 2> /dev/null; then
     :
   else
@@ -473,13 +545,11 @@ if ((CFG_COOLDOWN > 0)); then
   if ((NOW - PREV < CFG_COOLDOWN)); then
     DEDUPED=true
   fi
-  if [[ "$LOCKED_KF" == "true" ]]; then
-    flock -u 8 2> /dev/null || true
-  fi
-  exec 8>&- 2> /dev/null || true
 fi
 
 if [[ "$DEDUPED" == "true" ]]; then
+  release_cooldown_lock
+  trap - EXIT
   log_entry deduped "" true
   dbg "deduped within cooldown window"
   exit 0
@@ -499,10 +569,14 @@ if ((RC == 0)) && [[ "$HTTP_CODE" =~ ^2 ]]; then
   if [[ -n "$KF" ]] && ((CFG_COOLDOWN > 0)); then
     printf '%s\n' "$NOW" > "$KF" 2> /dev/null || true
   fi
+  release_cooldown_lock
+  trap - EXIT
   log_entry sent "$HTTP_CODE" false
   dbg "sent http=$HTTP_CODE"
 else
   rm -f "$KF" 2> /dev/null || true
+  release_cooldown_lock
+  trap - EXIT
   ERRSUM=$(head -c 200 "$STATE_DIR_BASE/curl.err" 2> /dev/null | tr '\r\n' '  ' || true)
   log_entry "failed curl_rc=$RC http=$HTTP_CODE $ERRSUM" "$HTTP_CODE" false
   dbg "send failed rc=$RC http=$HTTP_CODE err=$ERRSUM"

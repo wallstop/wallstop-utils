@@ -226,7 +226,7 @@ function Test-ShellQualityTargetMatchesSuite {
     )
 
     $relativePath = ConvertTo-ShellQualityRelativePath -RepositoryRoot $RepositoryRoot -Path $Path
-    return ($relativePath -match '^(Scripts/.+\.sh|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push))$')
+    return ($relativePath -match '^(Scripts/.+\.sh|Scripts/AgentNotify/(bin/agent-notify|adapters/nanocoder/notify-send)|\.devcontainer/.+\.sh|\.githooks/(pre-commit|pre-push))$')
 }
 
 function Select-ShellQualityTargetFiles {

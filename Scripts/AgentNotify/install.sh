@@ -5,8 +5,8 @@
 # Secrets safety model:
 #   The topic name IS the credential. This script generates it locally,
 #   writes it to $HOME/.config/agent-notify/agent-notify.env (chmod 600),
-#   and NEVER commits it: --audit scans the tracked tree (docs/images
-#   excluded) so any leaked topic/token fails loudly before publication.
+#   and NEVER commits it: --audit scans the complete tracked index so any
+#   leaked topic/token fails loudly before publication.
 
 set -euo pipefail
 shopt -s nullglob
@@ -56,10 +56,10 @@ Modes (default: --status):
                    are reported but left for manual removal; your env-file
                    (and therefore your topic subscription) is preserved
   --audit         verify secrets hygiene offline: env-file permissions and
-                  topic shape, plus a tracked-tree scan (docs/images excluded)
+                  topic shape, plus a complete tracked-index scan
                   proving no credentials are committed anywhere in this repo
 
-Targets for --install/--uninstall (repeatable, or --all):
+Targets for --install (repeatable, or --all; --uninstall intentionally rejects them):
   --all            all five targets below
   --claude         merge hook block into ~/.claude/settings.json (non-destructive)
   --codex          copy hooks into ~/.codex/            (no-clobber)
@@ -68,7 +68,7 @@ Targets for --install/--uninstall (repeatable, or --all):
   --nanocoder      install notify-send shim next to agent-notify
 
 Options:
-  --bin-dir DIR    executable install location (default: $DEFAULT_BIN_DIR)
+  --bin-dir DIR    executable location rendered into adapters (default: $DEFAULT_BIN_DIR)
   --project DIR    additionally wire repository-local copies (.codex/, .copilot/)
                    inside an arbitrary checkout at DIR (no-clobber)
   --show-topic     print the configured topic again (phone subscription input)
@@ -119,21 +119,73 @@ should_wire() {
 }
 
 install_executable() {
-  local src=$1 dst=$2 label=$3
+  local src=$1 dst=$2 label=$3 owner=${4:-} tmp
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    if [[ -z "$owner" || -L "$dst" ]] ||
+      ! grep -qF -- "# agent-notify-managed: $owner" "$dst" 2> /dev/null; then
+      diag "E_AGENT_NOTIFY_DEST_EXISTS: '$dst' already exists and is not owned by agent-notify; left untouched."
+      return 1
+    fi
+  fi
   if is_true "$DRY_RUN"; then
     status_line "[dry-run] would install $src -> $dst (chmod 755)"
     return 0
   fi
   mkdir -p "$(dirname "$dst")"
-  cp "$src" "$dst"
-  chmod 755 "$dst"
+  if ! tmp=$(mktemp "$dst.tmp.XXXXXX"); then
+    diag "E_AGENT_NOTIFY_TEMP_CREATE_FAILED: could not create a temporary file beside '$dst'."
+    return 1
+  fi
+  if ! cp "$src" "$tmp" || ! chmod 755 "$tmp" || ! mv "$tmp" "$dst"; then
+    rm -f "$tmp"
+    diag "E_AGENT_NOTIFY_INSTALL_WRITE_FAILED: could not atomically install '$dst'."
+    return 1
+  fi
   status_line "installed: $dst ($label)"
 }
 
+render_adapter() {
+  local harness=$1 bin_dir=$2 output=$3 bin_path bin_command js_path default_bin_reference
+  bin_path="$bin_dir/agent-notify"
+  printf -v default_bin_reference '\176/.local/bin/agent-notify'
+  case "$harness" in
+    claude | codex | copilot)
+      printf -v bin_command '%q' "$bin_path"
+      jq --arg old "$default_bin_reference" --arg new "$bin_command" \
+        'walk(if type == "string" then split($old) | join($new) else . end)' \
+        "$(adapter_source "$harness")" > "$output"
+      ;;
+    opencode)
+      js_path=$(jq -Rn --arg path "$bin_path" '$path')
+      printf -v default_bin_reference '\140\044{home}/.local/bin/agent-notify\140'
+      jq -Rrs --arg old "$default_bin_reference" --arg new "$js_path" \
+        'split($old) | join($new)' "$ADAPTER_OPENCODE" > "$output"
+      ;;
+    *)
+      diag "E_AGENT_NOTIFY_UNKNOWN_HARNESS: no renderable adapter for '$harness'."
+      return 1
+      ;;
+  esac
+}
+
+adapter_source() {
+  case "$1" in
+    claude) printf '%s\n' "$ADAPTER_CLAUDE" ;;
+    codex) printf '%s\n' "$ADAPTER_CODEX" ;;
+    copilot) printf '%s\n' "$ADAPTER_COPILOT" ;;
+    opencode) printf '%s\n' "$ADAPTER_OPENCODE" ;;
+    *) return 1 ;;
+  esac
+}
+
 copy_adapter_file() {
-  local src=$1 dst_dir=$2
+  local src=$1 dst_dir=$2 requested_name=${3:-}
   local base
-  base="$dst_dir/$(basename "$src")"
+  if [[ -n "$requested_name" ]]; then
+    base="$dst_dir/$requested_name"
+  else
+    base="$dst_dir/$(basename "$src")"
+  fi
   if [[ -e "$base" ]]; then
     diag "W_AGENT_NOTIFY_DEST_EXISTS: '$base' already exists; left untouched. Compare with '$src' manually."
     return 0
@@ -142,23 +194,30 @@ copy_adapter_file() {
 }
 
 wire_copy_adapter() {
-  local harness=$1 dest_dir=$2
-  local src=""
-  case "$harness" in
-    codex) src="$ADAPTER_CODEX" ;;
-    copilot) src="$ADAPTER_COPILOT" ;;
-    opencode) src="$ADAPTER_OPENCODE" ;;
-    *)
-      diag "E_AGENT_NOTIFY_UNKNOWN_HARNESS: no copy-style adapter for '$harness'."
-      return 1
-      ;;
-  esac
+  local harness=$1 dest_dir=$2 bin_dir=$3 src rendered
+  src=$(adapter_source "$harness") || {
+    diag "E_AGENT_NOTIFY_UNKNOWN_HARNESS: no copy-style adapter for '$harness'."
+    return 1
+  }
   if is_true "$DRY_RUN"; then
-    status_line "[dry-run] would copy $src into $dest_dir/ (no-clobber)"
+    status_line "[dry-run] would render $src into $dest_dir/ for $bin_dir/agent-notify (no-clobber)"
     return 0
   fi
   mkdir -p "$dest_dir"
-  copy_adapter_file "$src" "$dest_dir"
+  if ! rendered=$(mktemp "${TMPDIR:-/tmp}/agent-notify-adapter.XXXXXX"); then
+    diag "E_AGENT_NOTIFY_TEMP_CREATE_FAILED: could not create temporary adapter for '$harness'."
+    return 1
+  fi
+  if ! render_adapter "$harness" "$bin_dir" "$rendered"; then
+    rm -f "$rendered"
+    diag "E_AGENT_NOTIFY_ADAPTER_RENDER_FAILED: could not render '$harness' for '$bin_dir'."
+    return 1
+  fi
+  if ! copy_adapter_file "$rendered" "$dest_dir" "$(basename "$src")"; then
+    rm -f "$rendered"
+    return 1
+  fi
+  rm -f "$rendered"
 }
 
 ensure_env_file() {
@@ -195,32 +254,65 @@ ensure_env_file() {
 }
 
 wire_claude() {
+  local bin_dir=$1
   local settings="$HOME/.claude/settings.json"
   if is_true "$DRY_RUN"; then
     status_line "[dry-run] would merge $ADAPTER_CLAUDE hooks into $settings (non-destructive)"
     return 0
   fi
   mkdir -p "$(dirname "$settings")"
+  local rendered
+  if ! rendered=$(mktemp "$settings.adapter.XXXXXX"); then
+    diag "E_AGENT_NOTIFY_TEMP_CREATE_FAILED: could not create a temporary file beside '$settings'."
+    return 1
+  fi
+  if ! render_adapter claude "$bin_dir" "$rendered"; then
+    rm -f "$rendered"
+    diag "E_AGENT_NOTIFY_ADAPTER_RENDER_FAILED: could not render Claude hooks for '$bin_dir'."
+    return 1
+  fi
   if [[ ! -f "$settings" ]]; then
-    cp "$ADAPTER_CLAUDE" "$settings.new.$$"
-    chmod 600 "$settings.new.$$"
-    mv "$settings.new.$$" "$settings"
+    if ! chmod 600 "$rendered" || ! mv "$rendered" "$settings"; then
+      rm -f "$rendered"
+      diag "E_AGENT_NOTIFY_CLAUDE_WRITE_FAILED: could not atomically create '$settings'."
+      return 1
+    fi
     status_line "created: $settings with agent-notify hooks"
     return 0
   fi
-  local backup
-  backup="$settings.bak.agent-notify.$(date +%Y%m%d%H%M%S)"
-  cp "$settings" "$backup"
-  local merged
-  if ! merged="$(jq -s 'if (.[1].hooks // null) == null then .[1] * {hooks: .[0].hooks} else error("existing") end' \
-    "$ADAPTER_CLAUDE" "$settings" 2> /dev/null)"; then
-    diag "W_AGENT_NOTIFY_CLAUDE_HOOKS_PRESENT: $settings already defines a hooks section; left untouched. Merge $ADAPTER_CLAUDE manually if intended (backup: $backup)."
+  if ! jq -e 'type == "object"' "$settings" > /dev/null 2>&1; then
+    rm -f "$rendered"
+    diag "E_AGENT_NOTIFY_CLAUDE_SETTINGS_INVALID: $settings is not valid JSON object data; left untouched."
+    return 1
+  fi
+  if jq -e '(.hooks // null) != null' "$settings" > /dev/null 2>&1; then
+    rm -f "$rendered"
+    diag "W_AGENT_NOTIFY_CLAUDE_HOOKS_PRESENT: $settings already defines a hooks section; left untouched. Merge $ADAPTER_CLAUDE manually if intended."
     return 0
   fi
-  mv "$settings" "$backup"
-  printf '%s\n' "$merged" > "$settings.new.$$"
-  mv "$settings.new.$$" "$settings"
-  chmod 600 "$settings"
+  local merged backup
+  if ! merged=$(mktemp "$settings.new.XXXXXX"); then
+    rm -f "$rendered"
+    diag "E_AGENT_NOTIFY_TEMP_CREATE_FAILED: could not create a temporary file beside '$settings'."
+    return 1
+  fi
+  if ! jq -s '.[1] * {hooks: .[0].hooks}' \
+    "$rendered" "$settings" > "$merged" 2> /dev/null; then
+    rm -f "$rendered" "$merged"
+    diag "E_AGENT_NOTIFY_CLAUDE_MERGE_FAILED: could not merge hooks into $settings; left untouched."
+    return 1
+  fi
+  rm -f "$rendered"
+  if ! backup=$(mktemp "$settings.bak.agent-notify.XXXXXX"); then
+    rm -f "$merged"
+    diag "E_AGENT_NOTIFY_TEMP_CREATE_FAILED: could not create a backup beside '$settings'."
+    return 1
+  fi
+  if ! cp -p "$settings" "$backup" || ! chmod 600 "$merged" || ! mv "$merged" "$settings"; then
+    rm -f "$merged"
+    diag "E_AGENT_NOTIFY_CLAUDE_WRITE_FAILED: could not atomically replace '$settings'; original left in place (backup: $backup)."
+    return 1
+  fi
   status_line "merged: $settings (prior copy retained as $backup)"
 }
 
@@ -230,7 +322,7 @@ install_core() {
     diag "E_AGENT_NOTIFY_SOURCE_MISSING: expected executable $SOURCE_BIN."
     return 1
   fi
-  install_executable "$SOURCE_BIN" "$bin_dir/agent-notify" "core"
+  install_executable "$SOURCE_BIN" "$bin_dir/agent-notify" "core" "core" || return 1
   case ":$PATH:" in
     *":$bin_dir:"*) : ;;
     *) diag "W_AGENT_NOTIFY_PATH_HINT: '$bin_dir' is not on PATH; add it to your shell profile." ;;
@@ -238,16 +330,21 @@ install_core() {
 }
 
 wire_project() {
-  local target_repo=$1
+  local target_repo=$1 bin_dir=$2
+  local failures=0
   if [[ ! -d "$target_repo" ]]; then
     diag "E_AGENT_NOTIFY_PROJECT_MISSING: --project directory '$target_repo' does not exist."
     return 1
   fi
   if should_wire codex; then
-    wire_copy_adapter codex "$target_repo/.codex"
+    wire_copy_adapter codex "$target_repo/.codex" "$bin_dir" || failures=$((failures + 1))
   fi
   if should_wire copilot; then
-    wire_copy_adapter copilot "$target_repo/.copilot/hooks"
+    wire_copy_adapter copilot "$target_repo/.copilot/hooks" "$bin_dir" || failures=$((failures + 1))
+  fi
+  if ((failures > 0)); then
+    diag "E_AGENT_NOTIFY_PROJECT_PARTIAL: $failures project adapter(s) failed for '$target_repo'."
+    return 1
   fi
   status_line "project wiring finished for $target_repo"
 }
@@ -258,24 +355,24 @@ do_install() {
   install_core "$bin_dir" || return 1
   ensure_env_file || return 1
   if should_wire nanocoder; then
-    install_executable "$SOURCE_SHIM" "$bin_dir/notify-send" "nanocoder shim" ||
+    install_executable "$SOURCE_SHIM" "$bin_dir/notify-send" "nanocoder shim" "nanocoder-shim" ||
       step_failures=$((step_failures + 1))
   fi
   if should_wire claude; then
-    wire_claude || step_failures=$((step_failures + 1))
+    wire_claude "$bin_dir" || step_failures=$((step_failures + 1))
   fi
   if should_wire codex; then
-    wire_copy_adapter codex "$HOME/.codex" || step_failures=$((step_failures + 1))
+    wire_copy_adapter codex "$HOME/.codex" "$bin_dir" || step_failures=$((step_failures + 1))
   fi
   if should_wire copilot; then
-    wire_copy_adapter copilot "$HOME/.copilot/hooks" || step_failures=$((step_failures + 1))
+    wire_copy_adapter copilot "$HOME/.copilot/hooks" "$bin_dir" || step_failures=$((step_failures + 1))
   fi
   if should_wire opencode; then
-    wire_copy_adapter opencode "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins" ||
+    wire_copy_adapter opencode "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins" "$bin_dir" ||
       step_failures=$((step_failures + 1))
   fi
   if [[ -n "$PROJECT_TARGET" ]]; then
-    wire_project "$PROJECT_TARGET" || step_failures=$((step_failures + 1))
+    wire_project "$PROJECT_TARGET" "$bin_dir" || step_failures=$((step_failures + 1))
   fi
   if ((step_failures > 0)); then
     diag "E_AGENT_NOTIFY_INSTALL_PARTIAL: $step_failures wiring target(s) failed; see diagnostics above."
@@ -285,9 +382,18 @@ do_install() {
 
 do_uninstall() {
   local bin_dir="${INSTALL_BIN_DIR:-$DEFAULT_BIN_DIR}"
-  local t
+  local t owner
   for t in "$bin_dir/agent-notify" "$bin_dir/notify-send"; do
-    if [[ -f "$t" ]]; then
+    if [[ "$t" == */agent-notify ]]; then
+      owner=core
+    else
+      owner=nanocoder-shim
+    fi
+    if [[ -e "$t" || -L "$t" ]]; then
+      if [[ -L "$t" ]] || ! grep -qF -- "# agent-notify-managed: $owner" "$t" 2> /dev/null; then
+        diag "W_AGENT_NOTIFY_FOREIGN_EXECUTABLE: '$t' is not owned by agent-notify; left untouched."
+        continue
+      fi
       if is_true "$DRY_RUN"; then
         status_line "[dry-run] would remove $t"
       else
@@ -332,40 +438,37 @@ do_audit() {
     fi
     local topic_value
     topic_value=$(grep -E '^export AGENT_NOTIFY_TOPIC=' "$ENV_FILE" 2> /dev/null | tail -n 1 | cut -d= -f2- || true)
-    if [[ ${#topic_value} -ge 24 && "$topic_value" =~ ^agent-alerts-[A-Za-z0-9_-]+$ ]]; then
+    if [[ "$topic_value" =~ ^agent-alerts-[0-9a-f]{24}$ ]]; then
       status_line "audit ok: topic present with expected shape and entropy (${#topic_value} chars)"
     else
       diag "E_AGENT_NOTIFY_TOPIC_SHAPE: topic in $ENV_FILE does not look machine-generated (details withheld)."
       failures=$((failures + 1))
     fi
   fi
-  if command -v git > /dev/null 2>&1; then
-    local hits
-    hits="$(
-      (
-        cd "$REPO_ROOT" || exit 0
-        while IFS= read -r -d '' f; do
-          case "$f" in
-            *.md | *.png | *.gif | *.jpg | LICENSE) continue ;;
-          esac
-          if grep -qE '(^|[[:space:]])export AGENT_NOTIFY_TOPIC=agent-alerts-[A-Za-z0-9_-]{8,}|tk_[A-Za-z0-9]{16,}|ntfy\.sh/(agent-alerts-)?[A-Za-z0-9_-]{24,}' "$f" 2> /dev/null; then
-            printf '%s\n' "$f"
-          fi
-        done < <(git ls-files -z)
-      ) 2> /dev/null || true
-    )"
-    if [[ -z "$hits" ]]; then
-      status_line "audit ok: no tracked secrets in repository (docs/images excluded)"
+  if ! command -v git > /dev/null 2>&1; then
+    diag "E_AGENT_NOTIFY_GIT_NOT_AVAILABLE: 'git' is required to prove the tracked tree contains no secrets."
+    failures=$((failures + 1))
+  else
+    local hits git_status=0
+    if hits=$(git -C "$REPO_ROOT" grep -l -E --cached -- \
+      'agent-alerts-[0-9a-f]{24}|tk_[A-Za-z0-9]{16,}|ntfy\.sh/(agent-alerts-)?[A-Za-z0-9_-]{24,}' 2>&1); then
+      git_status=0
     else
+      git_status=$?
+    fi
+    if ((git_status == 1)); then
+      status_line "audit ok: no tracked secrets in repository"
+    elif ((git_status == 0)); then
       diag "E_AGENT_NOTIFY_SECRET_IN_TREE: potential secrets tracked in this repository:"
       local p
       while IFS= read -r p; do
         diag "  violation: $p"
       done <<< "$hits"
       failures=$((failures + 1))
+    else
+      diag "E_AGENT_NOTIFY_GIT_SCAN_FAILED: git could not scan the tracked index (exit $git_status): ${hits:-no details}."
+      failures=$((failures + 1))
     fi
-  else
-    diag "W_AGENT_NOTIFY_GIT_NOT_AVAILABLE: skipped repository-tree secret scan (git missing)."
   fi
   if ((failures > 0)); then
     diag "audit FAILED with $failures finding(s)."
@@ -437,12 +540,27 @@ while (($#)); do
   shift
 done
 
+if [[ -n "$INSTALL_BIN_DIR" && "$INSTALL_BIN_DIR" != /* ]]; then
+  diag "E_AGENT_NOTIFY_BIN_DIR_NOT_ABSOLUTE: --bin-dir must be an absolute path; received '$INSTALL_BIN_DIR'."
+  exit 1
+fi
+
+if [[ "$MODE" == "uninstall" ]] &&
+  { is_true "$WANT_ALL" || ((${#WANT_HARNESS[@]} > 0)) || [[ -n "$PROJECT_TARGET" ]]; }; then
+  diag "E_AGENT_NOTIFY_UNINSTALL_TARGETS_UNSUPPORTED: --uninstall only removes owned executables; adapter targets and --project are intentionally retained and must be removed manually."
+  exit 1
+fi
+
 case "$MODE" in
   status) do_status ;;
   install)
+    require_cmd grep "executable ownership checks" || exit 1
     require_cmd jq "adapter wiring" || exit 1
     do_install
     ;;
-  uninstall) do_uninstall ;;
+  uninstall)
+    require_cmd grep "executable ownership checks" || exit 1
+    do_uninstall
+    ;;
   audit) do_audit ;;
 esac

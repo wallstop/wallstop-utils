@@ -4,6 +4,7 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BIN="$ROOT/bin/agent-notify"
 SHIM="$ROOT/adapters/nanocoder/notify-send"
+INSTALLER="$ROOT/install.sh"
 FIXDIR="$ROOT/tests/fixtures"
 
 PASS=0
@@ -101,7 +102,7 @@ curl_calls() {
   fi
 }
 
-for shfile in "$BIN" "$SHIM" "$0"; do
+for shfile in "$BIN" "$SHIM" "$INSTALLER" "$0"; do
   if bash -n "$shfile" 2> /dev/null; then
     note_pass
   else
@@ -110,9 +111,269 @@ for shfile in "$BIN" "$SHIM" "$0"; do
 done
 
 if command -v shellcheck > /dev/null 2>&1; then
-  shellcheck "$BIN" "$SHIM" "$0" 2> "$SB/shellcheck.out" ||
-    printf '%s\n' "shellcheck notes (informational): $(head -c 300 "$SB/shellcheck.out")" >&2
+  if shellcheck "$BIN" "$SHIM" "$INSTALLER" "$0" 2> "$SB/shellcheck.out"; then
+    note_pass
+  else
+    note_fail "shellcheck failed: $(head -c 300 "$SB/shellcheck.out")"
+  fi
 fi
+
+# Installer coverage is hermetic: every HOME/bin/config/repository lives under SB,
+# entropy is local, and no adapter or notification command is executed.
+IH=$(mktemp -d "$SB/install-home.XXXXXX")
+IB="$IH/custom bin [managed]"
+HOME="$IH" XDG_CONFIG_HOME="$IH/config" \
+  "$INSTALLER" --install --all --bin-dir "$IB" > "$IH/install.out" 2> "$IH/install.err"
+RC=$?
+assert_eq "installer all-target custom-bin exit code" "$RC" "0"
+for json_file in "$IH/.claude/settings.json" "$IH/.codex/hooks.json" \
+  "$IH/.copilot/hooks/agent-notify.json"; do
+  if jq -e . "$json_file" > /dev/null 2>&1; then
+    note_pass
+  else
+    note_fail "installer emitted invalid JSON: $json_file"
+  fi
+done
+printf -v EXPECTED_BIN_COMMAND '%q' "$IB/agent-notify"
+printf -v DEFAULT_BIN_REFERENCE '\176/.local/bin/agent-notify'
+for command_file in "$IH/.claude/settings.json" "$IH/.codex/hooks.json" \
+  "$IH/.copilot/hooks/agent-notify.json"; do
+  if jq -e --arg expected "$EXPECTED_BIN_COMMAND" \
+    '[.. | strings | select(startswith($expected))] | length > 0' "$command_file" > /dev/null 2>&1; then
+    note_pass
+  else
+    note_fail "custom --bin-dir missing from adapter: $command_file"
+  fi
+  if grep -qF -- "$DEFAULT_BIN_REFERENCE" "$command_file"; then
+    note_fail "default bin path leaked into custom adapter: $command_file"
+  else
+    note_pass
+  fi
+done
+OPENCODE_FILE="$IH/config/opencode/plugins/agent-notify.js"
+if grep -qF -- "const script = \"$IB/agent-notify\"" "$OPENCODE_FILE"; then
+  note_pass
+else
+  note_fail "custom --bin-dir missing from OpenCode adapter"
+fi
+printf -v OPENCODE_DEFAULT_BIN_REFERENCE '\044{home}/.local/bin/agent-notify'
+if grep -qF -- "$OPENCODE_DEFAULT_BIN_REFERENCE" "$OPENCODE_FILE"; then
+  note_fail "default bin path leaked into custom OpenCode adapter"
+else
+  note_pass
+fi
+
+RH=$(mktemp -d "$SB/relative-bin-home.XXXXXX")
+(
+  cd "$RH" || exit 1
+  HOME="$RH" XDG_CONFIG_HOME="$RH/config" \
+    "$INSTALLER" --install --bin-dir 'relative-bin' > "$RH/install.out" 2> "$RH/install.err"
+)
+RC=$?
+assert_eq "relative --bin-dir is rejected" "$RC" "1"
+assert_match "relative --bin-dir failure is actionable" "$(cat "$RH/install.err")" \
+  "E_AGENT_NOTIFY_BIN_DIR_NOT_ABSOLUTE"
+assert_absent_path "relative --bin-dir performs no install" "$RH/relative-bin/agent-notify"
+
+HOME="$IH" XDG_CONFIG_HOME="$IH/config" \
+  "$INSTALLER" --uninstall --claude --bin-dir "$IB" > "$IH/target-uninstall.out" 2> "$IH/target-uninstall.err"
+RC=$?
+assert_eq "targeted uninstall is rejected" "$RC" "1"
+assert_match "targeted uninstall explains retained adapters" "$(cat "$IH/target-uninstall.err")" \
+  "E_AGENT_NOTIFY_UNINSTALL_TARGETS_UNSUPPORTED"
+if [[ -f "$IB/agent-notify" && -f "$IB/notify-send" ]]; then
+  note_pass
+else
+  note_fail "rejected targeted uninstall mutated managed executables"
+fi
+
+HOME="$IH" XDG_CONFIG_HOME="$IH/config" \
+  "$INSTALLER" --uninstall --bin-dir "$IB" > "$IH/uninstall.out" 2> "$IH/uninstall.err"
+RC=$?
+assert_eq "owned executable uninstall exit code" "$RC" "0"
+assert_absent_path "owned core removed on uninstall" "$IB/agent-notify"
+assert_absent_path "owned shim removed on uninstall" "$IB/notify-send"
+
+FH=$(mktemp -d "$SB/foreign-core-home.XXXXXX")
+FB="$FH/bin"
+mkdir -p "$FB"
+printf '%s\n' 'foreign core sentinel' > "$FB/agent-notify"
+chmod 755 "$FB/agent-notify"
+HOME="$FH" XDG_CONFIG_HOME="$FH/config" \
+  "$INSTALLER" --install --bin-dir "$FB" > "$FH/install.out" 2> "$FH/install.err"
+RC=$?
+assert_eq "foreign core blocks install" "$RC" "1"
+assert_eq "foreign core is not clobbered" "$(cat "$FB/agent-notify")" "foreign core sentinel"
+assert_match "foreign core failure is actionable" "$(cat "$FH/install.err")" \
+  "E_AGENT_NOTIFY_DEST_EXISTS"
+HOME="$FH" XDG_CONFIG_HOME="$FH/config" \
+  "$INSTALLER" --install --dry-run --bin-dir "$FB" > "$FH/dry-run.out" 2> "$FH/dry-run.err"
+RC=$?
+assert_eq "foreign core blocks dry-run plan" "$RC" "1"
+assert_match "foreign core dry-run failure is actionable" "$(cat "$FH/dry-run.err")" \
+  "E_AGENT_NOTIFY_DEST_EXISTS"
+assert_not_match "foreign core dry-run does not claim installation" "$(cat "$FH/dry-run.out")" \
+  "would install"
+
+FSH=$(mktemp -d "$SB/foreign-shim-home.XXXXXX")
+FSB="$FSH/bin"
+mkdir -p "$FSB"
+cp "$BIN" "$FSB/agent-notify"
+chmod 755 "$FSB/agent-notify"
+printf '%s\n' 'foreign shim sentinel' > "$FSB/notify-send"
+chmod 755 "$FSB/notify-send"
+HOME="$FSH" XDG_CONFIG_HOME="$FSH/config" \
+  "$INSTALLER" --install --nanocoder --bin-dir "$FSB" > "$FSH/install.out" 2> "$FSH/install.err"
+RC=$?
+assert_eq "foreign notify-send blocks shim install" "$RC" "1"
+assert_eq "foreign notify-send is not clobbered" "$(cat "$FSB/notify-send")" \
+  "foreign shim sentinel"
+
+FUH=$(mktemp -d "$SB/foreign-uninstall-home.XXXXXX")
+FUB="$FUH/bin"
+mkdir -p "$FUB"
+printf '%s\n' 'foreign core uninstall sentinel' > "$FUB/agent-notify"
+printf '%s\n' 'foreign shim uninstall sentinel' > "$FUB/notify-send"
+HOME="$FUH" XDG_CONFIG_HOME="$FUH/config" \
+  "$INSTALLER" --uninstall --bin-dir "$FUB" > "$FUH/uninstall.out" 2> "$FUH/uninstall.err"
+RC=$?
+assert_eq "foreign executable uninstall remains successful" "$RC" "0"
+assert_eq "foreign core is not deleted" "$(cat "$FUB/agent-notify")" \
+  "foreign core uninstall sentinel"
+assert_eq "foreign shim is not deleted" "$(cat "$FUB/notify-send")" \
+  "foreign shim uninstall sentinel"
+assert_match "foreign uninstall warning is actionable" "$(cat "$FUH/uninstall.err")" \
+  "W_AGENT_NOTIFY_FOREIGN_EXECUTABLE"
+
+AH=$(mktemp -d "$SB/atomic-claude-home.XXXXXX")
+AB="$AH/bin"
+mkdir -p "$AH/.claude" "$AH/fake-bin"
+printf '%s\n' '{"theme":"dark"}' > "$AH/.claude/settings.json"
+REAL_MV=$(command -v mv)
+export REAL_MV
+cat > "$AH/fake-bin/mv" << 'STUB'
+#!/usr/bin/env bash
+target=${!#}
+if [[ "$target" == "${FAIL_MOVE_DEST:?}" ]]; then
+  exit 73
+fi
+exec "${REAL_MV:?}" "$@"
+STUB
+chmod 755 "$AH/fake-bin/mv"
+PATH="$AH/fake-bin:$PATH" FAIL_MOVE_DEST="$AH/.claude/settings.json" \
+  HOME="$AH" XDG_CONFIG_HOME="$AH/config" \
+  "$INSTALLER" --install --claude --bin-dir "$AB" > "$AH/install.out" 2> "$AH/install.err"
+RC=$?
+assert_eq "failed Claude atomic replacement fails install" "$RC" "1"
+assert_eq "failed Claude replacement preserves live settings" \
+  "$(cat "$AH/.claude/settings.json")" '{"theme":"dark"}'
+if jq -e '.theme == "dark" and has("hooks") == false' "$AH/.claude/settings.json" > /dev/null 2>&1; then
+  note_pass
+else
+  note_fail "Claude settings invalid or partially replaced after failed atomic move"
+fi
+assert_match "failed Claude replacement is actionable" "$(cat "$AH/install.err")" \
+  "E_AGENT_NOTIFY_CLAUDE_WRITE_FAILED"
+
+IJH=$(mktemp -d "$SB/invalid-json-claude-home.XXXXXX")
+IJB="$IJH/bin"
+mkdir -p "$IJH/.claude"
+printf '%s\n' '{invalid-json' > "$IJH/.claude/settings.json"
+HOME="$IJH" XDG_CONFIG_HOME="$IJH/config" \
+  "$INSTALLER" --install --claude --bin-dir "$IJB" > "$IJH/install.out" 2> "$IJH/install.err"
+RC=$?
+assert_eq "invalid Claude JSON fails install" "$RC" "1"
+assert_eq "invalid Claude JSON is preserved" \
+  "$(cat "$IJH/.claude/settings.json")" '{invalid-json'
+assert_match "invalid Claude JSON failure is actionable" "$(cat "$IJH/install.err")" \
+  "E_AGENT_NOTIFY_CLAUDE_SETTINGS_INVALID"
+
+AR="$SB/audit-repo"
+mkdir -p "$AR/Scripts/AgentNotify"
+cp "$INSTALLER" "$AR/Scripts/AgentNotify/install.sh"
+git -C "$AR" init -q
+git -C "$AR" config user.email agent-notify-tests@example.invalid
+git -C "$AR" config user.name agent-notify-tests
+SECRET_TOPIC="agent-alerts-$(printf '%s' '0123456789abcdef01234567')"
+printf 'AGENT_NOTIFY_TOPIC=%s\n' "$SECRET_TOPIC" > "$AR/--leak.md"
+git -C "$AR" add -- '--leak.md' 'Scripts/AgentNotify/install.sh'
+AUDIT_HOME=$(mktemp -d "$SB/audit-home.XXXXXX")
+mkdir -p "$AUDIT_HOME/config/agent-notify"
+printf 'export AGENT_NOTIFY_TOPIC=%s\n' "$SECRET_TOPIC" \
+  > "$AUDIT_HOME/config/agent-notify/agent-notify.env"
+chmod 600 "$AUDIT_HOME/config/agent-notify/agent-notify.env"
+HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
+  "$AR/Scripts/AgentNotify/install.sh" --audit > "$AUDIT_HOME/audit.out" 2> "$AUDIT_HOME/audit.err"
+RC=$?
+assert_eq "audit rejects tracked unexported Markdown secret" "$RC" "1"
+assert_match "audit reports option-like Markdown operand" "$(cat "$AUDIT_HOME/audit.err")" \
+  "violation: --leak.md"
+printf 'AGENT_NOTIFY_TOPIC="%s"\n' "$SECRET_TOPIC" > "$AR/--leak.md"
+git -C "$AR" add -- '--leak.md'
+HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
+  "$AR/Scripts/AgentNotify/install.sh" --audit > "$AUDIT_HOME/quoted.out" 2> "$AUDIT_HOME/quoted.err"
+RC=$?
+assert_eq "audit rejects tracked quoted topic" "$RC" "1"
+assert_match "quoted topic audit reports tracked file" "$(cat "$AUDIT_HOME/quoted.err")" \
+  "violation: --leak.md"
+printf 'example private topic: %s\n' "$SECRET_TOPIC" > "$AR/--leak.md"
+git -C "$AR" add -- '--leak.md'
+HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
+  "$AR/Scripts/AgentNotify/install.sh" --audit > "$AUDIT_HOME/standalone.out" 2> "$AUDIT_HOME/standalone.err"
+RC=$?
+assert_eq "audit rejects tracked standalone topic" "$RC" "1"
+assert_match "standalone topic audit reports tracked file" "$(cat "$AUDIT_HOME/standalone.err")" \
+  "violation: --leak.md"
+git -C "$AR" rm --cached -q -- '--leak.md'
+HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
+  "$AR/Scripts/AgentNotify/install.sh" --audit > "$AUDIT_HOME/clean.out" 2> "$AUDIT_HOME/clean.err"
+RC=$?
+assert_eq "audit passes for a clean tracked index" "$RC" "0"
+assert_match "clean audit proves tracked scan" "$(cat "$AUDIT_HOME/clean.out")" \
+  "audit ok: no tracked secrets in repository"
+INVALID_TOPIC_SHORT="agent-alerts-$(printf '%s' '12345678')"
+INVALID_TOPIC_NONHEX="agent-alerts-$(printf '%s' '0123456789abcdef0123456g')"
+for invalid_topic in "$INVALID_TOPIC_SHORT" "$INVALID_TOPIC_NONHEX"; do
+  printf 'export AGENT_NOTIFY_TOPIC=%s\n' "$invalid_topic" \
+    > "$AUDIT_HOME/config/agent-notify/agent-notify.env"
+  HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
+    "$AR/Scripts/AgentNotify/install.sh" --audit \
+    > "$AUDIT_HOME/weak-topic.out" 2> "$AUDIT_HOME/weak-topic.err"
+  RC=$?
+  assert_eq "audit rejects non-minted topic shape ($invalid_topic)" "$RC" "1"
+  assert_match "invalid topic shape is actionable ($invalid_topic)" \
+    "$(cat "$AUDIT_HOME/weak-topic.err")" "E_AGENT_NOTIFY_TOPIC_SHAPE"
+done
+printf 'export AGENT_NOTIFY_TOPIC=%s\n' "$SECRET_TOPIC" \
+  > "$AUDIT_HOME/config/agent-notify/agent-notify.env"
+
+FAIL_GIT_BIN="$SB/failing-git-bin"
+mkdir -p "$FAIL_GIT_BIN"
+cat > "$FAIL_GIT_BIN/git" << 'STUB'
+#!/usr/bin/env bash
+printf '%s\n' 'synthetic git scan failure' >&2
+exit 42
+STUB
+chmod 755 "$FAIL_GIT_BIN/git"
+PATH="$FAIL_GIT_BIN:$PATH" HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
+  "$AR/Scripts/AgentNotify/install.sh" --audit > "$AUDIT_HOME/git-fail.out" 2> "$AUDIT_HOME/git-fail.err"
+RC=$?
+assert_eq "audit fails closed when git scan fails" "$RC" "1"
+assert_match "git scan failure is actionable" "$(cat "$AUDIT_HOME/git-fail.err")" \
+  "E_AGENT_NOTIFY_GIT_SCAN_FAILED.*exit 42"
+
+NO_GIT_BIN="$SB/no-git-bin"
+mkdir -p "$NO_GIT_BIN"
+for required_tool in dirname stat grep tail cut; do
+  ln -s "$(command -v "$required_tool")" "$NO_GIT_BIN/$required_tool"
+done
+PATH="$NO_GIT_BIN" HOME="$AUDIT_HOME" XDG_CONFIG_HOME="$AUDIT_HOME/config" \
+  /usr/bin/bash "$AR/Scripts/AgentNotify/install.sh" --audit \
+  > "$AUDIT_HOME/no-git.out" 2> "$AUDIT_HOME/no-git.err"
+RC=$?
+assert_eq "audit fails closed when git is missing" "$RC" "1"
+assert_match "missing git is actionable" "$(cat "$AUDIT_HOME/no-git.err")" \
+  "E_AGENT_NOTIFY_GIT_NOT_AVAILABLE"
 
 for f in "$FIXDIR"/*.json; do
   fname=$(basename "$f")
@@ -232,6 +493,58 @@ assert_match "publish carries title header" "$CURLLINE" "Title: \[testbox\] Clau
 assert_match "publish carries tags incl machine" "$CURLLINE" "Tags: heavy_check_mark,testbox"
 assert_match "publish body passed via --data-binary" "$CURLLINE" "--data-binary"
 assert_match "publish includes bearer token when configured" "$CURLLINE" "Authorization: Bearer tk_unit_123"
+rm -rf "$H"
+
+mkdir -p "$SB/slowbin"
+cat > "$SB/slowbin/curl" << 'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_CURL_LOG:?}"
+cat > /dev/null
+sleep "${FAKE_CURL_SLEEP_SECONDS:-0.4}"
+printf '%s' "200"
+STUB
+chmod 755 "$SB/slowbin/curl"
+H=$(mktemp -d "$SB/home.XXXXXX")
+N_CONCURRENT=$(curl_calls)
+PATH="$SB/slowbin:$PATH" HOME="$H" XDG_STATE_HOME='' AGENT_NOTIFY_TOPIC=test-topic \
+  "$BIN" claude < "$CLAUDE_STOP_FIXTURE" > /dev/null 2>&1 &
+PID_ONE=$!
+PATH="$SB/slowbin:$PATH" HOME="$H" XDG_STATE_HOME='' AGENT_NOTIFY_TOPIC=test-topic \
+  "$BIN" claude < "$CLAUDE_STOP_FIXTURE" > /dev/null 2>&1 &
+PID_TWO=$!
+wait "$PID_ONE"
+RC_ONE=$?
+wait "$PID_TWO"
+RC_TWO=$?
+assert_eq "first concurrent notifier exits 0" "$RC_ONE" "0"
+assert_eq "second concurrent notifier exits 0" "$RC_TWO" "0"
+assert_eq "cooldown lock permits one concurrent publish" \
+  "$(($(curl_calls) - N_CONCURRENT))" "1"
+CONCURRENT_LOG="$H/.local/state/agent-notify/log.jsonl"
+assert_eq "concurrent cooldown logs one sent result" \
+  "$(jq -s '[.[] | select(.result == "sent")] | length' "$CONCURRENT_LOG")" "1"
+assert_eq "concurrent cooldown logs one deduped result" \
+  "$(jq -s '[.[] | select(.result == "deduped")] | length' "$CONCURRENT_LOG")" "1"
+rm -rf "$H"
+
+H=$(mktemp -d "$SB/home.XXXXXX")
+N_DISTINCT=$(curl_calls)
+declare -a DISTINCT_PIDS=()
+for machine_label in concurrent-a concurrent-b concurrent-c; do
+  PATH="$SB/slowbin:$PATH" HOME="$H" XDG_STATE_HOME='' AGENT_NOTIFY_TOPIC=test-topic \
+    AGENT_NOTIFY_MACHINE_LABEL="$machine_label" FAKE_CURL_SLEEP_SECONDS=4 \
+    "$BIN" claude < "$CLAUDE_STOP_FIXTURE" > /dev/null 2>&1 &
+  DISTINCT_PIDS+=("$!")
+done
+for distinct_pid in "${DISTINCT_PIDS[@]}"; do
+  wait "$distinct_pid"
+  assert_eq "distinct-key concurrent notifier exits 0 ($distinct_pid)" "$?" "0"
+done
+assert_eq "per-key locks preserve all distinct concurrent publishes" \
+  "$(($(curl_calls) - N_DISTINCT))" "3"
+DISTINCT_LOG="$H/.local/state/agent-notify/log.jsonl"
+assert_eq "distinct-key concurrency has no lock timeout" \
+  "$(jq -s '[.[] | select(.result == "cooldown-lock-timeout")] | length' "$DISTINCT_LOG")" "0"
 rm -rf "$H"
 
 H=$(mktemp -d "$SB/home.XXXXXX")

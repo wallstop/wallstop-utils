@@ -90,6 +90,136 @@ BeforeAll {
                 }, $true)).Count -gt 0
     }
 
+    function Get-PesterBeforeAllDiscoveryReferenceViolations {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+
+        $beforeAllBodies = New-Object System.Collections.Generic.List[object]
+        $beforeDiscoveryBodies = New-Object System.Collections.Generic.List[object]
+        $pesterSetupCommands = @($Ast.FindAll({
+                    param($node)
+                    return $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -iin @('BeforeAll', 'BeforeDiscovery')
+                }, $true))
+        foreach ($pesterSetupCommand in $pesterSetupCommands) {
+            foreach ($element in $pesterSetupCommand.CommandElements) {
+                if ($element -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) {
+                    if ($pesterSetupCommand.GetCommandName() -ieq 'BeforeAll') {
+                        [void]$beforeAllBodies.Add($element)
+                    }
+                    else {
+                        [void]$beforeDiscoveryBodies.Add($element)
+                    }
+                }
+            }
+        }
+
+        $assignedInsideBeforeAll = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+        $discoverySafeAssignmentOffsets = @{}
+        $assignments = @($Ast.FindAll({
+                    param($node)
+                    return $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $node.Left -is [System.Management.Automation.Language.VariableExpressionAst]
+                }, $true))
+        foreach ($assignment in $assignments) {
+            $variableName = $assignment.Left.VariablePath.UserPath
+            $insideBeforeAll = $false
+            foreach ($beforeAllBody in $beforeAllBodies) {
+                if ($assignment.Extent.StartOffset -ge $beforeAllBody.Extent.StartOffset -and
+                    $assignment.Extent.EndOffset -le $beforeAllBody.Extent.EndOffset) {
+                    $insideBeforeAll = $true
+                    break
+                }
+            }
+
+            $insideFunction = $false
+            $insideConditionalScope = $false
+            $nearestScriptBlockExpression = $null
+            $ancestor = $assignment.Parent
+            while ($null -ne $ancestor -and $ancestor -ne $Ast) {
+                if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                    $insideFunction = $true
+                }
+                if ($ancestor -is [System.Management.Automation.Language.StatementBlockAst]) {
+                    $insideConditionalScope = $true
+                }
+
+                if ($null -eq $nearestScriptBlockExpression -and
+                    $ancestor -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) {
+                    $nearestScriptBlockExpression = $ancestor
+                }
+
+                $ancestor = $ancestor.Parent
+            }
+
+            $insideBeforeDiscovery = $false
+            if (-not $insideFunction -and -not $insideConditionalScope -and $null -ne $nearestScriptBlockExpression) {
+                foreach ($beforeDiscoveryBody in $beforeDiscoveryBodies) {
+                    if ([object]::ReferenceEquals($nearestScriptBlockExpression, $beforeDiscoveryBody)) {
+                        $insideBeforeDiscovery = $true
+                        break
+                    }
+                }
+            }
+
+            $atFileScope = -not $insideFunction -and -not $insideConditionalScope -and $null -eq $nearestScriptBlockExpression
+            if ($atFileScope -or $insideBeforeDiscovery) {
+                if (-not $discoverySafeAssignmentOffsets.ContainsKey($variableName)) {
+                    $discoverySafeAssignmentOffsets[$variableName] = New-Object System.Collections.Generic.List[int]
+                }
+                $discoverySafeAssignmentOffsets[$variableName].Add($assignment.Extent.StartOffset)
+            }
+
+            if ($insideBeforeAll) {
+                [void]$assignedInsideBeforeAll.Add($variableName)
+            }
+        }
+
+        $violations = New-Object System.Collections.Generic.List[object]
+        $pesterDiscoveryCommands = @($Ast.FindAll({
+                    param($node)
+                    if (-not ($node -is [System.Management.Automation.Language.CommandAst])) {
+                        return $false
+                    }
+
+                    return $node.GetCommandName() -iin @('Describe', 'Context', 'It')
+                }, $true))
+        foreach ($command in $pesterDiscoveryCommands) {
+            foreach ($element in @($command.CommandElements | Select-Object -Skip 1)) {
+                if ($element -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) {
+                    continue
+                }
+
+                $variableReferences = @($element.FindAll({
+                            param($node)
+                            return $node -is [System.Management.Automation.Language.VariableExpressionAst]
+                        }, $true))
+                foreach ($variableReference in $variableReferences) {
+                    $variableName = $variableReference.VariablePath.UserPath
+                    $hasPriorDiscoverySafeAssignment = $false
+                    if ($discoverySafeAssignmentOffsets.ContainsKey($variableName)) {
+                        foreach ($assignmentOffset in $discoverySafeAssignmentOffsets[$variableName]) {
+                            if ($assignmentOffset -lt $variableReference.Extent.StartOffset) {
+                                $hasPriorDiscoverySafeAssignment = $true
+                                break
+                            }
+                        }
+                    }
+                    if ($assignedInsideBeforeAll.Contains($variableName) -and -not $hasPriorDiscoverySafeAssignment) {
+                        [void]$violations.Add([pscustomobject]@{
+                                VariableName = $variableName
+                                LineNumber   = $variableReference.Extent.StartLineNumber
+                            })
+                    }
+                }
+            }
+        }
+
+        return $violations.ToArray() # array-unwrap-safe: callers wrap in @(...).
+    }
+
     function Get-GitHubWorkflowStepBlocks {
         param(
             [Parameter(Mandatory = $true)]
@@ -191,6 +321,123 @@ BeforeAll {
 }
 
 Describe "PowerShell test harness conventions" {
+    It "rejects variables initialized only in BeforeAll from Pester discovery arguments" {
+        $badFixture = @'
+BeforeAll { $script:ready = $true }
+Describe "bad" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+'@
+        $goodBeforeDiscoveryFixture = @'
+BeforeDiscovery { $script:ready = $true }
+Describe "good" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+'@
+        $goodFileScopeFixture = @'
+$script:ready = $true
+BeforeAll { $script:ready = $true }
+Describe "good" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+'@
+        $goodRunBodyFixture = @'
+BeforeAll { $script:ready = $true }
+Describe "good" { It "body" { $script:ready | Should -BeTrue } }
+'@
+        $badItAssignmentFixture = @'
+BeforeAll { $script:ready = $true }
+It "run phase" { $script:ready = $false }
+Describe "bad" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+'@
+        $badBeforeEachAssignmentFixture = @'
+BeforeAll { $script:ready = $true }
+BeforeEach { $script:ready = $false }
+Describe "bad" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+'@
+        $badFunctionAssignmentFixture = @'
+BeforeAll { $script:ready = $true }
+function Set-Ready { $script:ready = $true }
+Describe "bad" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+'@
+        $badAfterAllAssignmentFixture = @'
+BeforeAll { $script:ready = $true }
+AfterAll { $script:ready = $false }
+Describe "bad" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+'@
+        $badLateFileScopeAssignmentFixture = @'
+BeforeAll { $script:ready = $true }
+Describe "bad" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+$script:ready = $true
+'@
+        $badConditionalFileScopeAssignmentFixture = @'
+BeforeAll { $script:ready = $true }
+if ($false) { $script:ready = $true }
+Describe "bad" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+'@
+        $badLateBeforeDiscoveryFixture = @'
+BeforeAll { $script:ready = $true }
+Describe "bad" -Skip:(-not $script:ready) { It "body" { $true | Should -BeTrue } }
+BeforeDiscovery { $script:ready = $true }
+'@
+
+        $syntheticCases = @(
+            @{ Name = 'BeforeAll discovery reference'; Text = $badFixture; Expected = 1 },
+            @{ Name = 'BeforeDiscovery initialization'; Text = $goodBeforeDiscoveryFixture; Expected = 0 },
+            @{ Name = 'file-scope initialization'; Text = $goodFileScopeFixture; Expected = 0 },
+            @{ Name = 'run-body reference'; Text = $goodRunBodyFixture; Expected = 0 },
+            @{ Name = 'It assignment does not initialize discovery'; Text = $badItAssignmentFixture; Expected = 1 },
+            @{ Name = 'BeforeEach assignment does not initialize discovery'; Text = $badBeforeEachAssignmentFixture; Expected = 1 },
+            @{ Name = 'function-body assignment does not initialize discovery'; Text = $badFunctionAssignmentFixture; Expected = 1 },
+            @{ Name = 'AfterAll assignment does not initialize discovery'; Text = $badAfterAllAssignmentFixture; Expected = 1 },
+            @{ Name = 'late file-scope assignment does not initialize prior discovery'; Text = $badLateFileScopeAssignmentFixture; Expected = 1 },
+            @{ Name = 'conditional file-scope assignment is not guaranteed'; Text = $badConditionalFileScopeAssignmentFixture; Expected = 1 },
+            @{ Name = 'late BeforeDiscovery assignment does not initialize prior discovery'; Text = $badLateBeforeDiscoveryFixture; Expected = 1 }
+        )
+        foreach ($syntheticCase in $syntheticCases) {
+            $tokens = $null
+            $parseErrors = $null
+            $fixtureAst = [System.Management.Automation.Language.Parser]::ParseInput(
+                $syntheticCase.Text,
+                [ref]$tokens,
+                [ref]$parseErrors
+            )
+            @($parseErrors).Count | Should -Be 0 -Because $syntheticCase.Name
+            @(Get-PesterBeforeAllDiscoveryReferenceViolations -Ast $fixtureAst).Count |
+                Should -Be $syntheticCase.Expected -Because $syntheticCase.Name
+        }
+
+        $testsRoot = Join-Path -Path $script:repoRoot -ChildPath 'Tests'
+        $testFiles = @(Get-ChildItem -Path $testsRoot -Filter '*.Tests.ps1' -File -Recurse -ErrorAction Stop)
+        $violations = New-Object System.Collections.Generic.List[string]
+        foreach ($testFile in $testFiles) {
+            $tokens = $null
+            $parseErrors = $null
+            $testAst = [System.Management.Automation.Language.Parser]::ParseFile($testFile.FullName, [ref]$tokens, [ref]$parseErrors)
+            if (@($parseErrors).Count -gt 0) {
+                continue
+            }
+
+            foreach ($violation in @(Get-PesterBeforeAllDiscoveryReferenceViolations -Ast $testAst)) {
+                $relativePath = Get-RelativePathCompat -BasePath $script:repoRoot -TargetPath $testFile.FullName
+                $portableRelativePath = $relativePath -replace '\\', '/'
+                $violations.Add("${portableRelativePath}:$($violation.LineNumber):`$$($violation.VariableName)") | Out-Null
+            }
+        }
+
+        $violations.Count | Should -Be 0 -Because (
+            "Pester discovery arguments must initialize referenced variables at file scope or in BeforeDiscovery; BeforeAll runs too late. Violations: {0}" -f ($violations -join ', ')
+        )
+    }
+
+    It "bounds and observes AgentNotify suite process capture" {
+        $agentNotifyTestsPath = Join-Path -Path $script:repoRoot -ChildPath 'Tests/Utils/AgentNotify.Tests.ps1'
+        $content = Get-Content -LiteralPath $agentNotifyTestsPath -Raw
+
+        $content | Should -Match 'Stop-ProcessTreePortably\s+-Process\s+\$process'
+        $content | Should -Match 'Read-AgentNotifySuiteCaptureTaskBounded[\s\S]*\$Task\.Wait\(\$TimeoutMilliseconds\)'
+        $content | Should -Match "-StreamName\s+'stdout'"
+        $content | Should -Match "-StreamName\s+'stderr'"
+        $content | Should -Match 'E_AGENT_NOTIFY_SUITE_CAPTURE_TIMEOUT'
+        $content | Should -Match 'E_AGENT_NOTIFY_SUITE_CAPTURE_FAILED'
+        $content | Should -Not -Match '\$process\.Kill\('
+        $content | Should -Not -Match '\.WaitForExit\(\s*\)'
+    }
+
     It "does not truncate FunctionDefinitionAst matches before exact-cardinality assertions" {
         $testsRoot = Join-Path -Path $script:repoRoot -ChildPath "Tests"
         $testFiles = @(Get-ChildItem -Path $testsRoot -Filter "*.ps1" -File -Recurse -ErrorAction Stop)
@@ -1717,7 +1964,7 @@ Describe "Cross-language quality platform conventions" {
         $workflow = Get-Content -Path $script:devcontainerWorkflowPath -Raw
 
         $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+-EnsureOnly'
-        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/post-start\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push'
+        $workflow | Should -Match 'Invoke-ShellQualityChecks\.ps1\s+-Tool\s+All\s+\.devcontainer/post-create\.sh\s+\.devcontainer/post-start\.sh\s+\.devcontainer/initialize-host\.sh\s+\.devcontainer/build-wallstop-pr-comments-vsix\.sh\s+\.githooks/pre-commit\s+\.githooks/pre-push\s+Scripts/AgentNotify/bin/agent-notify\s+Scripts/AgentNotify/adapters/nanocoder/notify-send\s+Scripts/AgentNotify/install\.sh\s+Scripts/AgentNotify/tests/run\.sh'
         $workflow | Should -Not -Match 'apt-get\s+install[\s\S]*shellcheck'
         $workflow | Should -Not -Match 'shellcheck\s+--severity'
     }
@@ -2627,7 +2874,7 @@ Describe "Quality script executable guardrails" {
         $preCommitConfig | Should -Match 'id:\s+shellcheck'
         $preCommitConfig | Should -Match 'id:\s+shfmt'
         $preCommitConfig | Should -Match 'Invoke-ShellQualityChecks\.ps1'
-        $preCommitConfig | Should -Match 'files:\s+''\^\(Scripts/\.\*\\\.sh\|\\\.devcontainer/\.\*\\\.sh\|\\\.githooks/\(pre-commit\|pre-push\)\)\$'''
+        $preCommitConfig | Should -Match 'files:\s+''\^\(Scripts/\.\*\\\.sh\|Scripts/AgentNotify/\(bin/agent-notify\|adapters/nanocoder/notify-send\)\|\\\.devcontainer/\.\*\\\.sh\|\\\.githooks/\(pre-commit\|pre-push\)\)\$'''
         $macChecks | Should -Not -Match '(?m)^\s*local\s+-n\b'
     }
 

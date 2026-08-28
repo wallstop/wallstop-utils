@@ -45,6 +45,9 @@ Scripts/AgentNotify/install.sh --install --all --dry-run    # review plan
 Scripts/AgentNotify/install.sh --install --all              # binaries + env bootstrap + wiring
 ```
 
+`--bin-dir DIR` installs both executables there and renders that exact path into
+every selected harness adapter.
+
 The install prints `TOPIC_NAME=<agent-alerts-…>` exactly once — subscribe your
 phone's ntfy app to that topic on https://ntfy.sh (step one-time per device).
 
@@ -63,7 +66,7 @@ Scripts/AgentNotify/install.sh --audit     # E_AGENT_NOTIFY_SECRET_IN_TREE fails
 
 The private topic lives **only** in `$HOME/.config/agent-notify/agent-notify.env`
 (chmod 600) outside the repository; `.gitignore` guards reject accidental copies,
-and `--audit` re-proves it over the whole tracked tree (docs/images excluded)
+and `--audit` re-proves it over the complete tracked Git index
 whenever you want certainty.
 
 `agent-notify.env` is auto-sourced on every invocation and wins over ambient
@@ -185,7 +188,7 @@ token (`ntfy user add --role user … && ntfy token add you`), then point the
 client at it by changing two values in `agent-notify.env`:
 
     export AGENT_NOTIFY_URL=https://ntfy.yourdomain.tld
-    export AGENT_NOTIFY_TOKEN=tk_xxxxxxxxxxxxxxxx
+    export AGENT_NOTIFY_TOKEN=<your-token>
 
 Topic stays whatever name you created under that broker. Client code, adapter
 configs, and phone subscription are untouched apart from adding the server.
@@ -211,10 +214,11 @@ Official guide: https://docs.ntfy.sh/config/
 
 ## Uninstall
 
-Remove the hooks block from each harness config, delete copied binaries
-(`~/.local/bin/agent-notify`, `~/.local/bin/notify-send`), drop the opencode
-plugin file, remove `~/.config/agent-notify/`, and optionally delete
-`~/.local/state/agent-notify`.
+`install.sh --uninstall` removes only executables bearing its ownership marker.
+Harness selectors and `--project` are rejected because copied adapters are
+intentionally retained. Remove the hooks block from each harness config, drop
+the opencode plugin file, remove `~/.config/agent-notify/`, and optionally
+delete `~/.local/state/agent-notify` after reviewing those files manually.
 
 ## License
 
