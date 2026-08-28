@@ -722,6 +722,119 @@ fi
 rm -f "$SB/config/agent-notify/agent-notify.env"
 rm -rf "$H"
 
+SHIM_LAYOUT_ROOT=$(mktemp -d "$SB/shim-layout.XXXXXX")
+SHIM_LAYOUT_ROOT=$(cd -P -- "$SHIM_LAYOUT_ROOT" && pwd)
+SHIM_TOOL_DIR="$SHIM_LAYOUT_ROOT/tools"
+SHIM_CORE_STUB="$SHIM_LAYOUT_ROOT/core-stub"
+SHIM_TARGET_LOG="$SHIM_LAYOUT_ROOT/selected-target.log"
+mkdir -p "$SHIM_TOOL_DIR"
+if ! SHIM_HOST_BASH=$(command -v bash); then
+  note_fail "shim layout harness requires bash"
+  SHIM_HOST_BASH=/usr/bin/bash
+fi
+for tool in bash cat dirname grep jq; do
+  if ! SHIM_HOST_TOOL=$(command -v "$tool"); then
+    note_fail "shim layout harness requires $tool"
+    continue
+  fi
+  {
+    printf '#!%s\n' "$SHIM_HOST_BASH"
+    printf 'exec %q "$@"\n' "$SHIM_HOST_TOOL"
+  } > "$SHIM_TOOL_DIR/$tool"
+  chmod 755 "$SHIM_TOOL_DIR/$tool"
+done
+cat > "$SHIM_CORE_STUB" << 'STUB'
+#!/usr/bin/env bash
+# agent-notify-managed: core
+cat > /dev/null
+printf '%s\n' "$0" >> "${AGENT_NOTIFY_SHIM_TARGET_LOG:?}"
+STUB
+chmod 755 "$SHIM_CORE_STUB"
+
+SHIM_INSTALL_DIR="$SHIM_LAYOUT_ROOT/default-home/.local/bin"
+SHIM_STALE_DIR="$SHIM_LAYOUT_ROOT/default-home/bin"
+mkdir -p "$SHIM_INSTALL_DIR" "$SHIM_STALE_DIR"
+cp "$SHIM" "$SHIM_INSTALL_DIR/notify-send"
+cp "$SHIM_CORE_STUB" "$SHIM_INSTALL_DIR/agent-notify"
+cp "$SHIM_CORE_STUB" "$SHIM_STALE_DIR/agent-notify"
+AGENT_NOTIFY_SHIM_TARGET_LOG="$SHIM_TARGET_LOG" \
+  PATH="$SHIM_TOOL_DIR" HOME="$SHIM_LAYOUT_ROOT/default-home" XDG_STATE_HOME='' \
+  "$SHIM_INSTALL_DIR/notify-send" "Installed layout" "Uses sibling core" > /dev/null 2>&1
+for ((i = 0; i < 40; i++)); do
+  [[ -s "$SHIM_TARGET_LOG" ]] && break
+  sleep 0.05
+done
+assert_eq "installed shim prefers its managed sibling core" \
+  "$(cat "$SHIM_TARGET_LOG" 2> /dev/null || printf 'missing')" "$SHIM_INSTALL_DIR/agent-notify"
+
+rm -f "$SHIM_TARGET_LOG" "$SHIM_INSTALL_DIR/agent-notify"
+AGENT_NOTIFY_SHIM_TARGET_LOG="$SHIM_TARGET_LOG" \
+  PATH="$SHIM_TOOL_DIR" HOME="$SHIM_LAYOUT_ROOT/default-home" XDG_STATE_HOME='' \
+  "$SHIM_INSTALL_DIR/notify-send" "Installed layout" "Ignores stale parent core" > /dev/null 2>&1
+assert_absent_path "installed shim does not infer a core from ~/bin" "$SHIM_TARGET_LOG"
+
+SHIM_SOURCE_ROOT="$SHIM_LAYOUT_ROOT/source/AgentNotify"
+SHIM_SOURCE_DIR="$SHIM_SOURCE_ROOT/adapters/nanocoder"
+mkdir -p "$SHIM_SOURCE_DIR" "$SHIM_SOURCE_ROOT/bin"
+cp "$SHIM" "$SHIM_SOURCE_DIR/notify-send"
+cp "$SHIM_CORE_STUB" "$SHIM_SOURCE_DIR/agent-notify"
+cp "$SHIM_CORE_STUB" "$SHIM_SOURCE_ROOT/bin/agent-notify"
+printf '%s\n' "readonly SOURCE_SHIM=\"\$SCRIPT_DIR/adapters/nanocoder/notify-send\"" \
+  > "$SHIM_SOURCE_ROOT/install.sh"
+AGENT_NOTIFY_SHIM_TARGET_LOG="$SHIM_TARGET_LOG" \
+  PATH="$SHIM_TOOL_DIR" HOME="$SHIM_LAYOUT_ROOT/source-home" XDG_STATE_HOME='' \
+  "$SHIM_SOURCE_DIR/notify-send" "Source layout" "Uses repository core" > /dev/null 2>&1
+assert_eq "source shim prefers the repository core over a foreign sibling" \
+  "$(cat "$SHIM_TARGET_LOG" 2> /dev/null || printf 'missing')" \
+  "$SHIM_SOURCE_DIR/../../bin/agent-notify"
+
+rm -f "$SHIM_TARGET_LOG" "$SHIM_SOURCE_ROOT/bin/agent-notify"
+AGENT_NOTIFY_SHIM_TARGET_LOG="$SHIM_TARGET_LOG" \
+  PATH="$SHIM_TOOL_DIR" HOME="$SHIM_LAYOUT_ROOT/source-home" XDG_STATE_HOME='' \
+  "$SHIM_SOURCE_DIR/notify-send" "Partial source layout" "Falls back to sibling" > /dev/null 2>&1
+assert_eq "partial source layout falls back to its managed sibling" \
+  "$(cat "$SHIM_TARGET_LOG" 2> /dev/null || printf 'missing')" "$SHIM_SOURCE_DIR/agent-notify"
+
+rm -f "$SHIM_TARGET_LOG"
+SHIM_CUSTOM_DIR="$SHIM_LAYOUT_ROOT/custom/bin"
+SHIM_FALLBACK_DIR="$SHIM_LAYOUT_ROOT/fallback-home/.local/bin"
+mkdir -p "$SHIM_CUSTOM_DIR/agent-notify" "$SHIM_FALLBACK_DIR"
+cp "$SHIM" "$SHIM_CUSTOM_DIR/notify-send"
+cp "$SHIM_CORE_STUB" "$SHIM_FALLBACK_DIR/agent-notify"
+AGENT_NOTIFY_SHIM_TARGET_LOG="$SHIM_TARGET_LOG" \
+  PATH="$SHIM_TOOL_DIR" HOME="$SHIM_LAYOUT_ROOT/fallback-home" XDG_STATE_HOME='' \
+  "$SHIM_CUSTOM_DIR/notify-send" "Installed layout" "Skips directory candidate" > /dev/null 2>&1
+assert_eq "shim skips executable directories when resolving the core" \
+  "$(cat "$SHIM_TARGET_LOG" 2> /dev/null || printf 'missing')" "$SHIM_FALLBACK_DIR/agent-notify"
+
+rm -f "$SHIM_TARGET_LOG"
+SHIM_ALIAS_DIR="$SHIM_LAYOUT_ROOT/alias-bin"
+SHIM_REALPATH_DIR="$SHIM_LAYOUT_ROOT/no-realpath-bin"
+SHIM_REALPATH_LOG="$SHIM_LAYOUT_ROOT/realpath-called.log"
+mkdir -p "$SHIM_ALIAS_DIR" "$SHIM_REALPATH_DIR"
+if ! ln "$SHIM_INSTALL_DIR/notify-send" "$SHIM_ALIAS_DIR/notify-send"; then
+  note_fail "shim identity harness could not create a same-filesystem hard link"
+fi
+cat > "$SHIM_REALPATH_DIR/realpath" << 'STUB'
+#!/usr/bin/env bash
+printf '%s\n' called >> "${AGENT_NOTIFY_REALPATH_LOG:?}"
+exit 127
+STUB
+chmod 755 "$SHIM_REALPATH_DIR/realpath"
+cp "$SHIM_CORE_STUB" "$SHIM_INSTALL_DIR/agent-notify"
+AGENT_NOTIFY_SHIM_TARGET_LOG="$SHIM_TARGET_LOG" \
+  AGENT_NOTIFY_REALPATH_LOG="$SHIM_REALPATH_LOG" \
+  PATH="$SHIM_ALIAS_DIR:$SHIM_REALPATH_DIR:$SB/realbin:$SHIM_TOOL_DIR" \
+  HOME="$SHIM_LAYOUT_ROOT/default-home" XDG_STATE_HOME='' \
+  "$SHIM_INSTALL_DIR/notify-send" "Alias identity" "Forwards once" > /dev/null 2>&1
+for ((i = 0; i < 40; i++)); do
+  [[ -s "$SHIM_TARGET_LOG" ]] && break
+  sleep 0.05
+done
+assert_eq "shim recognizes its aliased path and invokes the core once" \
+  "$(cat "$SHIM_TARGET_LOG" 2> /dev/null || printf 'missing')" "$SHIM_INSTALL_DIR/agent-notify"
+assert_absent_path "shim path identity does not depend on realpath" "$SHIM_REALPATH_LOG"
+
 H=$(mktemp -d "$SB/home.XXXXXX")
 PATH="$SB/bin:$SB/realbin:$PATH" HOME="$H" XDG_STATE_HOME='' AGENT_NOTIFY_TOPIC=test-topic \
   "$SHIM" -u critical "Action Required in my-project" "Nanocoder needs your approval" > /dev/null 2>&1

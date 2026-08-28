@@ -4,7 +4,7 @@
 
 - [x] Add a secrets-safe, local-first `agent-notify` toolkit with adapters for Claude, Codex, Copilot, OpenCode, and Nanocoder; keep offline tests hermetic and notification hooks best-effort.
 - [x] Add idempotent machine bootstrap/audit tooling and repository documentation without committing ntfy topics or tokens.
-- [x] Address all three Cursor review findings with regression coverage: make the Pester gate discoverable from the actual repository root, preserve Nanocoder's original desktop-notification arguments, and stream leading-`@` bodies to curl literally through stdin.
+- [x] Address all four Cursor review findings with regression coverage: make the Pester gate discoverable from the actual repository root, preserve Nanocoder's original desktop-notification arguments, stream leading-`@` bodies to curl literally through stdin, and make the installed Nanocoder shim prefer only its managed sibling instead of an unrelated parent-derived core.
 - [x] Run the full repository validation loop after incorporating current `main`.
 - [x] Complete the three-round adversarial/self-improvement protocol and resolve every reported finding with regression coverage; the final independent pass found eight additional issues that were fixed after the protocol cap.
 - [x] Push the updated branch and drive PR #79 required checks to green; Cursor completed neutral with no new findings, while Copilot's non-code review check remains externally quota-failed.
