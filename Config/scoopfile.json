@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-08-27T23:32:43.7269211-07:00",
-      "Version": "2.36.33"
+      "Updated": "2026-08-28T23:32:01.4982856-07:00",
+      "Version": "2.36.34"
     },
     {
       "Info": "",
@@ -95,8 +95,8 @@
       "Info": "",
       "Name": "calibre",
       "Source": "extras",
-      "Updated": "2026-08-09T20:01:26.1335397-07:00",
-      "Version": "9.13.0"
+      "Updated": "2026-08-28T23:32:43.2887102-07:00",
+      "Version": "9.14.0"
     },
     {
       "Info": "",
@@ -361,8 +361,8 @@
       "Info": "",
       "Name": "megacmd",
       "Source": "main",
-      "Updated": "2026-04-19T11:41:17.766084-07:00",
-      "Version": "2.5.2"
+      "Updated": "2026-08-28T23:32:49.0547404-07:00",
+      "Version": "2.6.0"
     },
     {
       "Info": "",
@@ -438,15 +438,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-08-27T23:36:42.5957767-07:00",
-      "Version": "0.33.1"
+      "Updated": "2026-08-28T23:33:18.5247715-07:00",
+      "Version": "0.33.2"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-08-27T23:38:05.7739774-07:00",
-      "Version": "0.33.1"
+      "Updated": "2026-08-28T23:34:35.9287173-07:00",
+      "Version": "0.33.2"
     },
     {
       "Info": "",
@@ -459,15 +459,15 @@
       "Info": "",
       "Name": "opencode",
       "Source": "C:\\Users\\dbfsi\\scoop\\buckets\\main\\bucket\\opencode.json",
-      "Updated": "2026-08-25T23:35:39.8034662-07:00",
-      "Version": "1.18.23"
+      "Updated": "2026-08-28T23:34:38.4182151-07:00",
+      "Version": "1.18.25"
     },
     {
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-08-25T23:35:45.0690888-07:00",
-      "Version": "1.18.23"
+      "Updated": "2026-08-28T23:34:43.0829719-07:00",
+      "Version": "1.18.25"
     },
     {
       "Info": "",
@@ -480,8 +480,8 @@
       "Info": "",
       "Name": "pandoc",
       "Source": "main",
-      "Updated": "2026-08-12T23:33:08.8584112-07:00",
-      "Version": "3.10.2"
+      "Updated": "2026-08-28T23:34:44.8665418-07:00",
+      "Version": "3.11"
     },
     {
       "Info": "",
@@ -578,8 +578,8 @@
       "Info": "",
       "Name": "shfmt",
       "Source": "main",
-      "Updated": "2026-04-19T12:21:46.7157801-07:00",
-      "Version": "3.13.1"
+      "Updated": "2026-08-28T23:34:45.7254539-07:00",
+      "Version": "3.14.0"
     },
     {
       "Info": "",
@@ -713,13 +713,13 @@
       "Manifests": 1640,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-08-27T20:26:50-07:00"
+      "Updated": "2026-08-28T21:29:24-07:00"
     },
     {
-      "Manifests": 2373,
+      "Manifests": 2374,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-08-27T16:31:40-07:00"
+      "Updated": "2026-08-28T21:29:25-07:00"
     },
     {
       "Manifests": 75,
@@ -731,13 +731,13 @@
       "Manifests": 132,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-08-27T03:01:43-07:00"
+      "Updated": "2026-08-28T04:32:16-07:00"
     },
     {
       "Manifests": 336,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-08-27T21:05:10-07:00"
+      "Updated": "2026-08-28T12:56:47-07:00"
     }
   ]
 }
