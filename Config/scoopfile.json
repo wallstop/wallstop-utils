@@ -284,8 +284,8 @@
       "Info": "",
       "Name": "imageglass",
       "Source": "extras",
-      "Updated": "2026-08-09T20:03:30.430492-07:00",
-      "Version": "9.6.1.807"
+      "Updated": "2026-08-30T23:31:56.4959225-07:00",
+      "Version": "10.0.5.825"
     },
     {
       "Info": "",
@@ -375,8 +375,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-08-25T23:33:41.2784381-07:00",
-      "Version": "2026.8.14"
+      "Updated": "2026-08-30T23:31:59.1806172-07:00",
+      "Version": "2026.8.15"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-08-13T23:32:48.6585199-07:00",
-      "Version": "1.16.7"
+      "Updated": "2026-08-30T23:32:00.2075-07:00",
+      "Version": "1.17.1"
     },
     {
       "Info": "",
@@ -710,16 +710,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1640,
+      "Manifests": 1642,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-08-29T21:30:57-07:00"
+      "Updated": "2026-08-30T21:49:32-07:00"
     },
     {
       "Manifests": 2374,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-08-29T21:31:41-07:00"
+      "Updated": "2026-08-30T21:34:51-07:00"
     },
     {
       "Manifests": 75,
@@ -731,7 +731,7 @@
       "Manifests": 132,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-08-29T09:06:27-07:00"
+      "Updated": "2026-08-30T12:21:40-07:00"
     },
     {
       "Manifests": 336,
