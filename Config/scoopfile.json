@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-08-28T23:32:01.4982856-07:00",
-      "Version": "2.36.34"
+      "Updated": "2026-08-31T23:32:12.1916128-07:00",
+      "Version": "2.36.36"
     },
     {
       "Info": "",
@@ -123,8 +123,8 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-08-13T23:30:58.7477844-07:00",
-      "Version": "8.21.0_7"
+      "Updated": "2026-08-31T23:32:14.1577768-07:00",
+      "Version": "8.21.0_8"
     },
     {
       "Info": "",
@@ -375,8 +375,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-08-30T23:31:59.1806172-07:00",
-      "Version": "2026.8.15"
+      "Updated": "2026-08-31T23:32:16.9096949-07:00",
+      "Version": "2026.8.16"
     },
     {
       "Info": "",
@@ -634,8 +634,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-08-27T23:38:27.383796-07:00",
-      "Version": "0.12.7"
+      "Updated": "2026-08-31T23:32:33.1830831-07:00",
+      "Version": "0.12.8"
     },
     {
       "Info": "",
@@ -713,13 +713,13 @@
       "Manifests": 1642,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-08-30T21:49:32-07:00"
+      "Updated": "2026-08-31T21:32:59-07:00"
     },
     {
       "Manifests": 2374,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-08-30T21:34:51-07:00"
+      "Updated": "2026-08-31T21:33:55-07:00"
     },
     {
       "Manifests": 75,
@@ -731,13 +731,13 @@
       "Manifests": 132,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-08-30T12:21:40-07:00"
+      "Updated": "2026-08-31T14:31:56-07:00"
     },
     {
       "Manifests": 336,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-08-29T09:01:21-07:00"
+      "Updated": "2026-08-31T22:12:19-07:00"
     }
   ]
 }
