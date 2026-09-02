@@ -383,6 +383,8 @@ metadata:
 
 Stale inline path: ``.llm/skills/renamed-skill.md``.
 
+Inline path ending in ')': ``.llm/skills/paren)``.
+
 Broken link: [Missing Detail](./missing-detail.md).
 
 Prose between stray backticks stays scanned: stray `` tick then [stray](./missing-stray.md) then `` end.
@@ -408,6 +410,7 @@ Prose between stray backticks stays scanned: stray `` tick then [stray](./missin
             $validationFailure | Should -Not -BeNullOrEmpty
             $validationFailure.Exception.Message | Should -Match 'E_LLM_DOC_REFERENCE_MISSING'
             $validationFailure.Exception.Message | Should -Match '\.llm/skills/renamed-skill\.md'
+            $validationFailure.Exception.Message | Should -Match '\.llm/skills/paren\)' -Because 'a trailing ) in an inline path must be reported verbatim'
             $validationFailure.Exception.Message | Should -Match '\./missing-detail\.md'
             $validationFailure.Exception.Message | Should -Match '\./missing-stray\.md' -Because 'links between stray backticks must stay scanned'
         }

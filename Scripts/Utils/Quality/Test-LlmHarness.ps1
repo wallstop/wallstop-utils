@@ -265,8 +265,8 @@ foreach ($file in $llmMarkdownFiles) {
 # files and README are not gated. Reference-style link definitions (`[a]: path`) and heading
 # fragments on non-card links are intentionally out of scope. Inline code spans suppress
 # link scans only when their content has no whitespace, so prose between stray backticks
-# stays scanned; comment markers inside inline code spans are treated as comment state
-# transitions (fail-open) because no `.llm` doc embeds them.
+# stays scanned. Accepted fail-open limitation: a comment marker inside an inline code span
+# still flips comment state until the next `-->`.
 $inlineLlmReferencePattern = '`(\.llm/[^`\r\n]+)`'
 $markdownLinkPattern = '\]\((?<target>[^)\r\n]+)\)'
 $inlineCodeSpanPattern = '`[^`\r\n]+`'
@@ -329,9 +329,10 @@ foreach ($file in $llmMarkdownFiles) {
 
         foreach ($referenceMatch in [regex]::Matches($scannableLine,$inlineLlmReferencePattern)) {
             $referenceTarget = ConvertTo-PortablePath -PathValue $referenceMatch.Groups[1].Value.Trim()
-            # Trim sentence punctuation that commonly lands inside closing backticks. A
-            # trailing ')' is kept: legitimate filenames may end with one (for example
-            # 'name (draft).md').
+            # Trim sentence punctuation that commonly lands inside closing backticks
+            # (for example a comma in `` `.llm/foo.md`, ``). A trailing ')' is kept verbatim
+            # so refs targeting paths that end with ')' (for example `` `.llm/foo (draft)` ``)
+            # keep reporting their full target.
             $referenceTarget = ($referenceTarget -split '#')[0].Trim().TrimEnd('.,;:')
             if ($referenceTarget -match '[\*\$\[<]') {
                 # Glob patterns and placeholder expressions are prose, not resolvable references.
