@@ -61,7 +61,7 @@ All front-end wrapper files must point here and should not duplicate policy text
 6. Treat failing tests/hooks/CI checks as current-session priority.
 7. Prefer category-level guidance over brittle one-off rules.
 8. Keep commits bisectable: each commit must pass all gates independently.
-9. **Mandatory post-work self-improvement**: after any significant work, execute the [post-work self-improvement workflow](./skills/post-work-self-improvement.md) using sub-agents with adversarial consensus to analyze work done, extract new knowledge, and update `.llm/` guidance. This is a session-close gate, not optional. See [expanded guide](./skill-details/post-work-self-improvement.md) for trigger criteria and protocol.
+9. **Mandatory post-work self-improvement**: after any significant work, execute the [post-work self-improvement workflow](./skills/post-work-self-improvement/SKILL.md) using sub-agents with adversarial consensus to analyze work done, extract new knowledge, and update `.llm/` guidance. This is a session-close gate, not optional. See [expanded guide](./skill-details/post-work-self-improvement.md) for trigger criteria and protocol.
 10. Start multi-unit work on its feature branch before the first commit; recover wrong-base commits by branching at the commit, and never run history-destroying recovery (`git reset --hard`) while unstaged unit changes are pending — stage or stash them first.
 
 ## Primary Commands
@@ -255,7 +255,7 @@ For shell automation under `Scripts/`, keep commands portable, deterministic, an
 12. When invoking Unix tools from PowerShell on Windows, convert paths for the target runtime (`cygpath` for Git Bash, `wslpath` for WSL) or skip with an explicit diagnostic; do not pass raw Windows paths to `bash`.
 13. Prefer script files over large inline one-liners when logic is non-trivial; keep behavior reviewable and testable.
 
-See: [skill card](./skills/shell-tooling-portability-and-agentic-safety.md) and [expanded guide](./skill-details/shell-tooling-portability-and-agentic-safety.md)
+See: [skill card](./skills/shell-tooling-portability-and-agentic-safety/SKILL.md) and [expanded guide](./skill-details/shell-tooling-portability-and-agentic-safety.md)
 
 ## Backup/Restore Safety Contract
 

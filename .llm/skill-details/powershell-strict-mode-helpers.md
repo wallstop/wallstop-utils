@@ -1,6 +1,6 @@
 # PowerShell Strict Mode Helpers (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/powershell-strict-mode-helpers.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/powershell-strict-mode-helpers/SKILL.md`.
 
 ## Strict-Mode-Safe LASTEXITCODE Access
 

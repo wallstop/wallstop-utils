@@ -1,6 +1,6 @@
 # Devcontainer Bootstrap (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/devcontainer-bootstrap.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/devcontainer-bootstrap/SKILL.md`.
 
 ## Devcontainer Baseline Toolchain
 

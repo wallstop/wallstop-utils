@@ -258,6 +258,167 @@ foreach ($file in $llmMarkdownFiles) {
     }
 }
 
+# Doc reference resolution policy: every repo-root-relative `.llm/...` inline path and every
+# file-relative markdown link in .llm guidance docs must resolve on disk. The SKILL.md
+# migration previously left stale `.llm/skills/<name>.md` references behind; this invariant
+# keeps that class of drift from recurring silently. Scan scope is `.llm/**` only; wrapper
+# files and README are not gated. Reference-style link definitions (`[a]: path`) and heading
+# fragments on non-card links are intentionally out of scope. Inline code spans suppress
+# link scans only when their content has no whitespace, so prose between stray backticks
+# stays scanned. Accepted fail-open limitation: a comment marker inside an inline code span
+# still flips comment state until the next `-->`.
+$inlineLlmReferencePattern = '`(\.llm/[^`\r\n]+)`'
+$markdownLinkPattern = '\]\((?<target>[^)\r\n]+)\)'
+$inlineCodeSpanPattern = '`[^`\r\n]+`'
+foreach ($file in $llmMarkdownFiles) {
+    $relativePath = Get-RelativePathCompat -BasePath $repoRoot -TargetPath $file.FullName
+    $fileDirectory = Split-Path -Path $file.FullName -Parent
+    $inFencedCodeBlock = $false
+    $inHtmlComment = $false
+    $lineIndex = 0
+
+    foreach ($line in [System.IO.File]::ReadLines($file.FullName,[System.Text.Encoding]::UTF8)) {
+        $lineIndex++
+
+        if ($line -match '^\s*(```|~~~)') {
+            $inFencedCodeBlock = -not $inFencedCodeBlock
+            continue
+        }
+
+        if ($inFencedCodeBlock) {
+            continue
+        }
+
+        # Commented-out content is prose, not live references; track multi-line comments.
+        $scannableLine = $line
+        if ($inHtmlComment) {
+            $commentEndIndex = $scannableLine.IndexOf('-->',[System.StringComparison]::Ordinal)
+            if ($commentEndIndex -lt 0) {
+                continue
+            }
+
+            $scannableLine = $scannableLine.Substring($commentEndIndex + 3)
+            $inHtmlComment = $false
+        }
+
+        while ($true) {
+            $commentStartIndex = $scannableLine.IndexOf('<!--',[System.StringComparison]::Ordinal)
+            if ($commentStartIndex -lt 0) {
+                break
+            }
+
+            $commentEndIndex = $scannableLine.IndexOf('-->',$commentStartIndex + 4,[System.StringComparison]::Ordinal)
+            if ($commentEndIndex -lt 0) {
+                $scannableLine = $scannableLine.Substring(0,$commentStartIndex)
+                $inHtmlComment = $true
+                break
+            }
+
+            $scannableLine = (
+                $scannableLine.Substring(0,$commentStartIndex) +
+                $scannableLine.Substring($commentEndIndex + 3)
+            )
+        }
+
+        # Inline code spans stay in the line for the inline-path scan (they are
+        # backtick-delimited) but suppress link scans when they contain no whitespace.
+        $inlineCodeSpans = @(
+            [regex]::Matches($scannableLine,$inlineCodeSpanPattern) |
+                Where-Object { $_.Value.Substring(1,$_.Value.Length - 2) -notmatch '\s' }
+        )
+
+        foreach ($referenceMatch in [regex]::Matches($scannableLine,$inlineLlmReferencePattern)) {
+            $referenceTarget = ConvertTo-PortablePath -PathValue $referenceMatch.Groups[1].Value.Trim()
+            # Trim sentence punctuation that commonly lands inside closing backticks
+            # (for example a comma in `` `.llm/foo.md`, ``). A trailing ')' is kept verbatim
+            # so refs targeting paths that end with ')' (for example `` `.llm/foo (draft)` ``)
+            # keep reporting their full target.
+            $referenceTarget = ($referenceTarget -split '#')[0].Trim().TrimEnd('.,;:')
+            if ($referenceTarget -match '[\*\$\[<]') {
+                # Glob patterns and placeholder expressions are prose, not resolvable references.
+                continue
+            }
+
+            if ([string]::IsNullOrWhiteSpace($referenceTarget)) {
+                continue
+            }
+
+            if (-not (Test-Path -LiteralPath (Join-Path -Path $repoRoot -ChildPath $referenceTarget))) {
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: inline path '$referenceTarget' does not exist.") | Out-Null
+            }
+        }
+
+        foreach ($linkMatch in [regex]::Matches($scannableLine,$markdownLinkPattern)) {
+            $isInsideInlineCode = $false
+            foreach ($codeSpan in $inlineCodeSpans) {
+                if ($linkMatch.Index -ge $codeSpan.Index -and
+                    $linkMatch.Index -lt ($codeSpan.Index + $codeSpan.Length)) {
+                    $isInsideInlineCode = $true
+                    break
+                }
+            }
+
+            if ($isInsideInlineCode) {
+                continue
+            }
+
+            $linkTarget = $linkMatch.Groups['target'].Value.Trim()
+
+            # Split the optional link title before unwrapping angle targets so the combined
+            # `[label](<path> "title")` form resolves its path instead of failing on '<'.
+            # Decoration stripping precedes the external-URI/anchor skip so wrapped URIs
+            # like `[label](<https://example.com>)` stay out of filesystem resolution.
+            $titleSeparatorIndex = $linkTarget.IndexOf(' "',[System.StringComparison]::Ordinal)
+            if ($titleSeparatorIndex -ge 0) {
+                $linkTarget = $linkTarget.Substring(0,$titleSeparatorIndex).Trim()
+            }
+
+            if ($linkTarget.StartsWith('<',[System.StringComparison]::Ordinal) -and $linkTarget.EndsWith('>',[System.StringComparison]::Ordinal)) {
+                $linkTarget = $linkTarget.Substring(1,$linkTarget.Length - 2).Trim()
+            }
+
+            if ($linkTarget -match '^[A-Za-z][A-Za-z0-9+.-]*:' -or $linkTarget.StartsWith('#',[System.StringComparison]::Ordinal)) {
+                # External URIs and same-document anchors are out of resolution scope.
+                continue
+            }
+
+            $rawLinkTarget = ($linkTarget -split '#')[0].Trim()
+            try {
+                $linkTarget = ConvertTo-PortablePath -PathValue ([System.Uri]::UnescapeDataString($rawLinkTarget))
+            }
+            catch {
+                # Undecodable escapes are malformed targets, not gate crashes.
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: link target '$rawLinkTarget' does not exist.") | Out-Null
+                continue
+            }
+
+            if ([string]::IsNullOrWhiteSpace($linkTarget)) {
+                continue
+            }
+
+            if ($linkTarget.IndexOfAny([System.IO.Path]::GetInvalidPathChars()) -ge 0) {
+                # Decoded control/invalid characters are unresolvable by definition; fail
+                # closed instead of silently skipping or aborting the scan.
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: link target '$linkTarget' does not exist.") | Out-Null
+                continue
+            }
+
+            try {
+                $linkAbsolutePath = [System.IO.Path]::GetFullPath((Join-Path -Path $fileDirectory -ChildPath $linkTarget))
+            }
+            catch {
+                # Platforms may reject characters their own path grammar disallows.
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: link target '$linkTarget' does not exist.") | Out-Null
+                continue
+            }
+
+            if (-not (Test-Path -LiteralPath $linkAbsolutePath)) {
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: link target '$linkTarget' does not exist.") | Out-Null
+            }
+        }
+    }
+}
+
 $skillFiles = @()
 if (Test-Path -Path $skillsDir -PathType Container) {
     $skillFiles = @(

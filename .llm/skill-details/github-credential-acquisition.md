@@ -1,6 +1,6 @@
 # GitHub Credential Acquisition (Expanded)
 
-Supports the lightweight skill stub in `.llm/skills/github-credential-acquisition`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/github-credential-acquisition/SKILL.md`.
 
 ## Ladder (check silently, prompt at most once per host)
 

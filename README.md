@@ -405,8 +405,8 @@ LLM harness architecture:
 
 - `.llm/context.md` is the authoritative repository AI context file.
 - `.llm/skills-index.md` is a dedicated generated index artifact.
-- `.llm/skills/*.md` are lightweight skill cards with trigger metadata.
-- `.llm/skill-details/*.md` contain expanded guidance linked from lightweight skill cards.
+- `.llm/skills/<name>/SKILL.md` are lightweight skill cards with trigger metadata.
+- `.llm/skill-details/**/*.md` contain expanded guidance linked from lightweight skill cards.
 
 LLM harness commands:
 

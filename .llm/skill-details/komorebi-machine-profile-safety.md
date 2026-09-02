@@ -1,6 +1,6 @@
 # Komorebi Machine Profile Safety (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/komorebi-machine-profile-safety.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/komorebi-machine-profile-safety/SKILL.md`.
 
 ## Profile Selection
 

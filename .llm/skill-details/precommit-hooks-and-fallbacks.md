@@ -1,6 +1,6 @@
 # Pre-Commit Hooks And Fallbacks (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/precommit-hooks-and-fallbacks.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/precommit-hooks-and-fallbacks/SKILL.md`.
 
 ## Last-Resort Hook Behavior
 

@@ -103,6 +103,7 @@ Use the first failing gate as the active remediation target.
 - `W_HOOK_RUNTIME_BUDGET` from `.githooks/*`: hook phase exceeded its runtime tier. No-op/prefiltered paths target <=1s; active validation has a separate bounded budget so real staged lint/format work is investigated without hiding no-op regressions.
 - Hook-time index-lock recovery knobs: adjust only when needed (`WALLSTOP_GIT_INDEX_LOCK_RECOVERY_MODE`, `WALLSTOP_GIT_INDEX_LOCK_STALE_SECONDS`, `WALLSTOP_GIT_INDEX_LOCK_ALLOW_ACTIVE_GIT`, `WALLSTOP_GIT_INDEX_LOCK_SLOW_PATH_MS`), then rerun with the same command path.
 - `E_GIT_PUSH_DETACHED_HEAD`, `E_GIT_PUSH_REMOTE_MISSING`, or `E_GIT_PUSH_REMOTE_BRANCH_DIVERGED` from `Invoke-GitPushWithUpstream.ps1`: fix branch/remote state explicitly; do not force-push from automation.
+- Targeted `string[]` PowerShell parameters (`-TargetFiles a,b`) passed from a native shell bind as ONE literal `a,b` path: quality gates then report `status=skipped`/`reason=no-targets` (or `W_COMPAT_TARGET_MISSING`) while still exiting 0 — hollow green evidence. From bash, pass a list file (`-TargetFileListPath`) or invoke through `pwsh -Command "... -TargetFiles @('a','b')"`, and always verify the tool reports a real `status=pass` with the expected target count, not just exit 0.
 
 ## Codify New Knowledge (Forest-Not-Trees)
 

@@ -1,6 +1,6 @@
 # Adversarial Handoff Protocol (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/adversarial-handoff-protocol.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/adversarial-handoff-protocol/SKILL.md`.
 
 ## Known vs Unknown Invariants
 

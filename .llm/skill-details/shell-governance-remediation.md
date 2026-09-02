@@ -1,6 +1,6 @@
 # Shell Governance And Remediation (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/shell-governance-remediation.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/shell-governance-remediation/SKILL.md`.
 
 ## Fix-First Remediation Loop
 

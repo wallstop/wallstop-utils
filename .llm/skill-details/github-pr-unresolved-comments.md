@@ -1,6 +1,6 @@
 # GitHub PR Unresolved Comments (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/github-pr-unresolved-comments.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/github-pr-unresolved-comments/SKILL.md`.
 
 ## Host Allowlist And Input Validation
 
