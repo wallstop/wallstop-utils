@@ -194,7 +194,7 @@ This repository includes a ready-to-use VS Code development container at `.devco
 The devcontainer follows an image-first reliability contract:
 
 - The `image` value is pinned to an official `mcr.microsoft.com/devcontainers/*` digest.
-- `build` is intentionally omitted to avoid build-time Dockerfile drift; the single sanctioned `features` entry is `ghcr.io/devcontainers/features/node:1` pinned to `version=latest`, so containers ship current Node.js and npm without a custom image.
+- `build` is intentionally omitted to avoid build-time Dockerfile drift; the single sanctioned `features` entry is `ghcr.io/devcontainers/features/node:2` pinned to `version=latest`, so containers ship current Node.js and npm without a custom image.
 - The container runs with `init: true` for improved process reaping and shutdown behavior.
 - Project-specific setup remains in `.devcontainer/post-create.sh` with bounded timeouts and non-blocking fallback diagnostics.
 - Persistent cache mounts are configured for `pip`, `pre-commit`, and `npm` to reduce repeat bootstrap cost on rebuilds.
