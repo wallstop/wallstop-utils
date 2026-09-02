@@ -11,8 +11,8 @@
       "Info": "",
       "Name": "audacity",
       "Source": "extras",
-      "Updated": "2026-08-10T16:19:13.1656331-07:00",
-      "Version": "3.7.8"
+      "Updated": "2026-09-01T23:31:41.8296524-07:00",
+      "Version": "3.7.9"
     },
     {
       "Info": "",
@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-08-31T23:32:12.1916128-07:00",
-      "Version": "2.36.36"
+      "Updated": "2026-09-01T23:32:08.7310574-07:00",
+      "Version": "2.36.37"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-08-29T23:33:23.4621058-07:00",
-      "Version": "3.18.9"
+      "Updated": "2026-09-01T23:33:42.7959153-07:00",
+      "Version": "3.18.25"
     },
     {
       "Info": "",
@@ -207,8 +207,8 @@
       "Info": "",
       "Name": "gh",
       "Source": "main",
-      "Updated": "2026-08-20T23:32:55.1520714-07:00",
-      "Version": "2.98.0"
+      "Updated": "2026-09-01T23:33:45.1908583-07:00",
+      "Version": "2.99.0"
     },
     {
       "Info": "",
@@ -228,8 +228,8 @@
       "Info": "",
       "Name": "go",
       "Source": "main",
-      "Updated": "2026-08-19T23:32:54.0001055-07:00",
-      "Version": "1.27.0"
+      "Updated": "2026-09-01T23:35:04.4148883-07:00",
+      "Version": "1.27.1"
     },
     {
       "Info": "Held package",
@@ -242,8 +242,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-08-25T23:33:37.919996-07:00",
-      "Version": "152.0.7977.65"
+      "Updated": "2026-09-01T23:35:17.5053261-07:00",
+      "Version": "152.0.7977.76"
     },
     {
       "Info": "",
@@ -375,8 +375,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-08-31T23:32:16.9096949-07:00",
-      "Version": "2026.8.16"
+      "Updated": "2026-09-01T23:35:20.4114188-07:00",
+      "Version": "2026.9.0"
     },
     {
       "Info": "",
@@ -459,15 +459,15 @@
       "Info": "",
       "Name": "opencode",
       "Source": "C:\\Users\\dbfsi\\scoop\\buckets\\main\\bucket\\opencode.json",
-      "Updated": "2026-08-28T23:34:38.4182151-07:00",
-      "Version": "1.18.25"
+      "Updated": "2026-09-01T23:35:22.623337-07:00",
+      "Version": "1.18.26"
     },
     {
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-08-28T23:34:43.0829719-07:00",
-      "Version": "1.18.25"
+      "Updated": "2026-09-01T23:35:27.0761912-07:00",
+      "Version": "1.18.26"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-08-30T23:32:00.2075-07:00",
-      "Version": "1.17.1"
+      "Updated": "2026-09-01T23:35:27.6461072-07:00",
+      "Version": "1.17.2"
     },
     {
       "Info": "",
@@ -620,8 +620,8 @@
       "Info": "",
       "Name": "thunderbird",
       "Source": "extras",
-      "Updated": "2026-08-22T12:32:38.3512703-07:00",
-      "Version": "154.0"
+      "Updated": "2026-09-01T23:35:32.3917756-07:00",
+      "Version": "155.0"
     },
     {
       "Info": "",
@@ -634,8 +634,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-08-31T23:32:33.1830831-07:00",
-      "Version": "0.12.8"
+      "Updated": "2026-09-01T23:35:44.2146237-07:00",
+      "Version": "0.12.9"
     },
     {
       "Info": "",
@@ -710,16 +710,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1642,
+      "Manifests": 1641,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-08-31T21:32:59-07:00"
+      "Updated": "2026-09-01T23:06:53-07:00"
     },
     {
-      "Manifests": 2374,
+      "Manifests": 2377,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-08-31T21:33:55-07:00"
+      "Updated": "2026-09-01T21:36:29-07:00"
     },
     {
       "Manifests": 75,
@@ -731,13 +731,13 @@
       "Manifests": 132,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-08-31T14:31:56-07:00"
+      "Updated": "2026-09-01T15:40:07-07:00"
     },
     {
       "Manifests": 336,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-08-31T22:12:19-07:00"
+      "Updated": "2026-09-01T06:31:13-07:00"
     }
   ]
 }
