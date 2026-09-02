@@ -39,6 +39,20 @@ silent unless noted; stop at the first success and never print or log the secret
 - When the API is unreachable but SSH works (branch push), finish local work first; PR
   creation/comments can wait until any ladder step succeeds again.
 
+## Devcontainer Default State
+
+Fresh devcontainers carry no GitHub API credential: no `GH_TOKEN`/`GITHUB_TOKEN`, no agent
+cache file, no `gh` auth, and no VS Code-reachable token store. Only SSH push authentication
+works, so commits/pushes succeed while PR/issue/Actions operations fail until a ladder step
+succeeds. Concretely: ladder steps 1-2 return empty; step 3 (VS Code connector) hangs until
+its timeout — treat as unavailable and re-probe after operator activity. Installing `gh` is
+unauthenticated, but every `gh` API command requires login; for credential-free read-only
+triage on this public repository use plain `curl https://api.github.com/...` (unauthenticated
+budget is 60 requests/hour/IP). Check-run annotations are publicly readable without a
+credential — resolve `GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs`, take the
+`check_run_url`, then `GET .../check-runs/{id}/annotations` — while job logs require
+authenticated API access (403 when unauthenticated).
+
 ## Why this exists
 
 Session 2026-08-26 (PR #78) discovered the full shape: connector answered instantly early,
