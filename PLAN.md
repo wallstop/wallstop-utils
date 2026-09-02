@@ -1,5 +1,16 @@
 # Plan
 
+## Completed milestone: `.llm` reference hygiene and harness reference gate (session-028)
+
+- [x] Fix the 17 stale skill references left by the Agent Skills SKILL.md migration
+  (16 expanded-guide intro lines pointing at flat `.llm/skills/<name>.md` paths, 2 in drifted
+  variants, plus 2 broken markdown links in `.llm/context.md`).
+- [x] Add the `E_LLM_DOC_REFERENCE_MISSING` gate to `Test-LlmHarness.ps1` so every inline
+  `.llm/...` path and markdown link in `.llm` guidance docs must resolve (fenced blocks and
+  glob prose excluded), with red/green behavioral coverage in `Tests/Utils/LlmHarness.Tests.ps1`.
+- [x] Check off the delivered repo-side item-1 boxes on issue #70 with evidence; the issue
+  stays open solely for the host-side `window-control.ahk` redeploy operator action.
+
 ## Completed milestone: issue #81 cleanup, carry-forward, and CI RCA (session-027)
 
 - [x] Delete stray root `image.png` (issue #81); forward delete, file unreferenced.
