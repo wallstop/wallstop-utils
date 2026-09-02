@@ -261,9 +261,13 @@ foreach ($file in $llmMarkdownFiles) {
 # Doc reference resolution policy: every repo-root-relative `.llm/...` inline path and every
 # file-relative markdown link in .llm guidance docs must resolve on disk. The SKILL.md
 # migration previously left stale `.llm/skills/<name>.md` references behind; this invariant
-# keeps that class of drift from recurring silently.
+# keeps that class of drift from recurring silently. Scan scope is `.llm/**` only; wrapper
+# files and README are not gated. Reference-style link definitions (`[a]: path`) and heading
+# fragments on non-card links are intentionally out of scope.
 $inlineLlmReferencePattern = '`(\.llm/[^`\r\n]+)`'
 $markdownLinkPattern = '\]\((?<target>[^)\r\n]+)\)'
+$inlineCodeSpanPattern = '`[^`\r\n]+`'
+$htmlCommentPattern = '<!--.*?-->'
 foreach ($file in $llmMarkdownFiles) {
     $relativePath = Get-RelativePathCompat -BasePath $repoRoot -TargetPath $file.FullName
     $fileDirectory = Split-Path -Path $file.FullName -Parent
@@ -282,10 +286,20 @@ foreach ($file in $llmMarkdownFiles) {
             continue
         }
 
-        foreach ($referenceMatch in [regex]::Matches($line,$inlineLlmReferencePattern)) {
+        # Commented-out content is prose, not live references. Inline code spans stay in the
+        # line for the inline-path scan (they are backtick-delimited) but suppress link scans.
+        $scannableLine = [regex]::Replace($line,$htmlCommentPattern,'')
+        $inlineCodeSpans = @([regex]::Matches($scannableLine,$inlineCodeSpanPattern))
+
+        foreach ($referenceMatch in [regex]::Matches($scannableLine,$inlineLlmReferencePattern)) {
             $referenceTarget = ConvertTo-PortablePath -PathValue $referenceMatch.Groups[1].Value.Trim()
+            $referenceTarget = ($referenceTarget -split '#')[0].Trim().TrimEnd('.,;:)')
             if ($referenceTarget -match '[\*\$\[<]') {
                 # Glob patterns and placeholder expressions are prose, not resolvable references.
+                continue
+            }
+
+            if ([string]::IsNullOrWhiteSpace($referenceTarget)) {
                 continue
             }
 
@@ -294,14 +308,36 @@ foreach ($file in $llmMarkdownFiles) {
             }
         }
 
-        foreach ($linkMatch in [regex]::Matches($line,$markdownLinkPattern)) {
+        foreach ($linkMatch in [regex]::Matches($scannableLine,$markdownLinkPattern)) {
+            $isInsideInlineCode = $false
+            foreach ($codeSpan in $inlineCodeSpans) {
+                if ($linkMatch.Index -ge $codeSpan.Index -and
+                    $linkMatch.Index -lt ($codeSpan.Index + $codeSpan.Length)) {
+                    $isInsideInlineCode = $true
+                    break
+                }
+            }
+
+            if ($isInsideInlineCode) {
+                continue
+            }
+
             $linkTarget = $linkMatch.Groups['target'].Value.Trim()
             if ($linkTarget -match '^[A-Za-z][A-Za-z0-9+.-]*:' -or $linkTarget.StartsWith('#')) {
                 # External URIs and same-document anchors are out of resolution scope.
                 continue
             }
 
-            $linkTarget = ConvertTo-PortablePath -PathValue (($linkTarget -split '#')[0].Trim())
+            if ($linkTarget.StartsWith('<') -and $linkTarget.EndsWith('>')) {
+                $linkTarget = $linkTarget.Substring(1,$linkTarget.Length - 2).Trim()
+            }
+
+            $titleSeparatorIndex = $linkTarget.IndexOf(' "')
+            if ($titleSeparatorIndex -ge 0) {
+                $linkTarget = $linkTarget.Substring(0,$titleSeparatorIndex).Trim()
+            }
+
+            $linkTarget = ConvertTo-PortablePath -PathValue ([System.Uri]::UnescapeDataString(($linkTarget -split '#')[0].Trim()))
             if ([string]::IsNullOrWhiteSpace($linkTarget)) {
                 continue
             }

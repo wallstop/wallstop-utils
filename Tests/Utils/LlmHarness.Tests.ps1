@@ -344,7 +344,7 @@ Describe "LLM harness automation" {
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
         try {
-            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skills') -ItemType Directory -Force | Out-Null
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill') -ItemType Directory -Force | Out-Null
             New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details') -ItemType Directory -Force | Out-Null
             New-Item -Path (Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality') -ItemType Directory -Force | Out-Null
 
@@ -363,12 +363,21 @@ Describe "LLM harness automation" {
             [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), '# Skills Index`n', $utf8NoBom)
 
             $skillCardContent = @"
+---
+name: example-skill
+description: Resolve guidance document references.
+metadata:
+  category: Core
+  keywords: doc reference, deterministic validation
+  details: ../../skill-details/example-detail.md
+---
+
 <!-- trigger: doc reference, deterministic validation | Resolve guidance document references | Core | skill-details/example-detail.md -->
 # Example Skill
 
-- Expanded guide: [Example Detail](../skill-details/example-detail.md)
+- Expanded guide: [Example Detail](../../skill-details/example-detail.md)
 "@
-            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill.md'), $skillCardContent, $utf8NoBom)
+            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill/SKILL.md'), $skillCardContent, $utf8NoBom)
             $detailCardContent = @"
 # Example Detail
 
@@ -449,6 +458,10 @@ metadata:
 Valid inline path: ``.llm/skills/example-skill/SKILL.md`` and glob ``.llm/skills/*.md`` prose.
 
 Valid link: [Skills Index](../skills-index.md) and external [docs](https://example.com).
+
+Parser-hardening constructs that must stay ignored: titled [link](./example-detail.md "the title"),
+angle-wrapped [target](<./example-detail.md>), fragment [anchor](./example-detail.md#example-detail),
+code-wrapped ``[label](./missing-code.md)``, and commented <!-- [hidden](./missing-commented.md) -->.
 "@
             [System.IO.File]::WriteAllText(
                 (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/example-detail.md'),
