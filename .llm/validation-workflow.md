@@ -41,6 +41,12 @@ pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-FullValidation.ps1
 pwsh -NoLogo -NoProfile -File Scripts/Utils/Quality/Invoke-GitPushWithUpstream.ps1
 ```
 
+- Push triggers fire only on `main`/`master`; any other branch runs CI only through an open
+  PR (and only the path-scoped lanes matching the changed files). A PR-less agent branch
+  gets zero CI, so local full validation is the only gate; `-WatchCi` surfaces
+  `E_VALIDATION_GH_MISSING` until `gh` is installed and `E_VALIDATION_PR_MISSING` until a
+  PR exists.
+
 - Watch PR checks to completion:
 
 ```bash
