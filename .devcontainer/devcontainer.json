@@ -70,7 +70,8 @@
         "dbaeumer.vscode-eslint",
         "ms-azuretools.vscode-containers",
         "ms-dotnettools.csharp",
-        "ms-dotnettools.vscode-dotnet-runtime"
+        "ms-dotnettools.vscode-dotnet-runtime",
+        "sst-dev.opencode"
       ],
       "settings": {
         "workbench.colorTheme": "Tokyo Night Storm",
