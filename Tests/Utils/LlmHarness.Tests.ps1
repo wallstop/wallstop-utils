@@ -452,6 +452,11 @@ metadata:
 - Expanded guide: [Example Detail](../../skill-details/example-detail.md)
 "@
             [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill/SKILL.md'), $skillCardContent, $utf8NoBom)
+            [System.IO.File]::WriteAllText(
+                (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/spaced file.md'),
+                "# Spaced Detail`n",
+                $utf8NoBom
+            )
             $detailCardContent = @"
 # Example Detail
 
@@ -459,9 +464,18 @@ Valid inline path: ``.llm/skills/example-skill/SKILL.md`` and glob ``.llm/skills
 
 Valid link: [Skills Index](../skills-index.md) and external [docs](https://example.com).
 
-Parser-hardening constructs that must stay ignored: titled [link](./example-detail.md "the title"),
-angle-wrapped [target](<./example-detail.md>), fragment [anchor](./example-detail.md#example-detail),
+Parser-hardening constructs that must stay ignored or resolve: titled [link](./example-detail.md "the title"),
+angle-wrapped [target](<./example-detail.md>), combined [wrapped](<./example-detail.md> "with title"),
+encoded [spaced](./spaced%20file.md), fragment [anchor](./example-detail.md#example-detail),
 code-wrapped ``[label](./missing-code.md)``, and commented <!-- [hidden](./missing-commented.md) -->.
+
+Multi-line comments are ignored too:
+
+<!-- begin ignored block
+[hidden-multiline](./missing-multiline.md)
+end ignored block -->
+
+Prose between stray backticks stays scanned: stray `` tick then [visible](./example-detail.md) then `` end.
 "@
             [System.IO.File]::WriteAllText(
                 (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/example-detail.md'),

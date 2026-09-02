@@ -263,15 +263,17 @@ foreach ($file in $llmMarkdownFiles) {
 # migration previously left stale `.llm/skills/<name>.md` references behind; this invariant
 # keeps that class of drift from recurring silently. Scan scope is `.llm/**` only; wrapper
 # files and README are not gated. Reference-style link definitions (`[a]: path`) and heading
-# fragments on non-card links are intentionally out of scope.
+# fragments on non-card links are intentionally out of scope. Inline code spans suppress
+# link scans only when their content has no whitespace, so prose between stray backticks
+# stays scanned.
 $inlineLlmReferencePattern = '`(\.llm/[^`\r\n]+)`'
 $markdownLinkPattern = '\]\((?<target>[^)\r\n]+)\)'
 $inlineCodeSpanPattern = '`[^`\r\n]+`'
-$htmlCommentPattern = '<!--.*?-->'
 foreach ($file in $llmMarkdownFiles) {
     $relativePath = Get-RelativePathCompat -BasePath $repoRoot -TargetPath $file.FullName
     $fileDirectory = Split-Path -Path $file.FullName -Parent
     $inFencedCodeBlock = $false
+    $inHtmlComment = $false
     $lineIndex = 0
 
     foreach ($line in [System.IO.File]::ReadLines($file.FullName,[System.Text.Encoding]::UTF8)) {
@@ -286,10 +288,43 @@ foreach ($file in $llmMarkdownFiles) {
             continue
         }
 
-        # Commented-out content is prose, not live references. Inline code spans stay in the
-        # line for the inline-path scan (they are backtick-delimited) but suppress link scans.
-        $scannableLine = [regex]::Replace($line,$htmlCommentPattern,'')
-        $inlineCodeSpans = @([regex]::Matches($scannableLine,$inlineCodeSpanPattern))
+        # Commented-out content is prose, not live references; track multi-line comments.
+        $scannableLine = $line
+        if ($inHtmlComment) {
+            $commentEndIndex = $scannableLine.IndexOf('-->',[System.StringComparison]::Ordinal)
+            if ($commentEndIndex -lt 0) {
+                continue
+            }
+
+            $scannableLine = $scannableLine.Substring($commentEndIndex + 3)
+            $inHtmlComment = $false
+        }
+
+        while ($true) {
+            $commentStartIndex = $scannableLine.IndexOf('<!--',[System.StringComparison]::Ordinal)
+            if ($commentStartIndex -lt 0) {
+                break
+            }
+
+            $commentEndIndex = $scannableLine.IndexOf('-->',$commentStartIndex + 4,[System.StringComparison]::Ordinal)
+            if ($commentEndIndex -lt 0) {
+                $scannableLine = $scannableLine.Substring(0,$commentStartIndex)
+                $inHtmlComment = $true
+                break
+            }
+
+            $scannableLine = (
+                $scannableLine.Substring(0,$commentStartIndex) +
+                $scannableLine.Substring($commentEndIndex + 3)
+            )
+        }
+
+        # Inline code spans stay in the line for the inline-path scan (they are
+        # backtick-delimited) but suppress link scans when they contain no whitespace.
+        $inlineCodeSpans = @(
+            [regex]::Matches($scannableLine,$inlineCodeSpanPattern) |
+                Where-Object { $_.Value.Substring(1,$_.Value.Length - 2) -notmatch '\s' }
+        )
 
         foreach ($referenceMatch in [regex]::Matches($scannableLine,$inlineLlmReferencePattern)) {
             $referenceTarget = ConvertTo-PortablePath -PathValue $referenceMatch.Groups[1].Value.Trim()
@@ -328,21 +363,47 @@ foreach ($file in $llmMarkdownFiles) {
                 continue
             }
 
-            if ($linkTarget.StartsWith('<') -and $linkTarget.EndsWith('>')) {
-                $linkTarget = $linkTarget.Substring(1,$linkTarget.Length - 2).Trim()
-            }
-
+            # Split the optional link title before unwrapping angle targets so the combined
+            # `[label](<path> "title")` form resolves its path instead of failing on '<'.
             $titleSeparatorIndex = $linkTarget.IndexOf(' "')
             if ($titleSeparatorIndex -ge 0) {
                 $linkTarget = $linkTarget.Substring(0,$titleSeparatorIndex).Trim()
             }
 
-            $linkTarget = ConvertTo-PortablePath -PathValue ([System.Uri]::UnescapeDataString(($linkTarget -split '#')[0].Trim()))
+            if ($linkTarget.StartsWith('<') -and $linkTarget.EndsWith('>')) {
+                $linkTarget = $linkTarget.Substring(1,$linkTarget.Length - 2).Trim()
+            }
+
+            $rawLinkTarget = ($linkTarget -split '#')[0].Trim()
+            try {
+                $linkTarget = ConvertTo-PortablePath -PathValue ([System.Uri]::UnescapeDataString($rawLinkTarget))
+            }
+            catch {
+                # Undecodable escapes are malformed targets, not gate crashes.
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: link target '$rawLinkTarget' does not exist.") | Out-Null
+                continue
+            }
+
             if ([string]::IsNullOrWhiteSpace($linkTarget)) {
                 continue
             }
 
-            $linkAbsolutePath = [System.IO.Path]::GetFullPath((Join-Path -Path $fileDirectory -ChildPath $linkTarget))
+            if ($linkTarget.IndexOfAny([System.IO.Path]::GetInvalidPathChars()) -ge 0) {
+                # Decoded control/invalid characters are unresolvable by definition; fail
+                # closed instead of silently skipping or aborting the scan.
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: link target '$linkTarget' does not exist.") | Out-Null
+                continue
+            }
+
+            try {
+                $linkAbsolutePath = [System.IO.Path]::GetFullPath((Join-Path -Path $fileDirectory -ChildPath $linkTarget))
+            }
+            catch {
+                # Platforms may reject characters their own path grammar disallows.
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: link target '$linkTarget' does not exist.") | Out-Null
+                continue
+            }
+
             if (-not (Test-Path -LiteralPath $linkAbsolutePath)) {
                 $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: link target '$linkTarget' does not exist.") | Out-Null
             }
