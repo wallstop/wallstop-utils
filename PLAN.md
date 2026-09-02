@@ -1,6 +1,6 @@
 # Plan
 
-## Current milestone: agent notification integration (PR #79)
+## Completed milestone: agent notification integration (PR #79)
 
 - [x] Add a secrets-safe, local-first `agent-notify` toolkit with adapters for Claude, Codex, Copilot, OpenCode, and Nanocoder; keep offline tests hermetic and notification hooks best-effort.
 - [x] Add idempotent machine bootstrap/audit tooling and repository documentation without committing ntfy topics or tokens.
@@ -11,7 +11,7 @@
 
 Evidence: [PR #79](https://github.com/wallstop/wallstop-utils/pull/79)
 
-## Current milestone: backup upload diagnostics (issue #46)
+## Completed milestone: backup upload diagnostics (issue #46)
 
 - [x] RCA the recurring `backup steps failed: 2` auto-backup commits from repository evidence: failing step names were console-only, so ten days of partial-failure uploads (2026-08-12..2026-08-22) were undiagnosable from git history.
 - [x] Name failing steps in the backup commit message (`(backup steps failed: N [StepA, StepB]; X/Y succeeded)`), policy-pinned in the conventions suite.
@@ -23,7 +23,7 @@ Evidence: [PR #79](https://github.com/wallstop/wallstop-utils/pull/79)
 - [x] Fix the classifier misattribution proven by the 2026-08-26 artifact (session 025 / PR #78): winget dependency-resolution reprints of an open `(N/M) Found <id>` block no longer enqueue a phantom duplicate that shifted every later terminal onto the wrong package (WSL's 0x80073d28 had been attributed to Plex); regression tests pin per-package attribution over the verbatim production shape.
 - [x] Read the next two host runs: 2026-08-27 improved to `10/12` (temporary `ScoopUpdate` plus `WinGetUpdate`), and 2026-08-28 improved to `11/12` with only `WinGetUpdate`; Scoop and PowerShell profile recovery are now confirmed green.
 - [x] Fix the 2026-08-28 WinGet attribution failure: Windows PowerShell flattened redirected progress markers into one space-joined physical line, so line-anchored parsing found zero outcomes. Enumerate ordered markers within each physical line; the persisted production artifact now resolves Plex as upgraded and WSL's `0x80073d28` as deferred interactive.
-- [ ] After the next host backup run: confirm main pushes cleanly with zero step failures (`12/12 succeeded`) or read `Config/backup-step-failures.json` for remaining reasons and continue RCA under issue #46.
+- [x] Confirm clean end-to-end state: four consecutive host backup runs committed and pushed with `12/12 succeeded` (2026-08-29 through 2026-09-01); `Config/backup-step-failures.json` no longer records failures. Issue #46's repo-side work is complete; only optional host-side hygiene remains tracked in issue #70.
 
 Evidence: [session-022](./progress/session-022-backup-upload-diagnostics.md), [session-023](./progress/session-023-backup-upload-rca.md), [PR #76](https://github.com/wallstop/wallstop-utils/pull/76), [PR #78](https://github.com/wallstop/wallstop-utils/pull/78)
 
