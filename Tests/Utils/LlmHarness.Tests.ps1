@@ -473,7 +473,8 @@ Valid link: [Skills Index](../skills-index.md) and external [docs](https://examp
 Parser-hardening constructs that must stay ignored or resolve: titled [link](./example-detail.md "the title"),
 angle-wrapped [target](<./example-detail.md>), combined [wrapped](<./example-detail.md> "with title"),
 encoded [spaced](./spaced%20file.md), fragment [anchor](./example-detail.md#example-detail),
-code-wrapped ``[label](./missing-code.md)``, and commented <!-- [hidden](./missing-commented.md) -->.
+decorated external [uri](<https://example.com/doc>), code-wrapped ``[label](./missing-code.md)``,
+and commented <!-- [hidden](./missing-commented.md) -->.
 
 Multi-line comments are ignored too:
 

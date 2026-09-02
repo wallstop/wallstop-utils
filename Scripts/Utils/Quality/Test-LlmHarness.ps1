@@ -363,13 +363,11 @@ foreach ($file in $llmMarkdownFiles) {
             }
 
             $linkTarget = $linkMatch.Groups['target'].Value.Trim()
-            if ($linkTarget -match '^[A-Za-z][A-Za-z0-9+.-]*:' -or $linkTarget.StartsWith('#')) {
-                # External URIs and same-document anchors are out of resolution scope.
-                continue
-            }
 
             # Split the optional link title before unwrapping angle targets so the combined
             # `[label](<path> "title")` form resolves its path instead of failing on '<'.
+            # Decoration stripping precedes the external-URI/anchor skip so wrapped URIs
+            # like `[label](<https://example.com>)` stay out of filesystem resolution.
             $titleSeparatorIndex = $linkTarget.IndexOf(' "',[System.StringComparison]::Ordinal)
             if ($titleSeparatorIndex -ge 0) {
                 $linkTarget = $linkTarget.Substring(0,$titleSeparatorIndex).Trim()
@@ -377,6 +375,11 @@ foreach ($file in $llmMarkdownFiles) {
 
             if ($linkTarget.StartsWith('<',[System.StringComparison]::Ordinal) -and $linkTarget.EndsWith('>',[System.StringComparison]::Ordinal)) {
                 $linkTarget = $linkTarget.Substring(1,$linkTarget.Length - 2).Trim()
+            }
+
+            if ($linkTarget -match '^[A-Za-z][A-Za-z0-9+.-]*:' -or $linkTarget.StartsWith('#',[System.StringComparison]::Ordinal)) {
+                # External URIs and same-document anchors are out of resolution scope.
+                continue
             }
 
             $rawLinkTarget = ($linkTarget -split '#')[0].Trim()
