@@ -384,6 +384,8 @@ metadata:
 Stale inline path: ``.llm/skills/renamed-skill.md``.
 
 Broken link: [Missing Detail](./missing-detail.md).
+
+Prose between stray backticks stays scanned: stray `` tick then [stray](./missing-stray.md) then `` end.
 "@
             [System.IO.File]::WriteAllText(
                 (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/example-detail.md'),
@@ -407,6 +409,7 @@ Broken link: [Missing Detail](./missing-detail.md).
             $validationFailure.Exception.Message | Should -Match 'E_LLM_DOC_REFERENCE_MISSING'
             $validationFailure.Exception.Message | Should -Match '\.llm/skills/renamed-skill\.md'
             $validationFailure.Exception.Message | Should -Match '\./missing-detail\.md'
+            $validationFailure.Exception.Message | Should -Match '\./missing-stray\.md' -Because 'links between stray backticks must stay scanned'
         }
         finally {
             & $script:RemoveTempRoot $tempRoot

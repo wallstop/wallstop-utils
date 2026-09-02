@@ -265,7 +265,8 @@ foreach ($file in $llmMarkdownFiles) {
 # files and README are not gated. Reference-style link definitions (`[a]: path`) and heading
 # fragments on non-card links are intentionally out of scope. Inline code spans suppress
 # link scans only when their content has no whitespace, so prose between stray backticks
-# stays scanned.
+# stays scanned; comment markers inside inline code spans are treated as comment state
+# transitions (fail-open) because no `.llm` doc embeds them.
 $inlineLlmReferencePattern = '`(\.llm/[^`\r\n]+)`'
 $markdownLinkPattern = '\]\((?<target>[^)\r\n]+)\)'
 $inlineCodeSpanPattern = '`[^`\r\n]+`'
@@ -328,7 +329,10 @@ foreach ($file in $llmMarkdownFiles) {
 
         foreach ($referenceMatch in [regex]::Matches($scannableLine,$inlineLlmReferencePattern)) {
             $referenceTarget = ConvertTo-PortablePath -PathValue $referenceMatch.Groups[1].Value.Trim()
-            $referenceTarget = ($referenceTarget -split '#')[0].Trim().TrimEnd('.,;:)')
+            # Trim sentence punctuation that commonly lands inside closing backticks. A
+            # trailing ')' is kept: legitimate filenames may end with one (for example
+            # 'name (draft).md').
+            $referenceTarget = ($referenceTarget -split '#')[0].Trim().TrimEnd('.,;:')
             if ($referenceTarget -match '[\*\$\[<]') {
                 # Glob patterns and placeholder expressions are prose, not resolvable references.
                 continue
@@ -365,12 +369,12 @@ foreach ($file in $llmMarkdownFiles) {
 
             # Split the optional link title before unwrapping angle targets so the combined
             # `[label](<path> "title")` form resolves its path instead of failing on '<'.
-            $titleSeparatorIndex = $linkTarget.IndexOf(' "')
+            $titleSeparatorIndex = $linkTarget.IndexOf(' "',[System.StringComparison]::Ordinal)
             if ($titleSeparatorIndex -ge 0) {
                 $linkTarget = $linkTarget.Substring(0,$titleSeparatorIndex).Trim()
             }
 
-            if ($linkTarget.StartsWith('<') -and $linkTarget.EndsWith('>')) {
+            if ($linkTarget.StartsWith('<',[System.StringComparison]::Ordinal) -and $linkTarget.EndsWith('>',[System.StringComparison]::Ordinal)) {
                 $linkTarget = $linkTarget.Substring(1,$linkTarget.Length - 2).Trim()
             }
 
