@@ -258,6 +258,62 @@ foreach ($file in $llmMarkdownFiles) {
     }
 }
 
+# Doc reference resolution policy: every repo-root-relative `.llm/...` inline path and every
+# file-relative markdown link in .llm guidance docs must resolve on disk. The SKILL.md
+# migration previously left stale `.llm/skills/<name>.md` references behind; this invariant
+# keeps that class of drift from recurring silently.
+$inlineLlmReferencePattern = '`(\.llm/[^`\r\n]+)`'
+$markdownLinkPattern = '\]\((?<target>[^)\r\n]+)\)'
+foreach ($file in $llmMarkdownFiles) {
+    $relativePath = Get-RelativePathCompat -BasePath $repoRoot -TargetPath $file.FullName
+    $fileDirectory = Split-Path -Path $file.FullName -Parent
+    $inFencedCodeBlock = $false
+    $lineIndex = 0
+
+    foreach ($line in [System.IO.File]::ReadLines($file.FullName,[System.Text.Encoding]::UTF8)) {
+        $lineIndex++
+
+        if ($line -match '^\s*(```|~~~)') {
+            $inFencedCodeBlock = -not $inFencedCodeBlock
+            continue
+        }
+
+        if ($inFencedCodeBlock) {
+            continue
+        }
+
+        foreach ($referenceMatch in [regex]::Matches($line,$inlineLlmReferencePattern)) {
+            $referenceTarget = ConvertTo-PortablePath -PathValue $referenceMatch.Groups[1].Value.Trim()
+            if ($referenceTarget -match '[\*\$\[<]') {
+                # Glob patterns and placeholder expressions are prose, not resolvable references.
+                continue
+            }
+
+            if (-not (Test-Path -LiteralPath (Join-Path -Path $repoRoot -ChildPath $referenceTarget))) {
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: inline path '$referenceTarget' does not exist.") | Out-Null
+            }
+        }
+
+        foreach ($linkMatch in [regex]::Matches($line,$markdownLinkPattern)) {
+            $linkTarget = $linkMatch.Groups['target'].Value.Trim()
+            if ($linkTarget -match '^[A-Za-z][A-Za-z0-9+.-]*:' -or $linkTarget.StartsWith('#')) {
+                # External URIs and same-document anchors are out of resolution scope.
+                continue
+            }
+
+            $linkTarget = ConvertTo-PortablePath -PathValue (($linkTarget -split '#')[0].Trim())
+            if ([string]::IsNullOrWhiteSpace($linkTarget)) {
+                continue
+            }
+
+            $linkAbsolutePath = [System.IO.Path]::GetFullPath((Join-Path -Path $fileDirectory -ChildPath $linkTarget))
+            if (-not (Test-Path -LiteralPath $linkAbsolutePath)) {
+                $errors.Add("${relativePath}:$lineIndex E_LLM_DOC_REFERENCE_MISSING: link target '$linkTarget' does not exist.") | Out-Null
+            }
+        }
+    }
+}
+
 $skillFiles = @()
 if (Test-Path -Path $skillsDir -PathType Container) {
     $skillFiles = @(

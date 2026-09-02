@@ -339,6 +339,134 @@ Describe "LLM harness automation" {
         }
     }
 
+    It "fails validation when guidance docs reference missing .llm paths" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("llm-harness-{0}" -f ([System.Guid]::NewGuid().ToString('N')))
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+        try {
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skills') -ItemType Directory -Force | Out-Null
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details') -ItemType Directory -Force | Out-Null
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality') -ItemType Directory -Force | Out-Null
+
+            foreach ($wrapper in $script:wrapperFiles) {
+                $wrapperPath = Join-Path -Path $tempRoot -ChildPath $wrapper
+                $wrapperDir = Split-Path -Path $wrapperPath -Parent
+                New-Item -Path $wrapperDir -ItemType Directory -Force | Out-Null
+                [System.IO.File]::WriteAllText($wrapperPath, "# Wrapper`n`nSee .llm/context.md.`n", $utf8NoBom)
+            }
+
+            [System.IO.File]::WriteAllText(
+                (Join-Path -Path $tempRoot -ChildPath '.llm/context.md'),
+                $script:fixtureContextContent,
+                $utf8NoBom
+            )
+            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), '# Skills Index`n', $utf8NoBom)
+
+            $skillCardContent = @"
+<!-- trigger: doc reference, deterministic validation | Resolve guidance document references | Core | skill-details/example-detail.md -->
+# Example Skill
+
+- Expanded guide: [Example Detail](../skill-details/example-detail.md)
+"@
+            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill.md'), $skillCardContent, $utf8NoBom)
+            $detailCardContent = @"
+# Example Detail
+
+Stale inline path: ``.llm/skills/renamed-skill.md``.
+
+Broken link: [Missing Detail](./missing-detail.md).
+"@
+            [System.IO.File]::WriteAllText(
+                (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/example-detail.md'),
+                $detailCardContent,
+                $utf8NoBom
+            )
+
+            $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
+            & $script:CopyUpdaterToTemp $tempUpdaterPath
+            & $tempUpdaterPath -RootPath $tempRoot
+
+            $validationFailure = $null
+            try {
+                & $script:validatorPath -RootPath $tempRoot
+            }
+            catch {
+                $validationFailure = $_
+            }
+
+            $validationFailure | Should -Not -BeNullOrEmpty
+            $validationFailure.Exception.Message | Should -Match 'E_LLM_DOC_REFERENCE_MISSING'
+            $validationFailure.Exception.Message | Should -Match '\.llm/skills/renamed-skill\.md'
+            $validationFailure.Exception.Message | Should -Match '\./missing-detail\.md'
+        }
+        finally {
+            & $script:RemoveTempRoot $tempRoot
+        }
+    }
+
+    It "passes guidance doc reference validation when inline paths and links resolve" {
+        $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("llm-harness-{0}" -f ([System.Guid]::NewGuid().ToString('N')))
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+        try {
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill') -ItemType Directory -Force | Out-Null
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details') -ItemType Directory -Force | Out-Null
+            New-Item -Path (Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality') -ItemType Directory -Force | Out-Null
+
+            foreach ($wrapper in $script:wrapperFiles) {
+                $wrapperPath = Join-Path -Path $tempRoot -ChildPath $wrapper
+                $wrapperDir = Split-Path -Path $wrapperPath -Parent
+                New-Item -Path $wrapperDir -ItemType Directory -Force | Out-Null
+                [System.IO.File]::WriteAllText($wrapperPath, "# Wrapper`n`nSee .llm/context.md.`n", $utf8NoBom)
+            }
+
+            [System.IO.File]::WriteAllText(
+                (Join-Path -Path $tempRoot -ChildPath '.llm/context.md'),
+                $script:fixtureContextContent,
+                $utf8NoBom
+            )
+            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills-index.md'), '# Skills Index`n', $utf8NoBom)
+
+            $skillCardContent = @"
+---
+name: example-skill
+description: Resolve guidance document references.
+metadata:
+  category: Core
+  keywords: doc reference, deterministic validation
+  details: ../../skill-details/example-detail.md
+---
+
+<!-- trigger: doc reference, deterministic validation | Resolve guidance document references | Core | skill-details/example-detail.md -->
+# Example Skill
+
+- Expanded guide: [Example Detail](../../skill-details/example-detail.md)
+"@
+            [System.IO.File]::WriteAllText((Join-Path -Path $tempRoot -ChildPath '.llm/skills/example-skill/SKILL.md'), $skillCardContent, $utf8NoBom)
+            $detailCardContent = @"
+# Example Detail
+
+Valid inline path: ``.llm/skills/example-skill/SKILL.md`` and glob ``.llm/skills/*.md`` prose.
+
+Valid link: [Skills Index](../skills-index.md) and external [docs](https://example.com).
+"@
+            [System.IO.File]::WriteAllText(
+                (Join-Path -Path $tempRoot -ChildPath '.llm/skill-details/example-detail.md'),
+                $detailCardContent,
+                $utf8NoBom
+            )
+
+            $tempUpdaterPath = Join-Path -Path $tempRoot -ChildPath 'Scripts/Utils/Quality/Update-LlmSkillsIndex.ps1'
+            & $script:CopyUpdaterToTemp $tempUpdaterPath
+            & $tempUpdaterPath -RootPath $tempRoot
+
+            { & $script:validatorPath -RootPath $tempRoot } | Should -Not -Throw
+        }
+        finally {
+            & $script:RemoveTempRoot $tempRoot
+        }
+    }
+
     It "fails validation when a skill card anchor does not resolve to a details heading" {
         $tempRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("llm-harness-{0}" -f ([System.Guid]::NewGuid().ToString('N')))
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
