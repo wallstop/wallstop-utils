@@ -1,7 +1,6 @@
 # GitHub API Auth Via VSCode Connector (Expanded)
 
-This expanded guide supports the lightweight skill stub in
-`.llm/skills/github-api-auth-vscode-connector/SKILL.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/github-api-auth-vscode-connector/SKILL.md`.
 
 ## Etiquette (user directive, binding)
 

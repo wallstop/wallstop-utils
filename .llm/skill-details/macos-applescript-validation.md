@@ -1,6 +1,6 @@
 # macOS AppleScript Validation (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/macos-applescript-validation.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/macos-applescript-validation/SKILL.md`.
 
 ## Source-First Validation With SCPT Fallback
 

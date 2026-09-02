@@ -1,6 +1,6 @@
 # Cross-Platform PowerShell (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/cross-platform-powershell.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/cross-platform-powershell/SKILL.md`.
 Applies to shared scripts (e.g., `Scripts/Utils/`); platform-specific directories like `Scripts/Komorebi/` are exempt.
 Shared repository PowerShell must run on both Windows PowerShell 5.1 and PowerShell 7+.
 

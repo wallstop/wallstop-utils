@@ -1,6 +1,6 @@
 # Windows Language Validation (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/windows-language-validation.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/windows-language-validation/SKILL.md`.
 
 ## Fast-Lane Scope And Runtime Budget
 

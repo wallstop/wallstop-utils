@@ -1,6 +1,6 @@
 # Config Snapshot Safety (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/config-snapshot-safety.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/config-snapshot-safety/SKILL.md`.
 
 ## Scope Exclusions For Encrypted Snapshots
 

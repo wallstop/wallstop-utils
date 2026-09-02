@@ -1,6 +1,6 @@
 # Post-Work Self-Improvement (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/post-work-self-improvement.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/post-work-self-improvement/SKILL.md`.
 
 ## Purpose
 

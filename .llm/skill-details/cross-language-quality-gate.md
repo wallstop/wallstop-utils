@@ -1,6 +1,6 @@
 # Cross-Language Quality Gate (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/cross-language-quality-gate.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/cross-language-quality-gate/SKILL.md`.
 
 ## Session-Close Full Validation Loop
 

@@ -1,6 +1,6 @@
 # Dependency Update Automation (Expanded)
 
-This guide supports `.llm/skills/dependency-update-automation.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/dependency-update-automation/SKILL.md`.
 
 ## Weekly Schedule And Grouping Policy
 

@@ -1,6 +1,6 @@
 # Shell Tooling Portability And Agentic Safety (Expanded)
 
-This expanded guide supports the lightweight skill stub in `.llm/skills/shell-tooling-portability-and-agentic-safety.md`.
+This expanded guide supports the lightweight skill stub in `.llm/skills/shell-tooling-portability-and-agentic-safety/SKILL.md`.
 
 ## Mandatory Baseline
 
