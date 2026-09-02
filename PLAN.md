@@ -11,7 +11,7 @@
 - [x] Correct stale `features` doc drift: README + `.llm/context.md` said `node:1` while the
   devcontainer and its policy tests pin `ghcr.io/devcontainers/features/node:2`.
 
-Evidence: `agent/issue-81-image-cleanup` (PR opened by operator: `gh pr create --base main --head agent/issue-81-image-cleanup --fill`).
+Evidence: [PR #82](https://github.com/wallstop/wallstop-utils/pull/82) — all checks green (including Cursor Bugbot), zero review findings; issue #68 verified complete and closed.
 
 ## Completed milestone: agent notification integration (PR #79)
 
