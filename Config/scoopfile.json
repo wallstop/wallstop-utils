@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-09-01T23:32:08.7310574-07:00",
-      "Version": "2.36.37"
+      "Updated": "2026-09-02T23:31:30.4106305-07:00",
+      "Version": "2.36.38"
     },
     {
       "Info": "",
@@ -123,8 +123,8 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-08-31T23:32:14.1577768-07:00",
-      "Version": "8.21.0_8"
+      "Updated": "2026-09-02T23:31:32.8512285-07:00",
+      "Version": "8.22.0_1"
     },
     {
       "Info": "",
@@ -375,8 +375,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-09-01T23:35:20.4114188-07:00",
-      "Version": "2026.9.0"
+      "Updated": "2026-09-02T23:31:36.5684038-07:00",
+      "Version": "2026.9.1"
     },
     {
       "Info": "",
@@ -459,15 +459,15 @@
       "Info": "",
       "Name": "opencode",
       "Source": "C:\\Users\\dbfsi\\scoop\\buckets\\main\\bucket\\opencode.json",
-      "Updated": "2026-09-01T23:35:22.623337-07:00",
-      "Version": "1.18.26"
+      "Updated": "2026-09-02T23:31:40.0965306-07:00",
+      "Version": "1.18.27"
     },
     {
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-09-01T23:35:27.0761912-07:00",
-      "Version": "1.18.26"
+      "Updated": "2026-09-02T23:31:46.7993687-07:00",
+      "Version": "1.18.27"
     },
     {
       "Info": "",
@@ -713,13 +713,13 @@
       "Manifests": 1641,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-09-01T23:06:53-07:00"
+      "Updated": "2026-09-02T22:26:02-07:00"
     },
     {
       "Manifests": 2377,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-09-01T21:36:29-07:00"
+      "Updated": "2026-09-02T22:26:24-07:00"
     },
     {
       "Manifests": 75,
@@ -731,13 +731,13 @@
       "Manifests": 132,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-09-01T15:40:07-07:00"
+      "Updated": "2026-09-02T12:25:39-07:00"
     },
     {
       "Manifests": 336,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-09-01T06:31:13-07:00"
+      "Updated": "2026-09-02T21:35:41-07:00"
     }
   ]
 }

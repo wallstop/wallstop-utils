@@ -1,0 +1,24 @@
+{
+  "failedSteps": [
+    {
+      "name": "WinGetUpdate",
+      "error": "E_BACKUP_STEP_FAILED(WinGetUpdate): script 'WinGet/WinGetUpdate.ps1' at 'D:\\code\\wallstop-utils\\Scripts\\WinGet\\WinGetUpdate.ps1' exited with code -1978335188.",
+      "outputPreview": "Name                               Id                                           Version   Available Source ---------------------------------------------------------------------------------------------------------- Claude                             Anthropic.Claude                             1.40609.1 1.44121.2 winget Microsoft .NET Framework 4.6.2 SDK Microsoft.DotNet.Framework.DeveloperPack.4.6 < 4.6.2   4.6.2     winget Microsoft Visual Studio Code       Microsoft.VisualStudioCode                   1.135.0   1.136.0   winget Mozilla Firefox (x64 en-US)        Mozilla.Firefox                              154.0.1   155.0     winget Windows Subsystem for Linux        Microsoft.WSL                                2.7.11.0  2.7.12    winget 5 upgrades available. 1 package(s) have version numbers that cannot be determined. Use --include-unknown to see all results. 4 package(s) have pins that prevent upgrade. Use the 'winget pin' command to view and edit pins. Using the '--include-pinned' argument may show more results.  (1/4) Found Mozilla Firefox (en-US) [Mozilla.Firefox] Version 155.0 This application is licensed to you by its owner. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages. Downloading https://download-installer.cdn.mozilla.net/pub/firefox/releases/155.0/win64/en-US/Firefox%20Setup%20155.0.exe Successfully verified installer hash Starting package install... Successfully installed  (2/4) Found Microsoft Visual Studio Code [Microsoft.VisualStudioCode] Version 1.136.0 This application is licensed to you by its owner. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages. Downloading https://vscode.download.prss.microsoft.com/dbazure/download/stable/520fb30b2d3d324b4cb2342f6e88e2cd93751de1/VSCodeSetup-x64-1.136.0.exe Successfully verified installer hash Starting package install... You cancelled the installation. Installer failed with exit code: 2  (3/4) Found Claude [Anthropic.Claude] Version 1.44121.2 This application is licensed to you by its owner. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages. Downloading https://downloads.claude.ai/releases/win32/x64/1.44121.2/Claude-817a7b4563855a33d4b678faefc71f87554445d8.exe Successfully verified installer hash Starting package install... Successfully installed  (4/4) Found Windows Subsystem for Linux [Microsoft.WSL] Version 2.7.12 This application is licensed to you by its owner. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages. Successfully verified installer hash Starting package install... Installer failed with exit code: 0x80073d28 : The package installation failed because administrator privileges are required. Please contact an administrator to install this package.  51 package(s) have version numbers that cannot be determined. Use --include-unknown to see all results. 1 package(s) have upgrades blocked because newer versions use a different install technology than the current installation. Uninstall each package, then install the newer version. | WARNING: W_WINGET_UPGRADE_DEFERRED_INTERACTIVE: 1 package(s) require interactive elevation or consent and were not upgraded by the silent run: Microsoft.WSL (installer exit 0x80073d28). Run 'winget upgrade' in an interactive session to complete them. | E_WINGET_UPDATE_PACKAGE_INSTALL_FAILED: 1 package(s) failed to upgrade: Microsoft.VisualStudioCode (installer exit 2)."
+    }
+  ],
+  "phaseFailures": [],
+  "succeededSteps": [
+    "ConfigBackup",
+    "WindowsTerminalBackup",
+    "PowershellBackup",
+    "StopKomorebi",
+    "ScoopHealthCheck",
+    "ScoopUpdate",
+    "ScoopBackup",
+    "KomorebiBackup",
+    "PowerToysBackup",
+    "ThunderbirdBackup",
+    "RestartKomorebi"
+  ],
+  "totalSteps": 12
+}
