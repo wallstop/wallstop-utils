@@ -14,3 +14,9 @@ if (-not (Test-Path -LiteralPath $profileHelpersPath -PathType Leaf)) {
 $userProfileRoot = Resolve-KomorebiUserProfileRoot
 $configPath = Join-Path -Path $userProfileRoot -ChildPath "komorebi.json"
 komorebic start --config $configPath --whkd --clean-state
+
+# `komorebic monitor-information` needs a running Komorebi, so the gate runs after start.
+# It fails loudly when a display would silently fall back to the Komorebi defaults instead
+# of the layout this config asks for.
+$assignments = @(Assert-KomorebiLiveConfiguration -ConfigPath $configPath)
+Write-KomorebiMonitorAssignmentSummary -Assignments $assignments

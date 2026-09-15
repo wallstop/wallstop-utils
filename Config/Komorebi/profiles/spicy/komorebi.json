@@ -21,6 +21,11 @@
     "bar_accent": "Base0D"
   },
   "window_handling_behaviour": "Async",
+  "display_index_preferences": {
+    "0": "G7STF34",
+    "1": "9K42DP3",
+    "2": "CSLQNF4"
+  },
   "stackbar": {
     "mode": "Never"
   },
@@ -36,7 +41,7 @@
     {
       "workspaces": [
         {
-          "name": "Right",
+          "name": "Left",
           "layout": "Rows"
         }
       ]
@@ -44,8 +49,16 @@
     {
       "workspaces": [
         {
-          "name": "Left",
-          "layout": "Rows"
+          "name": "Right",
+          "layout": "Grid"
+        }
+      ]
+    },
+    {
+      "workspaces": [
+        {
+          "name": "Grid",
+          "layout": "Grid"
         }
       ]
     }

@@ -464,3 +464,399 @@ Describe "Komorebi profile helper behaviors" {
         Test-Path -LiteralPath $profileDirectory -PathType Container | Should -BeFalse
     }
 }
+
+Describe "Komorebi monitor configuration validation" {
+    BeforeEach {
+        # Physical order, left to right: DISPLAY2 (portrait, x=-1080), DISPLAY1 (x=0), DISPLAY3 (x=3840).
+        # Komorebi enumerates them DISPLAY1, DISPLAY2, DISPLAY3.
+        $script:testMonitors = @(
+            [pscustomobject]@{
+                name             = "DISPLAY1"
+                device           = "DEL429B"
+                device_id        = "DEL429B-5&9221308&0&UID8449"
+                serial_number_id = "G7STF34"
+                size             = [pscustomobject]@{ left = 0; top = 0; right = 3840; bottom = 2160 }
+            },
+            [pscustomobject]@{
+                name             = "DISPLAY2"
+                device           = "DEL41F3"
+                device_id        = "DEL41F3-5&9221308&0&UID8453"
+                serial_number_id = "9K42DP3"
+                size             = [pscustomobject]@{ left = -1080; top = 106; right = 1080; bottom = 1920 }
+            },
+            [pscustomobject]@{
+                name             = "DISPLAY3"
+                device           = "DEL429A"
+                device_id        = "DEL429A-5&9221308&0&UID8451"
+                serial_number_id = "CSLQNF4"
+                size             = [pscustomobject]@{ left = 3840; top = 0; right = 3840; bottom = 2160 }
+            }
+        )
+
+        $script:testConfigJson = @'
+{
+  "display_index_preferences": {
+    "0": "G7STF34",
+    "1": "9K42DP3",
+    "2": "CSLQNF4"
+  },
+  "monitors": [
+    { "workspaces": [ { "name": "Middle", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Left", "layout": "Rows" } ] },
+    { "workspaces": [ { "name": "Right", "layout": "Grid" } ] }
+  ]
+}
+'@
+    }
+
+    It "pairs each display with the monitors[] entry its serial number points at" {
+        $config = $script:testConfigJson | ConvertFrom-Json
+
+        $assignments = @(Get-KomorebiMonitorConfigAssignment -Config $config -Monitors $script:testMonitors)
+
+        $assignments.Count | Should -Be 3
+        @($assignments | Where-Object { $_.SerialNumberId -eq "G7STF34" })[0].ConfigIndex | Should -Be 0
+        @($assignments | Where-Object { $_.SerialNumberId -eq "9K42DP3" })[0].ConfigIndex | Should -Be 1
+        @($assignments | Where-Object { $_.SerialNumberId -eq "CSLQNF4" })[0].ConfigIndex | Should -Be 2
+        @($assignments | Where-Object { $_.MatchedBy -ne "preference" }).Count | Should -Be 0
+    }
+
+    It "gives the spicy RDP display Grid without consuming physical display slots" {
+        $path = Join-Path -Path $PSScriptRoot -ChildPath "../../Config/Komorebi/profiles/spicy/komorebi.json"
+        $config = Read-KomorebiStaticConfig -Path $path
+        $remoteMonitor = [pscustomobject]@{
+            name             = "DISPLAY1"
+            device_id        = "Default_Monitor-1&c528b8a&1&UID256"
+            serial_number_id = $null
+            size             = [pscustomobject]@{ left = 0 }
+        }
+
+        $assignments = @(Assert-KomorebiMonitorConfiguration -Config $config -Monitors @($remoteMonitor) -ConfigPath $path)
+
+        $assignments.Count | Should -Be 1
+        $assignments[0].MatchedBy | Should -Be "sequential"
+        $assignments[0].Workspaces[0].layout | Should -Be "Grid"
+        $assignments[0].Workspaces[0].name | Should -Be "Grid"
+
+        $physical = @(Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath $path)
+        @($physical | ForEach-Object { $_.ConfigIndex }) | Should -Be @(0, 1, 2)
+        @($physical | ForEach-Object { $_.Workspaces[0].layout }) | Should -Be @("Grid", "Rows", "Grid")
+        @($physical | Where-Object { $_.MatchedBy -ne "preference" }).Count | Should -Be 0
+    }
+
+    It "matches display_index_preferences on device_id as well as serial_number_id" {
+        $config = @'
+{
+  "display_index_preferences": {
+    "0": "DEL429B-5&9221308&0&UID8449",
+    "1": "DEL41F3-5&9221308&0&UID8453",
+    "2": "DEL429A-5&9221308&0&UID8451"
+  },
+  "monitors": [
+    { "workspaces": [ { "name": "Middle", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Left", "layout": "Rows" } ] },
+    { "workspaces": [ { "name": "Right", "layout": "Grid" } ] }
+  ]
+}
+'@ | ConvertFrom-Json
+
+        $assignments = @(Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath "device-id.json")
+
+        @($assignments | Where-Object { $_.MatchedBy -ne "preference" }).Count | Should -Be 0
+    }
+
+    It "falls back to sequential pairing when no display_index_preferences are declared" {
+        $config = @'
+{
+  "monitors": [
+    { "workspaces": [ { "name": "Middle", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Left", "layout": "Rows" } ] },
+    { "workspaces": [ { "name": "Right", "layout": "Grid" } ] }
+  ]
+}
+'@ | ConvertFrom-Json
+
+        $assignments = @(Get-KomorebiMonitorConfigAssignment -Config $config -Monitors $script:testMonitors)
+
+        @($assignments | ForEach-Object { $_.ConfigIndex }) | Should -Be @(0, 1, 2)
+        @($assignments | Where-Object { $_.MatchedBy -ne "sequential" }).Count | Should -Be 0
+    }
+
+    It "rejects display ids that match no connected display and starve every monitor of config" {
+        # Regression: display_index_preferences held GDI names ("DISPLAY1"), which match neither
+        # serial_number_id nor device_id. Those entries still reserve monitors[] indexes 0-2, so the
+        # sequential fallback finds nothing and every workspace silently reverts to BSP.
+        $config = @'
+{
+  "display_index_preferences": {
+    "0": "DISPLAY1",
+    "1": "DISPLAY2",
+    "2": "DISPLAY3"
+  },
+  "monitors": [
+    { "workspaces": [ { "name": "Middle", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Right", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Left", "layout": "Rows" } ] }
+  ]
+}
+'@ | ConvertFrom-Json
+
+        $assignments = @(Get-KomorebiMonitorConfigAssignment -Config $config -Monitors $script:testMonitors)
+        @($assignments | Where-Object { $null -eq $_.ConfigIndex }).Count | Should -Be 3
+
+        { Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath "broken.json" } |
+            Should -Throw -ExpectedMessage "*E_KOMOREBI_MONITOR_CONFIG_UNASSIGNED*"
+    }
+
+    It "names the offending display ids so the diagnostic is actionable" {
+        $config = $script:testConfigJson.Replace("G7STF34", "DISPLAY1") | ConvertFrom-Json
+
+        { Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath "partial.json" } |
+            Should -Throw -ExpectedMessage "*DISPLAY1*"
+    }
+
+    It "rejects positional workspace names that do not follow physical left-to-right order" {
+        # Regression: monitors[] listed Middle, Right, Left while the displays enumerate
+        # middle, left, right, so "Right" landed on the left-hand portrait panel.
+        $config = @'
+{
+  "display_index_preferences": {
+    "0": "G7STF34",
+    "1": "9K42DP3",
+    "2": "CSLQNF4"
+  },
+  "monitors": [
+    { "workspaces": [ { "name": "Middle", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Right", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Left", "layout": "Rows" } ] }
+  ]
+}
+'@ | ConvertFrom-Json
+
+        { Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath "swapped.json" } |
+            Should -Throw -ExpectedMessage "*E_KOMOREBI_MONITOR_LAYOUT_POSITION_MISMATCH*"
+    }
+
+    It "ignores non-positional workspace names when checking display order" {
+        $config = @'
+{
+  "monitors": [
+    { "workspaces": [ { "name": "Code", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Chat", "layout": "Rows" } ] },
+    { "workspaces": [ { "name": "Web", "layout": "Grid" } ] }
+  ]
+}
+'@ | ConvertFrom-Json
+
+        { Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath "named.json" } |
+            Should -Not -Throw
+    }
+
+    It "rejects display_index_preferences indexes outside the monitors array" {
+        $config = @'
+{
+  "display_index_preferences": { "0": "G7STF34", "5": "9K42DP3" },
+  "monitors": [
+    { "workspaces": [ { "name": "Middle", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Left", "layout": "Rows" } ] }
+  ]
+}
+'@ | ConvertFrom-Json
+
+        { Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath "range.json" } |
+            Should -Throw -ExpectedMessage "*E_KOMOREBI_DISPLAY_PREFERENCE_INDEX_INVALID*"
+    }
+
+    It "rejects non-numeric display_index_preferences keys" {
+        $config = @'
+{
+  "display_index_preferences": { "left": "9K42DP3" },
+  "monitors": [ { "workspaces": [ { "name": "Left", "layout": "Rows" } ] } ]
+}
+'@ | ConvertFrom-Json
+
+        { Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath "keys.json" } |
+            Should -Throw -ExpectedMessage "*E_KOMOREBI_DISPLAY_PREFERENCE_INDEX_INVALID*"
+    }
+
+    It "rejects a display id mapped to more than one monitors[] index" {
+        $config = @'
+{
+  "display_index_preferences": { "0": "G7STF34", "1": "G7STF34", "2": "CSLQNF4" },
+  "monitors": [
+    { "workspaces": [ { "name": "Middle", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Left", "layout": "Rows" } ] },
+    { "workspaces": [ { "name": "Right", "layout": "Grid" } ] }
+  ]
+}
+'@ | ConvertFrom-Json
+
+        { Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath "dupe.json" } |
+            Should -Throw -ExpectedMessage "*E_KOMOREBI_DISPLAY_PREFERENCE_DUPLICATE*"
+    }
+
+    It "tolerates a preferred display that is not currently connected" {
+        $config = @'
+{
+  "display_index_preferences": { "0": "G7STF34", "1": "LAPTOP-PANEL" },
+  "monitors": [
+    { "workspaces": [ { "name": "Middle", "layout": "Grid" } ] },
+    { "workspaces": [ { "name": "Docked", "layout": "Rows" } ] }
+  ]
+}
+'@ | ConvertFrom-Json
+
+        $singleMonitor = @($script:testMonitors[0])
+
+        { Assert-KomorebiMonitorConfiguration -Config $config -Monitors $singleMonitor -ConfigPath "docked.json" } |
+            Should -Not -Throw
+    }
+
+    It "accepts a config that omits the monitors array entirely" {
+        $config = '{ "border": false }' | ConvertFrom-Json
+
+        { Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath "bare.json" } |
+            Should -Not -Throw
+    }
+
+    It "reads and rejects malformed static configuration files" {
+        $path = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("komorebi-static-" + [System.Guid]::NewGuid().ToString("N") + ".json")
+        try {
+            [System.IO.File]::WriteAllText($path, "{ not json", [System.Text.UTF8Encoding]::new($false))
+
+            { Read-KomorebiStaticConfig -Path $path } | Should -Throw -ExpectedMessage "*E_KOMOREBI_STATIC_CONFIG_INVALID*"
+        }
+        finally {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "reports a missing static configuration file with a stable diagnostic" {
+        $path = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("komorebi-absent-" + [System.Guid]::NewGuid().ToString("N") + ".json")
+
+        { Read-KomorebiStaticConfig -Path $path } | Should -Throw -ExpectedMessage "*E_KOMOREBI_STATIC_CONFIG_MISSING*"
+    }
+}
+
+Describe "Komorebi applied configuration verification" {
+    BeforeEach {
+        $script:appliedMonitors = @(
+            [pscustomobject]@{
+                name             = "DISPLAY1"
+                device_id        = "DEL429B-5&9221308&0&UID8449"
+                serial_number_id = "G7STF34"
+                size             = [pscustomobject]@{ left = 0; top = 0; right = 3840; bottom = 2160 }
+            }
+        )
+
+        $script:appliedConfig = @'
+{
+  "display_index_preferences": { "0": "G7STF34" },
+  "monitors": [ { "workspaces": [ { "name": "Middle", "layout": "Grid" } ] } ]
+}
+'@ | ConvertFrom-Json
+    }
+
+    It "passes when Komorebi applied the configured workspace name and layout" {
+        $assignments = @(Get-KomorebiMonitorConfigAssignment -Config $script:appliedConfig -Monitors $script:appliedMonitors)
+        $state = @'
+{
+  "monitors": {
+    "elements": [
+      {
+        "name": "DISPLAY1",
+        "device_id": "DEL429B-5&9221308&0&UID8449",
+        "workspaces": { "elements": [ { "name": "Middle", "layout": { "Default": "Grid" } } ] }
+      }
+    ]
+  }
+}
+'@ | ConvertFrom-Json
+
+        { Assert-KomorebiAppliedConfiguration -Assignments $assignments -State $state -ConfigPath "live.json" } |
+            Should -Not -Throw
+    }
+
+    It "fails when Komorebi left a workspace on the default layout" {
+        # This is what the live state looked like while the config was silently ignored.
+        $assignments = @(Get-KomorebiMonitorConfigAssignment -Config $script:appliedConfig -Monitors $script:appliedMonitors)
+        $state = @'
+{
+  "monitors": {
+    "elements": [
+      {
+        "name": "DISPLAY1",
+        "device_id": "DEL429B-5&9221308&0&UID8449",
+        "workspaces": { "elements": [ { "name": null, "layout": { "Default": "BSP" } } ] }
+      }
+    ]
+  }
+}
+'@ | ConvertFrom-Json
+
+        { Assert-KomorebiAppliedConfiguration -Assignments $assignments -State $state -ConfigPath "live.json" } |
+            Should -Throw -ExpectedMessage "*E_KOMOREBI_MONITOR_CONFIG_NOT_APPLIED*"
+    }
+
+    It "fails when a configured display is absent from the live state" {
+        $assignments = @(Get-KomorebiMonitorConfigAssignment -Config $script:appliedConfig -Monitors $script:appliedMonitors)
+        $state = '{ "monitors": { "elements": [] } }' | ConvertFrom-Json
+
+        { Assert-KomorebiAppliedConfiguration -Assignments $assignments -State $state -ConfigPath "live.json" } |
+            Should -Throw -ExpectedMessage "*E_KOMOREBI_MONITOR_CONFIG_NOT_APPLIED*"
+    }
+
+    It "does not compare layout when the workspace uses a custom layout" {
+        $config = @'
+{
+  "display_index_preferences": { "0": "G7STF34" },
+  "monitors": [ { "workspaces": [ { "name": "Middle", "layout": "Grid", "custom_layout": "C:/layouts/middle.json" } ] } ]
+}
+'@ | ConvertFrom-Json
+        $assignments = @(Get-KomorebiMonitorConfigAssignment -Config $config -Monitors $script:appliedMonitors)
+        $state = @'
+{
+  "monitors": {
+    "elements": [
+      {
+        "name": "DISPLAY1",
+        "device_id": "DEL429B-5&9221308&0&UID8449",
+        "workspaces": { "elements": [ { "name": "Middle", "layout": { "Custom": [] } } ] }
+      }
+    ]
+  }
+}
+'@ | ConvertFrom-Json
+
+        { Assert-KomorebiAppliedConfiguration -Assignments $assignments -State $state -ConfigPath "live.json" } |
+            Should -Not -Throw
+    }
+}
+
+Describe "Komorebi repository profile layout invariants" {
+    It "keeps every checked-in profile config internally consistent" {
+        $repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
+        $profilesRoot = Join-Path -Path (Join-Path -Path (Join-Path -Path $repoRoot -ChildPath "Config") -ChildPath "Komorebi") -ChildPath "profiles"
+        $configPaths = @(Get-ChildItem -LiteralPath $profilesRoot -Filter "komorebi.json" -Recurse -File | ForEach-Object { $_.FullName })
+
+        $configPaths.Count | Should -BeGreaterThan 0
+
+        foreach ($configPath in $configPaths) {
+            $config = Read-KomorebiStaticConfig -Path $configPath
+            $monitorConfigs = @(Get-KomorebiObjectProperty -InputObject $config -Name "monitors")
+            $preferenceMap = Get-KomorebiDisplayIndexPreferenceMap -Config $config
+
+            $preferenceMap.InvalidKeys.Count | Should -Be 0 -Because "$configPath must use numeric display_index_preferences keys"
+
+            foreach ($entry in $preferenceMap.Entries) {
+                $entry.ConfigIndex | Should -BeLessThan $monitorConfigs.Count -Because "$configPath maps a display to a monitors[] index that does not exist"
+                # GDI display names are the classic wrong value here: they match neither
+                # serial_number_id nor device_id, so Komorebi silently drops the whole config.
+                $entry.Id | Should -Not -Match '^(?i)\\\\?\.?\\?DISPLAY\d+$' -Because "$configPath must key display_index_preferences on serial_number_id or device_id, not a GDI display name"
+            }
+
+            $preferenceIds = @($preferenceMap.Entries | ForEach-Object { $_.Id })
+            @($preferenceIds | Sort-Object -Unique).Count | Should -Be $preferenceIds.Count -Because "$configPath must not map one display to two monitors[] indexes"
+        }
+    }
+}
