@@ -4,8 +4,8 @@
       "Info": "",
       "Name": "7zip",
       "Source": "main",
-      "Updated": "2026-06-26T23:30:15.462921-07:00",
-      "Version": "26.02"
+      "Updated": "2026-09-15T23:31:32.0009625-07:00",
+      "Version": "26.03"
     },
     {
       "Info": "",
@@ -25,8 +25,8 @@
       "Info": "",
       "Name": "autohotkey",
       "Source": "extras",
-      "Updated": "2026-08-29T23:31:48.6943913-07:00",
-      "Version": "2.0.27"
+      "Updated": "2026-09-15T23:31:40.6796658-07:00",
+      "Version": "2.0.28"
     },
     {
       "Info": "",
@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-09-02T23:31:30.4106305-07:00",
-      "Version": "2.36.38"
+      "Updated": "2026-09-15T23:32:09.2959505-07:00",
+      "Version": "2.36.46"
     },
     {
       "Info": "",
@@ -60,8 +60,8 @@
       "Info": "",
       "Name": "bazel-buildtools",
       "Source": "main",
-      "Updated": "2026-05-14T16:41:43.0977328-07:00",
-      "Version": "8.5.1"
+      "Updated": "2026-09-15T23:32:12.4329697-07:00",
+      "Version": "10.0.1"
     },
     {
       "Info": "",
@@ -74,8 +74,8 @@
       "Info": "",
       "Name": "bun",
       "Source": "main",
-      "Updated": "2026-08-20T23:30:54.6070905-07:00",
-      "Version": "1.4.0"
+      "Updated": "2026-09-15T23:32:22.1260614-07:00",
+      "Version": "1.4.2"
     },
     {
       "Info": "",
@@ -109,8 +109,8 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2025-05-20T10:02:19.3464179-07:00",
-      "Version": "1.1.0"
+      "Updated": "2026-09-15T23:33:07.578722-07:00",
+      "Version": "26.903.8094.0"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-09-01T23:33:42.7959153-07:00",
-      "Version": "3.18.25"
+      "Updated": "2026-09-15T23:34:29.2899711-07:00",
+      "Version": "3.20.21"
     },
     {
       "Info": "",
@@ -165,8 +165,8 @@
       "Info": "",
       "Name": "fancontrol",
       "Source": "extras",
-      "Updated": "2026-08-25T23:33:25.2197689-07:00",
-      "Version": "275"
+      "Updated": "2026-09-15T23:34:31.8797602-07:00",
+      "Version": "277"
     },
     {
       "Info": "",
@@ -207,22 +207,22 @@
       "Info": "",
       "Name": "gh",
       "Source": "main",
-      "Updated": "2026-09-01T23:33:45.1908583-07:00",
-      "Version": "2.99.0"
+      "Updated": "2026-09-15T23:34:33.0602075-07:00",
+      "Version": "2.101.0"
     },
     {
       "Info": "",
       "Name": "ghostscript",
       "Source": "main",
-      "Updated": "2026-05-27T16:04:39.4747393-07:00",
-      "Version": "10.07.1"
+      "Updated": "2026-09-15T23:34:38.2761812-07:00",
+      "Version": "10.08.0"
     },
     {
       "Info": "",
       "Name": "github",
       "Source": "extras",
-      "Updated": "2026-08-13T23:31:17.0412655-07:00",
-      "Version": "3.6.4"
+      "Updated": "2026-09-15T23:34:51.6980498-07:00",
+      "Version": "3.6.5"
     },
     {
       "Info": "",
@@ -242,8 +242,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-09-01T23:35:17.5053261-07:00",
-      "Version": "152.0.7977.76"
+      "Updated": "2026-09-15T23:35:01.3178566-07:00",
+      "Version": "153.0.8010.48"
     },
     {
       "Info": "",
@@ -284,8 +284,8 @@
       "Info": "",
       "Name": "imageglass",
       "Source": "extras",
-      "Updated": "2026-08-30T23:31:56.4959225-07:00",
-      "Version": "10.0.5.825"
+      "Updated": "2026-09-15T23:35:03.4309814-07:00",
+      "Version": "10.0.6.906"
     },
     {
       "Info": "",
@@ -340,8 +340,8 @@
       "Info": "",
       "Name": "llvm",
       "Source": "main",
-      "Updated": "2026-08-27T23:36:02.9529402-07:00",
-      "Version": "23.1.0"
+      "Updated": "2026-09-15T23:35:31.8244233-07:00",
+      "Version": "23.1.1"
     },
     {
       "Info": "",
@@ -375,15 +375,15 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-09-02T23:31:36.5684038-07:00",
-      "Version": "2026.9.1"
+      "Updated": "2026-09-15T23:35:34.1001617-07:00",
+      "Version": "2026.9.9"
     },
     {
       "Info": "",
       "Name": "mobaxterm",
       "Source": "extras",
-      "Updated": "2026-06-19T23:31:35.4642197-07:00",
-      "Version": "26.4"
+      "Updated": "2026-09-15T23:36:27.1073766-07:00",
+      "Version": "26.5"
     },
     {
       "Info": "",
@@ -438,15 +438,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-08-28T23:33:18.5247715-07:00",
-      "Version": "0.33.2"
+      "Updated": "2026-09-15T23:36:48.6111008-07:00",
+      "Version": "0.34.1"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-08-28T23:34:35.9287173-07:00",
-      "Version": "0.33.2"
+      "Updated": "2026-09-15T23:37:49.4815497-07:00",
+      "Version": "0.34.1"
     },
     {
       "Info": "",
@@ -459,15 +459,15 @@
       "Info": "",
       "Name": "opencode",
       "Source": "C:\\Users\\dbfsi\\scoop\\buckets\\main\\bucket\\opencode.json",
-      "Updated": "2026-09-02T23:31:40.0965306-07:00",
-      "Version": "1.18.27"
+      "Updated": "2026-09-15T23:37:51.4759422-07:00",
+      "Version": "1.18.31"
     },
     {
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-09-02T23:31:46.7993687-07:00",
-      "Version": "1.18.27"
+      "Updated": "2026-09-15T23:37:55.6949521-07:00",
+      "Version": "1.18.31"
     },
     {
       "Info": "",
@@ -494,15 +494,15 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-09-01T23:35:27.6461072-07:00",
-      "Version": "1.17.2"
+      "Updated": "2026-09-15T23:37:56.3346198-07:00",
+      "Version": "1.17.3"
     },
     {
       "Info": "",
       "Name": "poppler",
       "Source": "main",
-      "Updated": "2026-05-14T16:44:45.3997785-07:00",
-      "Version": "26.02.0-0"
+      "Updated": "2026-09-15T23:37:58.8652096-07:00",
+      "Version": "26.09.0-0"
     },
     {
       "Info": "",
@@ -515,8 +515,8 @@
       "Info": "",
       "Name": "process-explorer",
       "Source": "sysinternals",
-      "Updated": "2026-08-12T23:33:10.1259732-07:00",
-      "Version": "17.13"
+      "Updated": "2026-09-15T23:37:59.7307422-07:00",
+      "Version": "17.14"
     },
     {
       "Info": "",
@@ -543,8 +543,8 @@
       "Info": "",
       "Name": "ruby",
       "Source": "main",
-      "Updated": "2026-07-14T23:32:23.0651878-07:00",
-      "Version": "4.0.6-1"
+      "Updated": "2026-09-15T23:39:13.0132592-07:00",
+      "Version": "4.0.7-1"
     },
     {
       "Info": "",
@@ -557,8 +557,8 @@
       "Info": "",
       "Name": "rust",
       "Source": "main",
-      "Updated": "2026-08-20T23:36:48.9329353-07:00",
-      "Version": "1.98.0"
+      "Updated": "2026-09-03T18:56:27.632406-07:00",
+      "Version": "1.98.1"
     },
     {
       "Info": "",
@@ -578,15 +578,15 @@
       "Info": "",
       "Name": "shfmt",
       "Source": "main",
-      "Updated": "2026-08-28T23:34:45.7254539-07:00",
-      "Version": "3.14.0"
+      "Updated": "2026-09-15T23:39:14.0394161-07:00",
+      "Version": "3.14.1"
     },
     {
       "Info": "",
       "Name": "signal",
       "Source": "extras",
-      "Updated": "2026-08-27T23:38:11.3292114-07:00",
-      "Version": "8.25.0"
+      "Updated": "2026-09-15T23:39:18.2201521-07:00",
+      "Version": "8.27.0"
     },
     {
       "Info": "",
@@ -625,6 +625,13 @@
     },
     {
       "Info": "",
+      "Name": "typescript",
+      "Source": "main",
+      "Updated": "2026-09-06T17:56:13.2445967-07:00",
+      "Version": "7.0.2"
+    },
+    {
+      "Info": "",
       "Name": "ultravnc",
       "Source": "extras",
       "Updated": "2026-06-19T23:32:23.9436855-07:00",
@@ -634,8 +641,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-09-01T23:35:44.2146237-07:00",
-      "Version": "0.12.9"
+      "Updated": "2026-09-15T23:39:29.7859886-07:00",
+      "Version": "0.12.15"
     },
     {
       "Info": "",
@@ -710,34 +717,34 @@
   ],
   "buckets": [
     {
-      "Manifests": 1641,
+      "Manifests": 1649,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-09-02T22:26:02-07:00"
+      "Updated": "2026-09-15T21:34:04-07:00"
     },
     {
-      "Manifests": 2377,
+      "Manifests": 2387,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-09-02T22:26:24-07:00"
+      "Updated": "2026-09-15T21:34:10-07:00"
     },
     {
-      "Manifests": 75,
+      "Manifests": 76,
       "Name": "sysinternals",
       "Source": "https://github.com/niheaven/scoop-sysinternals",
-      "Updated": "2026-08-27T12:55:26-07:00"
+      "Updated": "2026-09-13T05:34:09-07:00"
     },
     {
-      "Manifests": 132,
+      "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-09-02T12:25:39-07:00"
+      "Updated": "2026-09-15T06:40:48-07:00"
     },
     {
       "Manifests": 336,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-09-02T21:35:41-07:00"
+      "Updated": "2026-09-15T21:51:37-07:00"
     }
   ]
 }
