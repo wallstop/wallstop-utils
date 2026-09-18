@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-09-16T22:57:19.8899839-07:00",
-      "Version": "2.36.47"
+      "Updated": "2026-09-17T23:31:41.3327109-07:00",
+      "Version": "2.36.48"
     },
     {
       "Info": "",
@@ -95,8 +95,8 @@
       "Info": "",
       "Name": "calibre",
       "Source": "extras",
-      "Updated": "2026-08-28T23:32:43.2887102-07:00",
-      "Version": "9.14.0"
+      "Updated": "2026-09-17T23:32:08.4111872-07:00",
+      "Version": "9.15.0"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-09-15T23:34:29.2899711-07:00",
-      "Version": "3.20.21"
+      "Updated": "2026-09-17T23:33:27.1872368-07:00",
+      "Version": "3.21.9"
     },
     {
       "Info": "",
@@ -151,8 +151,8 @@
       "Info": "",
       "Name": "deno",
       "Source": "main",
-      "Updated": "2026-08-27T23:32:47.308567-07:00",
-      "Version": "2.9.6"
+      "Updated": "2026-09-17T23:33:30.4526324-07:00",
+      "Version": "2.9.7"
     },
     {
       "Info": "",
@@ -242,8 +242,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-09-15T23:35:01.3178566-07:00",
-      "Version": "153.0.8010.48"
+      "Updated": "2026-09-17T23:33:41.8959491-07:00",
+      "Version": "153.0.8010.53"
     },
     {
       "Info": "",
@@ -375,8 +375,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-09-16T22:57:55.6938315-07:00",
-      "Version": "2026.9.10"
+      "Updated": "2026-09-17T23:33:44.8103611-07:00",
+      "Version": "2026.9.11"
     },
     {
       "Info": "",
@@ -438,15 +438,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-09-15T23:36:48.6111008-07:00",
-      "Version": "0.34.1"
+      "Updated": "2026-09-17T23:34:07.159364-07:00",
+      "Version": "0.34.2"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-09-15T23:37:49.4815497-07:00",
-      "Version": "0.34.1"
+      "Updated": "2026-09-17T23:35:09.2014061-07:00",
+      "Version": "0.34.2"
     },
     {
       "Info": "",
@@ -641,8 +641,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-09-15T23:39:29.7859886-07:00",
-      "Version": "0.12.15"
+      "Updated": "2026-09-17T23:35:21.1753978-07:00",
+      "Version": "0.12.16"
     },
     {
       "Info": "",
@@ -717,16 +717,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1649,
+      "Manifests": 1651,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-09-16T21:34:00-07:00"
+      "Updated": "2026-09-17T21:33:03-07:00"
     },
     {
       "Manifests": 2388,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-09-16T22:14:09-07:00"
+      "Updated": "2026-09-17T21:33:53-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-09-16T12:36:48-07:00"
+      "Updated": "2026-09-17T21:54:04-07:00"
     },
     {
       "Manifests": 336,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-09-16T21:55:22-07:00"
+      "Updated": "2026-09-17T21:46:11-07:00"
     }
   ]
 }
