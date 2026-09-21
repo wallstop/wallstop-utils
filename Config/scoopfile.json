@@ -172,8 +172,8 @@
       "Info": "",
       "Name": "ffmpeg",
       "Source": "main",
-      "Updated": "2026-08-12T23:32:47.1187825-07:00",
-      "Version": "9.0.1"
+      "Updated": "2026-09-20T23:31:21.7111548-07:00",
+      "Version": "9.0.2"
     },
     {
       "Info": "",
@@ -375,8 +375,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-09-17T23:33:44.8103611-07:00",
-      "Version": "2026.9.11"
+      "Updated": "2026-09-20T23:31:25.9808731-07:00",
+      "Version": "2026.9.12"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-09-18T23:33:39.9737249-07:00",
-      "Version": "1.17.4"
+      "Updated": "2026-09-20T23:31:27.3216612-07:00",
+      "Version": "1.17.5"
     },
     {
       "Info": "",
@@ -717,16 +717,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1654,
+      "Manifests": 1655,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-09-19T21:33:01-07:00"
+      "Updated": "2026-09-20T21:36:42-07:00"
     },
     {
-      "Manifests": 2388,
+      "Manifests": 2389,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-09-19T21:33:09-07:00"
+      "Updated": "2026-09-20T21:37:48-07:00"
     },
     {
       "Manifests": 76,
@@ -738,7 +738,7 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-09-18T12:04:51-07:00"
+      "Updated": "2026-09-20T11:55:10-07:00"
     },
     {
       "Manifests": 336,
