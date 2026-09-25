@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-09-23T23:31:39.4934173-07:00",
-      "Version": "2.37.1"
+      "Updated": "2026-09-24T23:31:49.3927465-07:00",
+      "Version": "2.37.3"
     },
     {
       "Info": "",
@@ -88,8 +88,8 @@
       "Info": "",
       "Name": "cacert",
       "Source": "main",
-      "Updated": "2026-08-12T23:30:54.1822015-07:00",
-      "Version": "2026-08-13"
+      "Updated": "2026-09-24T23:31:49.8190013-07:00",
+      "Version": "2026-09-25"
     },
     {
       "Info": "",
@@ -109,8 +109,8 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2026-09-23T23:32:24.8538636-07:00",
-      "Version": "26.917.8451.0"
+      "Updated": "2026-09-24T23:32:21.5099051-07:00",
+      "Version": "26.917.9434.0"
     },
     {
       "Info": "",
@@ -123,15 +123,15 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-09-02T23:31:32.8512285-07:00",
-      "Version": "8.22.0_1"
+      "Updated": "2026-09-24T23:32:23.4971385-07:00",
+      "Version": "8.22.0_2"
     },
     {
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-09-22T23:33:49.9928038-07:00",
-      "Version": "3.21.18"
+      "Updated": "2026-09-24T23:33:48.9633285-07:00",
+      "Version": "3.22.7"
     },
     {
       "Info": "",
@@ -256,8 +256,8 @@
       "Info": "",
       "Name": "gradle",
       "Source": "main",
-      "Updated": "2026-08-19T23:34:50.8449616-07:00",
-      "Version": "9.7.1"
+      "Updated": "2026-09-24T23:35:21.9779913-07:00",
+      "Version": "9.8.0"
     },
     {
       "Info": "",
@@ -375,8 +375,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-09-20T23:31:25.9808731-07:00",
-      "Version": "2026.9.12"
+      "Updated": "2026-09-24T23:35:25.5468035-07:00",
+      "Version": "2026.9.13"
     },
     {
       "Info": "",
@@ -417,8 +417,8 @@
       "Info": "",
       "Name": "notepadplusplus",
       "Source": "extras",
-      "Updated": "2026-08-24T23:34:03.9020659-07:00",
-      "Version": "8.9.8"
+      "Updated": "2026-09-24T23:35:27.8777731-07:00",
+      "Version": "8.9.8.1"
     },
     {
       "Info": "",
@@ -438,15 +438,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-09-22T23:34:50.3907192-07:00",
-      "Version": "0.34.3"
+      "Updated": "2026-09-24T23:36:03.6944814-07:00",
+      "Version": "0.34.4"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-09-22T23:35:53.4394372-07:00",
-      "Version": "0.34.3"
+      "Updated": "2026-09-24T23:37:02.9834516-07:00",
+      "Version": "0.34.4"
     },
     {
       "Info": "",
@@ -487,8 +487,8 @@
       "Info": "",
       "Name": "php",
       "Source": "main",
-      "Updated": "2026-08-29T23:33:32.4997488-07:00",
-      "Version": "8.5.10"
+      "Updated": "2026-09-24T23:37:06.1267369-07:00",
+      "Version": "8.5.11"
     },
     {
       "Info": "",
@@ -606,8 +606,8 @@
       "Info": "",
       "Name": "sublime-text",
       "Source": "extras",
-      "Updated": "2026-09-22T23:35:59.0948233-07:00",
-      "Version": "4-4213"
+      "Updated": "2026-09-24T23:37:08.6324804-07:00",
+      "Version": "4-4215"
     },
     {
       "Info": "",
@@ -641,8 +641,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-09-22T23:36:14.6661365-07:00",
-      "Version": "0.12.18"
+      "Updated": "2026-09-24T23:37:17.219431-07:00",
+      "Version": "0.12.19"
     },
     {
       "Info": "",
@@ -717,16 +717,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1656,
+      "Manifests": 1658,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-09-23T21:34:25-07:00"
+      "Updated": "2026-09-24T21:34:55-07:00"
     },
     {
-      "Manifests": 2389,
+      "Manifests": 2391,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-09-23T21:34:34-07:00"
+      "Updated": "2026-09-24T21:35:17-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-09-23T16:00:28-07:00"
+      "Updated": "2026-09-24T16:15:58-07:00"
     },
     {
-      "Manifests": 336,
+      "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-09-23T21:53:52-07:00"
+      "Updated": "2026-09-24T21:59:52-07:00"
     }
   ]
 }
