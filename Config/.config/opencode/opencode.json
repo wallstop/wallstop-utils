@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "playwright": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@playwright/mcp@latest",
+          "--executable-path",
+          "C:\\Users\\dbfsi\\AppData\\Local\\ms-playwright\\chromium-1243\\chrome-win64\\chrome.exe",
+          "--isolated"
+        ]
+      },
+      "chrome-devtools": {
+        "type": "local",
+        "command": ["npx", "-y", "chrome-devtools-mcp@latest"],
+        "disabled": true
+      }
+    }
+  }
+}
