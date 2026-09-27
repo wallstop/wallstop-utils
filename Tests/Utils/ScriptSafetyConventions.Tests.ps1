@@ -2619,7 +2619,7 @@ Describe "Cross-language quality platform conventions" {
     }
 
     It "tracks pre-push hook executable mode in git" {
-        $git = Get-Command -Name git -ErrorAction SilentlyContinue
+        $git = Get-Command -Name git -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $git) {
             Set-ItResult -Skipped -Because "git is unavailable on this runner"
             return
@@ -2886,7 +2886,7 @@ Describe "Quality script executable guardrails" {
     }
 
     It "passes bash -n syntax check for macOS helper when bash is available" {
-        $bash = Get-Command -Name bash -ErrorAction SilentlyContinue
+        $bash = Get-Command -Name bash -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bash) {
             Set-ItResult -Skipped -Because "bash is unavailable on this runner"
             return
@@ -2895,7 +2895,7 @@ Describe "Quality script executable guardrails" {
         $macChecksPath = Join-Path -Path $script:repoRoot -ChildPath 'Scripts/Utils/Quality/Invoke-MacOSLanguageChecks.sh'
         $bashPathArgument = $macChecksPath
         if (Test-IsWindowsPlatform) {
-            $cygpath = Get-Command -Name cygpath -ErrorAction SilentlyContinue
+            $cygpath = Get-Command -Name cygpath -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($null -ne $cygpath) {
                 $convertedPath = @(& $cygpath.Source -u $macChecksPath 2>$null | Select-Object -First 1)
                 if ($global:LASTEXITCODE -eq 0 -and $convertedPath.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($convertedPath[0])) {

@@ -18,7 +18,7 @@ BeforeDiscovery {
         @{ HostName = 'Windows PowerShell 5.1'; CommandName = 'powershell.exe' }
     )
     foreach ($hostDefinition in $profileStartupHostDefinitions) {
-        $hostCommand = Get-Command -Name $hostDefinition.CommandName -ErrorAction SilentlyContinue
+        $hostCommand = Get-Command -Name $hostDefinition.CommandName -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $hostCommand) {
             continue
         }
@@ -452,7 +452,9 @@ Describe "Cross-version compatibility - automatic variable scan (dependency-free
         # Mirrors the gate's AST scan but needs no PSScriptAnalyzer, so it runs on every
         # lane (including the Windows PowerShell 5.1 test lane). $IsWindows/$IsMacOS/$IsLinux
         # do not exist on Desktop edition and throw under StrictMode; $PSStyle is 7.2+.
-        $scanRoots = @('Scripts', 'Config', 'Tests') |
+        # Config snapshots can contain third-party package-manager shims. The portability
+        # contract owns Config/Powershell, not arbitrary restored application dependencies.
+        $scanRoots = @('Scripts', 'Config/Powershell', 'Tests') |
             ForEach-Object { Join-Path -Path $script:repoRoot -ChildPath $_ } |
             Where-Object { Test-Path -LiteralPath $_ -PathType Container }
         $files = @(Get-ChildItem -Path $scanRoots -Recurse -File -Include *.ps1, *.psm1)

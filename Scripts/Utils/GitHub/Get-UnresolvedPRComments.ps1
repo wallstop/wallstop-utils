@@ -3069,7 +3069,7 @@ function Get-GitCredentialToken {
         [int]$TimeoutSeconds = 5
     )
 
-    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $gitCommand -or [string]::IsNullOrWhiteSpace([string]$gitCommand.Source)) {
         return $null
     }

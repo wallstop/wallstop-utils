@@ -31,7 +31,7 @@ function Get-LastExitCodeOrDefault {
 }
 
 function Get-GitExecutableOrThrow {
-    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $gitCommand) {
         throw "E_PRECOMMIT_AUTOREPAIR_GIT_NOT_AVAILABLE: git is required for pre-hook auto-repair but was not found on PATH."
     }

@@ -570,7 +570,7 @@ function Get-QualityToolingFileModifiedUnixSeconds {
     )
 
     $resolvedItem = Get-Item -LiteralPath (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path -ErrorAction Stop
-    $unixEpochUtc = [datetime]::SpecifyKind([datetime]"1970-01-01T00:00:00Z", [System.DateTimeKind]::Utc)
+    $unixEpochUtc = [datetime]::new(1970, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc)
     return [int64][math]::Floor(($resolvedItem.LastWriteTimeUtc - $unixEpochUtc).TotalSeconds)
 }
 
@@ -745,7 +745,7 @@ function Get-QualityToolingTarExecutableOrThrow {
         [pscustomobject]$Context
     )
 
-    $tarCommand = Get-Command -Name "tar" -ErrorAction SilentlyContinue
+    $tarCommand = Get-Command -Name "tar" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $tarCommand) {
         throw "E_$($Context.DiagnosticPrefix)_TAR_NOT_AVAILABLE: tar is required to extract pinned $($Context.ToolSuiteLabel) quality archives on this platform but was not found on PATH."
     }

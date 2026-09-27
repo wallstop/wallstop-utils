@@ -26,7 +26,7 @@ function Get-LastExitCodeOrDefault {
     return -1
 }
 
-$gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+$gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($null -eq $gitCommand) {
     throw "E_ASSERT_CLEAN_GIT_TREE_GIT_NOT_AVAILABLE: git is not available on PATH."
 }

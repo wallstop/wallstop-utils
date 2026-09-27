@@ -498,7 +498,7 @@ function Increment-Version {
 
         if ($operationContext.Updated -and $gitActionRequested) {
             $operationContext.GitStage = "starting"
-            $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+            $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($null -eq $gitCommand) {
                 $operationContext.GitStage = "failed-git-missing"
                 throw "E_INCREMENT_VERSION_GIT_NOT_AVAILABLE: git is not available on PATH. Install git or run without -CommitChanges/-RunPreCommit/-Push."

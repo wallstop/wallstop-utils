@@ -113,7 +113,7 @@ function New-LlmHarnessPattern {
 }
 
 function Get-GitExecutableOrThrow {
-    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $gitCommand) {
         throw "E_PRECOMMIT_VALIDATION_GIT_NOT_AVAILABLE: git is required to read staged files but was not found on PATH."
     }

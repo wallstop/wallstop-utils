@@ -223,7 +223,7 @@ function script:Resolve-TestBashCommand {
         }
     }
 
-    $pathBashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+    $pathBashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $pathBashCommand) {
         Add-BashCandidate -Candidates $candidates -Origin "PATH" -Path $pathBashCommand.Source
     }
@@ -242,7 +242,7 @@ function script:Resolve-TestBashCommand {
             $resolvedPath = (Resolve-Path -LiteralPath $candidatePath -ErrorAction Stop).Path
         }
         else {
-            $candidateCommand = Get-Command -Name $candidatePath -ErrorAction SilentlyContinue
+            $candidateCommand = Get-Command -Name $candidatePath -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($null -ne $candidateCommand) {
                 $resolvedPath = $candidateCommand.Source
                 $exists = $true

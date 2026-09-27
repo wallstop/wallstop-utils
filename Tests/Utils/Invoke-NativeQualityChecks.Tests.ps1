@@ -9,6 +9,23 @@ BeforeAll {
 }
 
 Describe "Invoke-NativeQualityChecks platform resolution" {
+    It "selects one tar executable from duplicate PATH matches" {
+        Mock Get-Command {
+            @([pscustomobject]@{ Source = '/usr/bin/tar' }, [pscustomobject]@{ Source = '/bin/tar' })
+        } -ParameterFilter { $Name -eq 'tar' }
+        $context = [pscustomobject]@{ DiagnosticPrefix = 'TEST'; ToolSuiteLabel = 'native' }
+
+        Get-QualityToolingTarExecutableOrThrow -Context $context | Should -Be '/usr/bin/tar'
+    }
+
+    It "measures file timestamps from the UTC Unix epoch" {
+        $samplePath = Join-Path $TestDrive 'timestamp-sample'
+        [System.IO.File]::WriteAllText($samplePath, 'sample')
+        [System.IO.File]::SetLastWriteTimeUtc($samplePath, [datetime]::new(2000, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc))
+
+        Get-QualityToolingFileModifiedUnixSeconds -Path $samplePath | Should -Be 946684800
+    }
+
     It "uses the pinned Windows x64 StyLua asset as the explicit Windows ARM64 fallback" {
         $manifest = Read-NativeQualityToolManifest
 

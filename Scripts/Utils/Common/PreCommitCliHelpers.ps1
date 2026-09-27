@@ -213,6 +213,11 @@ function Get-PreCommitCommandExecutablePath {
         return ""
     }
 
+    # Duplicate PATH entries can make Get-Command return several CommandInfo objects.
+    $firstCommand = @($CommandInfo | Select-Object -First 1)
+    if ($firstCommand.Count -eq 0) { return "" }
+    $CommandInfo = $firstCommand[0]
+
     if ($null -ne $CommandInfo.PSObject.Properties['Source'] -and -not [string]::IsNullOrWhiteSpace([string]$CommandInfo.Source)) {
         return [string]$CommandInfo.Source
     }

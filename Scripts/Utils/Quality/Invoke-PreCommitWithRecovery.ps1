@@ -52,7 +52,7 @@ if (-not (Test-Path -LiteralPath $preCommitCliHelpersPath -PathType Leaf)) {
 $script:PreCommitRecoveryScriptRepositoryRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "../../..") -ErrorAction Stop).Path
 
 function Get-PreCommitRecoveryGitExecutableOrThrow {
-    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $gitCommand) {
         throw "E_PRECOMMIT_RECOVERY_GIT_NOT_AVAILABLE: git is required for pre-commit recovery but was not found on PATH."
     }

@@ -583,7 +583,7 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
     }
 
     It "restages real formatter output only when the staged file had no pre-existing unstaged drift" {
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is not available on PATH."
             return
@@ -624,7 +624,7 @@ Describe "Invoke-PreCommitWithRecovery environment failure classification" {
     }
 
     It "refuses real autofix restage when any staged target had pre-existing unstaged drift" {
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is not available on PATH."
             return

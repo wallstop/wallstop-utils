@@ -77,7 +77,7 @@ function Invoke-NativeCommand {
 }
 
 function Get-GitExecutableOrThrow {
-    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $gitCommand) {
         throw "E_VALIDATION_GIT_NOT_AVAILABLE: git is required for validation status checks but was not found on PATH."
     }
@@ -262,7 +262,7 @@ function Assert-NativeQualityToolAvailability {
 }
 
 function Assert-HookFastToolResolverAvailability {
-    $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+    $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $bashCommand) {
         throw "E_VALIDATION_HOOK_FAST_RESOLVER_BASH_NOT_AVAILABLE: bash is required to preflight git hook fast-tool resolution but was not found on PATH."
     }

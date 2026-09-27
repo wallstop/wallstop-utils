@@ -96,7 +96,7 @@ Describe 'AgentNotify bash offline suite' -Skip:(-not $bashToolingAvailableForDi
         $suitePath = Join-Path -Path $script:agentNotifyDir -ChildPath 'tests/run.sh'
 
         $psi = [System.Diagnostics.ProcessStartInfo]::new()
-        $psi.FileName = (Get-Command -Name 'bash' -ErrorAction Stop).Source
+        $psi.FileName = (Get-Command -Name 'bash' -ErrorAction Stop | Select-Object -First 1).Source
         Set-PortableProcessArguments -StartInfo $psi -ArgumentList @($suitePath)
         $psi.WorkingDirectory = $script:repoRoot
         $psi.UseShellExecute = $false

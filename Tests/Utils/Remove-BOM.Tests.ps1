@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     $script:removeBomScriptPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Remove-BOM.ps1"
-    $script:gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    $script:gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
 
     . (Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/CompatibilityHelpers.ps1")
     . $script:removeBomScriptPath

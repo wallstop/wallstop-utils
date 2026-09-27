@@ -106,13 +106,13 @@ Describe "powershell pre-push pre-commit validation hook" {
     }
 
     It "runs real PowerShell governance validation for hook governance files" {
-        $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
+        $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $preCommitCommand) {
             Set-ItResult -Skipped -Because "pre-commit CLI is not available on PATH."
             return
         }
 
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is not available on PATH."
             return
@@ -230,7 +230,7 @@ Describe "powershell pre-push pre-commit validation hook" {
     }
 
     It "keeps pre-commit no-staged fast path before missing-pre-commit fallback" {
-        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable."
             return
@@ -240,13 +240,13 @@ Describe "powershell pre-push pre-commit validation hook" {
             return
         }
 
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable."
             return
         }
 
-        $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
+        $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $preCommitCommand) {
             Set-ItResult -Skipped -Because "pre-commit is already unavailable, so PATH fallback simulation is not needed."
             return
@@ -305,7 +305,7 @@ Describe "powershell pre-push pre-commit validation hook" {
     }
 
     It "validates staged shell blobs even when the worktree target is absent" {
-        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable."
             return
@@ -315,7 +315,7 @@ Describe "powershell pre-push pre-commit validation hook" {
             return
         }
 
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable."
             return
@@ -379,7 +379,7 @@ Describe "powershell pre-push pre-commit validation hook" {
     }
 
     It "runs explicit full-suite pre-commit recovery for non-fast staged files" {
-        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable."
             return
@@ -389,7 +389,7 @@ Describe "powershell pre-push pre-commit validation hook" {
             return
         }
 
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable."
             return
@@ -507,7 +507,7 @@ exit 0
     }
 
     It "falls back to legacy pre-commit validation when recovery bootstrap exits 125" {
-        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable."
             return
@@ -517,7 +517,7 @@ exit 0
             return
         }
 
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable."
             return
@@ -640,7 +640,7 @@ esac
     }
 
     It "uses recovery-backed pre-commit validation when staged discovery fails" {
-        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable."
             return
@@ -650,7 +650,7 @@ esac
             return
         }
 
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable."
             return
@@ -743,7 +743,7 @@ exit 0
     }
 
     It "runs opt-in pre-commit diff checks for non-fast staged files" {
-        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable."
             return
@@ -753,7 +753,7 @@ exit 0
             return
         }
 
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable."
             return
@@ -828,13 +828,13 @@ exit 0
             return
         }
 
-        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable."
             return
         }
 
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is unavailable."
             return
@@ -902,13 +902,13 @@ exec "$($gitCommand.Source)" "`$@"
     }
 
     It "passes multiple pre-commit filenames as explicit target files" {
-        $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue
+        $preCommitCommand = Get-Command -Name "pre-commit" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $preCommitCommand) {
             Set-ItResult -Skipped -Because "pre-commit CLI is not available on PATH."
             return
         }
 
-        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+        $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $gitCommand) {
             Set-ItResult -Skipped -Because "git is not available on PATH."
             return
@@ -937,7 +937,8 @@ exec "$($gitCommand.Source)" "`$@"
             )
 
             if ($filesToStage.Count -gt 0) {
-                $addOutput = @(& $gitCommand.Source -C $script:repoRoot add -- @filesToStage 2>&1)
+                # The temporary index may see a staged, ignored progress file as new.
+                $addOutput = @(& $gitCommand.Source -C $script:repoRoot add -f -- @filesToStage 2>&1)
                 $LASTEXITCODE | Should -Be 0 -Because (
                     "temp-index staging should make the modified pre-commit config visible to pre-commit. Output: {0}" -f
                     ($addOutput -join "`n")
