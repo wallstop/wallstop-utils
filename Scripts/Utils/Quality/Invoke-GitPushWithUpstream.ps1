@@ -26,7 +26,7 @@ if (-not (Test-Path -LiteralPath $gitHookRegistrationHelpersPath -PathType Leaf)
 . $gitHookRegistrationHelpersPath
 
 function Get-GitPushGitExecutableOrThrow {
-    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $gitCommand) {
         throw "E_GIT_PUSH_GIT_NOT_AVAILABLE: git is required for push automation but was not found on PATH."
     }

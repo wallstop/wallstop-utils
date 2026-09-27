@@ -9,6 +9,15 @@ BeforeAll {
 }
 
 Describe "Invoke-NativeQualityChecks platform resolution" {
+    It "selects one tar executable from duplicate PATH matches" {
+        Mock Get-Command {
+            @([pscustomobject]@{ Source = '/usr/bin/tar' }, [pscustomobject]@{ Source = '/bin/tar' })
+        } -ParameterFilter { $Name -eq 'tar' }
+        $context = [pscustomobject]@{ DiagnosticPrefix = 'TEST'; ToolSuiteLabel = 'native' }
+
+        Get-QualityToolingTarExecutableOrThrow -Context $context | Should -Be '/usr/bin/tar'
+    }
+
     It "measures file timestamps from the UTC Unix epoch" {
         $samplePath = Join-Path $TestDrive 'timestamp-sample'
         [System.IO.File]::WriteAllText($samplePath, 'sample')

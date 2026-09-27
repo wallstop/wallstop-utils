@@ -3,7 +3,7 @@ Set-StrictMode -Version Latest
 function Get-GitExperienceDeltaAudit {
     param([string]$StateDirectory, [string]$LazygitConfigPath)
     foreach ($name in @('delta', 'lazygit')) {
-        $command = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue
+        $command = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         [pscustomobject]@{ Key = $name; Recommended = 'Available'; Status = if ($command) { 'Available' } else { 'Missing' }; Effective = if ($command) { $command.Source } else { '' }; Origin = '' }
     }
     if ($null -ne $env:GIT_PAGER) {
@@ -14,20 +14,20 @@ function Get-GitExperienceDeltaAudit {
 
 function Get-GitExperienceDeltaChange {
     param([string]$StateDirectory, [string]$ConfigPath, $Previous, [switch]$InstallDependencies, [switch]$ReplaceConflicts)
-    $lazy = Get-Command -Name 'lazygit' -CommandType Application -ErrorAction SilentlyContinue
+    $lazy = Get-Command -Name 'lazygit' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $lazy) { throw 'E_GIT_EXPERIENCE_LAZYGIT_MISSING: Install lazygit 0.65.1 or newer.' }
     Assert-GitExperienceVersion $lazy.Source '0.65.1' 'version=(\d+\.\d+\.\d+)' | Out-Null
-    $delta = Get-Command -Name 'delta' -CommandType Application -ErrorAction SilentlyContinue
+    $delta = Get-Command -Name 'delta' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $delta -and $InstallDependencies) {
-        $scoop = Get-Command -Name 'scoop' -ErrorAction SilentlyContinue
-        $brew = Get-Command -Name 'brew' -CommandType Application -ErrorAction SilentlyContinue
+        $scoop = Get-Command -Name 'scoop' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $brew = Get-Command -Name 'brew' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if ((Test-IsWindowsPlatform) -and $scoop) {
             $shell = Resolve-PowerShellExecutablePath
             Invoke-GitExperienceProcess $shell @('-NoLogo', '-NoProfile', '-File', $scoop.Source, 'install', 'delta') -TimeoutSeconds 300 | Out-Null
         }
         elseif ($brew) { Invoke-GitExperienceProcess $brew.Source @('install', 'git-delta') -TimeoutSeconds 300 | Out-Null }
         else { throw 'E_GIT_EXPERIENCE_DELTA_MISSING: Install git-delta with your package manager, then rerun. No supported Scoop/Homebrew installation was found.' }
-        $delta = Get-Command -Name 'delta' -CommandType Application -ErrorAction SilentlyContinue
+        $delta = Get-Command -Name 'delta' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     }
     if (-not $delta) { throw 'E_GIT_EXPERIENCE_DELTA_MISSING: Install git-delta (Scoop: delta), or use -InstallDependencies with existing Scoop/Homebrew.' }
     Assert-GitExperienceVersion $delta.Source '0.19.2' | Out-Null

@@ -659,7 +659,7 @@ function Resolve-ScannableFileDiscovery {
         Write-Verbose "Remove-BOM symlink origin diagnostics: scan root '$scanRootInput' canonicalized to '$resolvedScanRoot'."
     }
 
-    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
     $gitDiscoveryFailureReason = ""
 
     if ($null -ne $gitCommand) {

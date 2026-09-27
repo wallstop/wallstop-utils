@@ -24,7 +24,7 @@ function Invoke-GitExperience {
         [string]$Action, [switch]$WithDelta, [switch]$InstallDependencies,
         [switch]$ReplaceConflicts, [string]$StateDirectory, [string]$LazygitConfigPath
     )
-    $gitCommand = Get-Command -Name 'git' -ErrorAction SilentlyContinue
+    $gitCommand = Get-Command -Name 'git' -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $gitCommand) { throw 'E_GIT_EXPERIENCE_GIT_NOT_AVAILABLE: Install Git and add it to PATH.' }
     $gitPath = $gitCommand.Source
     $manifest = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'GitExperience.settings.json'), [System.Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -34,6 +34,12 @@ function Invoke-GitExperience {
         $StateDirectory = Join-Path $storage 'wallstop-utils/git-experience'
     }
     $StateDirectory = [System.IO.Path]::GetFullPath($StateDirectory)
+    if (Test-Path -LiteralPath $StateDirectory) {
+        $stateDirectoryItem = Get-Item -LiteralPath $StateDirectory -Force
+        if (($stateDirectoryItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "E_GIT_EXPERIENCE_SYMLINK: Supply the resolved state directory instead of '$StateDirectory'."
+        }
+    }
     $profilePath = Join-Path $StateDirectory 'profile.gitconfig'
     $statePath = Join-Path $StateDirectory 'installation.json'
     $profileOrigin = 'file:' + ($profilePath -replace '\\', '/')
@@ -76,7 +82,8 @@ function Invoke-GitExperience {
     }
     if ($Action -eq 'Remove' -and $null -eq $state) { Write-Host 'Git experience is not installed.'; return }
     if (-not $PSCmdlet.ShouldProcess($globalPath, "$Action Git experience configuration")) { return }
-    if ($null -ne $state -and (Get-GitExperienceFile $profilePath) -cne $state.ProfileBytes) {
+    $currentProfile = Get-GitExperienceFile $profilePath
+    if ($null -ne $state -and $null -ne $currentProfile -and $currentProfile -cne $state.ProfileBytes) {
         throw "E_GIT_EXPERIENCE_DRIFT: Managed profile was edited; preserve it elsewhere before $Action."
     }
     if ($null -eq $state -and (Test-Path -LiteralPath $profilePath)) {
@@ -97,6 +104,7 @@ function Invoke-GitExperience {
         try { $globalLock = [System.IO.File]::Open(($globalPath + '.lock'), [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None) }
         catch { throw 'E_GIT_EXPERIENCE_LOCK: Global Git configuration is locked. Retry when the other writer completes.' }
         if ((Get-GitExperienceFile $globalPath) -cne $globalBefore) { throw 'E_GIT_EXPERIENCE_CONCURRENT: Global config changed during preparation.' }
+        if ((Get-GitExperienceFile $profilePath) -cne $currentProfile) { throw 'E_GIT_EXPERIENCE_CONCURRENT: Managed profile changed during preparation.' }
         $initialGlobal = if ($null -eq $globalBefore) { '' } else { $globalBefore }
         Write-GitExperienceFile $scratch $initialGlobal
         $include = $profilePath -replace '\\', '/'
@@ -114,7 +122,7 @@ function Invoke-GitExperience {
                 $profileText += "[$section]`n`t$name = $($settings[$key])`n"
             }
             $profileBytes = ConvertTo-GitExperienceBytes $profileText
-            $changes.Add([pscustomobject]@{ Path = $profilePath; Before = Get-GitExperienceFile $profilePath; After = $profileBytes })
+            $changes.Add([pscustomobject]@{ Path = $profilePath; Before = $currentProfile; After = $profileBytes })
             # git config --add can reuse an earlier section; text position controls precedence.
             $escapedInclude = $include.Replace('"', '\"').Replace("`n", '\n').Replace("`t", '\t')
             $existingBytes = [System.IO.File]::ReadAllBytes($scratch)
@@ -138,7 +146,7 @@ function Invoke-GitExperience {
         }
         else {
             if ($null -ne $deltaState) { $changes.Add((Get-GitExperienceDeltaRemoval $deltaState)) }
-            $changes.Add([pscustomobject]@{ Path = $profilePath; Before = Get-GitExperienceFile $profilePath; After = $null })
+            $changes.Add([pscustomobject]@{ Path = $profilePath; Before = $currentProfile; After = $null })
             $stateAfter = $null
         }
         $globalAfter = Get-GitExperienceFile $scratch
@@ -153,7 +161,8 @@ function Invoke-GitExperience {
         }
         foreach ($change in $actualChanges) {
             if ((Get-GitExperienceFile $change.Path) -cne $change.Before) { throw "E_GIT_EXPERIENCE_CONCURRENT: '$($change.Path)' changed during preparation." }
-            Write-GitExperienceFile $change.Path $change.After
+            $preserveMode = (Test-GitExperienceSamePath $change.Path $globalPath) -or ($null -ne $deltaState -and (Test-GitExperienceSamePath $change.Path $deltaState.Path))
+            Write-GitExperienceFile $change.Path $change.After -PreserveExistingMode:$preserveMode -VerifyOriginal -Original $change.Before
             $published.Add($change)
         }
         if ($Action -eq 'Apply') {
@@ -161,6 +170,8 @@ function Invoke-GitExperience {
                 $values = @(Get-GitExperienceValues $gitPath $key -Global)
                 if ($values.Count -eq 0 -or $values[-1].Value -ne $selected[$key]) { throw "E_GIT_EXPERIENCE_VERIFY: '$key' did not activate globally." }
             }
+            Set-GitExperiencePrivatePath $profilePath
+            Set-GitExperiencePrivatePath $statePath
         }
         Write-Host "Git experience: $Action completed. Recovery records: $StateDirectory"
     }
@@ -168,7 +179,10 @@ function Invoke-GitExperience {
         $originalError = $_
         for ($index = $published.Count - 1; $index -ge 0; $index--) {
             $change = $published[$index]
-            if ((Get-GitExperienceFile $change.Path) -ceq $change.After) { Write-GitExperienceFile $change.Path $change.Before }
+            if ((Get-GitExperienceFile $change.Path) -ceq $change.After) {
+                $preserveMode = (Test-GitExperienceSamePath $change.Path $globalPath) -or ($null -ne $deltaState -and (Test-GitExperienceSamePath $change.Path $deltaState.Path))
+                Write-GitExperienceFile $change.Path $change.Before -PreserveExistingMode:$preserveMode -VerifyOriginal -Original $change.After
+            }
             else { Write-Warning "W_GIT_EXPERIENCE_ROLLBACK_CONFLICT: Preserve concurrent edits in '$($change.Path)'; consult recovery records." }
         }
         throw $originalError

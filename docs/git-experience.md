@@ -55,6 +55,7 @@ The installer discovers lazygit's config directory using `--print-config-dir` an
 honors `LG_CONFIG_FILE`. For a comma-separated override, select the last layer with
 `-LazygitConfigPath`. Repository-local lazygit config can still override the renderer.
 Symlinked target files require an explicit resolved path; for Git, set `GIT_CONFIG_GLOBAL`.
+Use a resolved state directory as well; the installer rejects a symlink at that path.
 If delta appears inactive, inspect `GIT_PAGER`: an inherited value such as `cat`
 overrides pager selection, including lazygit's stdin renderer. Audit reports that override.
 For an interactive terminal test, clear that variable in the test process and use a
@@ -62,8 +63,16 @@ color-capable terminal; automation environments often set `TERM=dumb` and `NO_CO
 
 Backups contain original file bytes and stay in private user storage. They may contain
 sensitive personal settings: do not commit them. Removal restores the original bytes
-when possible; subsequent unrelated edits survive. Edits to the managed profile or
-renderer cause a drift error instead of being discarded. Recovery journals remain
+when possible; subsequent unrelated edits survive. Edits to an existing managed
+profile or renderer cause a drift error instead of being discarded. A deleted
+managed profile is rebuilt by Apply or cleaned up by Remove. Existing Unix config
+owner, group, and permissions are preserved; publication stops if they cannot be
+copied to the replacement file. A group-readable config whose group differs from
+the temporary file's group is rejected before copying its contents. Managed state
+stays private. Read-only Unix configs may require temporarily restoring owner-write
+permission before Apply or Remove. Extended attributes are copied where the
+platform copy tool supports them, but they are not independently verified.
+Recovery journals remain
 after removal. Installed programs and the helper environment are retained.
 
 ## Evidence and decisions

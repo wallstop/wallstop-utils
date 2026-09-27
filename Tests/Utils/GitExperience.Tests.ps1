@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 BeforeAll {
     $script:root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
     . (Join-Path $script:root 'Scripts/Git/Set-GitExperience.ps1') -NoInvokeMain
-    $script:git = (Get-Command -Name 'git' -ErrorAction Stop).Source
+    $script:git = (Get-Command -Name 'git' -ErrorAction Stop | Select-Object -First 1).Source
     function Read-Setting([string]$Key) {
         $result = Invoke-GitExperienceProcess $script:git @('config', '--global', '--includes', '--get', $Key) -AllowedExitCodes @(0, 1)
         return $result.Stdout.Trim()
@@ -93,6 +93,16 @@ Describe 'Git experience installation' {
         Mock Test-IsWindowsPlatform { return $false }
         Test-GitExperienceSamePath '/tmp/Profile' '/tmp/profile' | Should -BeFalse
     }
+    It 'selects one executable when a command exists in multiple PATH directories' {
+        Mock Test-IsWindowsPlatform { return $false }
+        Mock Get-Command {
+            @([pscustomobject]@{ Source = '/usr/bin/chmod' }, [pscustomobject]@{ Source = '/bin/chmod' })
+        } -ParameterFilter { $Name -eq 'chmod' }
+        Mock Invoke-GitExperienceProcess { return [pscustomobject]@{ ExitCode = 0; Stdout = ''; Stderr = '' } } -ParameterFilter { $Executable -eq '/usr/bin/chmod' }
+
+        Set-GitExperiencePrivatePath $env:GIT_CONFIG_GLOBAL
+        Should -Invoke Invoke-GitExperienceProcess -Times 1 -Exactly -ParameterFilter { $Executable -eq '/usr/bin/chmod' }
+    }
     It 'preserves preferences in included files and can explicitly override them reversibly' {
         $included = Join-Path $TestDrive 'existing preferences'
         [System.IO.File]::WriteAllText($included, "[diff]`n`talgorithm = patience`n", [System.Text.UTF8Encoding]::new($false))
@@ -113,6 +123,96 @@ Describe 'Git experience installation' {
         & (Join-Path $script:root 'Scripts/Git/Set-GitExperience.ps1') -Action Apply -StateDirectory $script:stateDir | Out-Null
         [System.IO.File]::AppendAllText((Join-Path $script:stateDir 'profile.gitconfig'), "`n# user edit`n")
         { & (Join-Path $script:root 'Scripts/Git/Set-GitExperience.ps1') -Action Apply -StateDirectory $script:stateDir } | Should -Throw '*E_GIT_EXPERIENCE_DRIFT*'
+    }
+    It 'repairs a missing managed profile and can remove its stale include' {
+        $before = Get-GitExperienceFile $env:GIT_CONFIG_GLOBAL
+        Invoke-GitExperience -Action Apply -StateDirectory $script:stateDir | Out-Null
+        $profile = Join-Path $script:stateDir 'profile.gitconfig'
+        Remove-Item -LiteralPath $profile
+
+        Invoke-GitExperience -Action Apply -StateDirectory $script:stateDir | Out-Null
+        Read-Setting 'diff.algorithm' | Should -Be 'histogram'
+        Remove-Item -LiteralPath $profile
+
+        Invoke-GitExperience -Action Remove -StateDirectory $script:stateDir | Out-Null
+        Get-GitExperienceFile $env:GIT_CONFIG_GLOBAL | Should -BeExactly $before
+        Test-Path -LiteralPath (Join-Path $script:stateDir 'installation.json') | Should -BeFalse
+    }
+    It 'preserves Unix mode of an existing user config through apply and remove' {
+        if (Test-IsWindowsPlatform) { Set-ItResult -Skipped -Because 'Unix file permissions'; return }
+        $chmod = Get-Command -Name 'chmod' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $stat = Get-Command -Name 'stat' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $modeOf = {
+            param([string]$Path)
+            $arguments = if (Test-IsMacOSPlatform) { @('-f', '%Lp', $Path) } else { @('-c', '%a', $Path) }
+            return (Invoke-GitExperienceProcess $stat.Source $arguments).Stdout.Trim()
+        }
+        Invoke-GitExperienceProcess $chmod.Source @('640', $env:GIT_CONFIG_GLOBAL) | Out-Null
+        $identityBefore = Get-GitExperienceUnixIdentity $env:GIT_CONFIG_GLOBAL
+
+        Invoke-GitExperience -Action Apply -StateDirectory $script:stateDir | Out-Null
+        & $modeOf $env:GIT_CONFIG_GLOBAL | Should -Be '640'
+        Get-GitExperienceUnixIdentity $env:GIT_CONFIG_GLOBAL | Should -Be $identityBefore
+        $statePath = Join-Path $script:stateDir 'installation.json'
+        Invoke-GitExperienceProcess $chmod.Source @('644', $statePath) | Out-Null
+        Invoke-GitExperience -Action Apply -StateDirectory $script:stateDir | Out-Null
+        & $modeOf $statePath | Should -Be '600'
+        Invoke-GitExperience -Action Remove -StateDirectory $script:stateDir | Out-Null
+        & $modeOf $env:GIT_CONFIG_GLOBAL | Should -Be '640'
+        Get-GitExperienceUnixIdentity $env:GIT_CONFIG_GLOBAL | Should -Be $identityBefore
+    }
+    It 'sets temporary file permissions before writing configuration bytes' {
+        Mock Set-GitExperiencePrivatePath {
+            if ((Get-Item -LiteralPath $Path).Length -ne 0) { throw 'temporary file contained data before mode was set' }
+        }
+        $target = Join-Path $TestDrive 'private temp target'
+        Write-GitExperienceFile $target (ConvertTo-GitExperienceBytes 'secret setting')
+        [System.IO.File]::ReadAllText($target) | Should -Be 'secret setting'
+    }
+    It 'rejects a destination edit made while preparing a replacement file' {
+        $target = Join-Path $TestDrive 'concurrent target'
+        [System.IO.File]::WriteAllText($target, 'original')
+        $original = Get-GitExperienceFile $target
+        Mock Set-GitExperiencePrivatePath {
+            [System.IO.File]::WriteAllText($target, 'new user edit')
+        }
+        { Write-GitExperienceFile $target (ConvertTo-GitExperienceBytes 'installer change') -VerifyOriginal -Original $original } |
+            Should -Throw '*E_GIT_EXPERIENCE_CONCURRENT*'
+        [System.IO.File]::ReadAllText($target) | Should -Be 'new user edit'
+    }
+    It 'does not copy a group-readable config through a different temporary group' {
+        $target = Join-Path $TestDrive 'group readable target'
+        [System.IO.File]::WriteAllText($target, 'private original')
+        Mock Test-IsWindowsPlatform { return $false }
+        Mock Get-GitExperienceUnixMode { return '640' }
+        Mock Get-GitExperienceUnixIdentity {
+            if ($Path -eq $target) { return '1000:2000:640' }
+            return '1000:3000:640'
+        }
+        Mock Set-GitExperiencePrivatePath {}
+        { Write-GitExperienceFile $target (ConvertTo-GitExperienceBytes 'replacement') -PreserveExistingMode } |
+            Should -Throw '*E_GIT_EXPERIENCE_METADATA*'
+        [System.IO.File]::ReadAllText($target) | Should -Be 'private original'
+    }
+    It 'does not overwrite a managed profile edited during preparation' {
+        Invoke-GitExperience -Action Apply -StateDirectory $script:stateDir | Out-Null
+        $script:profileDuringPreparation = Join-Path $script:stateDir 'profile.gitconfig'
+        Mock Get-GitExperienceDeltaChange {
+            [System.IO.File]::AppendAllText($script:profileDuringPreparation, "# concurrent user edit`n")
+            return $null
+        }
+        { Invoke-GitExperience -Action Apply -StateDirectory $script:stateDir -WithDelta } | Should -Throw '*E_GIT_EXPERIENCE_CONCURRENT*'
+        [System.IO.File]::ReadAllText($script:profileDuringPreparation) | Should -Match 'concurrent user edit'
+    }
+    It 'rejects a symlinked state directory without changing its target mode' {
+        if (Test-IsWindowsPlatform) { Set-ItResult -Skipped -Because 'Unix symlink permissions'; return }
+        $actual = Join-Path $TestDrive 'actual state directory'
+        [void][System.IO.Directory]::CreateDirectory($actual)
+        $linked = Join-Path $TestDrive 'linked state directory'
+        New-Item -ItemType SymbolicLink -Path $linked -Target $actual | Out-Null
+        $before = Get-GitExperienceUnixMode $actual
+        { Invoke-GitExperience -Action Apply -StateDirectory $linked } | Should -Throw '*E_GIT_EXPERIENCE_SYMLINK*'
+        Get-GitExperienceUnixMode $actual | Should -Be $before
     }
     It 'restores an absent global config to absence' {
         Remove-Item -LiteralPath $env:GIT_CONFIG_GLOBAL

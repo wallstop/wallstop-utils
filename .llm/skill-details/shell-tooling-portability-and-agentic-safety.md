@@ -72,6 +72,10 @@ awk -F: '$3 > 1000 {print $1}' /etc/passwd
   rule to config origin checks.
 - Preserve raw bytes when inserting into existing user configuration; decoding and
   rewriting can corrupt legacy encodings, and an existing UTF-8 BOM must stay first.
+- `Get-Command` can return several matching executables (for example `/usr/bin`
+  and `/bin`); select one command before using `.Source` as a process path.
+- Preserve existing Unix permissions for user-owned files during atomic replacement;
+  keep managed state and backups private, including on idempotent reapplication.
 - Render user-selected install paths into every generated/copied launcher configuration.
 - Audit/proof modes fail closed when a prerequisite, enumeration, or content scan fails.
 

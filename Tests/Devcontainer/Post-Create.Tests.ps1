@@ -455,7 +455,7 @@ Describe "post-create.sh Codex CLI bootstrap" {
     }
 
     It "does not report success from a local-bin npm prefix or symlinked local-bin PATH fallback" {
-        $bash = Get-Command -Name bash -ErrorAction SilentlyContinue
+        $bash = Get-Command -Name bash -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bash) {
             Set-ItResult -Skipped -Because "bash is unavailable on this runner."
             return
@@ -474,7 +474,7 @@ Describe "post-create.sh Codex CLI bootstrap" {
         $localPrefix = Join-Path -Path $homeRoot -ChildPath ".local"
         $runnerPath = Join-Path -Path $tempRoot -ChildPath "run-codex-install.sh"
         $fakeNpmPath = Join-Path -Path $fakeBin -ChildPath "npm"
-        $nodeCommand = Get-Command -Name node -ErrorAction SilentlyContinue
+        $nodeCommand = Get-Command -Name node -ErrorAction SilentlyContinue | Select-Object -First 1
         $chmodPath = Resolve-RequiredTestApplication -Name "chmod"
         $readlinkPath = Resolve-RequiredTestApplication -Name "readlink"
         $oldCodexPath = Join-Path -Path $oldBin -ChildPath "codex"
@@ -577,7 +577,7 @@ exit 1
     }
 
     It "reports success for a local npm prefix only when ~/.local/bin/codex resolves to the installed package bin" {
-        $bash = Get-Command -Name bash -ErrorAction SilentlyContinue
+        $bash = Get-Command -Name bash -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bash) {
             Set-ItResult -Skipped -Because "bash is unavailable on this runner."
             return
@@ -586,7 +586,7 @@ exit 1
             Set-ItResult -Skipped -Because "Bash-level devcontainer bootstrap regression uses POSIX paths."
             return
         }
-        $nodeCommand = Get-Command -Name node -ErrorAction SilentlyContinue
+        $nodeCommand = Get-Command -Name node -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $nodeCommand) {
             Set-ItResult -Skipped -Because "node is unavailable on this runner."
             return

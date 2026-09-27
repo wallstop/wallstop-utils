@@ -10,7 +10,7 @@ if (-not (Test-Path -LiteralPath $gitHookCompatibilityHelpersPath -PathType Leaf
 . $gitHookCompatibilityHelpersPath
 
 function Get-GitHookRegistrationGitExecutableOrThrow {
-    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue
+    $gitCommand = Get-Command -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $gitCommand) {
         throw "E_HOOK_REGISTRATION_GIT_NOT_AVAILABLE: git is required for hook registration preflight but was not found on PATH."
     }

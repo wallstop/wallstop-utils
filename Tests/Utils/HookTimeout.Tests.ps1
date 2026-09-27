@@ -13,7 +13,7 @@ BeforeAll {
             return $Path
         }
 
-        $cygpathCommand = Get-Command -Name cygpath -ErrorAction SilentlyContinue
+        $cygpathCommand = Get-Command -Name cygpath -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -ne $cygpathCommand) {
             $global:LASTEXITCODE = 0
             $convertedPath = @(& $cygpathCommand.Source -u $Path 2>$null | Select-Object -First 1)
@@ -22,7 +22,7 @@ BeforeAll {
             }
         }
 
-        $wslCommand = Get-Command -Name wsl.exe -ErrorAction SilentlyContinue
+        $wslCommand = Get-Command -Name wsl.exe -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -ne $wslCommand) {
             $wslInputPath = $Path -replace '\\', '/'
             $global:LASTEXITCODE = 0
@@ -41,7 +41,7 @@ BeforeAll {
 
 Describe "HookTimeout shell watchdog behavior" {
     It "emits timeout warnings on stderr without polluting stdout" {
-        $bashCommand = Get-Command -Name bash -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name bash -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable on this runner."
             return
@@ -123,7 +123,7 @@ printf '%s\n' "stdout-data"
             return
         }
 
-        $bashCommand = Get-Command -Name bash -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name bash -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable on this runner."
             return
@@ -246,7 +246,7 @@ exit 8
             if (Test-Path -LiteralPath $childPidPath -PathType Leaf) {
                 $childPid = [System.IO.File]::ReadAllText($childPidPath, [System.Text.Encoding]::UTF8).Trim()
                 if ($childPid -match '^\d+$') {
-                    $killCommand = Get-Command -Name kill -ErrorAction SilentlyContinue
+                    $killCommand = Get-Command -Name kill -ErrorAction SilentlyContinue | Select-Object -First 1
                     if ($null -ne $killCommand) {
                         & $killCommand.Source -KILL $childPid 2> $null
                     }
@@ -263,7 +263,7 @@ exit 8
             return
         }
 
-        $bashCommand = Get-Command -Name bash -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name bash -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable on this runner."
             return
@@ -373,7 +373,7 @@ exit 8
             if (Test-Path -LiteralPath $childPidPath -PathType Leaf) {
                 $childPid = [System.IO.File]::ReadAllText($childPidPath, [System.Text.Encoding]::UTF8).Trim()
                 if ($childPid -match '^\d+$') {
-                    $killCommand = Get-Command -Name kill -ErrorAction SilentlyContinue
+                    $killCommand = Get-Command -Name kill -ErrorAction SilentlyContinue | Select-Object -First 1
                     if ($null -ne $killCommand) {
                         & $killCommand.Source -KILL $childPid 2> $null
                     }
@@ -390,7 +390,7 @@ exit 8
             return
         }
 
-        $bashCommand = Get-Command -Name bash -ErrorAction SilentlyContinue
+        $bashCommand = Get-Command -Name bash -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $bashCommand) {
             Set-ItResult -Skipped -Because "bash is unavailable on this runner."
             return
@@ -447,7 +447,7 @@ fi
         $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
         [System.IO.File]::WriteAllText($fakeSetsidPath, $fakeSetsidContent, $utf8NoBom)
         [System.IO.File]::WriteAllText($driverPath, $driverContent, $utf8NoBom)
-        $chmodCommand = Get-Command -Name chmod -ErrorAction SilentlyContinue
+        $chmodCommand = Get-Command -Name chmod -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -ne $chmodCommand) {
             & $chmodCommand.Source +x $fakeSetsidPath
         }

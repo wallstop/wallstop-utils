@@ -19,6 +19,14 @@ BeforeAll {
 }
 
 Describe "PreCommitCliHelpers" {
+    It "uses the first executable when PATH discovery returns several matches" {
+        $matches = @(
+            [pscustomobject]@{ Source = '/usr/bin/python3' },
+            [pscustomobject]@{ Source = '/bin/python3' }
+        )
+        Get-PreCommitCommandExecutablePath -CommandInfo $matches | Should -Be '/usr/bin/python3'
+    }
+
     It "reads an exact pre-commit pin with comments and CRLF line endings" {
         $repoRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString("N"))
         [System.IO.Directory]::CreateDirectory($repoRoot) | Out-Null

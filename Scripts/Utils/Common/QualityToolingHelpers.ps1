@@ -745,7 +745,7 @@ function Get-QualityToolingTarExecutableOrThrow {
         [pscustomobject]$Context
     )
 
-    $tarCommand = Get-Command -Name "tar" -ErrorAction SilentlyContinue
+    $tarCommand = Get-Command -Name "tar" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $tarCommand) {
         throw "E_$($Context.DiagnosticPrefix)_TAR_NOT_AVAILABLE: tar is required to extract pinned $($Context.ToolSuiteLabel) quality archives on this platform but was not found on PATH."
     }

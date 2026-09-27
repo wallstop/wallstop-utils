@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 BeforeAll {
     $script:repoRoot = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "../..")).Path
     $script:resolverPath = Join-Path -Path $script:repoRoot -ChildPath "Scripts/Utils/Common/HookFastToolResolver.sh"
-    $script:bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue
+    $script:bashCommand = Get-Command -Name "bash" -ErrorAction SilentlyContinue | Select-Object -First 1
 
     function Invoke-HookFastResolverBash {
         param(

@@ -18,7 +18,7 @@ BeforeDiscovery {
         @{ HostName = 'Windows PowerShell 5.1'; CommandName = 'powershell.exe' }
     )
     foreach ($hostDefinition in $profileStartupHostDefinitions) {
-        $hostCommand = Get-Command -Name $hostDefinition.CommandName -ErrorAction SilentlyContinue
+        $hostCommand = Get-Command -Name $hostDefinition.CommandName -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $hostCommand) {
             continue
         }
