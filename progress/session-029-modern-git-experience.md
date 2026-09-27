@@ -75,6 +75,11 @@ PR whose CI and reviewer feedback are fully green.
   portable `cp -p` is now used for that case with the same metadata parity check.
   Both PowerShell editions passed all 30 installer tests, and full validation
   passed again before the follow-up commit.
+- CI on `ca3ed66` exposed a macOS-only test fixture error: three Linux fallback
+  tests mocked Windows detection but left macOS detection real, so the macOS
+  branch bypassed their mocked Linux copy path. The fixtures now explicitly
+  select Linux. Both PowerShell editions passed all 30 installer tests again;
+  full validation passed, and cross-platform CI rerun is pending.
 
 ## Environment finding
 

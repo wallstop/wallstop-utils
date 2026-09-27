@@ -198,6 +198,7 @@ Describe 'Git experience installation' {
         $target = Join-Path $TestDrive 'xattr fallback target'
         [System.IO.File]::WriteAllText($target, 'original')
         Mock Test-IsWindowsPlatform { return $false }
+        Mock Test-IsMacOSPlatform { return $false }
         Mock Get-GitExperienceUnixMode { return '640' }
         Mock Get-GitExperienceUnixIdentity { return '1000:1000:640' }
         Mock Set-GitExperiencePrivatePath {}
@@ -218,6 +219,7 @@ Describe 'Git experience installation' {
         $target = Join-Path $TestDrive 'xattr unrelated failure target'
         [System.IO.File]::WriteAllText($target, 'original')
         Mock Test-IsWindowsPlatform { return $false }
+        Mock Test-IsMacOSPlatform { return $false }
         Mock Get-GitExperienceUnixMode { return '640' }
         Mock Get-GitExperienceUnixIdentity { return '1000:1000:640' }
         Mock Set-GitExperiencePrivatePath {}
@@ -238,6 +240,7 @@ Describe 'Git experience installation' {
         $target = Join-Path $TestDrive 'portable cp target'
         [System.IO.File]::WriteAllText($target, 'original')
         Mock Test-IsWindowsPlatform { return $false }
+        Mock Test-IsMacOSPlatform { return $false }
         Mock Get-GitExperienceUnixMode { return '640' }
         Mock Get-GitExperienceUnixIdentity { return '1000:1000:640' }
         Mock Set-GitExperiencePrivatePath {}
