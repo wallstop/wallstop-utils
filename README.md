@@ -447,3 +447,11 @@ Batch validation is intentionally best effort:
 ## License
 
 See [LICENSE](LICENSE) for details.
+
+## Modern Git and lazygit setup
+
+An opt-in, reversible user-wide profile adds rebase conveniences, clearer conflicts,
+and optional delta rendering while preserving existing preferences. Start with
+`./Scripts/Git/Set-GitExperience.ps1 -Action Audit -WithDelta`.
+See [Git experience setup and research](docs/git-experience.md) for installation,
+removal, evidence, and lazygit-specific behavior.

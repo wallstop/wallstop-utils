@@ -63,6 +63,15 @@ awk -F: '$3 > 1000 {print $1}' /etc/passwd
   symlinks must be left untouched with an actionable diagnostic.
 - Build, permission, and validate replacements before atomic publication, retaining a
   recoverable backup when replacing user configuration.
+- Test configuration precedence across every file in the targeted scope and both matching
+  and nonmatching conditional contexts; configuration write APIs may insert into existing sections rather than append.
+- Reapplication must retain intervening user edits in the removal baseline;
+  cover apply → user edit → apply → remove.
+- Compare configuration target paths ordinally on Linux/macOS (so case-sensitive
+  volumes remain safe), and ordinally ignoring case on Windows. Apply the same
+  rule to config origin checks.
+- Preserve raw bytes when inserting into existing user configuration; decoding and
+  rewriting can corrupt legacy encodings, and an existing UTF-8 BOM must stay first.
 - Render user-selected install paths into every generated/copied launcher configuration.
 - Audit/proof modes fail closed when a prerequisite, enumeration, or content scan fails.
 

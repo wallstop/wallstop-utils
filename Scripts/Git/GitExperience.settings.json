@@ -1,0 +1,28 @@
+{
+  "gitMinimum": "2.38.0",
+  "settings": {
+    "diff.algorithm": "histogram",
+    "diff.colorMoved": "plain",
+    "merge.conflictStyle": "zdiff3",
+    "rerere.enabled": "true",
+    "rerere.autoupdate": "true",
+    "pull.rebase": "true",
+    "rebase.autoSquash": "true",
+    "rebase.autoStash": "true",
+    "rebase.updateRefs": "true",
+    "push.autoSetupRemote": "true",
+    "push.useForceIfIncludes": "true",
+    "fetch.prune": "true",
+    "init.defaultBranch": "main",
+    "branch.sort": "-committerdate",
+    "tag.sort": "version:refname",
+    "column.ui": "auto",
+    "commit.verbose": "true",
+    "help.autocorrect": "prompt"
+  },
+  "deltaSettings": {
+    "core.pager": "delta",
+    "interactive.diffFilter": "delta --color-only",
+    "delta.navigate": "true"
+  }
+}

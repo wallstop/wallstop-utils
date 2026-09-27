@@ -1,0 +1,56 @@
+name: Git experience
+
+on:
+  pull_request:
+    paths:
+      - "Scripts/Git/**"
+      - "Tests/Git/**"
+      - "Tests/Utils/GitExperience.Tests.ps1"
+      - "requirements-git-experience.txt"
+      - ".github/workflows/git-experience.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "Scripts/Git/**"
+      - "Tests/Git/**"
+      - "Tests/Utils/GitExperience.Tests.ps1"
+      - "requirements-git-experience.txt"
+      - ".github/workflows/git-experience.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  behavior:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            shell: pwsh
+          - os: macos-latest
+            shell: pwsh
+          - os: windows-latest
+            shell: pwsh
+          - os: windows-latest
+            shell: powershell
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install test prerequisites
+        run: |
+          & ./Scripts/Utils/Quality/Install-PowerShellQualityModules.ps1
+          python -m pip install --requirement requirements-git-experience.txt
+      - name: Installer behavior
+        run: |
+          & ./Scripts/Utils/Quality/Invoke-PesterQualityGate.ps1 -TestPath Tests/Utils/GitExperience.Tests.ps1 -OutputVerbosity None
+      - name: Git and YAML behavior
+        run: python -m unittest discover -s Tests/Git -p "test_*.py" -v

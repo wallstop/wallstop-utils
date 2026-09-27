@@ -18,6 +18,7 @@ pr-description.md
 
 .tmp_logs/
 .venv/
+__pycache__/
 pr-description.md
 ModuleAnalysisCache*
 StartupProfileData*
