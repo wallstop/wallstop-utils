@@ -570,7 +570,7 @@ function Get-QualityToolingFileModifiedUnixSeconds {
     )
 
     $resolvedItem = Get-Item -LiteralPath (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path -ErrorAction Stop
-    $unixEpochUtc = [datetime]::SpecifyKind([datetime]"1970-01-01T00:00:00Z", [System.DateTimeKind]::Utc)
+    $unixEpochUtc = [datetime]::new(1970, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc)
     return [int64][math]::Floor(($resolvedItem.LastWriteTimeUtc - $unixEpochUtc).TotalSeconds)
 }
 

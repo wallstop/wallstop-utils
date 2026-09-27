@@ -9,6 +9,14 @@ BeforeAll {
 }
 
 Describe "Invoke-NativeQualityChecks platform resolution" {
+    It "measures file timestamps from the UTC Unix epoch" {
+        $samplePath = Join-Path $TestDrive 'timestamp-sample'
+        [System.IO.File]::WriteAllText($samplePath, 'sample')
+        [System.IO.File]::SetLastWriteTimeUtc($samplePath, [datetime]::new(2000, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc))
+
+        Get-QualityToolingFileModifiedUnixSeconds -Path $samplePath | Should -Be 946684800
+    }
+
     It "uses the pinned Windows x64 StyLua asset as the explicit Windows ARM64 fallback" {
         $manifest = Read-NativeQualityToolManifest
 
