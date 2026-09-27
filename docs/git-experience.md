@@ -71,9 +71,11 @@ copied to the replacement file. A group-readable config whose group differs from
 the temporary file's group is rejected before copying its contents. Managed state
 stays private. Read-only Unix configs may require temporarily restoring owner-write
 permission before Apply or Remove. Extended attributes are copied where the
-platform copy tool supports them, but they are not independently verified.
-Recovery journals remain
-after removal. Installed programs and the helper environment are retained.
+platform copy tool supports them, but they are not independently verified. A
+warning reports when Linux falls back to owner/group/mode preservation or uses
+portable `cp -p` because GNU preserve flags are unavailable.
+Recovery journals remain after removal. Installed programs and the helper
+environment are retained.
 
 ## Evidence and decisions
 

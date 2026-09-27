@@ -194,6 +194,66 @@ Describe 'Git experience installation' {
             Should -Throw '*E_GIT_EXPERIENCE_METADATA*'
         [System.IO.File]::ReadAllText($target) | Should -Be 'private original'
     }
+    It 'continues with verified Unix ownership when xattr copying is unavailable' {
+        $target = Join-Path $TestDrive 'xattr fallback target'
+        [System.IO.File]::WriteAllText($target, 'original')
+        Mock Test-IsWindowsPlatform { return $false }
+        Mock Get-GitExperienceUnixMode { return '640' }
+        Mock Get-GitExperienceUnixIdentity { return '1000:1000:640' }
+        Mock Set-GitExperiencePrivatePath {}
+        Mock Get-Command { return [pscustomobject]@{ Source = 'cp' } } -ParameterFilter { $Name -eq 'cp' }
+        Mock Invoke-GitExperienceProcess {
+            if ($Arguments[0] -eq '--preserve=mode,ownership,xattr') { throw "cp: setting attribute 'user.sample': Operation not supported" }
+            return [pscustomobject]@{ ExitCode = 0; Stdout = ''; Stderr = '' }
+        } -ParameterFilter { $Executable -eq 'cp' }
+
+        Write-GitExperienceFile $target (ConvertTo-GitExperienceBytes 'replacement') -PreserveExistingMode
+
+        [System.IO.File]::ReadAllText($target) | Should -Be 'replacement'
+        Should -Invoke Invoke-GitExperienceProcess -Times 1 -Exactly -ParameterFilter {
+            $Executable -eq 'cp' -and $Arguments[0] -eq '--preserve=mode,ownership'
+        }
+    }
+    It 'does not discard xattrs after an unrelated copy failure' {
+        $target = Join-Path $TestDrive 'xattr unrelated failure target'
+        [System.IO.File]::WriteAllText($target, 'original')
+        Mock Test-IsWindowsPlatform { return $false }
+        Mock Get-GitExperienceUnixMode { return '640' }
+        Mock Get-GitExperienceUnixIdentity { return '1000:1000:640' }
+        Mock Set-GitExperiencePrivatePath {}
+        Mock Get-Command { return [pscustomobject]@{ Source = 'cp' } } -ParameterFilter { $Name -eq 'cp' }
+        Mock Invoke-GitExperienceProcess {
+            if ($Arguments[0] -eq '--preserve=mode,ownership,xattr') { throw 'cp: source I/O error' }
+            return [pscustomobject]@{ ExitCode = 0; Stdout = ''; Stderr = '' }
+        } -ParameterFilter { $Executable -eq 'cp' }
+
+        { Write-GitExperienceFile $target (ConvertTo-GitExperienceBytes 'replacement') -PreserveExistingMode } |
+            Should -Throw '*source I/O error*'
+        [System.IO.File]::ReadAllText($target) | Should -Be 'original'
+        Should -Not -Invoke Invoke-GitExperienceProcess -ParameterFilter {
+            $Executable -eq 'cp' -and $Arguments[0] -eq '--preserve=mode,ownership'
+        }
+    }
+    It 'uses portable cp flags when GNU preserve options are unavailable' {
+        $target = Join-Path $TestDrive 'portable cp target'
+        [System.IO.File]::WriteAllText($target, 'original')
+        Mock Test-IsWindowsPlatform { return $false }
+        Mock Get-GitExperienceUnixMode { return '640' }
+        Mock Get-GitExperienceUnixIdentity { return '1000:1000:640' }
+        Mock Set-GitExperiencePrivatePath {}
+        Mock Get-Command { return [pscustomobject]@{ Source = 'cp' } } -ParameterFilter { $Name -eq 'cp' }
+        Mock Invoke-GitExperienceProcess {
+            if ($Arguments[0] -like '--preserve=*') { throw "cp: unrecognized option '--preserve=mode,ownership,xattr'" }
+            return [pscustomobject]@{ ExitCode = 0; Stdout = ''; Stderr = '' }
+        } -ParameterFilter { $Executable -eq 'cp' }
+
+        Write-GitExperienceFile $target (ConvertTo-GitExperienceBytes 'replacement') -PreserveExistingMode
+
+        [System.IO.File]::ReadAllText($target) | Should -Be 'replacement'
+        Should -Invoke Invoke-GitExperienceProcess -Times 1 -Exactly -ParameterFilter {
+            $Executable -eq 'cp' -and $Arguments[0] -eq '-p'
+        }
+    }
     It 'does not overwrite a managed profile edited during preparation' {
         Invoke-GitExperience -Action Apply -StateDirectory $script:stateDir | Out-Null
         $script:profileDuringPreparation = Join-Path $script:stateDir 'profile.gitconfig'

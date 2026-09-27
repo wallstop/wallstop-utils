@@ -61,6 +61,20 @@ PR whose CI and reviewer feedback are fully green.
   fixture passed all 14 targeted tests. The full gate then passed: all-files
   pre-commit, deep PowerShell and GitHub utility suites, skills/harness checks,
   and workspace drift assertion.
+- All CI jobs on `7c7a400` completed green or intentionally skipped, and both
+  original Bugbot threads were resolved. A subsequent Bugbot review found that
+  mandatory Linux xattr copying contradicted the documented best-effort policy
+  on filesystems without xattr support. A one-test red run reproduced the
+  abort. Safety review then caught an overly broad fallback; a second red test
+  showed an unrelated I/O error could be hidden. The final fallback only retries
+  when the error identifies an unsupported xattr operation, warns, and verifies
+  owner/group/mode preservation. Both targeted tests passed green and adversarial
+  review found no remaining blocker.
+- Cross-platform review found the GNU-specific `cp --preserve` flags would fail
+  on BusyBox/Alpine. A red test reproduced the unsupported-option failure;
+  portable `cp -p` is now used for that case with the same metadata parity check.
+  Both PowerShell editions passed all 30 installer tests, and full validation
+  passed again before the follow-up commit.
 
 ## Environment finding
 

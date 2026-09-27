@@ -110,8 +110,19 @@ function Write-GitExperienceFile {
             }
             # Copy original metadata onto the private temporary inode before replacing it.
             $cp = Get-Command -Name 'cp' -CommandType Application -ErrorAction Stop | Select-Object -First 1
-            $copyArguments = if (Test-IsMacOSPlatform) { @('-p', $Path, $temporary) } else { @('--preserve=mode,ownership,xattr', $Path, $temporary) }
-            Invoke-GitExperienceProcess $cp.Source $copyArguments | Out-Null
+            if (Test-IsMacOSPlatform) { Invoke-GitExperienceProcess $cp.Source @('-p', $Path, $temporary) | Out-Null }
+            else {
+                try { Invoke-GitExperienceProcess $cp.Source @('--preserve=mode,ownership,xattr', $Path, $temporary) | Out-Null }
+                catch {
+                    $copyFailure = $_.Exception.Message
+                    $unsupportedPreserveOption = $copyFailure -match '(?i)(?:unrecognized|unknown|invalid|unsupported) (?:long )?option[^\r\n]*preserve'
+                    $unsupportedXattr = $copyFailure -match '(?i)(?:xattr|attribute)[^\r\n]*(?:Operation not supported|ENOTSUP|EOPNOTSUPP)'
+                    if (-not $unsupportedPreserveOption -and -not $unsupportedXattr) { throw }
+                    Write-Warning "W_GIT_EXPERIENCE_XATTR_UNAVAILABLE: Extended attributes could not be copied for '$Path'; preserving owner, group, and mode."
+                    $fallbackArguments = if ($unsupportedPreserveOption) { @('-p', $Path, $temporary) } else { @('--preserve=mode,ownership', $Path, $temporary) }
+                    Invoke-GitExperienceProcess $cp.Source $fallbackArguments | Out-Null
+                }
+            }
             if ((Get-GitExperienceUnixIdentity $Path) -cne (Get-GitExperienceUnixIdentity $temporary)) {
                 throw "E_GIT_EXPERIENCE_METADATA: Could not preserve Unix owner, group, and mode for '$Path'."
             }
