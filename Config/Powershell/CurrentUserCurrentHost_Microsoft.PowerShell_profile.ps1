@@ -22,3 +22,6 @@ if ($setPSReadLineKeyHandler) {
 }
 
 try { $null = gcm pshazz -ea stop; pshazz init 'default' } catch { }
+
+# Avoid Codex 0.157 daemon console popups (openai/codex#37599).
+. 'C:/Users/dbfsi/.local/share/mcp-servers/codex-no-daemon.ps1'

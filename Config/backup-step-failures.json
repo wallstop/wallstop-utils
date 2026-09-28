@@ -1,0 +1,24 @@
+{
+  "failedSteps": [
+    {
+      "name": "WinGetUpdate",
+      "error": "E_BACKUP_STEP_FAILED(WinGetUpdate): script 'WinGet/WinGetUpdate.ps1' at 'D:\\code\\wallstop-utils\\Scripts\\WinGet\\WinGetUpdate.ps1' exited with code -1978335188.",
+      "outputPreview": "Name                               Id                                           Version  Available Source --------------------------------------------------------------------------------------------------------- Microsoft .NET Framework 4.6.2 SDK Microsoft.DotNet.Framework.DeveloperPack.4.6 < 4.6.2  4.6.2     winget qpdf 12.4.1                        QPDF.QPDF                                    12.4.1   12.4.2    winget Windows Subsystem for Linux        Microsoft.WSL                                2.7.12.0 2.7.13    winget 3 upgrades available. 1 package(s) have version numbers that cannot be determined. Use --include-unknown to see all results. 3 package(s) have pins that prevent upgrade. Use the 'winget pin' command to view and edit pins. Using the '--include-pinned' argument may show more results.  (1/2) Found QPDF [QPDF.QPDF] Version 12.4.2 This application is licensed to you by its owner. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages. Downloading https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc64.exe Successfully verified installer hash Starting package install... An unexpected error occurred while executing the command:  0x800704c7 : The operation was canceled by the user.  (2/2) Found Windows Subsystem for Linux [Microsoft.WSL] Version 2.7.13 This application is licensed to you by its owner. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages. Successfully verified installer hash Starting package install... Installer failed with exit code: 0x80073d28 : The package installation failed because administrator privileges are required. Please contact an administrator to install this package.  58 package(s) have version numbers that cannot be determined. Use --include-unknown to see all results. 1 package(s) have upgrades blocked because newer versions use a different install technology than the current installation. Uninstall each package, then install the newer version. | E_WINGET_UPDATE_UNATTRIBUTED_FAILURE: 'winget upgrade --all' reported failures (exitCode=-1978335188) but not every package outcome could be accounted from its output. unaccounted=QPDF.QPDF; Microsoft.WSL. outputPreview=Name                               Id                                           Version  Available Source --------------------------------------------------------------------------------------------------------- Microsoft .NET Framework 4.6.2 SDK Microsoft.DotNet.Framework.DeveloperPack.4.6 < 4.6.2  4.6.2     winget qpdf 12.4.1                        QPDF.QPDF                                    12.4.1   12.4.2    winget Windows Subsystem for Linux        Microsoft.WSL                                2.7.12.0 2.7.13    winget 3 upgrades available. 1 package(s) have version numbers that cannot be determined. Use --include-unknown to see all results. 3 package(s) have pins that prevent upgrade. Use the 'winget pin' command to view and edit pins. Using the '--include-pinned' argument may show more results.  (1/2) Found QPDF [QPDF.QPDF] Version 12.4.2 This application is licensed to you by its owner. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages. Downloading https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc64.exe Successfully verified installer hash Starting package install... An unexpected error occurred while executing the command:  0x800704c7 : The operation was canceled by the user.  (2/2) Found Windows Subsystem for Linux [Microsoft.WSL] Version 2.7.13 This application is licensed to you by its owner. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages. Successfully verified installer hash Starting package install... Installer failed with exit code: 0x80073d28 : The package installation failed because administrator privileges are required. Please contact an administrator to install this package.  58 package(s) have version numbers that cannot be determined. Use --include-unknown to see all results. 1 package(s) have upgrades blocked because newer versions use a different install technology than the current installation. Uninstall each package, then install the newer version."
+    }
+  ],
+  "phaseFailures": [],
+  "succeededSteps": [
+    "ConfigBackup",
+    "WindowsTerminalBackup",
+    "PowershellBackup",
+    "StopKomorebi",
+    "ScoopHealthCheck",
+    "ScoopUpdate",
+    "ScoopBackup",
+    "KomorebiBackup",
+    "PowerToysBackup",
+    "ThunderbirdBackup",
+    "RestartKomorebi"
+  ],
+  "totalSteps": 12
+}

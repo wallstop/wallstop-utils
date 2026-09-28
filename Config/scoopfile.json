@@ -109,8 +109,8 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2026-09-25T23:32:45.1445896-07:00",
-      "Version": "26.924.1866.0"
+      "Updated": "2026-09-27T23:31:50.4990711-07:00",
+      "Version": "26.924.2738.0"
     },
     {
       "Info": "",
@@ -142,6 +142,13 @@
     },
     {
       "Info": "",
+      "Name": "delta",
+      "Source": "main",
+      "Updated": "2026-09-26T22:47:23.3439406-07:00",
+      "Version": "0.19.2"
+    },
+    {
+      "Info": "",
       "Name": "deluge",
       "Source": "extras",
       "Updated": "2025-05-20T11:12:29.0039929-07:00",
@@ -165,8 +172,8 @@
       "Info": "",
       "Name": "fancontrol",
       "Source": "extras",
-      "Updated": "2026-09-25T23:32:47.0393999-07:00",
-      "Version": "279"
+      "Updated": "2026-09-27T23:31:52.6455063-07:00",
+      "Version": "281"
     },
     {
       "Info": "",
@@ -375,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-09-25T23:32:50.3100399-07:00",
-      "Version": "2026.9.14"
+      "Updated": "2026-09-27T23:31:56.8814444-07:00",
+      "Version": "2026.9.15"
     },
     {
       "Info": "",
@@ -396,8 +403,8 @@
       "Info": "",
       "Name": "msys2",
       "Source": "main",
-      "Updated": "2026-06-17T23:34:10.8442221-07:00",
-      "Version": "2026-06-11"
+      "Updated": "2026-09-27T23:32:32.9968496-07:00",
+      "Version": "2026-09-27"
     },
     {
       "Info": "",
@@ -459,15 +466,15 @@
       "Info": "",
       "Name": "opencode",
       "Source": "C:\\Users\\dbfsi\\scoop\\buckets\\main\\bucket\\opencode.json",
-      "Updated": "2026-09-21T23:32:29.9744831-07:00",
-      "Version": "1.18.32"
+      "Updated": "2026-09-27T23:32:36.2356666-07:00",
+      "Version": "1.18.33"
     },
     {
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-09-21T23:32:36.3317421-07:00",
-      "Version": "1.18.32"
+      "Updated": "2026-09-27T23:32:42.2011953-07:00",
+      "Version": "1.18.33"
     },
     {
       "Info": "",
@@ -717,16 +724,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1658,
+      "Manifests": 1657,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-09-25T21:33:06-07:00"
+      "Updated": "2026-09-27T21:39:10-07:00"
     },
     {
       "Manifests": 2396,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-09-25T21:33:11-07:00"
+      "Updated": "2026-09-27T21:39:57-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +745,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-09-25T16:21:06-07:00"
+      "Updated": "2026-09-27T12:48:39-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-09-25T22:00:33-07:00"
+      "Updated": "2026-09-26T22:20:53-07:00"
     }
   ]
 }

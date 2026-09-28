@@ -5,18 +5,51 @@
       "playwright": {
         "type": "local",
         "command": [
-          "npx",
-          "-y",
-          "@playwright/mcp@latest",
+          "C:\\Users\\dbfsi\\scoop\\apps\\nodejs-lts\\current\\node.exe",
+          "C:\\Users\\dbfsi\\.local\\share\\mcp-servers\\node_modules\\@playwright\\mcp\\cli.js",
           "--executable-path",
           "C:\\Users\\dbfsi\\AppData\\Local\\ms-playwright\\chromium-1243\\chrome-win64\\chrome.exe",
           "--isolated"
-        ]
+        ],
+        "timeout": {
+          "startup": 30000,
+          "execution": 120000
+        }
       },
       "chrome-devtools": {
         "type": "local",
-        "command": ["npx", "-y", "chrome-devtools-mcp@latest"],
-        "disabled": true
+        "command": [
+          "C:\\Users\\dbfsi\\scoop\\apps\\nodejs-lts\\current\\node.exe",
+          "C:\\Users\\dbfsi\\.local\\share\\mcp-servers\\node_modules\\chrome-devtools-mcp\\build\\src\\bin\\chrome-devtools-mcp.js",
+          "--executable-path",
+          "C:\\Users\\dbfsi\\AppData\\Local\\ms-playwright\\chromium-1243\\chrome-win64\\chrome.exe",
+          "--isolated",
+          "--no-usage-statistics",
+          "--no-performance-crux"
+        ],
+        "timeout": {
+          "startup": 30000,
+          "execution": 120000
+        },
+        "environment": {
+          "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"
+        }
+      },
+      "github": {
+        "type": "local",
+        "command": [
+          "C:\\Users\\dbfsi\\scoop\\apps\\nodejs-lts\\current\\node.exe",
+          "C:\\Users\\dbfsi\\.local\\share\\mcp-servers\\github.mjs"
+        ],
+        "timeout": {
+          "startup": 30000,
+          "execution": 120000
+        }
+      },
+      "microsoft-learn": {
+        "type": "remote",
+        "url": "https://learn.microsoft.com/api/mcp",
+        "oauth": false
       }
     }
   }
