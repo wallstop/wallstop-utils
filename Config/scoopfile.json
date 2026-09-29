@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-09-25T23:32:08.5391022-07:00",
-      "Version": "2.37.4"
+      "Updated": "2026-09-28T23:31:59.4600037-07:00",
+      "Version": "2.37.5"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-09-24T23:33:48.9633285-07:00",
-      "Version": "3.22.7"
+      "Updated": "2026-09-28T23:33:21.9386276-07:00",
+      "Version": "3.22.12"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-09-27T23:31:56.8814444-07:00",
-      "Version": "2026.9.15"
+      "Updated": "2026-09-28T23:33:24.8420337-07:00",
+      "Version": "2026.9.16"
     },
     {
       "Info": "",
@@ -501,8 +501,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-09-22T23:35:54.8092364-07:00",
-      "Version": "1.17.6"
+      "Updated": "2026-09-28T23:33:25.5168606-07:00",
+      "Version": "1.17.7"
     },
     {
       "Info": "",
@@ -724,16 +724,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1657,
+      "Manifests": 1658,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-09-27T21:39:10-07:00"
+      "Updated": "2026-09-28T21:36:24-07:00"
     },
     {
       "Manifests": 2396,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-09-27T21:39:57-07:00"
+      "Updated": "2026-09-28T21:36:44-07:00"
     },
     {
       "Manifests": 76,
@@ -745,13 +745,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-09-27T12:48:39-07:00"
+      "Updated": "2026-09-28T17:25:52-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-09-26T22:20:53-07:00"
+      "Updated": "2026-09-28T17:23:24-07:00"
     }
   ]
 }
