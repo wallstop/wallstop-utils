@@ -11,8 +11,8 @@
       "Info": "",
       "Name": "audacity",
       "Source": "extras",
-      "Updated": "2026-09-01T23:31:41.8296524-07:00",
-      "Version": "3.7.9"
+      "Updated": "2026-09-30T23:34:13.0670112-07:00",
+      "Version": "4.0.1"
     },
     {
       "Info": "",
@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-09-29T23:31:58.6626167-07:00",
-      "Version": "2.37.6"
+      "Updated": "2026-09-30T23:36:03.2598779-07:00",
+      "Version": "2.37.7"
     },
     {
       "Info": "",
@@ -109,8 +109,8 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2026-09-29T23:32:55.9371689-07:00",
-      "Version": "26.928.1915.0"
+      "Updated": "2026-09-30T23:38:48.3149896-07:00",
+      "Version": "26.928.2636.0"
     },
     {
       "Info": "",
@@ -340,8 +340,8 @@
       "Info": "",
       "Name": "linqpad",
       "Source": "extras",
-      "Updated": "2026-08-27T23:35:23.7596889-07:00",
-      "Version": "9.10.20"
+      "Updated": "2026-09-30T23:39:08.2529994-07:00",
+      "Version": "9.11.10"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-09-29T23:33:15.6309404-07:00",
-      "Version": "2026.9.17"
+      "Updated": "2026-09-30T23:39:32.1816386-07:00",
+      "Version": "2026.9.18"
     },
     {
       "Info": "",
@@ -466,15 +466,15 @@
       "Info": "",
       "Name": "opencode",
       "Source": "C:\\Users\\dbfsi\\scoop\\buckets\\main\\bucket\\opencode.json",
-      "Updated": "2026-09-27T23:32:36.2356666-07:00",
-      "Version": "1.18.33"
+      "Updated": "2026-09-30T23:39:38.1999468-07:00",
+      "Version": "1.18.34"
     },
     {
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-09-27T23:32:42.2011953-07:00",
-      "Version": "1.18.33"
+      "Updated": "2026-09-30T23:39:45.6346648-07:00",
+      "Version": "1.18.34"
     },
     {
       "Info": "",
@@ -724,16 +724,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1658,
+      "Manifests": 1660,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-09-29T21:37:10-07:00"
+      "Updated": "2026-09-30T21:37:15-07:00"
     },
     {
-      "Manifests": 2396,
+      "Manifests": 2402,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-09-29T21:37:24-07:00"
+      "Updated": "2026-09-30T21:39:33-07:00"
     },
     {
       "Manifests": 76,
@@ -745,13 +745,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-09-29T11:08:44-07:00"
+      "Updated": "2026-09-30T12:43:21-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-09-29T22:35:00-07:00"
+      "Updated": "2026-09-30T22:57:22-07:00"
     }
   ]
 }
