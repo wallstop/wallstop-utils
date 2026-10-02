@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-09-30T23:36:03.2598779-07:00",
-      "Version": "2.37.7"
+      "Updated": "2026-10-01T23:31:40.8072888-07:00",
+      "Version": "2.37.8"
     },
     {
       "Info": "",
@@ -109,8 +109,8 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2026-09-30T23:38:48.3149896-07:00",
-      "Version": "26.928.2636.0"
+      "Updated": "2026-10-01T23:32:15.9523139-07:00",
+      "Version": "26.928.4866.0"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-09-28T23:33:21.9386276-07:00",
-      "Version": "3.22.12"
+      "Updated": "2026-10-01T23:33:27.3455711-07:00",
+      "Version": "3.23.12"
     },
     {
       "Info": "",
@@ -193,8 +193,8 @@
       "Info": "",
       "Name": "foobar2000",
       "Source": "extras",
-      "Updated": "2026-06-26T23:31:55.0127396-07:00",
-      "Version": "2.25.10"
+      "Updated": "2026-10-01T23:33:41.9288863-07:00",
+      "Version": "2.26"
     },
     {
       "Info": "",
@@ -249,8 +249,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-09-29T23:33:11.3204463-07:00",
-      "Version": "154.0.8037.93"
+      "Updated": "2026-10-01T23:33:53.1871062-07:00",
+      "Version": "154.0.8037.98"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-09-30T23:39:32.1816386-07:00",
-      "Version": "2026.9.18"
+      "Updated": "2026-10-01T23:33:56.0150683-07:00",
+      "Version": "2026.10.0"
     },
     {
       "Info": "",
@@ -501,8 +501,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-09-29T23:35:02.7167798-07:00",
-      "Version": "1.17.8"
+      "Updated": "2026-10-01T23:33:56.4384141-07:00",
+      "Version": "1.17.9"
     },
     {
       "Info": "",
@@ -564,8 +564,8 @@
       "Info": "",
       "Name": "rust",
       "Source": "main",
-      "Updated": "2026-09-03T18:56:27.632406-07:00",
-      "Version": "1.98.1"
+      "Updated": "2026-10-01T23:37:17.9008302-07:00",
+      "Version": "1.99.0"
     },
     {
       "Info": "",
@@ -592,8 +592,8 @@
       "Info": "",
       "Name": "signal",
       "Source": "extras",
-      "Updated": "2026-09-23T23:32:29.0512167-07:00",
-      "Version": "8.28.0"
+      "Updated": "2026-10-01T23:37:22.2338232-07:00",
+      "Version": "8.29.0"
     },
     {
       "Info": "",
@@ -627,8 +627,8 @@
       "Info": "",
       "Name": "thunderbird",
       "Source": "extras",
-      "Updated": "2026-09-22T23:36:04.3596119-07:00",
-      "Version": "156.0.1"
+      "Updated": "2026-10-01T23:37:26.4532559-07:00",
+      "Version": "157.0.1"
     },
     {
       "Info": "",
@@ -648,8 +648,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-09-29T23:35:14.0133051-07:00",
-      "Version": "0.12.21"
+      "Updated": "2026-10-01T23:37:39.1853271-07:00",
+      "Version": "0.12.22"
     },
     {
       "Info": "",
@@ -724,16 +724,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1660,
+      "Manifests": 1662,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-09-30T21:37:15-07:00"
+      "Updated": "2026-10-01T21:36:23-07:00"
     },
     {
-      "Manifests": 2402,
+      "Manifests": 2403,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-09-30T21:39:33-07:00"
+      "Updated": "2026-10-01T21:36:38-07:00"
     },
     {
       "Manifests": 76,
@@ -745,13 +745,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-09-30T12:43:21-07:00"
+      "Updated": "2026-10-01T14:06:15-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-09-30T22:57:22-07:00"
+      "Updated": "2026-10-01T22:40:09-07:00"
     }
   ]
 }
