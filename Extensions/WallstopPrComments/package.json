@@ -181,7 +181,7 @@
   },
   "devDependencies": {
     "@types/markdown-it": "^14.2.0",
-    "@types/node": "^26.6.1",
+    "@types/node": "^26.6.2",
     "@types/vscode": "1.138.0",
     "typescript": "^7.0.2",
     "yauzl": "^3.4.0",
