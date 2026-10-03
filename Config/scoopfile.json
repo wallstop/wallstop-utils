@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-10-01T23:31:40.8072888-07:00",
-      "Version": "2.37.8"
+      "Updated": "2026-10-02T23:31:44.6298528-07:00",
+      "Version": "2.37.9"
     },
     {
       "Info": "",
@@ -109,15 +109,15 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2026-10-01T23:32:15.9523139-07:00",
-      "Version": "26.928.4866.0"
+      "Updated": "2026-10-02T23:32:20.7431367-07:00",
+      "Version": "26.930.3748.0"
     },
     {
       "Info": "",
       "Name": "cmake",
       "Source": "main",
-      "Updated": "2026-08-25T23:33:23.2511251-07:00",
-      "Version": "4.4.3"
+      "Updated": "2026-10-02T23:32:46.2880544-07:00",
+      "Version": "4.4.4"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-09-29T23:33:46.5643264-07:00",
-      "Version": "0.35.0"
+      "Updated": "2026-10-02T23:33:14.4724206-07:00",
+      "Version": "0.35.1"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-09-29T23:34:59.4901257-07:00",
-      "Version": "0.35.0"
+      "Updated": "2026-10-02T23:34:31.7054011-07:00",
+      "Version": "0.35.1"
     },
     {
       "Info": "",
@@ -501,8 +501,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-10-01T23:33:56.4384141-07:00",
-      "Version": "1.17.9"
+      "Updated": "2026-10-02T23:34:32.2571677-07:00",
+      "Version": "1.17.10"
     },
     {
       "Info": "",
@@ -690,8 +690,8 @@
       "Info": "",
       "Name": "windows-terminal",
       "Source": "extras",
-      "Updated": "2026-07-30T20:32:44.2013961-07:00",
-      "Version": "1.24.11911.0"
+      "Updated": "2026-10-02T23:34:33.6795465-07:00",
+      "Version": "1.25.2733.0"
     },
     {
       "Info": "",
@@ -724,16 +724,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1662,
+      "Manifests": 1663,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-01T21:36:23-07:00"
+      "Updated": "2026-10-02T21:38:47-07:00"
     },
     {
-      "Manifests": 2403,
+      "Manifests": 2404,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-01T21:36:38-07:00"
+      "Updated": "2026-10-02T21:38:33-07:00"
     },
     {
       "Manifests": 76,
