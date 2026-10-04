@@ -25,8 +25,8 @@
       "Info": "",
       "Name": "autohotkey",
       "Source": "extras",
-      "Updated": "2026-09-15T23:31:40.6796658-07:00",
-      "Version": "2.0.28"
+      "Updated": "2026-10-03T23:31:52.8917277-07:00",
+      "Version": "2.0.29"
     },
     {
       "Info": "",
@@ -109,8 +109,8 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2026-10-02T23:32:20.7431367-07:00",
-      "Version": "26.930.3748.0"
+      "Updated": "2026-10-03T23:32:31.3722542-07:00",
+      "Version": "26.930.3930.0"
     },
     {
       "Info": "",
@@ -333,8 +333,8 @@
       "Info": "",
       "Name": "libreoffice",
       "Source": "extras",
-      "Updated": "2026-08-27T23:35:21.2518806-07:00",
-      "Version": "26.8.0"
+      "Updated": "2026-10-03T23:35:02.3139307-07:00",
+      "Version": "26.8.1"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-01T23:33:56.0150683-07:00",
-      "Version": "2026.10.0"
+      "Updated": "2026-10-03T23:35:05.8595408-07:00",
+      "Version": "2026.10.1"
     },
     {
       "Info": "",
@@ -501,8 +501,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-10-02T23:34:32.2571677-07:00",
-      "Version": "1.17.10"
+      "Updated": "2026-10-03T23:35:06.3791989-07:00",
+      "Version": "1.17.11"
     },
     {
       "Info": "",
@@ -648,8 +648,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-10-01T23:37:39.1853271-07:00",
-      "Version": "0.12.22"
+      "Updated": "2026-10-03T23:35:21.1438999-07:00",
+      "Version": "0.12.23"
     },
     {
       "Info": "",
@@ -727,13 +727,13 @@
       "Manifests": 1663,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-02T21:38:47-07:00"
+      "Updated": "2026-10-03T23:03:01-07:00"
     },
     {
       "Manifests": 2404,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-02T21:38:33-07:00"
+      "Updated": "2026-10-03T23:15:00-07:00"
     },
     {
       "Manifests": 76,
@@ -745,13 +745,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-01T14:06:15-07:00"
+      "Updated": "2026-10-03T06:31:28-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-01T22:40:09-07:00"
+      "Updated": "2026-10-03T01:18:36-07:00"
     }
   ]
 }
