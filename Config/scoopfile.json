@@ -123,8 +123,8 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-09-24T23:32:23.4971385-07:00",
-      "Version": "8.22.0_2"
+      "Updated": "2026-10-04T23:31:15.0015822-07:00",
+      "Version": "8.22.0_3"
     },
     {
       "Info": "",
@@ -172,8 +172,8 @@
       "Info": "",
       "Name": "fancontrol",
       "Source": "extras",
-      "Updated": "2026-09-27T23:31:52.6455063-07:00",
-      "Version": "281"
+      "Updated": "2026-10-04T16:23:39.710243-07:00",
+      "Version": "282"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-03T23:35:05.8595408-07:00",
-      "Version": "2026.10.1"
+      "Updated": "2026-10-04T16:23:42.8287077-07:00",
+      "Version": "2026.10.2"
     },
     {
       "Info": "",
@@ -724,16 +724,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1663,
+      "Manifests": 1664,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-03T23:03:01-07:00"
+      "Updated": "2026-10-04T21:57:00-07:00"
     },
     {
-      "Manifests": 2404,
+      "Manifests": 2405,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-03T23:15:00-07:00"
+      "Updated": "2026-10-04T21:55:22-07:00"
     },
     {
       "Manifests": 76,
@@ -751,7 +751,7 @@
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-03T01:18:36-07:00"
+      "Updated": "2026-10-04T07:06:09-07:00"
     }
   ]
 }
