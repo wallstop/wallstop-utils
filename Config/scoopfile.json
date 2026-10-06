@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-10-01T23:33:27.3455711-07:00",
-      "Version": "3.23.12"
+      "Updated": "2026-10-05T23:32:43.064552-07:00",
+      "Version": "3.23.23"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-04T16:23:42.8287077-07:00",
-      "Version": "2026.10.2"
+      "Updated": "2026-10-05T23:32:55.4617009-07:00",
+      "Version": "2026.10.3"
     },
     {
       "Info": "",
@@ -461,13 +461,6 @@
       "Source": "extras",
       "Updated": "2026-04-19T12:17:19.2996727-07:00",
       "Version": "3.108.0.0"
-    },
-    {
-      "Info": "",
-      "Name": "opencode",
-      "Source": "C:\\Users\\dbfsi\\scoop\\buckets\\main\\bucket\\opencode.json",
-      "Updated": "2026-09-30T23:39:38.1999468-07:00",
-      "Version": "1.18.34"
     },
     {
       "Info": "",
@@ -724,16 +717,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1664,
+      "Manifests": 1668,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-04T21:57:00-07:00"
+      "Updated": "2026-10-05T21:37:18-07:00"
     },
     {
       "Manifests": 2405,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-04T21:55:22-07:00"
+      "Updated": "2026-10-05T21:38:53-07:00"
     },
     {
       "Manifests": 76,
@@ -745,7 +738,7 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-03T06:31:28-07:00"
+      "Updated": "2026-10-05T10:16:01-07:00"
     },
     {
       "Manifests": 338,
