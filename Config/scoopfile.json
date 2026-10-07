@@ -4,8 +4,8 @@
       "Info": "",
       "Name": "7zip",
       "Source": "main",
-      "Updated": "2026-09-15T23:31:32.0009625-07:00",
-      "Version": "26.03"
+      "Updated": "2026-10-06T23:31:31.3649387-07:00",
+      "Version": "26.04"
     },
     {
       "Info": "",
@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-10-02T23:31:44.6298528-07:00",
-      "Version": "2.37.9"
+      "Updated": "2026-10-06T23:32:03.613288-07:00",
+      "Version": "2.37.10"
     },
     {
       "Info": "",
@@ -109,8 +109,8 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2026-10-03T23:32:31.3722542-07:00",
-      "Version": "26.930.3930.0"
+      "Updated": "2026-10-06T23:32:47.4272737-07:00",
+      "Version": "26.930.7945.0"
     },
     {
       "Info": "",
@@ -249,8 +249,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-10-01T23:33:53.1871062-07:00",
-      "Version": "154.0.8037.98"
+      "Updated": "2026-10-06T23:33:03.6559447-07:00",
+      "Version": "155.0.8059.40"
     },
     {
       "Info": "",
@@ -347,8 +347,8 @@
       "Info": "",
       "Name": "llvm",
       "Source": "main",
-      "Updated": "2026-09-22T23:34:28.0029784-07:00",
-      "Version": "23.1.2"
+      "Updated": "2026-10-06T23:33:38.9244989-07:00",
+      "Version": "23.1.3"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-10-02T23:33:14.4724206-07:00",
-      "Version": "0.35.1"
+      "Updated": "2026-10-06T23:34:07.9662275-07:00",
+      "Version": "0.40.0"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-10-02T23:34:31.7054011-07:00",
-      "Version": "0.35.1"
+      "Updated": "2026-10-06T23:35:33.950486-07:00",
+      "Version": "0.40.0"
     },
     {
       "Info": "",
@@ -466,8 +466,8 @@
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-09-30T23:39:45.6346648-07:00",
-      "Version": "1.18.34"
+      "Updated": "2026-10-06T23:35:41.4973362-07:00",
+      "Version": "1.18.35"
     },
     {
       "Info": "",
@@ -717,16 +717,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1668,
+      "Manifests": 1669,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-05T21:37:18-07:00"
+      "Updated": "2026-10-06T21:38:45-07:00"
     },
     {
       "Manifests": 2405,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-05T21:38:53-07:00"
+      "Updated": "2026-10-06T21:39:31-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-05T10:16:01-07:00"
+      "Updated": "2026-10-06T11:29:30-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-04T07:06:09-07:00"
+      "Updated": "2026-10-06T23:03:00-07:00"
     }
   ]
 }
