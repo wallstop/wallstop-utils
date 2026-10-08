@@ -53,8 +53,8 @@
       "Info": "",
       "Name": "bazel",
       "Source": "main",
-      "Updated": "2026-07-13T23:30:45.5171633-07:00",
-      "Version": "9.2.0"
+      "Updated": "2026-10-07T23:31:40.583364-07:00",
+      "Version": "9.3.0"
     },
     {
       "Info": "",
@@ -263,8 +263,8 @@
       "Info": "",
       "Name": "gradle",
       "Source": "main",
-      "Updated": "2026-09-24T23:35:21.9779913-07:00",
-      "Version": "9.8.0"
+      "Updated": "2026-10-07T23:34:15.0753137-07:00",
+      "Version": "9.8.1"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-05T23:32:55.4617009-07:00",
-      "Version": "2026.10.3"
+      "Updated": "2026-10-07T23:34:31.2035722-07:00",
+      "Version": "2026.10.4"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-10-06T23:34:07.9662275-07:00",
-      "Version": "0.40.0"
+      "Updated": "2026-10-07T23:35:03.5920639-07:00",
+      "Version": "0.40.1"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-10-06T23:35:33.950486-07:00",
-      "Version": "0.40.0"
+      "Updated": "2026-10-07T23:36:17.7830825-07:00",
+      "Version": "0.40.1"
     },
     {
       "Info": "",
@@ -480,8 +480,8 @@
       "Info": "",
       "Name": "pandoc",
       "Source": "main",
-      "Updated": "2026-09-29T23:35:02.0380298-07:00",
-      "Version": "3.12"
+      "Updated": "2026-10-07T23:36:25.7684076-07:00",
+      "Version": "3.12.1"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-10-03T23:35:06.3791989-07:00",
-      "Version": "1.17.11"
+      "Updated": "2026-10-07T23:36:36.921564-07:00",
+      "Version": "1.17.12"
     },
     {
       "Info": "",
@@ -585,8 +585,8 @@
       "Info": "",
       "Name": "signal",
       "Source": "extras",
-      "Updated": "2026-10-01T23:37:22.2338232-07:00",
-      "Version": "8.29.0"
+      "Updated": "2026-10-07T23:36:54.6576886-07:00",
+      "Version": "8.30.0"
     },
     {
       "Info": "",
@@ -720,13 +720,13 @@
       "Manifests": 1669,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-06T21:38:45-07:00"
+      "Updated": "2026-10-07T21:38:41-07:00"
     },
     {
-      "Manifests": 2405,
+      "Manifests": 2406,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-06T21:39:31-07:00"
+      "Updated": "2026-10-07T21:39:32-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-06T11:29:30-07:00"
+      "Updated": "2026-10-07T23:18:36-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-06T23:03:00-07:00"
+      "Updated": "2026-10-07T08:34:59-07:00"
     }
   ]
 }
