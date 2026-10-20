@@ -521,7 +521,7 @@ Describe "Komorebi monitor configuration validation" {
         @($assignments | Where-Object { $_.MatchedBy -ne "preference" }).Count | Should -Be 0
     }
 
-    It "gives the spicy RDP display Grid without consuming physical display slots" {
+    It "gives the spicy RDP display a preferred full-width scrolling workspace" {
         $path = Join-Path -Path $PSScriptRoot -ChildPath "../../Config/Komorebi/profiles/spicy/komorebi.json"
         $config = Read-KomorebiStaticConfig -Path $path
         $remoteMonitor = [pscustomobject]@{
@@ -534,13 +534,51 @@ Describe "Komorebi monitor configuration validation" {
         $assignments = @(Assert-KomorebiMonitorConfiguration -Config $config -Monitors @($remoteMonitor) -ConfigPath $path)
 
         $assignments.Count | Should -Be 1
+        $assignments[0].MatchedBy | Should -Be "preference"
+        $assignments[0].ConfigIndex | Should -Be 3
+        $assignments[0].Workspaces[0].layout | Should -Be "Scrolling"
+        $assignments[0].Workspaces[0].name | Should -Be "PaperWM"
+        $assignments[0].Workspaces[0].layout_options.scrolling.columns | Should -Be 1
+        $assignments[0].Workspaces[0].workspace_padding | Should -Be 0
+        $assignments[0].Workspaces[0].container_padding | Should -Be 0
+    }
+
+    It "gives an unknown single display scrolling at config load without consuming reserved slots" {
+        $path = Join-Path -Path $PSScriptRoot -ChildPath "../../Config/Komorebi/profiles/spicy/komorebi.json"
+        $config = Read-KomorebiStaticConfig -Path $path
+        $unknownMonitor = [pscustomobject]@{
+            name             = "DISPLAY999"
+            device_id        = "Previously-Unseen-Display"
+            serial_number_id = $null
+            size             = [pscustomobject]@{ left = 0 }
+        }
+
+        $assignments = @(Assert-KomorebiMonitorConfiguration -Config $config -Monitors @($unknownMonitor) -ConfigPath $path)
+
+        $assignments.Count | Should -Be 1
         $assignments[0].MatchedBy | Should -Be "sequential"
-        $assignments[0].Workspaces[0].layout | Should -Be "Grid"
-        $assignments[0].Workspaces[0].name | Should -Be "Grid"
+        $assignments[0].ConfigIndex | Should -Be 4
+        $assignments[0].Workspaces[0].layout | Should -Be "Scrolling"
+        $assignments[0].Workspaces[0].name | Should -Be "PaperWM"
+        $assignments[0].Workspaces[0].layout_options.scrolling.columns | Should -Be 1
+        $assignments[0].Workspaces[0].workspace_padding | Should -Be 0
+        $assignments[0].Workspaces[0].container_padding | Should -Be 0
+    }
+
+    It "preserves spicy physical layouts across display enumeration changes" {
+        $path = Join-Path -Path $PSScriptRoot -ChildPath "../../Config/Komorebi/profiles/spicy/komorebi.json"
+        $config = Read-KomorebiStaticConfig -Path $path
 
         $physical = @(Assert-KomorebiMonitorConfiguration -Config $config -Monitors $script:testMonitors -ConfigPath $path)
         @($physical | ForEach-Object { $_.ConfigIndex }) | Should -Be @(0, 1, 2)
         @($physical | ForEach-Object { $_.Workspaces[0].layout }) | Should -Be @("Grid", "Rows", "Grid")
+        @($physical | Where-Object { $_.MatchedBy -ne "preference" }).Count | Should -Be 0
+
+        $reordered = @($script:testMonitors[2], $script:testMonitors[0], $script:testMonitors[1])
+        $physical = @(Assert-KomorebiMonitorConfiguration -Config $config -Monitors $reordered -ConfigPath $path)
+        @($physical | ForEach-Object { $_.ConfigIndex }) | Should -Be @(2, 0, 1)
+        @($physical | ForEach-Object { $_.Workspaces[0].name }) | Should -Be @("Right", "Middle", "Left")
+        @($physical | ForEach-Object { $_.Workspaces[0].layout }) | Should -Be @("Grid", "Grid", "Rows")
         @($physical | Where-Object { $_.MatchedBy -ne "preference" }).Count | Should -Be 0
     }
 

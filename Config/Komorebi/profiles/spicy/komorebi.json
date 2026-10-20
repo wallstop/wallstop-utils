@@ -24,7 +24,8 @@
   "display_index_preferences": {
     "0": "G7STF34",
     "1": "9K42DP3",
-    "2": "CSLQNF4"
+    "2": "CSLQNF4",
+    "3": "Default_Monitor-1&c528b8a&1&UID256"
   },
   "stackbar": {
     "mode": "Never"
@@ -57,8 +58,30 @@
     {
       "workspaces": [
         {
-          "name": "Grid",
-          "layout": "Grid"
+          "name": "PaperWM",
+          "layout": "Scrolling",
+          "layout_options": {
+            "scrolling": {
+              "columns": 1
+            }
+          },
+          "workspace_padding": 0,
+          "container_padding": 0
+        }
+      ]
+    },
+    {
+      "workspaces": [
+        {
+          "name": "PaperWM",
+          "layout": "Scrolling",
+          "layout_options": {
+            "scrolling": {
+              "columns": 1
+            }
+          },
+          "workspace_padding": 0,
+          "container_padding": 0
         }
       ]
     }

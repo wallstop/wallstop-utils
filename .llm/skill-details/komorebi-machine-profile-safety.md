@@ -43,7 +43,8 @@ write them and restore must not silently fall back to them.
 
 ## Monitor And Layout Invariants
 
-Komorebi pairs each connected display with a `monitors[]` entry in two tiers
+During startup or static-configuration reload, Komorebi pairs each connected display
+with a `monitors[]` entry in two tiers
 (`StaticConfig::postload`, komorebi v0.1.41):
 
 1. A `display_index_preferences` entry whose value **exactly equals** the display's
@@ -81,14 +82,42 @@ that matches no connected display is *not* an error on its own - Komorebi caches
 for reconnect - so docked and undocked setups still pass.
 
 RDP can expose a display with no serial number and a `Default_Monitor-*` device id.
-Physical-display preferences still reserve their indexes while those displays are
-disconnected. The `spicy` profile therefore keeps an unreserved `monitors[3]` entry
-with workspace name and layout `Grid`; one unmatched display receives it through
-sequential fallback. This supports a single unknown display, including the observed
-RDP display, and does not automatically switch profiles on RDP connection. Additional
-unmatched displays require additional unreserved entries. Preserve the physical
-preferences and cover both the RDP assignment and physical-display layouts in
-`Tests/Utils/KomorebiProfileHelpers.Tests.ps1`.
+For single-monitor RDP, the `spicy` profile maps the observed device
+`Default_Monitor-1&c528b8a&1&UID256` explicitly to `monitors[3]`, using `Scrolling`
+with one visible column and zero workspace/container padding. Physical-display
+preferences and layouts remain in slots 0–2. An unreserved `monitors[4]` entry uses
+the same configuration for a single unknown monitor during startup or static
+configuration reload. This scrolling behavior is limited to a single connected
+monitor: v0.1.41 `StaticConfig::postload` replaces `Scrolling` with `Columns` when
+more than one monitor is connected.
+
+<!-- v0.1.41 StaticConfig::postload and monitor_reconciliator use different paths. -->
+Sequential fallback during static configuration loading does not establish hotplug
+behavior. In v0.1.41, a newly constructed monitor starts with BSP;
+`monitor_reconciliator` restores cached configuration for preferred or previously
+seen display IDs, rather than assigning the unreserved static fallback. Explicit
+mapping therefore supports reconnecting the known RDP display. If its ID changes,
+run `komorebic replace-configuration "$HOME/komorebi.json"` to apply the unreserved
+fallback, then update the mapping for future starts. Obtain the new ID from
+`komorebic monitor-information`; do not bind to the changing `DISPLAY*` name.
+
+Existing whkd bindings provide `Alt+Left/Right` focus and `Alt+Shift+Left/Right`
+reordering. Each ordinary tiled window fills the usable work area, preserving the
+taskbar and title bar. Up/Down bindings retain their native behavior. Floating or
+ignored windows and explicitly created multi-window stacks retain their semantics.
+
+Cover the explicit single-monitor RDP assignment, single unknown-monitor
+startup/reload fallback, and unchanged physical-display layouts in
+`Tests/Utils/KomorebiProfileHelpers.Tests.ps1`. Assert the scrolling column count
+and workspace/container padding alongside the layout. Static assignment tests do
+not prove live reconnect behavior or upstream multi-monitor layout conversion;
+validate those separately against the running Komorebi version. The live assertion
+helper checks names/layouts, so also inspect `komorebic state` for layout options,
+padding, focus, container order, and geometry when verifying scrolling behavior.
+When window handling is asynchronous, wait for the expected live state before
+issuing the next dependent command or asserting geometry; CLI completion alone
+does not prove the transition has settled. Restore temporary floating state,
+window order, and focus after live experiments.
 
 The checked-in profiles under `Config/Komorebi/profiles/` are validated statically by the
 same helper, so a bad `display_index_preferences` value cannot be committed.
