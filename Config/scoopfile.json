@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-10-06T23:32:03.613288-07:00",
-      "Version": "2.37.10"
+      "Updated": "2026-10-20T23:31:48.0134355-07:00",
+      "Version": "2.38.3"
     },
     {
       "Info": "",
@@ -53,8 +53,8 @@
       "Info": "",
       "Name": "bazel",
       "Source": "main",
-      "Updated": "2026-10-07T23:31:40.583364-07:00",
-      "Version": "9.3.0"
+      "Updated": "2026-10-20T23:31:51.6699399-07:00",
+      "Version": "9.3.1"
     },
     {
       "Info": "",
@@ -74,8 +74,8 @@
       "Info": "",
       "Name": "bun",
       "Source": "main",
-      "Updated": "2026-09-15T23:32:22.1260614-07:00",
-      "Version": "1.4.2"
+      "Updated": "2026-10-16T09:52:24.5354148-07:00",
+      "Version": "1.4.3"
     },
     {
       "Info": "",
@@ -88,15 +88,15 @@
       "Info": "",
       "Name": "cacert",
       "Source": "main",
-      "Updated": "2026-09-24T23:31:49.8190013-07:00",
-      "Version": "2026-09-25"
+      "Updated": "2026-10-20T23:31:51.9950919-07:00",
+      "Version": "2026-10-20"
     },
     {
       "Info": "",
       "Name": "calibre",
       "Source": "extras",
-      "Updated": "2026-09-17T23:32:08.4111872-07:00",
-      "Version": "9.15.0"
+      "Updated": "2026-10-16T09:53:48.6586101-07:00",
+      "Version": "9.16.0"
     },
     {
       "Info": "",
@@ -123,15 +123,15 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-10-04T23:31:15.0015822-07:00",
-      "Version": "8.22.0_3"
+      "Updated": "2026-10-20T23:31:53.9238983-07:00",
+      "Version": "8.23.0_3"
     },
     {
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-10-05T23:32:43.064552-07:00",
-      "Version": "3.23.23"
+      "Updated": "2026-10-20T23:33:35.2916671-07:00",
+      "Version": "3.26.13"
     },
     {
       "Info": "",
@@ -144,8 +144,8 @@
       "Info": "",
       "Name": "delta",
       "Source": "main",
-      "Updated": "2026-09-26T22:47:23.3439406-07:00",
-      "Version": "0.19.2"
+      "Updated": "2026-10-16T09:54:41.5427196-07:00",
+      "Version": "0.20.1"
     },
     {
       "Info": "",
@@ -172,8 +172,8 @@
       "Info": "",
       "Name": "fancontrol",
       "Source": "extras",
-      "Updated": "2026-10-04T16:23:39.710243-07:00",
-      "Version": "282"
+      "Updated": "2026-10-20T23:33:36.6285954-07:00",
+      "Version": "284"
     },
     {
       "Info": "",
@@ -193,8 +193,8 @@
       "Info": "",
       "Name": "foobar2000",
       "Source": "extras",
-      "Updated": "2026-10-01T23:33:41.9288863-07:00",
-      "Version": "2.26"
+      "Updated": "2026-10-16T09:54:46.6072777-07:00",
+      "Version": "2.26.1"
     },
     {
       "Info": "",
@@ -214,8 +214,8 @@
       "Info": "",
       "Name": "gh",
       "Source": "main",
-      "Updated": "2026-09-29T23:32:57.8608988-07:00",
-      "Version": "2.102.0"
+      "Updated": "2026-10-20T23:33:38.0169253-07:00",
+      "Version": "2.102.1"
     },
     {
       "Info": "",
@@ -228,15 +228,15 @@
       "Info": "",
       "Name": "github",
       "Source": "extras",
-      "Updated": "2026-09-21T23:32:26.7083226-07:00",
-      "Version": "3.6.6"
+      "Updated": "2026-10-16T09:55:02.7810576-07:00",
+      "Version": "3.6.7"
     },
     {
       "Info": "",
       "Name": "go",
       "Source": "main",
-      "Updated": "2026-09-01T23:35:04.4148883-07:00",
-      "Version": "1.27.1"
+      "Updated": "2026-10-20T23:34:51.9407851-07:00",
+      "Version": "1.27.3"
     },
     {
       "Info": "Held package",
@@ -249,8 +249,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-10-06T23:33:03.6559447-07:00",
-      "Version": "155.0.8059.40"
+      "Updated": "2026-10-20T23:35:00.552445-07:00",
+      "Version": "156.0.8078.48"
     },
     {
       "Info": "",
@@ -263,8 +263,8 @@
       "Info": "",
       "Name": "gradle",
       "Source": "main",
-      "Updated": "2026-10-07T23:34:15.0753137-07:00",
-      "Version": "9.8.1"
+      "Updated": "2026-10-20T23:36:33.8793504-07:00",
+      "Version": "9.8.2"
     },
     {
       "Info": "",
@@ -298,15 +298,15 @@
       "Info": "",
       "Name": "innounp",
       "Source": "main",
-      "Updated": "2026-08-29T23:33:24.1025953-07:00",
-      "Version": "2.71.1"
+      "Updated": "2026-10-16T09:56:00.711661-07:00",
+      "Version": "2.71.2"
     },
     {
       "Info": "",
       "Name": "just",
       "Source": "main",
-      "Updated": "2026-08-05T18:46:17.3429249-07:00",
-      "Version": "1.58.0"
+      "Updated": "2026-10-16T09:56:01.8568379-07:00",
+      "Version": "1.59.0"
     },
     {
       "Info": "",
@@ -347,8 +347,8 @@
       "Info": "",
       "Name": "llvm",
       "Source": "main",
-      "Updated": "2026-10-06T23:33:38.9244989-07:00",
-      "Version": "23.1.3"
+      "Updated": "2026-10-20T23:37:00.1768736-07:00",
+      "Version": "23.1.4"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-07T23:34:31.2035722-07:00",
-      "Version": "2026.10.4"
+      "Updated": "2026-10-20T23:37:02.3805853-07:00",
+      "Version": "2026.10.17"
     },
     {
       "Info": "",
@@ -438,22 +438,22 @@
       "Info": "",
       "Name": "obsidian",
       "Source": "extras",
-      "Updated": "2026-08-12T23:33:06.1297083-07:00",
-      "Version": "1.13.7"
+      "Updated": "2026-10-16T09:56:12.0405308-07:00",
+      "Version": "1.14.4"
     },
     {
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-10-07T23:35:03.5920639-07:00",
-      "Version": "0.40.1"
+      "Updated": "2026-10-20T23:37:24.8528885-07:00",
+      "Version": "0.40.7"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-10-07T23:36:17.7830825-07:00",
-      "Version": "0.40.1"
+      "Updated": "2026-10-20T23:38:28.1477755-07:00",
+      "Version": "0.40.7"
     },
     {
       "Info": "",
@@ -466,8 +466,8 @@
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-10-06T23:35:41.4973362-07:00",
-      "Version": "1.18.35"
+      "Updated": "2026-10-16T09:58:05.9147314-07:00",
+      "Version": "1.19.3"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-10-07T23:36:36.921564-07:00",
-      "Version": "1.17.12"
+      "Updated": "2026-10-20T23:38:28.582491-07:00",
+      "Version": "1.18.4"
     },
     {
       "Info": "",
@@ -557,8 +557,8 @@
       "Info": "",
       "Name": "rust",
       "Source": "main",
-      "Updated": "2026-10-01T23:37:17.9008302-07:00",
-      "Version": "1.99.0"
+      "Updated": "2026-10-16T10:03:09.6436944-07:00",
+      "Version": "1.99.1"
     },
     {
       "Info": "",
@@ -585,15 +585,15 @@
       "Info": "",
       "Name": "signal",
       "Source": "extras",
-      "Updated": "2026-10-07T23:36:54.6576886-07:00",
-      "Version": "8.30.0"
+      "Updated": "2026-10-20T23:38:32.118596-07:00",
+      "Version": "8.32.0"
     },
     {
       "Info": "",
       "Name": "sqlite",
       "Source": "main",
-      "Updated": "2026-07-30T20:32:42.9030567-07:00",
-      "Version": "3.53.4"
+      "Updated": "2026-10-20T23:38:33.7317418-07:00",
+      "Version": "3.54.1"
     },
     {
       "Info": "",
@@ -620,8 +620,8 @@
       "Info": "",
       "Name": "thunderbird",
       "Source": "extras",
-      "Updated": "2026-10-01T23:37:26.4532559-07:00",
-      "Version": "157.0.1"
+      "Updated": "2026-10-20T23:38:37.8204457-07:00",
+      "Version": "158.0.1"
     },
     {
       "Info": "",
@@ -641,8 +641,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-10-03T23:35:21.1438999-07:00",
-      "Version": "0.12.23"
+      "Updated": "2026-10-16T10:03:26.6801657-07:00",
+      "Version": "0.13.1"
     },
     {
       "Info": "",
@@ -662,8 +662,8 @@
       "Info": "",
       "Name": "wget",
       "Source": "main",
-      "Updated": "2025-06-09T19:22:06.1569868-07:00",
-      "Version": "1.21.4"
+      "Updated": "2026-10-20T23:38:40.702271-07:00",
+      "Version": "1.25.0"
     },
     {
       "Info": "",
@@ -717,34 +717,34 @@
   ],
   "buckets": [
     {
-      "Manifests": 1669,
+      "Manifests": 1694,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-07T21:38:41-07:00"
+      "Updated": "2026-10-20T21:34:38-07:00"
     },
     {
-      "Manifests": 2406,
+      "Manifests": 2433,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-07T21:39:32-07:00"
+      "Updated": "2026-10-20T21:36:10-07:00"
     },
     {
       "Manifests": 76,
       "Name": "sysinternals",
       "Source": "https://github.com/niheaven/scoop-sysinternals",
-      "Updated": "2026-09-23T13:17:04-07:00"
+      "Updated": "2026-10-18T10:01:27-07:00"
     },
     {
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-07T23:18:36-07:00"
+      "Updated": "2026-10-20T22:01:11-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-07T08:34:59-07:00"
+      "Updated": "2026-10-20T16:11:54-07:00"
     }
   ]
 }
