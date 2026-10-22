@@ -4,8 +4,8 @@
       "Info": "",
       "Name": "7zip",
       "Source": "main",
-      "Updated": "2026-10-06T23:31:31.3649387-07:00",
-      "Version": "26.04"
+      "Updated": "2026-10-21T23:31:16.6562231-07:00",
+      "Version": "26.05"
     },
     {
       "Info": "",
@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-10-20T23:31:48.0134355-07:00",
-      "Version": "2.38.3"
+      "Updated": "2026-10-21T23:31:43.7630702-07:00",
+      "Version": "2.38.4"
     },
     {
       "Info": "",
@@ -123,15 +123,15 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-10-20T23:31:53.9238983-07:00",
-      "Version": "8.23.0_3"
+      "Updated": "2026-10-21T23:31:45.5325769-07:00",
+      "Version": "8.23.0_4"
     },
     {
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-10-20T23:33:35.2916671-07:00",
-      "Version": "3.26.13"
+      "Updated": "2026-10-21T23:33:25.2865968-07:00",
+      "Version": "3.26.16"
     },
     {
       "Info": "",
@@ -158,8 +158,8 @@
       "Info": "",
       "Name": "deno",
       "Source": "main",
-      "Updated": "2026-09-17T23:33:30.4526324-07:00",
-      "Version": "2.9.7"
+      "Updated": "2026-10-21T23:33:27.2458583-07:00",
+      "Version": "2.9.8"
     },
     {
       "Info": "",
@@ -214,8 +214,8 @@
       "Info": "",
       "Name": "gh",
       "Source": "main",
-      "Updated": "2026-10-20T23:33:38.0169253-07:00",
-      "Version": "2.102.1"
+      "Updated": "2026-10-21T23:33:28.4859854-07:00",
+      "Version": "2.103.0"
     },
     {
       "Info": "",
@@ -326,8 +326,8 @@
       "Info": "",
       "Name": "lazygit",
       "Source": "extras",
-      "Updated": "2026-09-16T22:57:52.983049-07:00",
-      "Version": "0.65.1"
+      "Updated": "2026-10-21T23:33:29.5521475-07:00",
+      "Version": "0.66.2"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-10-20T23:37:24.8528885-07:00",
-      "Version": "0.40.7"
+      "Updated": "2026-10-21T23:33:55.065022-07:00",
+      "Version": "0.40.8"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-10-20T23:38:28.1477755-07:00",
-      "Version": "0.40.7"
+      "Updated": "2026-10-21T23:35:11.8896903-07:00",
+      "Version": "0.40.8"
     },
     {
       "Info": "",
@@ -487,8 +487,8 @@
       "Info": "",
       "Name": "php",
       "Source": "main",
-      "Updated": "2026-09-24T23:37:06.1267369-07:00",
-      "Version": "8.5.11"
+      "Updated": "2026-10-21T23:35:14.5315394-07:00",
+      "Version": "8.5.12"
     },
     {
       "Info": "",
@@ -543,8 +543,8 @@
       "Info": "",
       "Name": "ruby",
       "Source": "main",
-      "Updated": "2026-09-15T23:39:13.0132592-07:00",
-      "Version": "4.0.7-1"
+      "Updated": "2026-10-21T23:36:24.2748705-07:00",
+      "Version": "4.0.7-2"
     },
     {
       "Info": "",
@@ -641,8 +641,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-10-16T10:03:26.6801657-07:00",
-      "Version": "0.13.1"
+      "Updated": "2026-10-21T23:36:27.5797431-07:00",
+      "Version": "0.13.5"
     },
     {
       "Info": "",
@@ -711,22 +711,22 @@
       "Info": "",
       "Name": "yt-dlp",
       "Source": "main",
-      "Updated": "2026-08-19T23:35:01.4549284-07:00",
-      "Version": "2026.08.19"
+      "Updated": "2026-10-21T23:36:28.6003346-07:00",
+      "Version": "2026.10.21"
     }
   ],
   "buckets": [
     {
-      "Manifests": 1694,
+      "Manifests": 1695,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-20T21:34:38-07:00"
+      "Updated": "2026-10-21T21:35:33-07:00"
     },
     {
-      "Manifests": 2433,
+      "Manifests": 2440,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-20T21:36:10-07:00"
+      "Updated": "2026-10-21T22:14:42-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-20T22:01:11-07:00"
+      "Updated": "2026-10-21T06:57:01-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-20T16:11:54-07:00"
+      "Updated": "2026-10-21T21:49:48-07:00"
     }
   ]
 }
