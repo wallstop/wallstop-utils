@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-10-21T23:31:43.7630702-07:00",
-      "Version": "2.38.4"
+      "Updated": "2026-10-22T23:32:14.4745731-07:00",
+      "Version": "2.38.5"
     },
     {
       "Info": "",
@@ -74,8 +74,8 @@
       "Info": "",
       "Name": "bun",
       "Source": "main",
-      "Updated": "2026-10-16T09:52:24.5354148-07:00",
-      "Version": "1.4.3"
+      "Updated": "2026-10-22T23:32:23.2992877-07:00",
+      "Version": "1.4.4"
     },
     {
       "Info": "",
@@ -95,8 +95,8 @@
       "Info": "",
       "Name": "calibre",
       "Source": "extras",
-      "Updated": "2026-10-16T09:53:48.6586101-07:00",
-      "Version": "9.16.0"
+      "Updated": "2026-10-22T23:33:14.5652885-07:00",
+      "Version": "9.17.0"
     },
     {
       "Info": "",
@@ -123,15 +123,15 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-10-21T23:31:45.5325769-07:00",
-      "Version": "8.23.0_4"
+      "Updated": "2026-10-22T23:33:16.6841211-07:00",
+      "Version": "8.23.0_5"
     },
     {
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-10-21T23:33:25.2865968-07:00",
-      "Version": "3.26.16"
+      "Updated": "2026-10-23T23:33:17.5339411-07:00",
+      "Version": "3.27.12"
     },
     {
       "Info": "",
@@ -214,8 +214,8 @@
       "Info": "",
       "Name": "gh",
       "Source": "main",
-      "Updated": "2026-10-21T23:33:28.4859854-07:00",
-      "Version": "2.103.0"
+      "Updated": "2026-10-23T23:33:19.4195211-07:00",
+      "Version": "2.103.2"
     },
     {
       "Info": "",
@@ -368,8 +368,8 @@
       "Info": "",
       "Name": "megacmd",
       "Source": "main",
-      "Updated": "2026-08-28T23:32:49.0547404-07:00",
-      "Version": "2.6.0"
+      "Updated": "2026-10-23T23:33:24.3477431-07:00",
+      "Version": "2.7.0"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-20T23:37:02.3805853-07:00",
-      "Version": "2026.10.17"
+      "Updated": "2026-10-23T23:33:28.1856812-07:00",
+      "Version": "2026.10.18"
     },
     {
       "Info": "",
@@ -431,29 +431,29 @@
       "Info": "",
       "Name": "obs-studio",
       "Source": "extras",
-      "Updated": "2026-08-14T23:33:02.2057264-07:00",
-      "Version": "32.2.2"
+      "Updated": "2026-10-23T23:33:51.9047825-07:00",
+      "Version": "33.0.0"
     },
     {
       "Info": "",
       "Name": "obsidian",
       "Source": "extras",
-      "Updated": "2026-10-16T09:56:12.0405308-07:00",
-      "Version": "1.14.4"
+      "Updated": "2026-10-23T23:34:02.5726354-07:00",
+      "Version": "1.14.5"
     },
     {
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-10-21T23:33:55.065022-07:00",
-      "Version": "0.40.8"
+      "Updated": "2026-10-23T23:34:31.3996262-07:00",
+      "Version": "0.40.10"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-10-21T23:35:11.8896903-07:00",
-      "Version": "0.40.8"
+      "Updated": "2026-10-23T23:35:53.404466-07:00",
+      "Version": "0.40.10"
     },
     {
       "Info": "",
@@ -466,8 +466,8 @@
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-10-16T09:58:05.9147314-07:00",
-      "Version": "1.19.3"
+      "Updated": "2026-10-22T23:37:34.8163374-07:00",
+      "Version": "1.19.4"
     },
     {
       "Info": "",
@@ -543,8 +543,8 @@
       "Info": "",
       "Name": "ruby",
       "Source": "main",
-      "Updated": "2026-10-21T23:36:24.2748705-07:00",
-      "Version": "4.0.7-2"
+      "Updated": "2026-10-23T23:37:15.1128495-07:00",
+      "Version": "4.0.9-1"
     },
     {
       "Info": "",
@@ -717,16 +717,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1695,
+      "Manifests": 1698,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-21T21:35:33-07:00"
+      "Updated": "2026-10-23T23:21:30-07:00"
     },
     {
-      "Manifests": 2440,
+      "Manifests": 2447,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-21T22:14:42-07:00"
+      "Updated": "2026-10-23T21:37:25-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-21T06:57:01-07:00"
+      "Updated": "2026-10-23T10:04:55-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-21T21:49:48-07:00"
+      "Updated": "2026-10-23T21:39:02-07:00"
     }
   ]
 }
