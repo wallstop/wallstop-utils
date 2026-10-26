@@ -389,8 +389,8 @@
       "Info": "",
       "Name": "mobaxterm",
       "Source": "extras",
-      "Updated": "2026-09-15T23:36:27.1073766-07:00",
-      "Version": "26.5"
+      "Updated": "2026-10-25T23:32:40.8754421-07:00",
+      "Version": "26.6"
     },
     {
       "Info": "",
@@ -720,13 +720,13 @@
       "Manifests": 1700,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-24T21:33:39-07:00"
+      "Updated": "2026-10-25T21:38:44-07:00"
     },
     {
-      "Manifests": 2447,
+      "Manifests": 2448,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-24T21:34:05-07:00"
+      "Updated": "2026-10-25T21:39:08-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-23T10:04:55-07:00"
+      "Updated": "2026-10-25T06:14:40-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-24T11:48:54-07:00"
+      "Updated": "2026-10-25T12:04:42-07:00"
     }
   ]
 }
