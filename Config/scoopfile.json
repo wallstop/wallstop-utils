@@ -25,8 +25,8 @@
       "Info": "",
       "Name": "autohotkey",
       "Source": "extras",
-      "Updated": "2026-10-03T23:31:52.8917277-07:00",
-      "Version": "2.0.29"
+      "Updated": "2026-10-26T23:33:43.6948656-07:00",
+      "Version": "2.0.31"
     },
     {
       "Info": "",
@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-10-22T23:32:14.4745731-07:00",
-      "Version": "2.38.5"
+      "Updated": "2026-10-26T23:34:36.7647105-07:00",
+      "Version": "2.38.6"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-10-23T23:33:17.5339411-07:00",
-      "Version": "3.27.12"
+      "Updated": "2026-10-26T23:37:05.472591-07:00",
+      "Version": "3.27.14"
     },
     {
       "Info": "",
@@ -214,8 +214,8 @@
       "Info": "",
       "Name": "gh",
       "Source": "main",
-      "Updated": "2026-10-23T23:33:19.4195211-07:00",
-      "Version": "2.103.2"
+      "Updated": "2026-10-26T23:37:08.106311-07:00",
+      "Version": "2.103.3"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-24T23:31:40.1838124-07:00",
-      "Version": "2026.10.19"
+      "Updated": "2026-10-26T23:37:11.6355538-07:00",
+      "Version": "2026.10.20"
     },
     {
       "Info": "",
@@ -480,8 +480,8 @@
       "Info": "",
       "Name": "pandoc",
       "Source": "main",
-      "Updated": "2026-10-07T23:36:25.7684076-07:00",
-      "Version": "3.12.1"
+      "Updated": "2026-10-26T23:37:15.7598209-07:00",
+      "Version": "3.13"
     },
     {
       "Info": "",
@@ -697,8 +697,8 @@
       "Info": "",
       "Name": "wixtoolset",
       "Source": "main",
-      "Updated": "2026-04-19T12:22:12.4226122-07:00",
-      "Version": "7.0.0"
+      "Updated": "2026-10-26T23:37:29.6966119-07:00",
+      "Version": "7.0.1"
     },
     {
       "Info": "",
@@ -711,22 +711,22 @@
       "Info": "",
       "Name": "yt-dlp",
       "Source": "main",
-      "Updated": "2026-10-21T23:36:28.6003346-07:00",
-      "Version": "2026.10.21"
+      "Updated": "2026-10-26T23:37:31.3789828-07:00",
+      "Version": "2026.10.26"
     }
   ],
   "buckets": [
     {
-      "Manifests": 1700,
+      "Manifests": 1701,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-25T21:38:44-07:00"
+      "Updated": "2026-10-26T21:35:01-07:00"
     },
     {
       "Manifests": 2448,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-25T21:39:08-07:00"
+      "Updated": "2026-10-26T21:35:06-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-25T06:14:40-07:00"
+      "Updated": "2026-10-26T22:16:43-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-25T12:04:42-07:00"
+      "Updated": "2026-10-26T22:08:11-07:00"
     }
   ]
 }
