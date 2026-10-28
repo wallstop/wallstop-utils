@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-10-26T23:34:36.7647105-07:00",
-      "Version": "2.38.6"
+      "Updated": "2026-10-27T23:32:04.9644743-07:00",
+      "Version": "2.39.0"
     },
     {
       "Info": "",
@@ -81,8 +81,8 @@
       "Info": "",
       "Name": "busybox",
       "Source": "main",
-      "Updated": "2026-05-14T16:41:46.9867375-07:00",
-      "Version": "6075-g169694ebd"
+      "Updated": "2026-10-27T23:32:22.8188416-07:00",
+      "Version": "6354-g5f09fb446"
     },
     {
       "Info": "",
@@ -109,15 +109,15 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2026-10-06T23:32:47.4272737-07:00",
-      "Version": "26.930.7945.0"
+      "Updated": "2026-10-27T23:33:06.4605306-07:00",
+      "Version": "26.1023.6123.0"
     },
     {
       "Info": "",
       "Name": "cmake",
       "Source": "main",
-      "Updated": "2026-10-02T23:32:46.2880544-07:00",
-      "Version": "4.4.4"
+      "Updated": "2026-10-27T23:33:40.3831307-07:00",
+      "Version": "4.4.5"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-10-26T23:37:05.472591-07:00",
-      "Version": "3.27.14"
+      "Updated": "2026-10-27T23:35:30.0437426-07:00",
+      "Version": "3.27.22"
     },
     {
       "Info": "",
@@ -249,8 +249,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-10-20T23:35:00.552445-07:00",
-      "Version": "156.0.8078.48"
+      "Updated": "2026-10-27T23:35:44.9790655-07:00",
+      "Version": "156.0.8078.74"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-26T23:37:11.6355538-07:00",
-      "Version": "2026.10.20"
+      "Updated": "2026-10-27T23:35:55.4571135-07:00",
+      "Version": "2026.10.21"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-10-24T23:31:59.7642446-07:00",
-      "Version": "0.40.11"
+      "Updated": "2026-10-27T23:36:45.4881026-07:00",
+      "Version": "0.40.12"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-10-24T23:33:07.3125754-07:00",
-      "Version": "0.40.11"
+      "Updated": "2026-10-27T23:38:09.2844978-07:00",
+      "Version": "0.40.12"
     },
     {
       "Info": "",
@@ -487,15 +487,15 @@
       "Info": "",
       "Name": "php",
       "Source": "main",
-      "Updated": "2026-10-21T23:35:14.5315394-07:00",
-      "Version": "8.5.12"
+      "Updated": "2026-10-27T23:38:19.214939-07:00",
+      "Version": "8.5.12-1"
     },
     {
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-10-20T23:38:28.582491-07:00",
-      "Version": "1.18.4"
+      "Updated": "2026-10-27T23:38:26.9079715-07:00",
+      "Version": "1.18.6"
     },
     {
       "Info": "",
@@ -620,8 +620,8 @@
       "Info": "",
       "Name": "thunderbird",
       "Source": "extras",
-      "Updated": "2026-10-20T23:38:37.8204457-07:00",
-      "Version": "158.0.1"
+      "Updated": "2026-10-27T23:38:45.4746369-07:00",
+      "Version": "159.0"
     },
     {
       "Info": "",
@@ -717,16 +717,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1701,
+      "Manifests": 1702,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-26T21:35:01-07:00"
+      "Updated": "2026-10-27T21:27:15-07:00"
     },
     {
       "Manifests": 2448,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-26T21:35:06-07:00"
+      "Updated": "2026-10-27T21:29:19-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-26T22:16:43-07:00"
+      "Updated": "2026-10-27T07:40:17-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-26T22:08:11-07:00"
+      "Updated": "2026-10-27T22:44:51-07:00"
     }
   ]
 }
