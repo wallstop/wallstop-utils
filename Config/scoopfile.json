@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-10-28T23:32:05.8038916-07:00",
-      "Version": "2.39.1"
+      "Updated": "2026-10-29T23:32:37.93519-07:00",
+      "Version": "2.39.2"
     },
     {
       "Info": "",
@@ -109,8 +109,8 @@
       "Info": "",
       "Name": "chatgpt",
       "Source": "extras",
-      "Updated": "2026-10-28T23:32:59.4137696-07:00",
-      "Version": "26.1023.6621.0"
+      "Updated": "2026-10-29T23:33:37.9882484-07:00",
+      "Version": "26.1027.3384.0"
     },
     {
       "Info": "",
@@ -123,8 +123,8 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-10-22T23:33:16.6841211-07:00",
-      "Version": "8.23.0_5"
+      "Updated": "2026-10-29T23:33:47.434311-07:00",
+      "Version": "8.23.0_6"
     },
     {
       "Info": "",
@@ -193,8 +193,8 @@
       "Info": "",
       "Name": "foobar2000",
       "Source": "extras",
-      "Updated": "2026-10-16T09:54:46.6072777-07:00",
-      "Version": "2.26.1"
+      "Updated": "2026-10-29T23:33:58.1879973-07:00",
+      "Version": "2.26.2"
     },
     {
       "Info": "",
@@ -249,8 +249,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-10-27T23:35:44.9790655-07:00",
-      "Version": "156.0.8078.74"
+      "Updated": "2026-10-29T23:34:15.5634813-07:00",
+      "Version": "156.0.8078.80"
     },
     {
       "Info": "",
@@ -333,8 +333,8 @@
       "Info": "",
       "Name": "libreoffice",
       "Source": "extras",
-      "Updated": "2026-10-03T23:35:02.3139307-07:00",
-      "Version": "26.8.1"
+      "Updated": "2026-10-29T23:37:18.6930065-07:00",
+      "Version": "26.8.2"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-28T23:33:09.1797814-07:00",
-      "Version": "2026.10.22"
+      "Updated": "2026-10-29T23:37:31.0232966-07:00",
+      "Version": "2026.10.23"
     },
     {
       "Info": "",
@@ -431,8 +431,8 @@
       "Info": "",
       "Name": "obs-studio",
       "Source": "extras",
-      "Updated": "2026-10-23T23:33:51.9047825-07:00",
-      "Version": "33.0.0"
+      "Updated": "2026-10-29T23:38:04.1473842-07:00",
+      "Version": "33.0.1"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-10-28T23:35:30.2430001-07:00",
-      "Version": "1.18.8"
+      "Updated": "2026-10-29T23:38:11.6486516-07:00",
+      "Version": "1.18.10"
     },
     {
       "Info": "",
@@ -720,13 +720,13 @@
       "Manifests": 1702,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-28T21:27:24-07:00"
+      "Updated": "2026-10-29T21:27:06-07:00"
     },
     {
       "Manifests": 2449,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-28T21:28:08-07:00"
+      "Updated": "2026-10-29T21:27:19-07:00"
     },
     {
       "Manifests": 76,
@@ -738,13 +738,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-28T23:00:47-07:00"
+      "Updated": "2026-10-29T23:01:33-07:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-28T22:50:40-07:00"
+      "Updated": "2026-10-29T22:51:36-07:00"
     }
   ]
 }
