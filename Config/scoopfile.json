@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-10-29T23:32:37.93519-07:00",
-      "Version": "2.39.2"
+      "Updated": "2026-10-30T23:32:03.2307093-07:00",
+      "Version": "2.39.3"
     },
     {
       "Info": "",
@@ -228,8 +228,8 @@
       "Info": "",
       "Name": "github",
       "Source": "extras",
-      "Updated": "2026-10-16T09:55:02.7810576-07:00",
-      "Version": "3.6.7"
+      "Updated": "2026-10-30T23:32:20.2708662-07:00",
+      "Version": "3.6.10"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-29T23:37:31.0232966-07:00",
-      "Version": "2026.10.23"
+      "Updated": "2026-10-30T23:32:29.8772634-07:00",
+      "Version": "2026.10.24"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-10-29T23:38:11.6486516-07:00",
-      "Version": "1.18.10"
+      "Updated": "2026-10-30T23:32:44.4803551-07:00",
+      "Version": "1.18.11"
     },
     {
       "Info": "",
@@ -717,16 +717,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1702,
+      "Manifests": 1703,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-29T21:27:06-07:00"
+      "Updated": "2026-10-30T21:23:53-07:00"
     },
     {
       "Manifests": 2449,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-29T21:27:19-07:00"
+      "Updated": "2026-10-30T21:23:38-07:00"
     },
     {
       "Manifests": 76,
@@ -738,7 +738,7 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-29T23:01:33-07:00"
+      "Updated": "2026-10-30T02:31:57-07:00"
     },
     {
       "Manifests": 338,
