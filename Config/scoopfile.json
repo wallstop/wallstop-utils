@@ -417,8 +417,8 @@
       "Info": "",
       "Name": "nodejs-lts",
       "Source": "main",
-      "Updated": "2026-09-16T22:58:03.6496276-07:00",
-      "Version": "24.21.0"
+      "Updated": "2026-11-01T13:51:35.2775575-08:00",
+      "Version": "26.13.0"
     },
     {
       "Info": "",
@@ -529,8 +529,8 @@
       "Info": "",
       "Name": "pwsh",
       "Source": "main",
-      "Updated": "2026-07-30T20:28:52.8350604-07:00",
-      "Version": "7.6.4"
+      "Updated": "2026-11-01T13:44:28.808669-08:00",
+      "Version": "7.6.9"
     },
     {
       "Info": "",
@@ -641,8 +641,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-10-21T23:36:27.5797431-07:00",
-      "Version": "0.13.5"
+      "Updated": "2026-11-01T13:51:57.2611974-08:00",
+      "Version": "0.13.6"
     },
     {
       "Info": "",
@@ -673,11 +673,10 @@
       "Version": "0.2.10"
     },
     {
-      "Info": "",
+      "Info": "Install failed",
       "Name": "windhawk",
-      "Source": "extras",
-      "Updated": "2025-12-19T23:14:13.6460205-08:00",
-      "Version": "1.7.3"
+      "Updated": "2026-11-01T13:40:31.2434224-08:00",
+      "Version": null
     },
     {
       "Info": "",
@@ -720,13 +719,13 @@
       "Manifests": 1703,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-31T21:23:23-07:00"
+      "Updated": "2026-11-01T12:22:43-08:00"
     },
     {
       "Manifests": 2451,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-31T21:24:09-07:00"
+      "Updated": "2026-11-01T12:24:50-08:00"
     },
     {
       "Manifests": 76,
