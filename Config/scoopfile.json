@@ -298,8 +298,8 @@
       "Info": "",
       "Name": "innounp",
       "Source": "main",
-      "Updated": "2026-10-16T09:56:00.711661-07:00",
-      "Version": "2.71.2"
+      "Updated": "2026-10-31T23:31:47.5205745-07:00",
+      "Version": "2.71.3"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-30T23:32:29.8772634-07:00",
-      "Version": "2026.10.24"
+      "Updated": "2026-10-31T23:31:58.0283191-07:00",
+      "Version": "2026.10.25"
     },
     {
       "Info": "",
@@ -720,13 +720,13 @@
       "Manifests": 1703,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-10-30T21:23:53-07:00"
+      "Updated": "2026-10-31T21:23:23-07:00"
     },
     {
-      "Manifests": 2449,
+      "Manifests": 2451,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-10-30T21:23:38-07:00"
+      "Updated": "2026-10-31T21:24:09-07:00"
     },
     {
       "Manifests": 76,
@@ -744,7 +744,7 @@
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-29T22:51:36-07:00"
+      "Updated": "2026-10-31T23:08:24-07:00"
     }
   ]
 }
