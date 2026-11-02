@@ -719,13 +719,13 @@
       "Manifests": 1703,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-01T12:22:43-08:00"
+      "Updated": "2026-11-01T20:24:43-08:00"
     },
     {
       "Manifests": 2451,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-01T12:24:50-08:00"
+      "Updated": "2026-11-01T22:56:31-08:00"
     },
     {
       "Manifests": 76,
@@ -743,7 +743,7 @@
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-10-31T23:08:24-07:00"
+      "Updated": "2026-11-01T22:07:24-08:00"
     }
   ]
 }

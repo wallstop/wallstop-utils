@@ -3,7 +3,7 @@
     {
       "name": "ScoopHealthCheck",
       "error": "E_BACKUP_STEP_FAILED(ScoopHealthCheck): script 'Scoop/Invoke-ScoopHealthCheck.ps1' at 'D:\\code\\wallstop-utils\\Scripts\\Scoop\\Invoke-ScoopHealthCheck.ps1' exited with code 1.",
-      "outputPreview": "Scoop is up to date. | WARNING: W_SCOOP_HEALTH_STATUS_ANOMALY: app='@{Name=windhawk;' reason='InstallFailed' requires manual recovery (see docs/operator-runbooks/scoop-host-audit-recovery.md) | WARNING: E_SCOOP_HEALTH_CURRENT_LINK_MISSING: app='windhawk' root='C:\\Users\\dbfsi\\scoop' current='C:\\Users\\dbfsi\\scoop\\apps\\windhawk\\current' | Scoop health check complete: 2 finding(s) require attention."
+      "outputPreview": "WARN  Scoop bucket(s) out of date. Run 'scoop update' to get the latest changes. | WARNING: W_SCOOP_HEALTH_STATUS_ANOMALY: app='@{Name=windhawk;' reason='InstallFailed' requires manual recovery (see docs/operator-runbooks/scoop-host-audit-recovery.md) | WARNING: E_SCOOP_HEALTH_CURRENT_LINK_MISSING: app='windhawk' root='C:\\Users\\dbfsi\\scoop' current='C:\\Users\\dbfsi\\scoop\\apps\\windhawk\\current' | Scoop health check complete: 2 finding(s) require attention."
     }
   ],
   "phaseFailures": [],
