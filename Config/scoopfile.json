@@ -11,8 +11,8 @@
       "Info": "",
       "Name": "audacity",
       "Source": "extras",
-      "Updated": "2026-09-30T23:34:13.0670112-07:00",
-      "Version": "4.0.1"
+      "Updated": "2026-11-02T23:31:41.2595138-08:00",
+      "Version": "4.0.2"
     },
     {
       "Info": "",
@@ -123,8 +123,8 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-10-29T23:33:47.434311-07:00",
-      "Version": "8.23.0_6"
+      "Updated": "2026-11-02T23:31:43.1678875-08:00",
+      "Version": "8.23.0_8"
     },
     {
       "Info": "",
@@ -172,8 +172,8 @@
       "Info": "",
       "Name": "fancontrol",
       "Source": "extras",
-      "Updated": "2026-10-20T23:33:36.6285954-07:00",
-      "Version": "284"
+      "Updated": "2026-11-02T23:31:44.0745978-08:00",
+      "Version": "285"
     },
     {
       "Info": "",
@@ -438,8 +438,8 @@
       "Info": "",
       "Name": "obsidian",
       "Source": "extras",
-      "Updated": "2026-10-23T23:34:02.5726354-07:00",
-      "Version": "1.14.5"
+      "Updated": "2026-11-02T23:31:50.0265935-08:00",
+      "Version": "1.15.0"
     },
     {
       "Info": "",
@@ -719,13 +719,13 @@
       "Manifests": 1703,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-01T20:24:43-08:00"
+      "Updated": "2026-11-02T20:24:15-08:00"
     },
     {
       "Manifests": 2451,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-01T22:56:31-08:00"
+      "Updated": "2026-11-02T20:25:25-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-10-30T02:31:57-07:00"
+      "Updated": "2026-11-02T10:33:46-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-01T22:07:24-08:00"
+      "Updated": "2026-11-02T18:20:38-08:00"
     }
   ]
 }
