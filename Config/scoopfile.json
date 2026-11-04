@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-10-27T23:35:30.0437426-07:00",
-      "Version": "3.27.22"
+      "Updated": "2026-11-03T23:33:47.6666837-08:00",
+      "Version": "3.28.7"
     },
     {
       "Info": "",
@@ -249,8 +249,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-10-29T23:34:15.5634813-07:00",
-      "Version": "156.0.8078.80"
+      "Updated": "2026-11-03T23:33:56.6180915-08:00",
+      "Version": "157.0.8103.39"
     },
     {
       "Info": "",
@@ -347,8 +347,8 @@
       "Info": "",
       "Name": "llvm",
       "Source": "main",
-      "Updated": "2026-10-20T23:37:00.1768736-07:00",
-      "Version": "23.1.4"
+      "Updated": "2026-11-03T23:34:29.9110667-08:00",
+      "Version": "23.1.5"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-10-31T23:31:58.0283191-07:00",
-      "Version": "2026.10.25"
+      "Updated": "2026-11-03T23:34:33.8287413-08:00",
+      "Version": "2026.11.0"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-10-28T23:33:50.7714967-07:00",
-      "Version": "0.40.13"
+      "Updated": "2026-11-03T23:35:06.0546763-08:00",
+      "Version": "0.40.14"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-10-28T23:35:11.9652194-07:00",
-      "Version": "0.40.13"
+      "Updated": "2026-11-03T23:36:26.6551712-08:00",
+      "Version": "0.40.14"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-10-30T23:32:44.4803551-07:00",
-      "Version": "1.18.11"
+      "Updated": "2026-11-03T23:36:27.749049-08:00",
+      "Version": "1.18.12"
     },
     {
       "Info": "",
@@ -716,16 +716,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1703,
+      "Manifests": 1704,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-02T20:24:15-08:00"
+      "Updated": "2026-11-03T20:24:15-08:00"
     },
     {
-      "Manifests": 2451,
+      "Manifests": 2452,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-02T20:25:25-08:00"
+      "Updated": "2026-11-03T20:25:29-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-02T10:33:46-08:00"
+      "Updated": "2026-11-03T04:03:50-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-02T18:20:38-08:00"
+      "Updated": "2026-11-03T11:32:17-08:00"
     }
   ]
 }
