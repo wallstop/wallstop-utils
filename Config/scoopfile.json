@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-11-04T23:32:23.3787509-08:00",
-      "Version": "2.39.4"
+      "Updated": "2026-11-05T23:32:16.9115303-08:00",
+      "Version": "2.39.5"
     },
     {
       "Info": "",
@@ -53,8 +53,8 @@
       "Info": "",
       "Name": "bazel",
       "Source": "main",
-      "Updated": "2026-10-20T23:31:51.6699399-07:00",
-      "Version": "9.3.1"
+      "Updated": "2026-11-05T23:32:26.9332722-08:00",
+      "Version": "9.3.2"
     },
     {
       "Info": "",
@@ -88,15 +88,15 @@
       "Info": "",
       "Name": "cacert",
       "Source": "main",
-      "Updated": "2026-10-20T23:31:51.9950919-07:00",
-      "Version": "2026-10-20"
+      "Updated": "2026-11-05T23:32:27.5303199-08:00",
+      "Version": "2026-11-05"
     },
     {
       "Info": "",
       "Name": "calibre",
       "Source": "extras",
-      "Updated": "2026-10-22T23:33:14.5652885-07:00",
-      "Version": "9.17.0"
+      "Updated": "2026-11-05T23:33:18.1415374-08:00",
+      "Version": "9.18.0"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-11-03T23:33:47.6666837-08:00",
-      "Version": "3.28.7"
+      "Updated": "2026-11-05T23:34:45.9013053-08:00",
+      "Version": "3.29.9"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-04T23:32:29.7731475-08:00",
-      "Version": "2026.11.1"
+      "Updated": "2026-11-05T23:34:49.234819-08:00",
+      "Version": "2026.11.2"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-11-03T23:35:06.0546763-08:00",
-      "Version": "0.40.14"
+      "Updated": "2026-11-05T23:35:13.2463175-08:00",
+      "Version": "0.40.15"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-11-03T23:36:26.6551712-08:00",
-      "Version": "0.40.14"
+      "Updated": "2026-11-05T23:36:38.5301667-08:00",
+      "Version": "0.40.15"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-11-04T23:32:30.4351778-08:00",
-      "Version": "1.18.13"
+      "Updated": "2026-11-05T23:36:39.0757394-08:00",
+      "Version": "1.18.14"
     },
     {
       "Info": "",
@@ -515,8 +515,8 @@
       "Info": "",
       "Name": "process-explorer",
       "Source": "sysinternals",
-      "Updated": "2026-09-15T23:37:59.7307422-07:00",
-      "Version": "17.14"
+      "Updated": "2026-11-05T23:36:40.0693917-08:00",
+      "Version": "17.21"
     },
     {
       "Info": "",
@@ -585,8 +585,8 @@
       "Info": "",
       "Name": "signal",
       "Source": "extras",
-      "Updated": "2026-10-28T23:35:52.2956286-07:00",
-      "Version": "8.33.0"
+      "Updated": "2026-11-05T23:36:43.7423426-08:00",
+      "Version": "8.34.0"
     },
     {
       "Info": "",
@@ -716,34 +716,34 @@
   ],
   "buckets": [
     {
-      "Manifests": 1707,
+      "Manifests": 1709,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-04T23:22:33-08:00"
+      "Updated": "2026-11-05T20:24:25-08:00"
     },
     {
-      "Manifests": 2455,
+      "Manifests": 2456,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-04T23:18:14-08:00"
+      "Updated": "2026-11-05T22:01:58-08:00"
     },
     {
       "Manifests": 76,
       "Name": "sysinternals",
       "Source": "https://github.com/niheaven/scoop-sysinternals",
-      "Updated": "2026-10-18T10:01:27-07:00"
+      "Updated": "2026-11-05T14:07:23-08:00"
     },
     {
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-04T11:55:19-08:00"
+      "Updated": "2026-11-05T23:00:27-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-04T16:55:09-08:00"
+      "Updated": "2026-11-05T22:50:14-08:00"
     }
   ]
 }
