@@ -4,8 +4,8 @@
       "Info": "",
       "Name": "7zip",
       "Source": "main",
-      "Updated": "2026-10-21T23:31:16.6562231-07:00",
-      "Version": "26.05"
+      "Updated": "2026-11-07T23:32:29.2259523-08:00",
+      "Version": "26.06"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-06T23:35:00.8591869-08:00",
-      "Version": "2026.11.3"
+      "Updated": "2026-11-07T23:32:36.109851-08:00",
+      "Version": "2026.11.4"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-11-06T23:35:21.251455-08:00",
-      "Version": "1.18.15"
+      "Updated": "2026-11-07T23:32:36.7392722-08:00",
+      "Version": "1.18.16"
     },
     {
       "Info": "",
@@ -716,16 +716,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1709,
+      "Manifests": 1710,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-06T20:23:22-08:00"
+      "Updated": "2026-11-07T22:52:45-08:00"
     },
     {
       "Manifests": 2458,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-06T20:23:34-08:00"
+      "Updated": "2026-11-07T20:23:38-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-06T13:37:45-08:00"
+      "Updated": "2026-11-07T06:57:11-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-06T22:00:28-08:00"
+      "Updated": "2026-11-07T22:04:12-08:00"
     }
   ]
 }
