@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-07T23:32:36.109851-08:00",
-      "Version": "2026.11.4"
+      "Updated": "2026-11-08T23:32:02.9772545-08:00",
+      "Version": "2026.11.5"
     },
     {
       "Info": "",
@@ -719,13 +719,13 @@
       "Manifests": 1710,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-07T22:52:45-08:00"
+      "Updated": "2026-11-08T20:25:49-08:00"
     },
     {
-      "Manifests": 2458,
+      "Manifests": 2459,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-07T20:23:38-08:00"
+      "Updated": "2026-11-08T20:25:52-08:00"
     },
     {
       "Manifests": 76,
@@ -743,7 +743,7 @@
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-07T22:04:12-08:00"
+      "Updated": "2026-11-08T22:34:08-08:00"
     }
   ]
 }
