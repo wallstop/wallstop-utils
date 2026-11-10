@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-11-06T23:32:36.4650689-08:00",
-      "Version": "2.39.6"
+      "Updated": "2026-11-09T23:31:46.1590307-08:00",
+      "Version": "2.39.7"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-11-05T23:34:45.9013053-08:00",
-      "Version": "3.29.9"
+      "Updated": "2026-11-09T23:33:02.9447162-08:00",
+      "Version": "3.29.15"
     },
     {
       "Info": "",
@@ -249,8 +249,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-11-03T23:33:56.6180915-08:00",
-      "Version": "157.0.8103.39"
+      "Updated": "2026-11-09T23:33:11.0341798-08:00",
+      "Version": "157.0.8103.51"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-11-05T23:35:13.2463175-08:00",
-      "Version": "0.40.15"
+      "Updated": "2026-11-09T23:33:30.1159528-08:00",
+      "Version": "0.40.16"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-11-05T23:36:38.5301667-08:00",
-      "Version": "0.40.15"
+      "Updated": "2026-11-09T23:34:38.1888333-08:00",
+      "Version": "0.40.16"
     },
     {
       "Info": "",
@@ -716,16 +716,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1710,
+      "Manifests": 1711,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-08T20:25:49-08:00"
+      "Updated": "2026-11-09T20:23:58-08:00"
     },
     {
-      "Manifests": 2459,
+      "Manifests": 2467,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-08T20:25:52-08:00"
+      "Updated": "2026-11-09T20:25:08-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-07T06:57:11-08:00"
+      "Updated": "2026-11-09T14:05:49-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-08T22:34:08-08:00"
+      "Updated": "2026-11-09T18:45:53-08:00"
     }
   ]
 }
