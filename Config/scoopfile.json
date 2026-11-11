@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-11-09T23:31:46.1590307-08:00",
-      "Version": "2.39.7"
+      "Updated": "2026-11-10T23:31:55.9102563-08:00",
+      "Version": "2.40.0"
     },
     {
       "Info": "",
@@ -235,8 +235,8 @@
       "Info": "",
       "Name": "go",
       "Source": "main",
-      "Updated": "2026-10-20T23:34:51.9407851-07:00",
-      "Version": "1.27.3"
+      "Updated": "2026-11-10T23:33:09.9520783-08:00",
+      "Version": "1.27.4"
     },
     {
       "Info": "Held package",
@@ -263,8 +263,8 @@
       "Info": "",
       "Name": "gradle",
       "Source": "main",
-      "Updated": "2026-11-06T23:34:55.6124332-08:00",
-      "Version": "9.9.0"
+      "Updated": "2026-11-10T23:34:40.5688711-08:00",
+      "Version": "9.9.1"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-08T23:32:02.9772545-08:00",
-      "Version": "2026.11.5"
+      "Updated": "2026-11-10T23:34:43.9558642-08:00",
+      "Version": "2026.11.6"
     },
     {
       "Info": "",
@@ -466,8 +466,8 @@
       "Info": "",
       "Name": "opencode-desktop",
       "Source": "extras",
-      "Updated": "2026-10-28T23:35:22.7792141-07:00",
-      "Version": "1.19.5"
+      "Updated": "2026-11-10T23:34:54.7397698-08:00",
+      "Version": "2.2.7"
     },
     {
       "Info": "",
@@ -620,8 +620,8 @@
       "Info": "",
       "Name": "thunderbird",
       "Source": "extras",
-      "Updated": "2026-10-27T23:38:45.4746369-07:00",
-      "Version": "159.0"
+      "Updated": "2026-11-10T23:34:59.1690198-08:00",
+      "Version": "160.0"
     },
     {
       "Info": "",
@@ -682,8 +682,8 @@
       "Info": "",
       "Name": "windows-terminal",
       "Source": "extras",
-      "Updated": "2026-10-02T23:34:33.6795465-07:00",
-      "Version": "1.25.2733.0"
+      "Updated": "2026-11-10T23:35:00.3383613-08:00",
+      "Version": "1.25.3131.0"
     },
     {
       "Info": "",
@@ -716,16 +716,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1711,
+      "Manifests": 1712,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-09T20:23:58-08:00"
+      "Updated": "2026-11-10T23:08:35-08:00"
     },
     {
       "Manifests": 2467,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-09T20:25:08-08:00"
+      "Updated": "2026-11-10T20:27:24-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-09T14:05:49-08:00"
+      "Updated": "2026-11-10T13:51:10-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-09T18:45:53-08:00"
+      "Updated": "2026-11-10T22:24:59-08:00"
     }
   ]
 }
