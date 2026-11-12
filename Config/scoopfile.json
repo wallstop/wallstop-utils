@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-11-10T23:31:55.9102563-08:00",
-      "Version": "2.40.0"
+      "Updated": "2026-11-11T23:32:05.364966-08:00",
+      "Version": "2.40.1"
     },
     {
       "Info": "",
@@ -123,8 +123,8 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-11-02T23:31:43.1678875-08:00",
-      "Version": "8.23.0_8"
+      "Updated": "2026-11-11T23:32:07.7267274-08:00",
+      "Version": "8.23.0_9"
     },
     {
       "Info": "",
@@ -249,8 +249,8 @@
       "Info": "",
       "Name": "googlechrome",
       "Source": "extras",
-      "Updated": "2026-11-09T23:33:11.0341798-08:00",
-      "Version": "157.0.8103.51"
+      "Updated": "2026-11-11T23:32:19.7589084-08:00",
+      "Version": "157.0.8103.79"
     },
     {
       "Info": "",
@@ -340,8 +340,8 @@
       "Info": "",
       "Name": "linqpad",
       "Source": "extras",
-      "Updated": "2026-09-30T23:39:08.2529994-07:00",
-      "Version": "9.11.10"
+      "Updated": "2026-11-11T23:32:21.6636356-08:00",
+      "Version": "9.12.5"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-10T23:34:43.9558642-08:00",
-      "Version": "2026.11.6"
+      "Updated": "2026-11-11T23:32:24.6391576-08:00",
+      "Version": "2026.11.7"
     },
     {
       "Info": "",
@@ -424,8 +424,8 @@
       "Info": "",
       "Name": "notepadplusplus",
       "Source": "extras",
-      "Updated": "2026-11-06T23:35:18.410128-08:00",
-      "Version": "8.9.9"
+      "Updated": "2026-11-11T23:32:27.1227305-08:00",
+      "Version": "8.9.9.1"
     },
     {
       "Info": "",
@@ -585,8 +585,8 @@
       "Info": "",
       "Name": "signal",
       "Source": "extras",
-      "Updated": "2026-11-05T23:36:43.7423426-08:00",
-      "Version": "8.34.0"
+      "Updated": "2026-11-11T23:32:31.6577099-08:00",
+      "Version": "8.35.0"
     },
     {
       "Info": "",
@@ -716,16 +716,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1712,
+      "Manifests": 1713,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-10T23:08:35-08:00"
+      "Updated": "2026-11-11T20:24:22-08:00"
     },
     {
-      "Manifests": 2467,
+      "Manifests": 2468,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-10T20:27:24-08:00"
+      "Updated": "2026-11-11T20:27:24-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 134,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-10T13:51:10-08:00"
+      "Updated": "2026-11-11T23:25:18-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-10T22:24:59-08:00"
+      "Updated": "2026-11-11T23:13:18-08:00"
     }
   ]
 }
