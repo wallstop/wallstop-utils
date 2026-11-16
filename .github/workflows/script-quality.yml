@@ -39,7 +39,7 @@ jobs:
 
       - name: Setup Python
         id: setup_python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.12"
 
@@ -400,7 +400,7 @@ jobs:
 
       - name: Setup Python
         id: setup_python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.12"
 
@@ -777,7 +777,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: pester-winps51
           path: testresults-winps51.xml
@@ -836,7 +836,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: pester-pwsh7
           path: testresults-pwsh7.xml
