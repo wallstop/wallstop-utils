@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-11-13T23:32:31.3380806-08:00",
-      "Version": "2.40.3"
+      "Updated": "2026-11-16T23:32:01.833256-08:00",
+      "Version": "2.40.4"
     },
     {
       "Info": "",
@@ -193,8 +193,8 @@
       "Info": "",
       "Name": "foobar2000",
       "Source": "extras",
-      "Updated": "2026-10-29T23:33:58.1879973-07:00",
-      "Version": "2.26.2"
+      "Updated": "2026-11-16T23:32:22.0799905-08:00",
+      "Version": "2.26.3"
     },
     {
       "Info": "",
@@ -228,8 +228,8 @@
       "Info": "",
       "Name": "github",
       "Source": "extras",
-      "Updated": "2026-10-30T23:32:20.2708662-07:00",
-      "Version": "3.6.10"
+      "Updated": "2026-11-16T23:32:35.9122062-08:00",
+      "Version": "3.6.11"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-13T23:34:02.9058187-08:00",
-      "Version": "2026.11.8"
+      "Updated": "2026-11-16T23:32:40.0654341-08:00",
+      "Version": "2026.11.9"
     },
     {
       "Info": "",
@@ -494,8 +494,8 @@
       "Info": "",
       "Name": "pipx",
       "Source": "main",
-      "Updated": "2026-11-07T23:32:36.7392722-08:00",
-      "Version": "1.18.16"
+      "Updated": "2026-11-16T23:32:40.7115593-08:00",
+      "Version": "1.18.18"
     },
     {
       "Info": "",
@@ -716,16 +716,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1714,
+      "Manifests": 1716,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-15T20:30:06-08:00"
+      "Updated": "2026-11-16T20:25:52-08:00"
     },
     {
-      "Manifests": 2469,
+      "Manifests": 2470,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-15T21:34:14-08:00"
+      "Updated": "2026-11-16T20:26:04-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 135,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-15T22:49:07-08:00"
+      "Updated": "2026-11-16T18:59:43-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-15T07:40:45-08:00"
+      "Updated": "2026-11-16T18:56:48-08:00"
     }
   ]
 }
