@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-11-17T23:32:11.7259829-08:00",
-      "Version": "2.41.0"
+      "Updated": "2026-11-18T23:31:51.4546122-08:00",
+      "Version": "2.41.1"
     },
     {
       "Info": "",
@@ -144,8 +144,8 @@
       "Info": "",
       "Name": "delta",
       "Source": "main",
-      "Updated": "2026-10-16T09:54:41.5427196-07:00",
-      "Version": "0.20.1"
+      "Updated": "2026-11-18T23:31:52.9048765-08:00",
+      "Version": "0.21.1"
     },
     {
       "Info": "",
@@ -326,8 +326,8 @@
       "Info": "",
       "Name": "lazygit",
       "Source": "extras",
-      "Updated": "2026-10-21T23:33:29.5521475-07:00",
-      "Version": "0.66.2"
+      "Updated": "2026-11-18T23:31:53.7553183-08:00",
+      "Version": "0.66.3"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-16T23:32:40.0654341-08:00",
-      "Version": "2026.11.9"
+      "Updated": "2026-11-18T23:31:56.7829837-08:00",
+      "Version": "2026.11.10"
     },
     {
       "Info": "",
@@ -716,34 +716,34 @@
   ],
   "buckets": [
     {
-      "Manifests": 1716,
+      "Manifests": 1719,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-17T20:24:46-08:00"
+      "Updated": "2026-11-18T20:26:04-08:00"
     },
     {
-      "Manifests": 2473,
+      "Manifests": 2474,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-17T23:15:00-08:00"
+      "Updated": "2026-11-18T20:25:26-08:00"
     },
     {
       "Manifests": 76,
       "Name": "sysinternals",
       "Source": "https://github.com/niheaven/scoop-sysinternals",
-      "Updated": "2026-11-05T14:07:23-08:00"
+      "Updated": "2026-11-18T01:49:15-08:00"
     },
     {
       "Manifests": 135,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-17T15:33:53-08:00"
+      "Updated": "2026-11-18T09:21:44-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-17T15:31:57-08:00"
+      "Updated": "2026-11-18T09:18:05-08:00"
     }
   ]
 }
