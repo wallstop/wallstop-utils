@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-11-19T23:32:00.6011984-08:00",
-      "Version": "2.41.2"
+      "Updated": "2026-11-20T23:32:30.1737865-08:00",
+      "Version": "2.42.1"
     },
     {
       "Info": "",
@@ -130,8 +130,8 @@
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-11-19T23:34:28.075062-08:00",
-      "Version": "3.31.11"
+      "Updated": "2026-11-20T23:33:52.4494042-08:00",
+      "Version": "3.31.15"
     },
     {
       "Info": "",
@@ -179,8 +179,8 @@
       "Info": "",
       "Name": "ffmpeg",
       "Source": "main",
-      "Updated": "2026-09-20T23:31:21.7111548-07:00",
-      "Version": "9.0.2"
+      "Updated": "2026-11-20T23:33:58.0149133-08:00",
+      "Version": "9.1"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-18T23:31:56.7829837-08:00",
-      "Version": "2026.11.10"
+      "Updated": "2026-11-20T23:34:00.5214113-08:00",
+      "Version": "2026.11.11"
     },
     {
       "Info": "",
@@ -403,8 +403,8 @@
       "Info": "",
       "Name": "msys2",
       "Source": "main",
-      "Updated": "2026-09-27T23:32:32.9968496-07:00",
-      "Version": "2026-09-27"
+      "Updated": "2026-11-20T23:34:43.380675-08:00",
+      "Version": "2026-11-20"
     },
     {
       "Info": "",
@@ -431,8 +431,8 @@
       "Info": "",
       "Name": "obs-studio",
       "Source": "extras",
-      "Updated": "2026-10-29T23:38:04.1473842-07:00",
-      "Version": "33.0.1"
+      "Updated": "2026-11-20T23:34:56.6913526-08:00",
+      "Version": "33.0.2"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-11-09T23:33:30.1159528-08:00",
-      "Version": "0.40.16"
+      "Updated": "2026-11-20T23:35:19.7833703-08:00",
+      "Version": "0.40.17"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-11-09T23:34:38.1888333-08:00",
-      "Version": "0.40.16"
+      "Updated": "2026-11-20T23:36:39.301274-08:00",
+      "Version": "0.40.17"
     },
     {
       "Info": "",
@@ -719,13 +719,13 @@
       "Manifests": 1719,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-19T22:44:28-08:00"
+      "Updated": "2026-11-20T20:24:07-08:00"
     },
     {
       "Manifests": 2475,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-19T20:26:17-08:00"
+      "Updated": "2026-11-20T22:40:49-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 135,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-19T15:06:34-08:00"
+      "Updated": "2026-11-20T17:35:55-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-19T23:18:28-08:00"
+      "Updated": "2026-11-20T08:59:09-08:00"
     }
   ]
 }
