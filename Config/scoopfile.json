@@ -25,8 +25,8 @@
       "Info": "",
       "Name": "autohotkey",
       "Source": "extras",
-      "Updated": "2026-10-26T23:33:43.6948656-07:00",
-      "Version": "2.0.31"
+      "Updated": "2026-11-21T23:32:24.4913125-08:00",
+      "Version": "2.0.32"
     },
     {
       "Info": "",
@@ -95,8 +95,8 @@
       "Info": "",
       "Name": "calibre",
       "Source": "extras",
-      "Updated": "2026-11-05T23:33:18.1415374-08:00",
-      "Version": "9.18.0"
+      "Updated": "2026-11-21T23:34:43.2616417-08:00",
+      "Version": "9.19.0"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-20T23:34:00.5214113-08:00",
-      "Version": "2026.11.11"
+      "Updated": "2026-11-21T23:34:48.9042829-08:00",
+      "Version": "2026.11.12"
     },
     {
       "Info": "",
@@ -431,8 +431,8 @@
       "Info": "",
       "Name": "obs-studio",
       "Source": "extras",
-      "Updated": "2026-11-20T23:34:56.6913526-08:00",
-      "Version": "33.0.2"
+      "Updated": "2026-11-21T23:35:07.5928861-08:00",
+      "Version": "33.0.3"
     },
     {
       "Info": "",
@@ -719,13 +719,13 @@
       "Manifests": 1719,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-20T20:24:07-08:00"
+      "Updated": "2026-11-21T20:24:44-08:00"
     },
     {
-      "Manifests": 2475,
+      "Manifests": 2477,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-20T22:40:49-08:00"
+      "Updated": "2026-11-21T20:25:32-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 135,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-20T17:35:55-08:00"
+      "Updated": "2026-11-21T13:43:28-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-20T08:59:09-08:00"
+      "Updated": "2026-11-21T22:51:06-08:00"
     }
   ]
 }
