@@ -536,8 +536,8 @@
       "Info": "",
       "Name": "ripgrep",
       "Source": "main",
-      "Updated": "2026-07-15T10:02:31.8736287-07:00",
-      "Version": "15.2.0"
+      "Updated": "2026-11-22T23:31:50.1735408-08:00",
+      "Version": "16.0.0"
     },
     {
       "Info": "",
@@ -719,13 +719,13 @@
       "Manifests": 1719,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-21T20:24:44-08:00"
+      "Updated": "2026-11-22T20:27:55-08:00"
     },
     {
       "Manifests": 2477,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-21T20:25:32-08:00"
+      "Updated": "2026-11-22T20:27:37-08:00"
     },
     {
       "Manifests": 76,
