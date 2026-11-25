@@ -39,8 +39,8 @@
       "Info": "",
       "Name": "aws",
       "Source": "main",
-      "Updated": "2026-11-23T23:31:58.0080418-08:00",
-      "Version": "2.42.2"
+      "Updated": "2026-11-24T23:31:58.3495857-08:00",
+      "Version": "2.42.3"
     },
     {
       "Info": "",
@@ -123,15 +123,15 @@
       "Info": "",
       "Name": "curl",
       "Source": "main",
-      "Updated": "2026-11-11T23:32:07.7267274-08:00",
-      "Version": "8.23.0_9"
+      "Updated": "2026-11-24T23:32:00.7401522-08:00",
+      "Version": "8.23.0_10"
     },
     {
       "Info": "",
       "Name": "cursor",
       "Source": "extras",
-      "Updated": "2026-11-20T23:33:52.4494042-08:00",
-      "Version": "3.31.15"
+      "Updated": "2026-11-24T23:33:19.42001-08:00",
+      "Version": "3.32.4"
     },
     {
       "Info": "",
@@ -312,8 +312,8 @@
       "Info": "",
       "Name": "keyviz",
       "Source": "extras",
-      "Updated": "2026-08-09T20:03:32.360281-07:00",
-      "Version": "2.1.1"
+      "Updated": "2026-11-24T23:33:22.0025701-08:00",
+      "Version": "2.1.2"
     },
     {
       "Info": "",
@@ -382,8 +382,8 @@
       "Info": "",
       "Name": "mise",
       "Source": "main",
-      "Updated": "2026-11-23T23:32:11.9074829-08:00",
-      "Version": "2026.11.13"
+      "Updated": "2026-11-24T23:33:25.2337684-08:00",
+      "Version": "2026.11.14"
     },
     {
       "Info": "",
@@ -445,15 +445,15 @@
       "Info": "",
       "Name": "ollama",
       "Source": "main",
-      "Updated": "2026-11-20T23:35:19.7833703-08:00",
-      "Version": "0.40.17"
+      "Updated": "2026-11-24T23:33:49.2163879-08:00",
+      "Version": "0.40.18"
     },
     {
       "Info": "",
       "Name": "ollama-full",
       "Source": "extras",
-      "Updated": "2026-11-20T23:36:39.301274-08:00",
-      "Version": "0.40.17"
+      "Updated": "2026-11-24T23:35:02.7277051-08:00",
+      "Version": "0.40.18"
     },
     {
       "Info": "",
@@ -716,16 +716,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1719,
+      "Manifests": 1721,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-23T20:25:44-08:00"
+      "Updated": "2026-11-24T20:26:27-08:00"
     },
     {
-      "Manifests": 2478,
+      "Manifests": 2479,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-23T20:26:12-08:00"
+      "Updated": "2026-11-24T20:26:17-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 135,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-21T13:43:28-08:00"
+      "Updated": "2026-11-24T07:00:11-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-23T20:48:43-08:00"
+      "Updated": "2026-11-24T19:33:56-08:00"
     }
   ]
 }
