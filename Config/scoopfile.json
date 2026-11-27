@@ -144,8 +144,8 @@
       "Info": "",
       "Name": "delta",
       "Source": "main",
-      "Updated": "2026-11-18T23:31:52.9048765-08:00",
-      "Version": "0.21.1"
+      "Updated": "2026-11-26T18:25:47.8022949-08:00",
+      "Version": "0.22.0"
     },
     {
       "Info": "",
@@ -214,8 +214,8 @@
       "Info": "",
       "Name": "gh",
       "Source": "main",
-      "Updated": "2026-11-17T23:32:17.0253116-08:00",
-      "Version": "2.105.0"
+      "Updated": "2026-11-26T18:25:48.8057181-08:00",
+      "Version": "2.106.0"
     },
     {
       "Info": "",
@@ -529,8 +529,8 @@
       "Info": "",
       "Name": "pwsh",
       "Source": "main",
-      "Updated": "2026-11-01T13:44:28.808669-08:00",
-      "Version": "7.6.9"
+      "Updated": "2026-11-26T18:25:28.2672585-08:00",
+      "Version": "7.7.0"
     },
     {
       "Info": "",
@@ -641,8 +641,8 @@
       "Info": "",
       "Name": "uv",
       "Source": "main",
-      "Updated": "2026-11-14T23:36:16.6344454-08:00",
-      "Version": "0.13.8"
+      "Updated": "2026-11-26T18:25:53.8907388-08:00",
+      "Version": "0.13.10"
     },
     {
       "Info": "",
@@ -716,16 +716,16 @@
   ],
   "buckets": [
     {
-      "Manifests": 1723,
+      "Manifests": 1725,
       "Name": "main",
       "Source": "https://github.com/ScoopInstaller/Main",
-      "Updated": "2026-11-25T20:25:47-08:00"
+      "Updated": "2026-11-26T23:09:13-08:00"
     },
     {
       "Manifests": 2479,
       "Name": "extras",
       "Source": "https://github.com/ScoopInstaller/Extras",
-      "Updated": "2026-11-25T20:26:24-08:00"
+      "Updated": "2026-11-26T23:17:22-08:00"
     },
     {
       "Manifests": 76,
@@ -737,13 +737,13 @@
       "Manifests": 135,
       "Name": "nonportable",
       "Source": "https://github.com/ScoopInstaller/Nonportable",
-      "Updated": "2026-11-25T16:31:25-08:00"
+      "Updated": "2026-11-26T06:01:32-08:00"
     },
     {
       "Manifests": 338,
       "Name": "java",
       "Source": "https://github.com/ScoopInstaller/Java",
-      "Updated": "2026-11-25T16:23:20-08:00"
+      "Updated": "2026-11-26T16:36:52-08:00"
     }
   ]
 }
